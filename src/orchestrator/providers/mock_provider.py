@@ -37,32 +37,54 @@ class MockProvider(BaseProvider):
         if purpose == "review":
             text = self._review(tags, meta)
         elif purpose == "plan":
-            text = json.dumps({
-                "phases": [
-                    {"phase_number": 1, "phase_slug": "scaffold", "title": "Scaffold",
-                     "definition_of_done": ["Project skeleton exists", "Tests pass"],
-                     "acceptance_criteria": ["`make test` is green"], "risks": [],
-                     "risk": "low"},
-                    {"phase_number": 2, "phase_slug": "core", "title": "Core logic",
-                     "definition_of_done": ["Core module implemented with tests"],
-                     "acceptance_criteria": [], "risks": ["scope creep"], "risk": "medium"},
-                ]
-            })
+            text = json.dumps(
+                {
+                    "phases": [
+                        {
+                            "phase_number": 1,
+                            "phase_slug": "scaffold",
+                            "title": "Scaffold",
+                            "definition_of_done": ["Project skeleton exists", "Tests pass"],
+                            "acceptance_criteria": ["`make test` is green"],
+                            "risks": [],
+                            "risk": "low",
+                        },
+                        {
+                            "phase_number": 2,
+                            "phase_slug": "core",
+                            "title": "Core logic",
+                            "definition_of_done": ["Core module implemented with tests"],
+                            "acceptance_criteria": [],
+                            "risks": ["scope creep"],
+                            "risk": "medium",
+                        },
+                    ]
+                }
+            )
         elif purpose == "supervise":
             text = json.dumps({"recommendation": "proceed", "notes": ["mock supervisor note"]})
         else:
             status = "BLOCKED" if "mock-blocked" in tags else "READY_FOR_REVIEW"
-            text = json.dumps({
-                "phase": meta.get("phase", "agent"),
-                "branch": meta.get("branch", ""),
-                "status": status,
-                "summary": "Mock agent completed the task." if status != "BLOCKED"
-                else "Blocked: mock blocker.",
-                "files_changed": [],
-                "tests": {"command": "", "passed": 0, "failed": 0, "skipped": 0, "log_path": ""},
-                "dod_self_check": [],
-                "blockers": ["mock blocker"] if status == "BLOCKED" else [],
-            })
+            text = json.dumps(
+                {
+                    "phase": meta.get("phase", "agent"),
+                    "branch": meta.get("branch", ""),
+                    "status": status,
+                    "summary": "Mock agent completed the task."
+                    if status != "BLOCKED"
+                    else "Blocked: mock blocker.",
+                    "files_changed": [],
+                    "tests": {
+                        "command": "",
+                        "passed": 0,
+                        "failed": 0,
+                        "skipped": 0,
+                        "log_path": "",
+                    },
+                    "dod_self_check": [],
+                    "blockers": ["mock blocker"] if status == "BLOCKED" else [],
+                }
+            )
         usage = {
             "input_tokens": estimate_tokens(req.prompt.static_text() + req.prompt.dynamic_text()),
             "output_tokens": estimate_tokens(text),
@@ -83,12 +105,19 @@ class MockProvider(BaseProvider):
             verdict = "APPROVED"
         findings = []
         if verdict == "CHANGES_REQUESTED":
-            findings = [{"file_or_area": "MOCK_CHANGE.md", "issue": "mock reviewer requested "
-                         "changes", "violates": "DoD item 1"}]
+            findings = [
+                {
+                    "file_or_area": "MOCK_CHANGE.md",
+                    "issue": "mock reviewer requested changes",
+                    "violates": "DoD item 1",
+                }
+            ]
         missing = list(meta.get("missing_artifacts") or [])
-        return json.dumps({
-            "verdict": verdict,
-            "findings": findings,
-            "missing_artifacts": missing,
-            "notes": ["mock review based only on supplied artifacts"],
-        })
+        return json.dumps(
+            {
+                "verdict": verdict,
+                "findings": findings,
+                "missing_artifacts": missing,
+                "notes": ["mock review based only on supplied artifacts"],
+            }
+        )

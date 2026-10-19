@@ -36,10 +36,12 @@ def create_schedule(body: ScheduleCreate, session: Session = SessionDep) -> dict
 
 
 @router.patch("/schedules/{schedule_id}")
-def update_schedule(schedule_id: int, body: ScheduleUpdate,
-                    session: Session = SessionDep) -> dict[str, Any]:
-    return dump(scheduler_service.update(session, scheduler_service.get(session, schedule_id),
-                                         body))
+def update_schedule(
+    schedule_id: int, body: ScheduleUpdate, session: Session = SessionDep
+) -> dict[str, Any]:
+    return dump(
+        scheduler_service.update(session, scheduler_service.get(session, schedule_id), body)
+    )
 
 
 @router.post("/schedules/{schedule_id}/run")

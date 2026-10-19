@@ -51,8 +51,9 @@ async def run_logs(ws: WebSocket, run_id: int) -> None:
                     text = partial[stream] + chunk.decode(errors="replace")
                     *lines, partial[stream] = text.split("\n")
                     for line in lines:
-                        await ws.send_json({"type": "log", "run_id": run_id, "stream": stream,
-                                            "line": line})
+                        await ws.send_json(
+                            {"type": "log", "run_id": run_id, "stream": stream, "line": line}
+                        )
             with session_scope() as s:
                 run = s.get(Run, run_id)
                 status = run.status if run else "unknown"

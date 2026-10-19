@@ -20,13 +20,25 @@ def dump(obj: Any) -> dict[str, Any]:
 
 
 @router.get("/memory")
-def list_memory(category: str | None = None, scope: str | None = None, role: str | None = None,
-                project_slug: str | None = None,
-                status: str | None = Query(None, pattern="^(approved|pending|rejected)$"),
-                session: Session = SessionDep) -> list[dict[str, Any]]:
-    return [dump(e) for e in memory_service.list_entries(
-        session, category=category, scope=scope, role=role, project_slug=project_slug,
-        status=status)]
+def list_memory(
+    category: str | None = None,
+    scope: str | None = None,
+    role: str | None = None,
+    project_slug: str | None = None,
+    status: str | None = Query(None, pattern="^(approved|pending|rejected)$"),
+    session: Session = SessionDep,
+) -> list[dict[str, Any]]:
+    return [
+        dump(e)
+        for e in memory_service.list_entries(
+            session,
+            category=category,
+            scope=scope,
+            role=role,
+            project_slug=project_slug,
+            status=status,
+        )
+    ]
 
 
 @router.post("/memory", status_code=201)
@@ -39,8 +51,9 @@ def create_memory(body: MemoryCreate, session: Session = SessionDep) -> dict[str
 
 # Declared before /memory/{entry_id} routes so the literal paths win.
 @router.get("/memory/search")
-def search_memory(q: str = Query(..., min_length=1), session: Session = SessionDep
-                  ) -> list[dict[str, Any]]:
+def search_memory(
+    q: str = Query(..., min_length=1), session: Session = SessionDep
+) -> list[dict[str, Any]]:
     return [dump(e) for e in memory_service.search(session, q)]
 
 
@@ -62,8 +75,9 @@ async def import_memory(request: Request, session: Session = SessionDep) -> dict
 
 
 @router.patch("/memory/{entry_id}")
-def update_memory(entry_id: int, body: MemoryUpdate, session: Session = SessionDep
-                  ) -> dict[str, Any]:
+def update_memory(
+    entry_id: int, body: MemoryUpdate, session: Session = SessionDep
+) -> dict[str, Any]:
     return dump(memory_service.update(session, entry_id, body))
 
 

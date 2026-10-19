@@ -23,10 +23,20 @@ def git_available() -> bool:
     return shutil.which("git") is not None
 
 
-def run_git(args: list[str], cwd: Path | str, check: bool = True,
-            env: dict[str, str] | None = None, timeout: int = 120) -> GitResult:
+def run_git(
+    args: list[str],
+    cwd: Path | str,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+    timeout: int = 120,
+) -> GitResult:
     proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout,
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=timeout,
         check=False,
     )
     res = GitResult(proc.returncode, proc.stdout, proc.stderr)
@@ -44,8 +54,12 @@ def is_repo(path: Path | str) -> bool:
 
 
 def branch_exists(repo: Path | str, branch: str) -> bool:
-    return run_git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo,
-                   check=False).code == 0
+    return (
+        run_git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo, check=False
+        ).code
+        == 0
+    )
 
 
 def head_sha(repo: Path | str) -> str | None:

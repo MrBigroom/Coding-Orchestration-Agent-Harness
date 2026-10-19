@@ -24,9 +24,18 @@ class MockHarnessAdapter(BaseHarnessAdapter):
     experimental = False
     default_command = sys.executable
     default_args = [
-        "-m", "orchestrator.adapters.mock_harness",
-        "--cwd", "{cwd}", "--prompt-file", "{prompt_file}", "--handoff", "{handoff_path}",
-        "--branch", "{branch}", "--run-id", "{run_id}",
+        "-m",
+        "orchestrator.adapters.mock_harness",
+        "--cwd",
+        "{cwd}",
+        "--prompt-file",
+        "{prompt_file}",
+        "--handoff",
+        "{handoff_path}",
+        "--branch",
+        "{branch}",
+        "--run-id",
+        "{run_id}",
     ]
     default_capabilities = {"commits": True, "writes_handoff": True, "offline": True}
     description = "Offline deterministic harness for demo and tests."
@@ -79,10 +88,18 @@ def main(argv: list[str] | None = None) -> int:
 
     phase = a.branch
     handoff: dict = {
-        "phase": phase, "branch": a.branch, "summary": "", "files_changed": [],
+        "phase": phase,
+        "branch": a.branch,
+        "summary": "",
+        "files_changed": [],
         "tests": {"command": "", "passed": 0, "failed": 0, "skipped": 0, "log_path": ""},
-        "dod_self_check": [], "new_dependencies": [], "assumptions": [], "questions": [],
-        "blockers": [], "contracts_touched": [], "memory_suggestions": [],
+        "dod_self_check": [],
+        "new_dependencies": [],
+        "assumptions": [],
+        "questions": [],
+        "blockers": [],
+        "contracts_touched": [],
+        "memory_suggestions": [],
     }
     if "mock-blocked" in tags:
         handoff |= {
@@ -102,16 +119,27 @@ def main(argv: list[str] | None = None) -> int:
             "status": "READY_FOR_REVIEW",
             "summary": "Appended a deterministic line to MOCK_CHANGE.md.",
             "files_changed": ["MOCK_CHANGE.md"],
-            "dod_self_check": [{"item": "MOCK_CHANGE.md updated", "met": True,
-                                "evidence": "committed on phase branch"}],
+            "dod_self_check": [
+                {
+                    "item": "MOCK_CHANGE.md updated",
+                    "met": True,
+                    "evidence": "committed on phase branch",
+                }
+            ],
             "assumptions": ["Tests are run by the orchestrator verification step."],
             "memory_suggestions": [
-                {"category": "project", "scope": "conventions",
-                 "content": "Mock changes are appended to MOCK_CHANGE.md, one line per run.",
-                 "tags": ["mock"]},
-                {"category": "role", "scope": "worker",
-                 "content": "Commit on the phase branch with feat(phase-N): messages.",
-                 "tags": ["git"]},
+                {
+                    "category": "project",
+                    "scope": "conventions",
+                    "content": "Mock changes are appended to MOCK_CHANGE.md, one line per run.",
+                    "tags": ["mock"],
+                },
+                {
+                    "category": "role",
+                    "scope": "worker",
+                    "content": "Commit on the phase branch with feat(phase-N): messages.",
+                    "tags": ["git"],
+                },
             ],
         }
     hp = Path(a.handoff)

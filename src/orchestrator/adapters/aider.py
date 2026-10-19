@@ -14,7 +14,11 @@ class AiderAdapter(BaseHarnessAdapter):
     experimental = True
     default_command = "aider"
     default_args = ["--yes-always", "?--model={model}", "--message-file", "{prompt_file}"]
-    default_env_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_API_BASE",
-                        "DEEPSEEK_API_KEY"]
+    default_env_vars = [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE",
+        "DEEPSEEK_API_KEY",
+    ]
     description = "Optional alternative coding harness (fallback after OpenCode)."
     verify_hint = "aider --version"

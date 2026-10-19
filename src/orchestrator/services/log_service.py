@@ -31,15 +31,29 @@ def log_event(
 
         task = session.get(Task, task_id)
         if task:
-            phase = f"phase-{task.phase_number}" if task.phase_number is not None \
-                else task.short_id
-    entry = BuildLogEntry(timestamp=now, phase=phase, task_id=task_id, run_id=run_id,
-                          role=role, event=event, details=details, commit_sha=commit_sha)
+            phase = f"phase-{task.phase_number}" if task.phase_number is not None else task.short_id
+    entry = BuildLogEntry(
+        timestamp=now,
+        phase=phase,
+        task_id=task_id,
+        run_id=run_id,
+        role=role,
+        event=event,
+        details=details,
+        commit_sha=commit_sha,
+    )
     session.add(entry)
     session.commit()
-    record = BuildLogRecord(timestamp=now.isoformat(), phase=phase, task_id=task_id,
-                            run_id=run_id, role=role, event=event, details=details,
-                            commit_sha=commit_sha)
+    record = BuildLogRecord(
+        timestamp=now.isoformat(),
+        phase=phase,
+        task_id=task_id,
+        run_id=run_id,
+        role=role,
+        event=event,
+        details=details,
+        commit_sha=commit_sha,
+    )
     path = get_settings().build_log_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:

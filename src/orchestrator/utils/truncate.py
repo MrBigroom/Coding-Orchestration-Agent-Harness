@@ -27,8 +27,9 @@ def truncate_tail(text: str, max_tokens: int) -> str:
     return "... [earlier output truncated] ...\n" + text[-keep:]
 
 
-_PYTEST_SUMMARY = re.compile(r"=+\s*(?P<body>[^=]*?(passed|failed|error|skipped)[^=]*?)\s*=+\s*$",
-                             re.M)
+_PYTEST_SUMMARY = re.compile(
+    r"=+\s*(?P<body>[^=]*?(passed|failed|error|skipped)[^=]*?)\s*=+\s*$", re.M
+)
 _COUNT = re.compile(r"(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed|deselected)")
 _GENERIC_COUNT = re.compile(r"(?i)\b(\d+)\s+(tests?\s+)?(passed|failed|skipped|ok|failures?)\b")
 

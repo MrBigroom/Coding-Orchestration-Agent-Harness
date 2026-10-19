@@ -53,9 +53,13 @@ def _template(raw: dict[str, Any], schedule_name: str) -> TaskCreate:
 def create(session: Session, data: ScheduleCreate) -> Schedule:
     times = validate_cron(data.cron_expression)
     _template(data.task_template_json, data.name)  # validate template up front
-    sched = Schedule(name=data.name, cron_expression=data.cron_expression,
-                     task_template_json=data.task_template_json, enabled=data.enabled,
-                     next_run_at=times[0] if times and data.enabled else None)
+    sched = Schedule(
+        name=data.name,
+        cron_expression=data.cron_expression,
+        task_template_json=data.task_template_json,
+        enabled=data.enabled,
+        next_run_at=times[0] if times and data.enabled else None,
+    )
     session.add(sched)
     session.commit()
     session.refresh(sched)
@@ -98,8 +102,9 @@ def fire(session: Session, sched: Schedule) -> Task:
     sched.next_run_at = times[0] if sched.enabled and times else None
     session.add(sched)
     session.commit()
-    log_service.log_event(session, "schedule_fired", f"{sched.name} -> {task.short_id}",
-                          task_id=task.id)
+    log_service.log_event(
+        session, "schedule_fired", f"{sched.name} -> {task.short_id}", task_id=task.id
+    )
     return task
 
 
@@ -111,8 +116,9 @@ class SchedulerRunner:
         self._signature: tuple = ()
 
     def start(self) -> None:
-        self.scheduler.add_job(self.sync, "interval", seconds=30, id="__sync__",
-                               next_run_time=datetime.now(UTC))
+        self.scheduler.add_job(
+            self.sync, "interval", seconds=30, id="__sync__", next_run_time=datetime.now(UTC)
+        )
         self.scheduler.start()
 
     def shutdown(self) -> None:
@@ -131,9 +137,15 @@ class SchedulerRunner:
                 job.remove()
         for r in rows:
             try:
-                self.scheduler.add_job(_fire_by_id, CronTrigger.from_crontab(
-                    r.cron_expression, timezone=UTC), args=[r.id], id=f"schedule-{r.id}",
-                    misfire_grace_time=300, coalesce=True, max_instances=1)
+                self.scheduler.add_job(
+                    _fire_by_id,
+                    CronTrigger.from_crontab(r.cron_expression, timezone=UTC),
+                    args=[r.id],
+                    id=f"schedule-{r.id}",
+                    misfire_grace_time=300,
+                    coalesce=True,
+                    max_instances=1,
+                )
             except ValueError as e:
                 log.warning("skipping schedule %s: %s", r.name, e)
 

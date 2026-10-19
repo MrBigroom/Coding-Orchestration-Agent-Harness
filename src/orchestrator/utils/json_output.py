@@ -75,7 +75,4 @@ def parse_model(text: str, model: type[M]) -> M:
 
 def json_instruction(model: type[BaseModel]) -> str:
     schema = json.dumps(model.model_json_schema(), sort_keys=True)
-    return (
-        "Respond with a single JSON object only, no prose, matching this JSON Schema:\n"
-        f"{schema}"
-    )
+    return f"Respond with a single JSON object only, no prose, matching this JSON Schema:\n{schema}"

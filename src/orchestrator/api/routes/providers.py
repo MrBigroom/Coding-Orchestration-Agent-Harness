@@ -45,8 +45,9 @@ def create_provider(body: ProviderCreate, session: Session = SessionDep) -> dict
 
 
 @router.patch("/providers/{provider_id}")
-def update_provider(provider_id: int, body: ProviderUpdate,
-                    session: Session = SessionDep) -> dict[str, Any]:
+def update_provider(
+    provider_id: int, body: ProviderUpdate, session: Session = SessionDep
+) -> dict[str, Any]:
     p = session.get(Provider, provider_id)
     if not p:
         raise HTTPException(404, "provider not found")
@@ -83,8 +84,9 @@ def create_profile(body: ModelProfileCreate, session: Session = SessionDep) -> d
 
 
 @router.patch("/model-profiles/{profile_id}")
-def update_profile(profile_id: int, body: ModelProfileUpdate,
-                   session: Session = SessionDep) -> dict[str, Any]:
+def update_profile(
+    profile_id: int, body: ModelProfileUpdate, session: Session = SessionDep
+) -> dict[str, Any]:
     m = session.get(ModelProfile, profile_id)
     if not m:
         raise HTTPException(404, "profile not found")
@@ -112,8 +114,7 @@ async def adapter_health(name: str, session: Session = SessionDep) -> dict[str, 
 
 
 @router.patch("/adapters/{name}")
-def update_adapter(name: str, body: AdapterUpdate,
-                   session: Session = SessionDep) -> dict[str, Any]:
+def update_adapter(name: str, body: AdapterUpdate, session: Session = SessionDep) -> dict[str, Any]:
     row = adapter_service.get_row(session, name)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(row, k, v)

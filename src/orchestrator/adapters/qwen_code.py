@@ -17,7 +17,12 @@ class QwenCodeAdapter(BaseHarnessAdapter):
     experimental = True
     default_command = "qwen"
     default_args = ["--approval-mode", "auto-edit", "?--model={model}", "-p", "{prompt}"]
-    default_env_vars = ["QWEN_API_KEY", "QWEN_OPENAI_BASE_URL", "OPENAI_API_KEY",
-                        "OPENAI_BASE_URL", "OPENAI_MODEL"]
+    default_env_vars = [
+        "QWEN_API_KEY",
+        "QWEN_OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+    ]
     description = "Alibaba Qwen harness; preferred for `qwen`-tagged tasks."
     verify_hint = "qwen --version && qwen --help"

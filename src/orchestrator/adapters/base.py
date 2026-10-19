@@ -128,8 +128,11 @@ class BaseHarnessAdapter(ABC):  # noqa: B024 - concrete defaults, subclass per h
 
     @property
     def capabilities(self) -> dict[str, Any]:
-        return {**self.default_capabilities, **self.spec.capabilities,
-                "experimental": self.experimental}
+        return {
+            **self.default_capabilities,
+            **self.spec.capabilities,
+            "experimental": self.experimental,
+        }
 
     def resolved_binary(self) -> str | None:
         return shutil.which(self.spec.command)
@@ -171,8 +174,7 @@ class BaseHarnessAdapter(ABC):  # noqa: B024 - concrete defaults, subclass per h
         }
 
     def build_command(self, ctx: RunContext) -> list[str]:
-        return [self.spec.command, *render_args(self.spec.args_template,
-                                                self.template_values(ctx))]
+        return [self.spec.command, *render_args(self.spec.args_template, self.template_values(ctx))]
 
     def command_preview(self, ctx: RunContext) -> list[str]:
         """Like build_command, but never inlines the prompt text (safe to display/log)."""

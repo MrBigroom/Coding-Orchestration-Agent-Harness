@@ -19,8 +19,9 @@ def _url() -> str:
 
 
 def run_migrations_offline() -> None:
-    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True,
-                      render_as_batch=True)
+    context.configure(
+        url=_url(), target_metadata=target_metadata, literal_binds=True, render_as_batch=True
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -30,8 +31,9 @@ def run_migrations_online() -> None:
     section["sqlalchemy.url"] = _url()
     connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata,
-                          render_as_batch=True)
+        context.configure(
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
+        )
         with context.begin_transaction():
             context.run_migrations()
 

@@ -29,8 +29,10 @@ POLL_SECONDS = 0.25
 def git_identity_env() -> dict[str, str]:
     s = get_settings()
     return {
-        "GIT_AUTHOR_NAME": s.git_user_name, "GIT_AUTHOR_EMAIL": s.git_user_email,
-        "GIT_COMMITTER_NAME": s.git_user_name, "GIT_COMMITTER_EMAIL": s.git_user_email,
+        "GIT_AUTHOR_NAME": s.git_user_name,
+        "GIT_AUTHOR_EMAIL": s.git_user_email,
+        "GIT_COMMITTER_NAME": s.git_user_name,
+        "GIT_COMMITTER_EMAIL": s.git_user_email,
         # Never let a child block on an interactive git/ssh prompt.
         "GIT_TERMINAL_PROMPT": "0",
     }
@@ -87,8 +89,12 @@ async def run_process(
         )
     except (FileNotFoundError, PermissionError) as e:
         err_path.write_text(f"failed to start {argv[0]!r}: {e}\n")
-        return AdapterResult(exit_code=None, error=f"failed to start: {e}",
-                             stdout_path=out_path, stderr_path=err_path)
+        return AdapterResult(
+            exit_code=None,
+            error=f"failed to start: {e}",
+            stdout_path=out_path,
+            stderr_path=err_path,
+        )
 
     (artifacts_dir / f"{log_prefix}pid").write_text(str(proc.pid))
     assert proc.stdout and proc.stderr
@@ -133,19 +139,31 @@ async def run_process(
         error = f"timed out after {timeout_seconds}s"
     elif cancelled:
         error = "cancelled"
-    return AdapterResult(exit_code=proc.returncode, timed_out=timed_out, cancelled=cancelled,
-                         duration_ms=duration_ms, stdout_path=out_path, stderr_path=err_path,
-                         error=error)
+    return AdapterResult(
+        exit_code=proc.returncode,
+        timed_out=timed_out,
+        cancelled=cancelled,
+        duration_ms=duration_ms,
+        stdout_path=out_path,
+        stderr_path=err_path,
+        error=error,
+    )
 
 
-async def run_simple(argv: list[str], cwd: Path, timeout_seconds: int = 600,
-                     env_names: list[str] | None = None) -> tuple[int | None, str, bool]:
+async def run_simple(
+    argv: list[str], cwd: Path, timeout_seconds: int = 600, env_names: list[str] | None = None
+) -> tuple[int | None, str, bool]:
     """Run a short verification command; returns (exit_code, combined_output, timed_out)."""
-    env = child_env(env_names or [], git_identity_env())
+    # Don't leave bytecode caches in the worktree being verified.
+    env = child_env(env_names or [], {**git_identity_env(), "PYTHONDONTWRITEBYTECODE": "1"})
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(cwd), env=env, stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            *argv,
+            cwd=str(cwd),
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
     except (FileNotFoundError, PermissionError) as e:

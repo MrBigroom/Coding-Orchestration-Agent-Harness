@@ -87,8 +87,13 @@ class Settings(BaseSettings):
         return self.bind_host in LOCAL_HOSTS
 
     def ensure_dirs(self) -> None:
-        for p in (self.home, self.worktree_root, self.artifact_root, self.log_root,
-                  self.memory_root):
+        for p in (
+            self.home,
+            self.worktree_root,
+            self.artifact_root,
+            self.log_root,
+            self.memory_root,
+        ):
             Path(p).mkdir(parents=True, exist_ok=True)
 
 

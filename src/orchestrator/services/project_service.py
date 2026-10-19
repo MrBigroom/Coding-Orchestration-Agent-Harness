@@ -26,14 +26,22 @@ def create(session: Session, data: ProjectCreate) -> Project:
     if not path.is_dir():
         raise ProjectError(f"path does not exist: {path}")
     slug = slugify(data.name)
-    if session.exec(select(Project).where((Project.name == data.name) | (Project.slug == slug))
-                    ).first():
+    if session.exec(
+        select(Project).where((Project.name == data.name) | (Project.slug == slug))
+    ).first():
         raise ProjectError(f"project {data.name!r} already exists")
     base = data.base_branch or _detect_base(path) or get_settings().default_base_branch
-    proj = Project(name=data.name, slug=slug, path=str(path), base_branch=base,
-                   test_command=data.test_command, lint_command=data.lint_command,
-                   build_command=data.build_command, allowed_commands=data.allowed_commands,
-                   notes=data.notes)
+    proj = Project(
+        name=data.name,
+        slug=slug,
+        path=str(path),
+        base_branch=base,
+        test_command=data.test_command,
+        lint_command=data.lint_command,
+        build_command=data.build_command,
+        allowed_commands=data.allowed_commands,
+        notes=data.notes,
+    )
     session.add(proj)
     session.commit()
     session.refresh(proj)
@@ -60,8 +68,9 @@ def get(session: Session, ref: str | int) -> Project:
     if isinstance(ref, int) or (isinstance(ref, str) and ref.isdigit()):
         proj = session.get(Project, int(ref))
     if proj is None:
-        proj = session.exec(select(Project).where(
-            (Project.name == str(ref)) | (Project.slug == slugify(str(ref))))).first()
+        proj = session.exec(
+            select(Project).where((Project.name == str(ref)) | (Project.slug == slugify(str(ref))))
+        ).first()
     if not proj:
         raise ProjectError(f"project {ref!r} not found")
     return proj
@@ -77,8 +86,9 @@ def _detect_base(path: Path) -> str | None:
 def command_argv(command: str) -> list[str]:
     """Split a configured command into argv (no shell). Shell syntax is rejected."""
     if any(tok in command for tok in ("&&", "||", "|", ";", "`", "$(", ">", "<")):
-        raise ProjectError(f"shell syntax is not allowed in commands: {command!r} "
-                           "(wrap it in a script instead)")
+        raise ProjectError(
+            f"shell syntax is not allowed in commands: {command!r} (wrap it in a script instead)"
+        )
     argv = shlex.split(command)
     if not argv:
         raise ProjectError("empty command")
@@ -107,13 +117,18 @@ def doctor(project: Project) -> list[dict[str, Any]]:
     repo = path.is_dir() and is_repo(path)
     add("is git repository", repo)
     if repo:
-        add(f"base branch '{project.base_branch}' exists",
-            branch_exists(path, project.base_branch))
+        add(f"base branch '{project.base_branch}' exists", branch_exists(path, project.base_branch))
         dirty = bool(run_git(["status", "--porcelain"], path).stdout.strip())
-        add("main checkout clean", not dirty,
-            "uncommitted changes (fine for worktrees; merge gate will refuse)" if dirty else "")
-    for label, cmd in (("test", project.test_command), ("lint", project.lint_command),
-                       ("build", project.build_command)):
+        add(
+            "main checkout clean",
+            not dirty,
+            "uncommitted changes (fine for worktrees; merge gate will refuse)" if dirty else "",
+        )
+    for label, cmd in (
+        ("test", project.test_command),
+        ("lint", project.lint_command),
+        ("build", project.build_command),
+    ):
         if not cmd:
             add(f"{label} command", True, "not configured (verification will mark N/A)")
             continue

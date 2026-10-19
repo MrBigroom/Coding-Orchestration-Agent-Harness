@@ -15,8 +15,15 @@ from orchestrator.adapters.zcode import ZCodeAdapter
 
 ADAPTER_CLASSES: dict[str, type[BaseHarnessAdapter]] = {
     c.kind: c
-    for c in (MockHarnessAdapter, OpenCodeAdapter, DeepSeekHarnessAdapter, ZCodeAdapter,
-              QwenCodeAdapter, AiderAdapter, ClaudeCliAdapter)
+    for c in (
+        MockHarnessAdapter,
+        OpenCodeAdapter,
+        DeepSeekHarnessAdapter,
+        ZCodeAdapter,
+        QwenCodeAdapter,
+        AiderAdapter,
+        ClaudeCliAdapter,
+    )
 }
 
 # Env vars that override the default binary name for each adapter.

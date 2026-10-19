@@ -42,8 +42,12 @@ def get_artifact(run_id: int, name: str, session: Session = SessionDep) -> Plain
 
 
 @router.get("/logs/{run_id}")
-def poll_logs(run_id: int, stream: str = Query("stdout", pattern="^(stdout|stderr)$"),
-              offset: int = Query(0, ge=0), session: Session = SessionDep) -> dict[str, Any]:
+def poll_logs(
+    run_id: int,
+    stream: str = Query("stdout", pattern="^(stdout|stderr)$"),
+    offset: int = Query(0, ge=0),
+    session: Session = SessionDep,
+) -> dict[str, Any]:
     """Polling fallback for the WebSocket: returns bytes after `offset`."""
     run = _run(session, run_id)
     path = safe_join(artifact_service.run_dir(run_id), f"{stream}.log")
@@ -52,5 +56,8 @@ def poll_logs(run_id: int, stream: str = Query("stdout", pattern="^(stdout|stder
     with path.open("rb") as fh:
         fh.seek(offset)
         chunk = fh.read(256_000)
-    return {"data": chunk.decode(errors="replace"), "offset": offset + len(chunk),
-            "status": run.status}
+    return {
+        "data": chunk.decode(errors="replace"),
+        "offset": offset + len(chunk),
+        "status": run.status,
+    }

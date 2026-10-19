@@ -110,5 +110,6 @@ class AnthropicProvider(BaseProvider):
             "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
             "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
         }
-        return CompletionResult(text=text, model=msg.model, usage=usage,
-                                stop_reason=msg.stop_reason)
+        return CompletionResult(
+            text=text, model=msg.model, usage=usage, stop_reason=msg.stop_reason
+        )

@@ -70,10 +70,13 @@ def _bullets(items: list[str]) -> str:
 
 
 def render_handoff_md(h: Handoff) -> str:
-    dod = "\n".join(
-        f"- [{'x' if d.met else ' '}] {d.item} — {d.evidence or 'no evidence'}"
-        for d in h.dod_self_check
-    ) or "- none supplied"
+    dod = (
+        "\n".join(
+            f"- [{'x' if d.met else ' '}] {d.item} — {d.evidence or 'no evidence'}"
+            for d in h.dod_self_check
+        )
+        or "- none supplied"
+    )
     deps = "\n".join(f"- {d.name} {d.version}: {d.reason}" for d in h.new_dependencies) or "- none"
     t = h.tests
     return f"""# Handoff — {h.phase}
@@ -88,8 +91,8 @@ def render_handoff_md(h: Handoff) -> str:
 {_bullets(h.files_changed)}
 
 ## Tests
-`{t.command or 'not run'}` -> passed {t.passed}, failed {t.failed}, skipped {t.skipped}
-Log: {t.log_path or 'n/a'}
+`{t.command or "not run"}` -> passed {t.passed}, failed {t.failed}, skipped {t.skipped}
+Log: {t.log_path or "n/a"}
 
 ## DoD self-check
 {dod}
@@ -109,10 +112,13 @@ Log: {t.log_path or 'n/a'}
 
 
 def render_review_md(r: ReviewResult, reviewer: str) -> str:
-    findings = "\n".join(
-        f"{i}. **{f.file_or_area}** — {f.issue} (violates: {f.violates or 'n/a'})"
-        for i, f in enumerate(r.findings, 1)
-    ) or "none"
+    findings = (
+        "\n".join(
+            f"{i}. **{f.file_or_area}** — {f.issue} (violates: {f.violates or 'n/a'})"
+            for i, f in enumerate(r.findings, 1)
+        )
+        or "none"
+    )
     return f"""# Review ({reviewer})
 
 VERDICT: {r.verdict.value}

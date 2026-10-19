@@ -61,8 +61,10 @@ def ensure_layout(project_slugs: list[str] | None = None) -> None:
         _touch(root / "roles" / f"{r}.md", f"# Role — {r}\n")
     for slug in project_slugs or []:
         for scope in PROJECT_SCOPES:
-            _touch(safe_join(root, "projects", slugify(slug)) / f"{scope}.md",
-                   f"# Project {slug} — {scope}\n")
+            _touch(
+                safe_join(root, "projects", slugify(slug)) / f"{scope}.md",
+                f"# Project {slug} — {scope}\n",
+            )
 
 
 def _touch(path: Path, header: str) -> None:
@@ -76,8 +78,9 @@ def _file_for(entry: MemoryEntry) -> Path:
     if entry.category == MemoryCategory.global_:
         return safe_join(root, "global", f"{slugify(entry.scope)}.md")
     if entry.category == MemoryCategory.project:
-        return safe_join(root, "projects", slugify(entry.project_slug or "unknown"),
-                         f"{slugify(entry.scope)}.md")
+        return safe_join(
+            root, "projects", slugify(entry.project_slug or "unknown"), f"{slugify(entry.scope)}.md"
+        )
     role = entry.role or entry.scope
     return safe_join(root, "roles", f"{slugify(ROLE_MEMORY_KEY.get(role, role))}.md")
 
@@ -93,8 +96,11 @@ def _validate(entry: MemoryEntry) -> None:
 
 def render_file(session: Session, path: Path) -> None:
     """Re-render one markdown file from all approved entries that map to it."""
-    entries = [e for e in session.exec(select(MemoryEntry).where(MemoryEntry.approved == True))  # noqa: E712
-               if _file_for(e) == path]
+    entries = [
+        e
+        for e in session.exec(select(MemoryEntry).where(MemoryEntry.approved == True))  # noqa: E712
+        if _file_for(e) == path
+    ]
     entries.sort(key=lambda e: e.id or 0)
     title = path.stem
     body = "\n".join(f"- {e.content.strip()}  <!-- mem:{e.id} -->" for e in entries)
@@ -104,10 +110,14 @@ def render_file(session: Session, path: Path) -> None:
 
 def create(session: Session, data: MemoryCreate) -> MemoryEntry:
     entry = MemoryEntry(
-        category=data.category.value, scope=data.scope,
+        category=data.category.value,
+        scope=data.scope,
         project_slug=slugify(data.project_slug) if data.project_slug else None,
-        role=data.role.value if data.role else None, content=redact(data.content.strip()),
-        source=data.source, tags_json=sorted(set(data.tags)), approved=data.approved,
+        role=data.role.value if data.role else None,
+        content=redact(data.content.strip()),
+        source=data.source,
+        tags_json=sorted(set(data.tags)),
+        approved=data.approved,
     )
     _validate(entry)
     session.add(entry)
@@ -118,29 +128,47 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
     return entry
 
 
-def suggest_from_handoff(session: Session, suggestions: list[MemorySuggestion],
-                         source: str, project_slug: str | None,
-                         role: str = "worker") -> list[MemoryEntry]:
+def suggest_from_handoff(
+    session: Session,
+    suggestions: list[MemorySuggestion],
+    source: str,
+    project_slug: str | None,
+    role: str = "worker",
+) -> list[MemoryEntry]:
     """Store worker/architect suggestions as unapproved entries for Supervisor review."""
     created = []
-    existing = {(e.category, e.scope, e.project_slug, e.content.strip())
-                for e in list_entries(session)}
+    existing = {
+        (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
+    }
     for s in suggestions:
-        key = (s.category, slugify(s.scope),
-               slugify(project_slug) if s.category == "project" and project_slug else None,
-               redact(s.content.strip()))
+        key = (
+            s.category,
+            slugify(s.scope),
+            slugify(project_slug) if s.category == "project" and project_slug else None,
+            redact(s.content.strip()),
+        )
         if key in existing:
             continue
         existing.add(key)
         try:
             scope = slugify(s.scope)
-            created.append(create(session, MemoryCreate(
-                category=MemoryCategory(s.category), scope=scope, content=s.content,
-                project_slug=project_slug if s.category == "project" else None,
-                role=Role(scope) if s.category == "role" and scope in Role.__members__ else
-                (Role(role) if s.category == "role" else None),
-                tags=s.tags, source=source, approved=False,
-            )))
+            created.append(
+                create(
+                    session,
+                    MemoryCreate(
+                        category=MemoryCategory(s.category),
+                        scope=scope,
+                        content=s.content,
+                        project_slug=project_slug if s.category == "project" else None,
+                        role=Role(scope)
+                        if s.category == "role" and scope in Role.__members__
+                        else (Role(role) if s.category == "role" else None),
+                        tags=s.tags,
+                        source=source,
+                        approved=False,
+                    ),
+                )
+            )
         except (ValueError, MemoryError_):
             continue
     return created
@@ -191,9 +219,15 @@ def _get(session: Session, entry_id: int) -> MemoryEntry:
     return entry
 
 
-def list_entries(session: Session, *, category: str | None = None, scope: str | None = None,
-                 role: str | None = None, project_slug: str | None = None,
-                 status: str | None = None) -> list[MemoryEntry]:
+def list_entries(
+    session: Session,
+    *,
+    category: str | None = None,
+    scope: str | None = None,
+    role: str | None = None,
+    project_slug: str | None = None,
+    status: str | None = None,
+) -> list[MemoryEntry]:
     q = select(MemoryEntry)
     if category:
         q = q.where(MemoryEntry.category == category)
@@ -214,8 +248,9 @@ def list_entries(session: Session, *, category: str | None = None, scope: str | 
 
 def search(session: Session, query: str) -> list[MemoryEntry]:
     like = f"%{query}%"
-    q = select(MemoryEntry).where(or_(col(MemoryEntry.content).ilike(like),
-                                      col(MemoryEntry.scope).ilike(like)))
+    q = select(MemoryEntry).where(
+        or_(col(MemoryEntry.content).ilike(like), col(MemoryEntry.scope).ilike(like))
+    )
     return list(session.exec(q.order_by(col(MemoryEntry.id))))
 
 
@@ -231,11 +266,21 @@ def for_prompt(session: Session, role: str, project_slug: str | None) -> dict[st
     approved = list_entries(session, status="approved")
     role_key = ROLE_MEMORY_KEY.get(role, role)
     glob = [e for e in approved if e.category == MemoryCategory.global_]
-    role_mem = [e for e in approved if e.category == MemoryCategory.role
-                and ROLE_MEMORY_KEY.get(e.role or "", e.role) == role_key]
+    role_mem = [
+        e
+        for e in approved
+        if e.category == MemoryCategory.role
+        and ROLE_MEMORY_KEY.get(e.role or "", e.role) == role_key
+    ]
     scopes = ROLE_PROJECT_SCOPES.get(role, ())
-    proj = [e for e in approved if e.category == MemoryCategory.project
-            and project_slug and e.project_slug == slugify(project_slug) and e.scope in scopes]
+    proj = [
+        e
+        for e in approved
+        if e.category == MemoryCategory.project
+        and project_slug
+        and e.project_slug == slugify(project_slug)
+        and e.scope in scopes
+    ]
 
     def fmt(entries: list[MemoryEntry]) -> str:
         by_scope: dict[str, list[str]] = {}
@@ -256,8 +301,20 @@ def export_all(session: Session) -> dict[str, Any]:
     return {
         "version": 1,
         "entries": [
-            {k: getattr(e, k) for k in ("category", "scope", "project_slug", "role", "content",
-                                        "source", "tags_json", "approved", "rejected")}
+            {
+                k: getattr(e, k)
+                for k in (
+                    "category",
+                    "scope",
+                    "project_slug",
+                    "role",
+                    "content",
+                    "source",
+                    "tags_json",
+                    "approved",
+                    "rejected",
+                )
+            }
             for e in list_entries(session)
         ],
     }
@@ -267,20 +324,32 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     """Import entries; skips exact duplicates (same category/scope/project/role/content)."""
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
-    existing = {(e.category, e.scope, e.project_slug, e.role, e.content)
-                for e in list_entries(session)}
+    existing = {
+        (e.category, e.scope, e.project_slug, e.role, e.content) for e in list_entries(session)
+    }
     count = 0
     touched: set[Path] = set()
     for raw in payload["entries"]:
-        key = (raw.get("category"), raw.get("scope"), raw.get("project_slug"), raw.get("role"),
-               redact(str(raw.get("content", "")).strip()))
+        key = (
+            raw.get("category"),
+            raw.get("scope"),
+            raw.get("project_slug"),
+            raw.get("role"),
+            redact(str(raw.get("content", "")).strip()),
+        )
         if key in existing or not key[4]:
             continue
-        entry = MemoryEntry(category=key[0], scope=key[1], project_slug=key[2], role=key[3],
-                            content=key[4], source=raw.get("source", "import"),
-                            tags_json=list(raw.get("tags_json") or []),
-                            approved=bool(raw.get("approved")),
-                            rejected=bool(raw.get("rejected")))
+        entry = MemoryEntry(
+            category=key[0],
+            scope=key[1],
+            project_slug=key[2],
+            role=key[3],
+            content=key[4],
+            source=raw.get("source", "import"),
+            tags_json=list(raw.get("tags_json") or []),
+            approved=bool(raw.get("approved")),
+            rejected=bool(raw.get("rejected")),
+        )
         if entry.category not in {c.value for c in MemoryCategory}:
             continue
         try:
@@ -314,14 +383,28 @@ def import_markdown_tree(session: Session) -> int:
                 continue
             content = m.group("content")
             if rel[0] == "global":
-                data = MemoryCreate(category=MemoryCategory.global_, scope=slugify(path.stem),
-                                    content=content, source="markdown")
+                data = MemoryCreate(
+                    category=MemoryCategory.global_,
+                    scope=slugify(path.stem),
+                    content=content,
+                    source="markdown",
+                )
             elif rel[0] == "projects" and len(rel) == 3:
-                data = MemoryCreate(category=MemoryCategory.project, scope=slugify(path.stem),
-                                    project_slug=rel[1], content=content, source="markdown")
+                data = MemoryCreate(
+                    category=MemoryCategory.project,
+                    scope=slugify(path.stem),
+                    project_slug=rel[1],
+                    content=content,
+                    source="markdown",
+                )
             elif rel[0] == "roles" and path.stem in Role.__members__:
-                data = MemoryCreate(category=MemoryCategory.role, scope=path.stem,
-                                    role=Role(path.stem), content=content, source="markdown")
+                data = MemoryCreate(
+                    category=MemoryCategory.role,
+                    scope=path.stem,
+                    role=Role(path.stem),
+                    content=content,
+                    source="markdown",
+                )
             else:
                 continue
             create(session, data)

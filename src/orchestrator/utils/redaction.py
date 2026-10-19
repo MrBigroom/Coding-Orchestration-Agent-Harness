@@ -30,7 +30,8 @@ _PATTERNS: list[re.Pattern[str]] = [
 _ASSIGNMENT = re.compile(
     r"""(?ix)
     (?P<key>[A-Z0-9_\-]*(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_\-]*)
-    (?P<sep>\s*[:=]\s*["']?)
+    (?P<sep>["']?\s*[:=]\s*["']?)
+    (?!(?-i:[A-Z_][A-Z0-9_]*)(?:[\s"',}]|$))   # an UPPER_CASE env var NAME is not a secret
     (?P<val>[^\s"',}]{4,})
     """
 )

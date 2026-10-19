@@ -94,8 +94,10 @@ class MemoryCategory(StrEnum):
 
 
 def _json(default: Any) -> Any:
-    return Field(default_factory=lambda: default.copy() if hasattr(default, "copy") else default,
-                 sa_column=Column(JSON, nullable=False))
+    return Field(
+        default_factory=lambda: default.copy() if hasattr(default, "copy") else default,
+        sa_column=Column(JSON, nullable=False),
+    )
 
 
 # ---------------------------------------------------------------- tables
@@ -130,11 +132,11 @@ class Task(SQLModel, table=True):
     title: str
     description: str = Field(default="", sa_column=Column(Text, nullable=False))
     kind: str = Field(default=TaskKind.coding, sa_column=Column(String(32), nullable=False))
-    status: str = Field(default=TaskStatus.draft,
-                        sa_column=Column(String(32), nullable=False, index=True))
+    status: str = Field(
+        default=TaskStatus.draft, sa_column=Column(String(32), nullable=False, index=True)
+    )
     risk: str = Field(default=TaskRisk.low, sa_column=Column(String(16), nullable=False))
-    priority: str = Field(default=TaskPriority.normal,
-                          sa_column=Column(String(16), nullable=False))
+    priority: str = Field(default=TaskPriority.normal, sa_column=Column(String(16), nullable=False))
     tags: list[str] = _json([])
     acceptance_criteria: list[str] = _json([])
     definition_of_done: list[str] = _json([])
@@ -159,8 +161,9 @@ class Run(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     short_id: str = Field(index=True, unique=True)
     task_id: int = Field(foreign_key="tasks.id", index=True)
-    status: str = Field(default=RunStatus.pending,
-                        sa_column=Column(String(16), nullable=False, index=True))
+    status: str = Field(
+        default=RunStatus.pending, sa_column=Column(String(16), nullable=False, index=True)
+    )
     provider_profile: str | None = None
     harness_adapter: str | None = None
     command_preview: str | None = Field(default=None, sa_column=Column(Text))

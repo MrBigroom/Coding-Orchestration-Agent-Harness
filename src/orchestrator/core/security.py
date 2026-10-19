@@ -13,10 +13,28 @@ TOKEN_HEADER = "X-Orchestrator-Token"  # noqa: S105 - header name, not a secret
 
 # Minimal env passed to every child process; adapters add their declared vars on top.
 BASE_ENV_ALLOWLIST = (
-    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
-    "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
-    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "TMPDIR",
+    "SHELL",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
     "VIRTUAL_ENV",
 )
 
@@ -39,8 +57,9 @@ def require_token_ws(token: str | None = Query(default=None)) -> bool:
     return token_ok(token)
 
 
-def child_env(extra_names: list[str] | None = None,
-              overrides: dict[str, str] | None = None) -> dict[str, str]:
+def child_env(
+    extra_names: list[str] | None = None, overrides: dict[str, str] | None = None
+) -> dict[str, str]:
     """Build a minimal environment: allowlisted basics + explicitly declared variable names."""
     env: dict[str, str] = {}
     for name in (*BASE_ENV_ALLOWLIST, *(extra_names or [])):

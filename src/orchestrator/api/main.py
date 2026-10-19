@@ -91,8 +91,11 @@ async def lifespan(app: FastAPI):
 
         bootstrap.init()
     if not s.is_local_bind:
-        log.warning("!!! Orchestrator bound to %s — reachable beyond localhost. Token auth is %s.",
-                    s.bind_host, "ON" if s.token else "OFF")
+        log.warning(
+            "!!! Orchestrator bound to %s — reachable beyond localhost. Token auth is %s.",
+            s.bind_host,
+            "ON" if s.token else "OFF",
+        )
     if s.enable_worker:
         background.loop_task = asyncio.create_task(background.worker_loop())
     if s.enable_scheduler:
@@ -110,8 +113,14 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="coding-orchestrator", version=__version__, lifespan=lifespan,
-                  docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(
+        title="coding-orchestrator",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        redoc_url=None,
+    )
 
     def err(status: int, error: str, detail=None) -> JSONResponse:
         return JSONResponse(status_code=status, content={"error": error, "detail": detail})

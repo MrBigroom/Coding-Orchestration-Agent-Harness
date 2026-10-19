@@ -1,6 +1,8 @@
 """Headers for memory sections in the cached prompt prefix."""
 
-GLOBAL_HEADER = "Shared memory — global (environment, preferences, patterns). Approved entries only."
+GLOBAL_HEADER = (
+    "Shared memory — global (environment, preferences, patterns). Approved entries only."
+)
 ROLE_HEADER = "Shared memory — role-specific. Approved entries only."
 PROJECT_HEADER = "Shared memory — project (conventions/decisions/gotchas). Approved entries only."
 

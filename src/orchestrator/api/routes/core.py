@@ -52,8 +52,12 @@ def health() -> dict[str, Any]:
         rev = db.current_revision()
     except Exception:  # noqa: BLE001
         rev = None
-    return {"ok": True, "version": __version__, "db_revision": rev,
-            "time": datetime.now(UTC).isoformat()}
+    return {
+        "ok": True,
+        "version": __version__,
+        "db_revision": rev,
+        "time": datetime.now(UTC).isoformat(),
+    }
 
 
 @router.get("/dashboard", dependencies=AUTH)
@@ -100,8 +104,9 @@ def get_project(project: Project = Depends(load_project)) -> dict[str, Any]:
 
 
 @router.patch("/projects/{project_id}", dependencies=AUTH)
-def update_project(body: ProjectUpdate, project: Project = Depends(load_project),
-                   session: Session = SessionDep) -> dict[str, Any]:
+def update_project(
+    body: ProjectUpdate, project: Project = Depends(load_project), session: Session = SessionDep
+) -> dict[str, Any]:
     return dump(project_service.update(session, project, body))
 
 
@@ -112,14 +117,18 @@ def project_doctor(project: Project = Depends(load_project)) -> dict[str, Any]:
 
 
 @router.post("/projects/{project_id}/commands/{label}", dependencies=AUTH)
-async def run_project_command(label: str, project: Project = Depends(load_project),
-                              session: Session = SessionDep) -> dict[str, Any]:
+async def run_project_command(
+    label: str, project: Project = Depends(load_project), session: Session = SessionDep
+) -> dict[str, Any]:
     """Run the project's configured test/lint/build command in its main checkout.
     Disabled unless the `allow_gui_commands` setting is on. No arbitrary commands."""
     if not settings_service.get(session, "allow_gui_commands"):
         raise HTTPException(403, "GUI command execution is disabled (allow_gui_commands=false)")
-    cmd = {"test": project.test_command, "lint": project.lint_command,
-           "build": project.build_command}.get(label)
+    cmd = {
+        "test": project.test_command,
+        "lint": project.lint_command,
+        "build": project.build_command,
+    }.get(label)
     if label not in ("test", "lint", "build"):
         raise HTTPException(404, "unknown command label")
     if not cmd:
@@ -129,7 +138,8 @@ async def run_project_command(label: str, project: Project = Depends(load_projec
     from pathlib import Path
 
     code, out, timed_out = await process_service.run_simple(
-        project_service.command_argv(cmd), Path(project.path), 900)
+        project_service.command_argv(cmd), Path(project.path), 900
+    )
     return {"command": cmd, "exit_code": code, "timed_out": timed_out, "output": out[-20000:]}
 
 
@@ -147,9 +157,12 @@ def update_settings(body: SettingsUpdate, session: Session = SessionDep) -> dict
 
 
 @router.get("/build-log", dependencies=AUTH)
-def build_log(limit: int = Query(200, ge=1, le=5000), task_id: int | None = None,
-              source: str = Query("db", pattern="^(db|jsonl)$"),
-              session: Session = SessionDep) -> list[dict[str, Any]]:
+def build_log(
+    limit: int = Query(200, ge=1, le=5000),
+    task_id: int | None = None,
+    source: str = Query("db", pattern="^(db|jsonl)$"),
+    session: Session = SessionDep,
+) -> list[dict[str, Any]]:
     if source == "jsonl":
         rows = log_service.tail_jsonl(limit)
         return [r for r in rows if task_id is None or r.get("task_id") == task_id]
@@ -178,9 +191,12 @@ def prompt_preview(body: PromptPreviewRequest, session: Session = SessionDep) ->
 
 
 @router.get("/prompt-preview", dependencies=AUTH)
-def prompt_preview_get(role: str = "worker", task_id: int | None = None,
-                       project_slug: str | None = None,
-                       session: Session = SessionDep) -> dict[str, Any]:
-    return _preview(session, PromptPreviewRequest(role=role, task_id=task_id,
-                                                  project_slug=project_slug))
-
+def prompt_preview_get(
+    role: str = "worker",
+    task_id: int | None = None,
+    project_slug: str | None = None,
+    session: Session = SessionDep,
+) -> dict[str, Any]:
+    return _preview(
+        session, PromptPreviewRequest(role=role, task_id=task_id, project_slug=project_slug)
+    )

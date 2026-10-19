@@ -15,7 +15,7 @@ from orchestrator.core.models import (
     utcnow,
 )
 from orchestrator.core.schemas import TaskCreate, TaskUpdate
-from orchestrator.core.state import ACTIVE_RUN_STATES, check_task_transition
+from orchestrator.core.state import ACTIVE_RUN_STATES, InvalidTransition, check_task_transition
 from orchestrator.services import log_service
 from orchestrator.utils.slug import phase_branch
 
@@ -32,15 +32,26 @@ def phase_label(task: Task) -> str:
 
 def create(session: Session, data: TaskCreate) -> Task:
     task = Task(
-        short_id=f"tmp-{uuid.uuid4().hex}", project_id=data.project_id,
-        parent_task_id=data.parent_task_id, phase_number=data.phase_number,
-        phase_slug=data.phase_slug, title=data.title, description=data.description,
-        kind=data.kind.value, risk=data.risk.value, priority=data.priority.value,
-        tags=data.tags, acceptance_criteria=data.acceptance_criteria,
-        definition_of_done=data.definition_of_done, frozen_contracts=data.frozen_contracts,
-        out_of_scope=data.out_of_scope, assigned_provider_profile=data.assigned_provider_profile,
-        assigned_harness_adapter=data.assigned_harness_adapter, source=data.source.value,
-        created_by=data.created_by, status=TaskStatus.draft,
+        short_id=f"tmp-{uuid.uuid4().hex}",
+        project_id=data.project_id,
+        parent_task_id=data.parent_task_id,
+        phase_number=data.phase_number,
+        phase_slug=data.phase_slug,
+        title=data.title,
+        description=data.description,
+        kind=data.kind.value,
+        risk=data.risk.value,
+        priority=data.priority.value,
+        tags=data.tags,
+        acceptance_criteria=data.acceptance_criteria,
+        definition_of_done=data.definition_of_done,
+        frozen_contracts=data.frozen_contracts,
+        out_of_scope=data.out_of_scope,
+        assigned_provider_profile=data.assigned_provider_profile,
+        assigned_harness_adapter=data.assigned_harness_adapter,
+        source=data.source.value,
+        created_by=data.created_by,
+        status=TaskStatus.draft,
     )
     session.add(task)
     session.flush()
@@ -50,8 +61,13 @@ def create(session: Session, data: TaskCreate) -> Task:
     session.add(task)
     session.commit()
     session.refresh(task)
-    log_service.log_event(session, "task_created", f"{task.short_id}: {task.title}",
-                          task_id=task.id, phase=phase_label(task))
+    log_service.log_event(
+        session,
+        "task_created",
+        f"{task.short_id}: {task.title}",
+        task_id=task.id,
+        phase=phase_label(task),
+    )
     if data.queue:
         transition(session, task, TaskStatus.queued, "queued on creation")
     else:
@@ -71,9 +87,16 @@ def get(session: Session, ref: str | int) -> Task:
     return task
 
 
-def list_tasks(session: Session, *, project_id: int | None = None, status: str | None = None,
-               kind: str | None = None, risk: str | None = None, tag: str | None = None,
-               include_archived: bool = False) -> list[Task]:
+def list_tasks(
+    session: Session,
+    *,
+    project_id: int | None = None,
+    status: str | None = None,
+    kind: str | None = None,
+    risk: str | None = None,
+    tag: str | None = None,
+    include_archived: bool = False,
+) -> list[Task]:
     q = select(Task)
     if project_id:
         q = q.where(Task.project_id == project_id)
@@ -104,28 +127,36 @@ def update(session: Session, task: Task, data: TaskUpdate) -> Task:
     return task
 
 
-def transition(session: Session, task: Task, dst: str, reason: str = "",
-               role: str = "system") -> Task:
+def transition(
+    session: Session, task: Task, dst: str, reason: str = "", role: str = "system"
+) -> Task:
     src = task.status
     check_task_transition(src, dst)
     task.status = TaskStatus(dst).value
     task.updated_at = utcnow()
     session.add(task)
     session.commit()
-    log_service.log_event(session, "task_status", f"{src} -> {dst}" + (f": {reason}" if reason
-                                                                        else ""),
-                          role=role, task_id=task.id, phase=phase_label(task))
+    log_service.log_event(
+        session,
+        "task_status",
+        f"{src} -> {dst}" + (f": {reason}" if reason else ""),
+        role=role,
+        task_id=task.id,
+        phase=phase_label(task),
+    )
     return task
 
 
 def active_run(session: Session, task: Task) -> Run | None:
-    return session.exec(select(Run).where(Run.task_id == task.id,
-                                          col(Run.status).in_(ACTIVE_RUN_STATES))).first()
+    return session.exec(
+        select(Run).where(Run.task_id == task.id, col(Run.status).in_(ACTIVE_RUN_STATES))
+    ).first()
 
 
 def runs_for(session: Session, task: Task) -> list[Run]:
-    return list(session.exec(select(Run).where(Run.task_id == task.id)
-                             .order_by(col(Run.id).desc())))
+    return list(
+        session.exec(select(Run).where(Run.task_id == task.id).order_by(col(Run.id).desc()))
+    )
 
 
 def latest_run(session: Session, task: Task) -> Run | None:
@@ -144,8 +175,11 @@ def block(session: Session, task: Task, reason: str, role: str = "supervisor") -
 
 
 def unblock(session: Session, task: Task, reason: str = "") -> Task:
-    return transition(session, task, TaskStatus.queued, reason or "unblocked by operator",
-                      role="supervisor")
+    if task.status != TaskStatus.blocked:
+        raise InvalidTransition("task", task.status, "queued (unblock requires `blocked`)")
+    return transition(
+        session, task, TaskStatus.queued, reason or "unblocked by operator", role="supervisor"
+    )
 
 
 def archive(session: Session, task: Task) -> Task:

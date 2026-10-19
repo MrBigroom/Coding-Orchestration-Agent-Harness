@@ -35,9 +35,16 @@ def init() -> dict[str, Any]:
             from orchestrator.core.schemas import MemoryCreate
 
             for scope, content in DEFAULT_GLOBAL_MEMORY:
-                memory_service.create(session, MemoryCreate(
-                    category=MemoryCategory.global_, scope=scope, content=content,
-                    source="init", approved=True))
+                memory_service.create(
+                    session,
+                    MemoryCreate(
+                        category=MemoryCategory.global_,
+                        scope=scope,
+                        content=content,
+                        source="init",
+                        approved=True,
+                    ),
+                )
     return {"home": str(s.home), "db": s.db_url, "revision": db.current_revision()}
 
 
@@ -46,8 +53,7 @@ def doctor() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str = "", level: str = "error") -> None:
-        checks.append({"name": name, "ok": ok, "detail": detail,
-                       "level": "ok" if ok else level})
+        checks.append({"name": name, "ok": ok, "detail": detail, "level": "ok" if ok else level})
 
     add("python >= 3.12", sys.version_info >= (3, 12), sys.version.split()[0])
     add("git on PATH", shutil.which("git") is not None)
@@ -60,27 +66,40 @@ def doctor() -> list[dict[str, Any]]:
         return checks
     add("bind host is local", s.is_local_bind, s.bind_host, level="warn")
     if not s.is_local_bind:
-        add("token required for non-local bind", bool(s.token),
-            "ORCHESTRATOR_TOKEN must be set when binding beyond localhost")
+        add(
+            "token required for non-local bind",
+            bool(s.token),
+            "ORCHESTRATOR_TOKEN must be set when binding beyond localhost",
+        )
     for mod in ("anthropic", "openai", "apscheduler"):
         add(f"python package {mod}", importlib.util.find_spec(mod) is not None)
     dist = s.frontend_dist
-    add("frontend build", bool(dist and dist.exists()) or _default_dist_exists(),
-        "fallback static UI will be served" if not _default_dist_exists() else "", level="warn")
+    add(
+        "frontend build",
+        bool(dist and dist.exists()) or _default_dist_exists(),
+        "fallback static UI will be served" if not _default_dist_exists() else "",
+        level="warn",
+    )
     with session_scope() as session:
         for p in session.exec(select(Provider)):
             st = provider_service.provider_status(p)
             if p.kind == "mock":
                 continue
-            add(f"provider {p.name}", st["configured"] or not p.enabled,
+            add(
+                f"provider {p.name}",
+                st["configured"] or not p.enabled,
                 "disabled" if not p.enabled else "; ".join(st["problems"]) or "configured",
-                level="warn")
+                level="warn",
+            )
         for a in session.exec(select(HarnessAdapter)):
             d = adapter_service.describe(a)
-            add(f"adapter {a.name}", d["detected"] or not a.enabled,
-                ("disabled" if not a.enabled else
-                 (d["binary"] or f"`{a.command}` not found")) +
-                (" [experimental]" if d["experimental"] else ""), level="warn")
+            add(
+                f"adapter {a.name}",
+                d["detected"] or not a.enabled,
+                ("disabled" if not a.enabled else (d["binary"] or f"`{a.command}` not found"))
+                + (" [experimental]" if d["experimental"] else ""),
+                level="warn",
+            )
     return checks
 
 

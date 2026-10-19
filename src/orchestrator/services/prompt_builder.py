@@ -34,8 +34,14 @@ from orchestrator.utils.redaction import redact, strip_sensitive_files_from_diff
 from orchestrator.utils.truncate import estimate_tokens, truncate_middle, truncate_tail
 
 SECTION_ORDER = [
-    "system", "global_memory", "role_memory", "project_memory", "contracts", "phase",
-    "history", "dynamic_state",
+    "system",
+    "global_memory",
+    "role_memory",
+    "project_memory",
+    "contracts",
+    "phase",
+    "history",
+    "dynamic_state",
 ]
 STATIC_SECTIONS = set(SECTION_ORDER[:6])
 BREAKPOINTS = {"system", "project_memory", "phase"}
@@ -54,8 +60,13 @@ def system_prompt_for(role: str) -> str:
     if role == Role.supervisor:
         return supervisor.SYSTEM_PROMPT + "\n" + supervisor.RECOMMENDATION_CONTRACT
     schema = json.dumps(Handoff.model_json_schema(), sort_keys=True)
-    return (worker.SYSTEM_PROMPT + "\n" + worker.PROTOCOL.format(handoff_schema=schema)
-            + "\n" + memory.SUGGESTION_GUIDANCE)
+    return (
+        worker.SYSTEM_PROMPT
+        + "\n"
+        + worker.PROTOCOL.format(handoff_schema=schema)
+        + "\n"
+        + memory.SUGGESTION_GUIDANCE
+    )
 
 
 def _contracts(task: Task | None, project: Project | None) -> str:
@@ -63,11 +74,14 @@ def _contracts(task: Task | None, project: Project | None) -> str:
     if project:
         doc = Path(project.path) / "docs" / "frozen-contracts.md"
         if doc.is_file():
-            parts.append("Project frozen contracts (docs/frozen-contracts.md):\n"
-                         + truncate_middle(doc.read_text(errors="replace"), 4000))
+            parts.append(
+                "Project frozen contracts (docs/frozen-contracts.md):\n"
+                + truncate_middle(doc.read_text(errors="replace"), 4000)
+            )
     if task and task.frozen_contracts:
-        parts.append("Frozen contracts for this task:\n"
-                     + "\n".join(f"- {c}" for c in task.frozen_contracts))
+        parts.append(
+            "Frozen contracts for this task:\n" + "\n".join(f"- {c}" for c in task.frozen_contracts)
+        )
     if task and task.out_of_scope:
         parts.append("Out of scope:\n" + "\n".join(f"- {c}" for c in task.out_of_scope))
     return "\n\n".join(parts)
@@ -94,7 +108,8 @@ def _phase(task: Task | None, project: Project | None) -> str:
         lines += ["", "Steps / description:", task.description]
     if task.definition_of_done:
         lines += ["", "Definition of Done:"] + [
-            f"{i}. {d}" for i, d in enumerate(task.definition_of_done, 1)]
+            f"{i}. {d}" for i, d in enumerate(task.definition_of_done, 1)
+        ]
     if task.acceptance_criteria:
         lines += ["", "Acceptance criteria:"] + [f"- {a}" for a in task.acceptance_criteria]
     return "\n".join(lines)
@@ -117,15 +132,19 @@ def _dynamic(state: DynamicState) -> str:
     if state.handoff:
         parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))
     if state.test_summary:
-        parts.append("### Latest test summary\n" + truncate_tail(state.test_summary,
-                                                                 s.max_log_tokens))
+        parts.append(
+            "### Latest test summary\n" + truncate_tail(state.test_summary, s.max_log_tokens)
+        )
     if state.verification:
-        parts.append("### Supervisor verification narrative\n"
-                     + truncate_middle(state.verification, s.max_log_tokens))
+        parts.append(
+            "### Supervisor verification narrative\n"
+            + truncate_middle(state.verification, s.max_log_tokens)
+        )
     if state.diff:
         diff = strip_sensitive_files_from_diff(state.diff)
-        parts.append("### Latest diff\n```diff\n" + truncate_middle(diff, s.max_diff_tokens)
-                     + "\n```")
+        parts.append(
+            "### Latest diff\n```diff\n" + truncate_middle(diff, s.max_diff_tokens) + "\n```"
+        )
     if state.feedback:
         parts.append("### Latest reviewer feedback\n" + truncate_middle(state.feedback, 2000))
     for k, v in sorted(state.extra.items()):
@@ -133,23 +152,31 @@ def _dynamic(state: DynamicState) -> str:
     return "\n\n".join(parts)
 
 
-def build_prompt(session: Session, role: str, task: Task | None = None,
-                 project: Project | None = None,
-                 state: DynamicState | None = None) -> BuiltPrompt:
+def build_prompt(
+    session: Session,
+    role: str,
+    task: Task | None = None,
+    project: Project | None = None,
+    state: DynamicState | None = None,
+) -> BuiltPrompt:
     state = state or DynamicState()
     mem = memory_service.for_prompt(session, role, project.slug if project else None)
 
     def sec(name: str, content: str) -> PromptSection:
-        return PromptSection(name=name, content=redact(content),
-                             static=name in STATIC_SECTIONS,
-                             cache_breakpoint=name in BREAKPOINTS)
+        return PromptSection(
+            name=name,
+            content=redact(content),
+            static=name in STATIC_SECTIONS,
+            cache_breakpoint=name in BREAKPOINTS,
+        )
 
     sections = [
         sec("system", system_prompt_for(role)),
         sec("global_memory", f"{memory.GLOBAL_HEADER}\n{mem['global']}" if mem["global"] else ""),
         sec("role_memory", f"{memory.ROLE_HEADER}\n{mem['role']}" if mem["role"] else ""),
-        sec("project_memory",
-            f"{memory.PROJECT_HEADER}\n{mem['project']}" if mem["project"] else ""),
+        sec(
+            "project_memory", f"{memory.PROJECT_HEADER}\n{mem['project']}" if mem["project"] else ""
+        ),
         sec("contracts", _contracts(task, project)),
         sec("phase", _phase(task, project)),
         sec("history", truncate_middle(state.history or "", 2000)),
@@ -171,8 +198,10 @@ def enforce_budget(prompt: BuiltPrompt) -> BuiltPrompt:
     per = max(200, room // max(1, len(dyn)))
     for s in dyn:
         if estimate_tokens(s.content) > per:
-            s.content = ("[structured summary: content exceeded the context budget and was "
-                         "truncated]\n" + truncate_middle(s.content, per))
+            s.content = (
+                "[structured summary: content exceeded the context budget and was "
+                "truncated]\n" + truncate_middle(s.content, per)
+            )
     return prompt
 
 
@@ -185,10 +214,17 @@ def preview(sections: list[PromptSection]) -> dict[str, Any]:
     seen_dynamic: str | None = None
     for idx, s in enumerate(sections):
         tokens = estimate_tokens(s.content)
-        rows.append({"index": idx, "name": s.name, "static": s.static,
-                     "cache_breakpoint": s.cache_breakpoint, "tokens": tokens,
-                     "empty": not s.content.strip(),
-                     "excerpt": s.content[:300]})
+        rows.append(
+            {
+                "index": idx,
+                "name": s.name,
+                "static": s.static,
+                "cache_breakpoint": s.cache_breakpoint,
+                "tokens": tokens,
+                "empty": not s.content.strip(),
+                "excerpt": s.content[:300],
+            }
+        )
         if not s.content.strip():
             continue
         if not s.static and seen_dynamic is None:
@@ -196,12 +232,15 @@ def preview(sections: list[PromptSection]) -> dict[str, Any]:
         elif s.static and seen_dynamic is not None:
             warnings.append(
                 f"dynamic section '{seen_dynamic}' appears before static section '{s.name}' "
-                "— this busts the prompt cache for everything after it")
+                "— this busts the prompt cache for everything after it"
+            )
         if s.static:
             for pat, label in _VOLATILE:
                 if pat.search(s.content):
-                    warnings.append(f"static section '{s.name}' contains a {label}; volatile "
-                                    "values in the cached prefix invalidate the cache")
+                    warnings.append(
+                        f"static section '{s.name}' contains a {label}; volatile "
+                        "values in the cached prefix invalidate the cache"
+                    )
                     break
     static_tokens = sum(r["tokens"] for r in rows if r["static"])
     dynamic_tokens = sum(r["tokens"] for r in rows if not r["static"])
@@ -217,8 +256,12 @@ def preview(sections: list[PromptSection]) -> dict[str, Any]:
 
 
 def sections_from_dicts(items: list[dict[str, Any]]) -> list[PromptSection]:
-    return [PromptSection(name=str(i.get("name", f"section{n}")),
-                          content=str(i.get("content", "")),
-                          static=bool(i.get("static", False)),
-                          cache_breakpoint=bool(i.get("cache_breakpoint", False)))
-            for n, i in enumerate(items)]
+    return [
+        PromptSection(
+            name=str(i.get("name", f"section{n}")),
+            content=str(i.get("content", "")),
+            static=bool(i.get("static", False)),
+            cache_breakpoint=bool(i.get("cache_breakpoint", False)),
+        )
+        for n, i in enumerate(items)
+    ]

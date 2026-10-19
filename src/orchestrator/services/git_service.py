@@ -24,6 +24,7 @@ from orchestrator.utils.git import (
     status_porcelain,
 )
 from orchestrator.utils.paths import is_within
+from orchestrator.utils.redaction import is_sensitive_path
 
 ORCH_DIR = ".orchestrator"  # per-worktree scratch (handoff file); git-excluded
 
@@ -56,12 +57,15 @@ def _ensure_excluded(repo: Path) -> None:
     existing = exclude.read_text() if exclude.exists() else ""
     if f"/{ORCH_DIR}/" not in existing.splitlines():
         with exclude.open("a") as fh:
-            fh.write(("" if existing.endswith("\n") or not existing else "\n")
-                     + f"# coding-orchestrator scratch\n/{ORCH_DIR}/\n")
+            fh.write(
+                ("" if existing.endswith("\n") or not existing else "\n")
+                + f"# coding-orchestrator scratch\n/{ORCH_DIR}/\n"
+            )
 
 
-def ensure_worktree(repo: Path, project_slug: str, task_id: int, branch: str,
-                    base_branch: str) -> WorktreeInfo:
+def ensure_worktree(
+    repo: Path, project_slug: str, task_id: int, branch: str, base_branch: str
+) -> WorktreeInfo:
     if not is_repo(repo):
         raise GitError(f"{repo} is not a git repository")
     path = worktree_path(project_slug, task_id)
@@ -96,12 +100,18 @@ def is_dirty(path: Path) -> bool:
 
 
 def recovery_commit(path: Path, label: str) -> str | None:
-    """Commit leftover changes in an isolated worktree with a clearly labelled message."""
+    """Commit leftover changes in an isolated worktree with a clearly labelled message.
+    Sensitive files (.env, keys, credentials) are never staged; they stay untracked."""
     if not is_dirty(path):
         return None
     run_git(["add", "-A"], path)
-    run_git(["commit", "-q", "-m", f"chore(orchestrator-recovery): {label}"], path,
-            env=_git_env())
+    staged = run_git(["diff", "--cached", "--name-only", "-z"], path).stdout.split("\0")
+    sensitive = [f for f in staged if f and is_sensitive_path(f)]
+    if sensitive:
+        run_git(["reset", "-q", "--", *sensitive], path)
+    if not run_git(["diff", "--cached", "--name-only"], path).stdout.strip():
+        return None
+    run_git(["commit", "-q", "-m", f"chore(orchestrator-recovery): {label}"], path, env=_git_env())
     return head_sha(path)
 
 
@@ -109,9 +119,13 @@ def _git_env() -> dict[str, str]:
     import os
 
     s = get_settings()
-    return {**os.environ, "GIT_AUTHOR_NAME": s.git_user_name,
-            "GIT_AUTHOR_EMAIL": s.git_user_email, "GIT_COMMITTER_NAME": s.git_user_name,
-            "GIT_COMMITTER_EMAIL": s.git_user_email}
+    return {
+        **os.environ,
+        "GIT_AUTHOR_NAME": s.git_user_name,
+        "GIT_AUTHOR_EMAIL": s.git_user_email,
+        "GIT_COMMITTER_NAME": s.git_user_name,
+        "GIT_COMMITTER_EMAIL": s.git_user_email,
+    }
 
 
 def diff_against_base(path: Path, base_branch: str) -> tuple[str, str]:
@@ -127,8 +141,7 @@ def changed_files(path: Path, base_branch: str) -> list[str]:
 
 
 def merge_command(repo: Path, base_branch: str, branch: str) -> str:
-    return (f"git -C {repo} checkout {base_branch} && "
-            f"git -C {repo} merge --no-ff {branch}")
+    return f"git -C {repo} checkout {base_branch} && git -C {repo} merge --no-ff {branch}"
 
 
 def merge_no_ff(repo: Path, base_branch: str, branch: str, message: str) -> str:
@@ -154,8 +167,15 @@ def managed_worktrees() -> list[dict]:
         slug = marker_dir.parent.name
         for marker in marker_dir.iterdir():
             path = root / slug / marker.name
-            out.append({"project_slug": slug, "task_id": marker.name, "path": path,
-                        "exists": path.exists(), "marker": marker})
+            out.append(
+                {
+                    "project_slug": slug,
+                    "task_id": marker.name,
+                    "path": path,
+                    "exists": path.exists(),
+                    "marker": marker,
+                }
+            )
     return out
 
 

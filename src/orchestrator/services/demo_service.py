@@ -39,13 +39,25 @@ def ensure_sample_repo() -> Path:
         return dest
     if dest.exists():
         shutil.rmtree(dest)
-    shutil.copytree(sample_source(), dest,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
+    shutil.copytree(
+        sample_source(), dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git")
+    )
     s = get_settings()
     run_git(["init", "-q", "-b", "main"], dest)
     run_git(["add", "-A"], dest)
-    run_git(["-c", f"user.name={s.git_user_name}", "-c", f"user.email={s.git_user_email}",
-             "commit", "-q", "-m", "sample project: initial commit"], dest)
+    run_git(
+        [
+            "-c",
+            f"user.name={s.git_user_name}",
+            "-c",
+            f"user.email={s.git_user_email}",
+            "commit",
+            "-q",
+            "-m",
+            "sample project: initial commit",
+        ],
+        dest,
+    )
     return dest
 
 
@@ -54,10 +66,16 @@ def ensure_sample_project(session: Session) -> Project:
     if existing:
         return existing
     path = ensure_sample_repo()
-    return project_service.create(session, ProjectCreate(
-        name=SAMPLE_NAME, path=str(path), base_branch="main",
-        test_command="python3 run_tests.py",
-        notes="Demo project created by `orchestrator demo`."))
+    return project_service.create(
+        session,
+        ProjectCreate(
+            name=SAMPLE_NAME,
+            path=str(path),
+            base_branch="main",
+            test_command="python3 run_tests.py",
+            notes="Demo project created by `orchestrator demo`.",
+        ),
+    )
 
 
 async def run_demo(session: Session, extra_tags: list[str] | None = None) -> dict[str, Any]:
@@ -68,16 +86,25 @@ async def run_demo(session: Session, extra_tags: list[str] | None = None) -> dic
     steps.append(f"project '{project.name}' registered at {project.path}")
 
     n = len(task_service.list_tasks(session, project_id=project.id, include_archived=True)) + 1
-    task = task_service.create(session, TaskCreate(
-        title=f"Demo phase {n}: append a mock change",
-        project_id=project.id, kind=TaskKind.coding, tags=["mock", *(extra_tags or [])],
-        phase_number=n, phase_slug=f"demo-{n}",
-        description="Append one deterministic line to MOCK_CHANGE.md and keep tests green.",
-        definition_of_done=["MOCK_CHANGE.md contains a line for this run",
-                            "`python3 run_tests.py` passes"],
-        acceptance_criteria=["handoff.json, review.json and verification.json exist"],
-        frozen_contracts=["calc.add/calc.mul signatures"], out_of_scope=["new dependencies"],
-    ))
+    task = task_service.create(
+        session,
+        TaskCreate(
+            title=f"Demo phase {n}: append a mock change",
+            project_id=project.id,
+            kind=TaskKind.coding,
+            tags=["mock", *(extra_tags or [])],
+            phase_number=n,
+            phase_slug=f"demo-{n}",
+            description="Append one deterministic line to MOCK_CHANGE.md and keep tests green.",
+            definition_of_done=[
+                "MOCK_CHANGE.md contains a line for this run",
+                "`python3 run_tests.py` passes",
+            ],
+            acceptance_criteria=["handoff.json, review.json and verification.json exist"],
+            frozen_contracts=["calc.add/calc.mul signatures"],
+            out_of_scope=["new dependencies"],
+        ),
+    )
     steps.append(f"created mock phase task {task.short_id} on branch {task.branch_name}")
 
     outcome = await run_service.run_task_now(session, task)
@@ -93,15 +120,26 @@ async def run_demo(session: Session, extra_tags: list[str] | None = None) -> dic
     if outcome.get("merge_command"):
         steps.append(f"merge gate disabled -> run manually: {outcome['merge_command']}")
 
-    pending = [e for e in memory_service.list_entries(session, status="pending")
-               if e.source.endswith(f"R-{run_id}")]
+    pending = [
+        e
+        for e in memory_service.list_entries(session, status="pending")
+        if e.source.endswith(f"R-{run_id}")
+    ]
     approved: MemoryEntry | None = None
     if pending:
         approved = memory_service.approve(session, pending[0].id or 0)
-        steps.append(f"{len(pending)} memory suggestion(s) from handoff; approved #{approved.id}"
-                     f" ({approved.category}/{approved.scope})")
+        steps.append(
+            f"{len(pending)} memory suggestion(s) from handoff; approved #{approved.id}"
+            f" ({approved.category}/{approved.scope})"
+        )
     else:
         steps.append("no new memory suggestions (identical suggestions already indexed)")
-    return {"task": task.short_id, "task_id": task.id, "run_id": run_id,
-            "status": task.status, "outcome": outcome, "steps": steps,
-            "approved_memory_id": approved.id if approved else None}
+    return {
+        "task": task.short_id,
+        "task_id": task.id,
+        "run_id": run_id,
+        "status": task.status,
+        "outcome": outcome,
+        "steps": steps,
+        "approved_memory_id": approved.id if approved else None,
+    }

@@ -83,5 +83,9 @@ class OpenAICompatibleProvider(BaseProvider):
             cached = getattr(details, "cached_tokens", None) if details else None
             if cached is not None:
                 usage["cache_read_input_tokens"] = cached
-        return CompletionResult(text=text, model=resp.model or req.model, usage=usage,
-                                stop_reason=choice.finish_reason if choice else None)
+        return CompletionResult(
+            text=text,
+            model=resp.model or req.model,
+            usage=usage,
+            stop_reason=choice.finish_reason if choice else None,
+        )

@@ -15,7 +15,12 @@ class OpenCodeAdapter(BaseHarnessAdapter):
     experimental = True
     default_command = "opencode"
     default_args = ["run", "?--model={model}", "{prompt}"]
-    default_env_vars = ["OPENCODE_CONFIG", "ANTHROPIC_API_KEY", "QWEN_API_KEY",
-                        "DEEPSEEK_API_KEY", "GLM_API_KEY"]
+    default_env_vars = [
+        "OPENCODE_CONFIG",
+        "ANTHROPIC_API_KEY",
+        "QWEN_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GLM_API_KEY",
+    ]
     description = "General, model-agnostic coding harness (preferred default)."
     verify_hint = "opencode --version && opencode run --help"

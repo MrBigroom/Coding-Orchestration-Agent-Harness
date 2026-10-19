@@ -40,8 +40,13 @@ def claim(session: Session, task_id: int) -> bool:
         task = session.get(Task, task_id)
         if task:
             session.refresh(task)
-            log_service.log_event(session, "task_status", "queued -> in_progress: claimed",
-                                  task_id=task_id, role="supervisor")
+            log_service.log_event(
+                session,
+                "task_status",
+                "queued -> in_progress: claimed",
+                task_id=task_id,
+                role="supervisor",
+            )
         return True
     return False
 
@@ -53,12 +58,15 @@ def claim_next(session: Session) -> Task | None:
         return None
     per_project = settings["max_parallel_runs_per_project"]
     candidates = session.exec(
-        select(Task).where(Task.status == TaskStatus.queued)
+        select(Task)
+        .where(Task.status == TaskStatus.queued)
         .order_by(_PRIORITY_ORDER, col(Task.created_at), col(Task.id))
     ).all()
     for task in candidates:
-        if task.project_id is not None and in_progress_count(session, task.project_id) >= \
-                per_project:
+        if (
+            task.project_id is not None
+            and in_progress_count(session, task.project_id) >= per_project
+        ):
             continue
         assert task.id is not None
         if claim(session, task.id):

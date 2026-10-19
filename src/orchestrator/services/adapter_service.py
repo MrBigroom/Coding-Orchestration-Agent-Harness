@@ -16,21 +16,33 @@ def seed_defaults(session: Session) -> None:
     have = {a.name for a in session.exec(select(HarnessAdapter))}
     for spec in default_specs():
         if spec.name not in have:
-            session.add(HarnessAdapter(
-                name=spec.name, kind=spec.kind, command=spec.command,
-                args_template_json=spec.args_template, env_vars_json=spec.env_vars,
-                timeout_seconds=spec.timeout_seconds, enabled=spec.enabled,
-                capabilities_json=spec.capabilities,
-                notes=ADAPTER_CLASSES[spec.kind].description,
-            ))
+            session.add(
+                HarnessAdapter(
+                    name=spec.name,
+                    kind=spec.kind,
+                    command=spec.command,
+                    args_template_json=spec.args_template,
+                    env_vars_json=spec.env_vars,
+                    timeout_seconds=spec.timeout_seconds,
+                    enabled=spec.enabled,
+                    capabilities_json=spec.capabilities,
+                    notes=ADAPTER_CLASSES[spec.kind].description,
+                )
+            )
     session.commit()
 
 
 def spec_from_row(row: HarnessAdapter) -> AdapterSpec:
-    return AdapterSpec(name=row.name, kind=row.kind, command=row.command,
-                       args_template=list(row.args_template_json),
-                       env_vars=list(row.env_vars_json), timeout_seconds=row.timeout_seconds,
-                       enabled=row.enabled, capabilities=dict(row.capabilities_json))
+    return AdapterSpec(
+        name=row.name,
+        kind=row.kind,
+        command=row.command,
+        args_template=list(row.args_template_json),
+        env_vars=list(row.env_vars_json),
+        timeout_seconds=row.timeout_seconds,
+        enabled=row.enabled,
+        capabilities=dict(row.capabilities_json),
+    )
 
 
 def get_row(session: Session, name: str) -> HarnessAdapter:
@@ -48,12 +60,20 @@ def describe(row: HarnessAdapter) -> dict[str, Any]:
     adapter = build_adapter(spec_from_row(row))
     cls = ADAPTER_CLASSES[row.kind]
     return {
-        "id": row.id, "name": row.name, "kind": row.kind, "command": row.command,
-        "args_template": row.args_template_json, "env_vars": row.env_vars_json,
-        "timeout_seconds": row.timeout_seconds, "enabled": row.enabled,
-        "capabilities": adapter.capabilities, "experimental": cls.experimental,
-        "detected": adapter.detect(), "binary": adapter.resolved_binary(),
-        "verify_hint": cls.verify_hint, "notes": row.notes,
+        "id": row.id,
+        "name": row.name,
+        "kind": row.kind,
+        "command": row.command,
+        "args_template": row.args_template_json,
+        "env_vars": row.env_vars_json,
+        "timeout_seconds": row.timeout_seconds,
+        "enabled": row.enabled,
+        "capabilities": adapter.capabilities,
+        "experimental": cls.experimental,
+        "detected": adapter.detect(),
+        "binary": adapter.resolved_binary(),
+        "verify_hint": cls.verify_hint,
+        "notes": row.notes,
     }
 
 
