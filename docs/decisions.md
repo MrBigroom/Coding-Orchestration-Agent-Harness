@@ -66,3 +66,24 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-10-19 — Qwen default stays on the Token Plan** (user's decision, reconfirmed after
   learning that the interactive-only rule covers every model on the plan, DeepSeek/GLM
   included, and also covers Qwen Cloud's Token Plan).
+
+## Open decisions
+
+- **2026-10-19 — OPEN: Token Plan usage by the harness (waiting on Qwen Cloud support).**
+  Question sent to support: does a local tool that the user starts manually, which then
+  launches `qwen -p` (headless Qwen Code) for each coding task with the Token Plan key,
+  count as allowed "interactive use within a tool", or as a prohibited "non-interactive
+  batch call / automation script"? Current state: the default stays on the Token Plan.
+  The supervisor LLM profile is never called. Qwen-key usage comes only from Worker harness
+  runs, plus direct API calls for agent/cron tasks and for low-risk tasks when no harness
+  is installed. Options to implement depending on the answer:
+  1. **Token Plan guard.** Mark the provider `interactive_only`. Refuse direct API calls
+     through it (agent tasks, cron, the direct-API worker fallback), and warn or require
+     confirmation before unattended harness runs that would forward its key.
+  2. **Interactive Worker mode.** Instead of `qwen -p`, open a real interactive Qwen Code
+     session in a new terminal window (Hyprland: e.g. `kitty`/`foot`) with the task
+     prompt loaded. The user drives and approves it, and on exit the orchestrator collects
+     the diff, handoff and tests as usual.
+  If support says headless runs are allowed, keep the current behaviour (maybe still add
+  the guard for direct API calls). If not, implement 1 + 2, or move automated paths to a
+  pay-as-you-go key.
