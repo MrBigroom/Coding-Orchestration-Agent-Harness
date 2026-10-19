@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Frontend
+web/node_modules/
+web/dist/
+src/orchestrator/api/static_dist/
+
+# Local config & data (never commit secrets)
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.log
+build-log.jsonl
+
+# Orchestrator runtime dirs if ORCHESTRATOR_HOME points inside the repo
+.orchestrator/
+worktrees/
+runs/
