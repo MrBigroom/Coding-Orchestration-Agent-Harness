@@ -77,6 +77,7 @@ class ProviderKind(StrEnum):
     mock = "mock"
     anthropic = "anthropic"
     openai_compatible = "openai_compatible"
+    claude_cli = "claude_cli"
 
 
 class Role(StrEnum):

@@ -71,11 +71,19 @@ key's env var, and the GUI shows whether a key is set, never its value.
 
 | Provider | Env vars | Default profiles |
 |---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` (`ANTHROPIC_BASE_URL` optional) | `architect-opus` → `claude-opus-5-5`, `supervisor-sonnet` → `claude-sonnet-5-5` |
+| **Claude subscription via `claude -p`** (default Architect) | none: install Claude Code and run `claude auth login` with your Pro/Max account | `architect-claude-cli` → `claude-opus-5-5` (tools disabled, uses your plan limits) |
+| Anthropic API (optional) | `ANTHROPIC_API_KEY` (`ANTHROPIC_BASE_URL` optional) | `architect-opus` (fallback if the CLI profile is disabled), `supervisor-sonnet` → `claude-sonnet-5-5` |
 | Alibaba Model Studio (Token Plan default) | `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL` | `supervisor-qwen-max` → `qwen3.8-max` (primary supervisor), `worker-qwen-flash`, `worker-deepseek-flash` → `deepseek-v4.1-flash`, `worker-glm` → `glm-5.3`, `agent-flash` |
 | DeepSeek direct (disabled) | `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL` | point a profile at model `deepseek-flash` |
 | Z.ai GLM direct (disabled) | `GLM_API_KEY`, `GLM_OPENAI_BASE_URL` | point a profile at your GLM model id |
 | Hermes / local (disabled) | `HERMES_OPENAI_BASE_URL`, `HERMES_API_KEY` | `hermes-local`; only used when explicitly selected |
+
+> **Claude subscription.** Anthropic allows `claude -p` on Pro/Max subscription limits, but
+> reserves subscription sign-in for its own apps. So the orchestrator runs the unmodified
+> `claude` binary and never touches your OAuth token or uses it for API calls.
+> `ANTHROPIC_API_KEY` is never passed to `claude`, so you can't be billed through the API
+> by accident. Reviews draw on your Pro usage limits. When a limit is hit, the review
+> comes back `NEEDS_HUMAN` and the task blocks instead of failing silently.
 
 > ⚠️ **Token Plan terms.** Alibaba documents the Token Plan as being for *interactive* use
 > in coding/agent tools. Automated scripts and application backends are not allowed, and
@@ -99,7 +107,7 @@ Each adapter is a **command + argv template stored in the DB** and editable in t
 | ZCode | `zcode-cli` | `run --cwd {cwd} --prompt-file {prompt_file}` | experimental, **binary/flags unverified** |
 | Qwen Code | `qwen` | `--approval-mode auto-edit ?--model={model} -p {prompt}` | experimental, docs-checked |
 | Aider | `aider` | `--yes-always ?--model={model} --message-file {prompt_file}` | experimental |
-| Claude Code | `claude` | `-p {prompt} --permission-mode acceptEdits ?--model={model}` | experimental, disabled by default |
+| Claude Code (Worker) | `claude` | `-p {prompt} --permission-mode acceptEdits ?--model={model}` | experimental, disabled by default (subscription auth) |
 | Mock | python | built-in | tested |
 
 `orchestrator adapters detect` shows which binaries are on `PATH`. Manual verification

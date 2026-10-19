@@ -175,3 +175,35 @@ async def run_simple(
         await proc.wait()
         return proc.returncode, "timed out", True
     return proc.returncode, redact(out.decode(errors="replace")), False
+
+
+async def run_capture(
+    argv: list[str],
+    cwd: Path,
+    env_names: list[str],
+    stdin_data: bytes | None,
+    timeout_seconds: int,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int | None, str, str, bool]:
+    """Run a command feeding stdin; return (exit_code, stdout, stderr, timed_out).
+    Output is returned unredacted for parsing — callers must redact before persisting."""
+    env = child_env(env_names, extra_env)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(cwd),
+            env=env,
+            stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, PermissionError) as e:
+        return None, "", f"failed to start {argv[0]!r}: {e}", False
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(stdin_data), timeout=timeout_seconds)
+    except TimeoutError:
+        _terminate(proc, signal.SIGKILL)
+        await proc.wait()
+        return proc.returncode, "", "timed out", True
+    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace"), False

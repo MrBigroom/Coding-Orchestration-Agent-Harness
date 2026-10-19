@@ -43,7 +43,7 @@ def test_agent_tasks_prefer_flash_and_avoid_opus(session):
     escalated = _task(session, kind="agent", tags=["escalate"])
     assert (
         provider_service.choose_profile(session, escalated, "agent").profile.name
-        == "architect-opus"
+        == "architect-claude-cli"
     )
 
 

@@ -11,7 +11,38 @@ All requests ask for structured JSON. Output is parsed from raw JSON, fenced blo
 embedded objects and validated with Pydantic. Invalid output is **retried once** with the
 validation error attached, and a second failure is a clear `ProviderError`.
 
-## Anthropic (`kind=anthropic`)
+## Claude subscription via Claude Code CLI (`kind=claude_cli`, provider `claude-subscription`) — default Architect
+
+- **Setup:** install Claude Code, then `claude auth login` with your Claude Pro/Max account.
+  No API key. For headless machines, `claude setup-token` prints a long-lived token you
+  can export as `CLAUDE_CODE_OAUTH_TOKEN`; it's an official Claude Code mechanism.
+- **Profile:** `architect-claude-cli` → `claude-opus-5-5`, effort `high`. It's used for
+  planning, gate reviews, and escalations ahead of `architect-opus`.
+- **How a call runs:**
+  `claude -p --output-format json --model <model> --system-prompt-file <static prefix>
+  --tools "" --disallowedTools "mcp__*" --strict-mcp-config --no-session-persistence
+  [--effort <e>]`. Dynamic state goes on stdin, and the call runs in an empty temporary
+  directory. With every tool removed, the Architect has no execution access, as its role
+  requires. Calls run one at a time.
+- **Policy** (checked 2026-10-19): the Claude Help Center says subscribers "can still use
+  ... `claude -p` ... with your subscription limits". Anthropic's legal page reserves
+  OAuth sign-in for "ordinary use of Claude Code and other native Anthropic applications"
+  and forbids routing requests through Free/Pro/Max credentials from other software. So
+  the orchestrator only ever launches the unmodified `claude` binary. It never reads,
+  stores, or forwards the token, and it **never passes `ANTHROPIC_API_KEY`**, so usage
+  can't silently switch to API billing.
+- **Limits:** reviews count against your plan's usage, which assumes "ordinary,
+  individual usage". When a limit is hit, `claude -p` returns an error, the review becomes
+  `NEEDS_HUMAN`, and the task blocks. `orchestrator doctor` runs `claude auth status` and
+  warns when Claude Code is using an API key instead of your subscription.
+- **Optional flags:** `CLAUDE_CLI_EXTRA_ARGS` adds flags, e.g. `--safe-mode` to skip your
+  personal `~/.claude` CLAUDE.md, plugins, and hooks during reviews. `CLAUDE_CLI_COMMAND`
+  overrides the binary path.
+- **Verified:** flags were checked against the Claude Code CLI reference, and one real
+  call was made with Claude Code 2.1.303 (it reported no tools available and returned
+  parsed JSON).
+
+## Anthropic API (`kind=anthropic`, optional)
 
 - **Env:** `ANTHROPIC_API_KEY` (required), `ANTHROPIC_BASE_URL` (optional).
 - **Profiles:** `architect-opus` → `claude-opus-5-5` (effort `high`); `supervisor-sonnet` →
@@ -25,7 +56,9 @@ validation error attached, and a second failure is a clear `ProviderError`.
     `server-side-fallback-2026-07-01`) is enabled for Claude 5.x models. Turn it off with
     `ORCHESTRATOR_ANTHROPIC_REFUSAL_FALLBACK=false`. A final `stop_reason=refusal` becomes
     a `ProviderRefusal`, and the review is recorded as `NEEDS_HUMAN`.
-  - Use an Anthropic **API key**. A Claude.ai subscription is not an API credential.
+  - Use an Anthropic **API key**. A Claude.ai subscription is not an API credential (use
+    the `claude-subscription` provider above for that). Max 5x/20x plans include
+    $100/$200 per month of API credits that work with this provider; Pro doesn't.
 
 ## Qwen Cloud / Alibaba Model Studio (`kind=openai_compatible`, provider `qwen-token-plan`)
 
@@ -37,6 +70,13 @@ validation error attached, and a second failure is a clear `ProviderError`.
   (**primary supervisor**), `worker-qwen-flash` → `qwen3.8-flash`, `worker-deepseek-flash`
   → `deepseek-v4.1-flash`, `worker-glm` → `glm-5.3`, `agent-flash` → `qwen3.8-flash`.
   These IDs match Model Studio's documented model IDs as of 2026-10-19.
+- **Qwen Cloud = Alibaba Model Studio.** Qwen Cloud's Token Plan (docs.qwencloud.com) and
+  Alibaba Model Studio's Token Plan carry the same scope rule: interactive use inside
+  coding/agent tools only, with no "automation scripts, custom application backends, or
+  any non-interactive batch call scenarios". The rule attaches to the **plan key**, so it
+  covers every model on the plan, including `deepseek-v4.1-flash` and `glm-5.3`. It also
+  covers harness runs the orchestrator launches unattended (e.g. `qwen -p`), not only
+  direct API calls.
 - ⚠️ **Terms of use.** Alibaba's Token Plan documentation says the plan is *for
   interactive use only within compatible AI coding and agent tools, not for automated
   scripts or application backends*, and violations may suspend the subscription or revoke
@@ -74,7 +114,7 @@ validation error attached, and a second failure is a clear `ProviderError`.
 
 | Need | Profile |
 |---|---|
-| Planning, gate review, high-risk final review | `architect-opus` |
+| Planning, gate review, high-risk final review | `architect-claude-cli` (`claude -p` on your subscription), then `architect-opus` (API key) |
 | Supervisor recommendation | `supervisor-qwen-max`, then `supervisor-sonnet` |
 | Coding worker / direct fallback | tag `deepseek` → `worker-deepseek-flash`, `glm` → `worker-glm`, `qwen`/default → `worker-qwen-flash` |
 | Background / cron agent tasks | `agent-flash`; Opus only if escalated |

@@ -85,6 +85,20 @@ def doctor() -> list[dict[str, Any]]:
             st = provider_service.provider_status(p)
             if p.kind == "mock":
                 continue
+            if p.kind == "claude_cli" and p.enabled and st["configured"]:
+                import asyncio
+
+                from orchestrator.providers.registry import build_provider
+
+                h = asyncio.run(build_provider(provider_service.provider_config(p)).health())
+                add(
+                    f"provider {p.name}",
+                    h["ok"],
+                    "; ".join(h["problems"] + h.get("notes", []))
+                    or f"signed in ({h.get('auth_method')})",
+                    level="warn",
+                )
+                continue
             add(
                 f"provider {p.name}",
                 st["configured"] or not p.enabled,

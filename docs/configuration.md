@@ -50,6 +50,15 @@ Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `DEEPSEEK_BASE_URL`, `DEEPSEEK_API_KEY`, `GLM_OPENAI_BASE_URL`, `GLM_API_KEY`,
 `HERMES_OPENAI_BASE_URL`, `HERMES_API_KEY`. See `providers.md`.
 
+## Claude CLI variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CLAUDE_CLI_COMMAND` | `claude` | Path to the Claude Code binary (Architect provider and Worker adapter seed) |
+| `CLAUDE_CLI_EXTRA_ARGS` | empty | Extra flags appended to Architect `claude -p` calls, e.g. `--safe-mode` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Optional long-lived subscription token from `claude setup-token` (headless machines) |
+| `CLAUDE_CONFIG_DIR` | unset | Alternate Claude Code config directory |
+
 ## Adapter variables
 
 `OPENCODE_COMMAND`, `DEEPSEEK_HARNESS_COMMAND`, `ZCODE_COMMAND`, `QWEN_CODE_COMMAND`,

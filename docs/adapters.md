@@ -101,9 +101,11 @@ counts as a missing artifact at review.
 
 - **Purpose:** optional headless Claude Code runs, e.g. for escalations. **Disabled by default.**
 - **Template:** `claude -p {prompt} --permission-mode acceptEdits ?--model={model}`.
-- **Env:** `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`; binary override `CLAUDE_CLI_COMMAND`.
-- **Auth:** use only auth that the CLI supports for headless use, such as an Anthropic API
-  key. Don't assume a consumer subscription can be driven as an API.
+- **Env:** `CLAUDE_CODE_OAUTH_TOKEN` (optional, from `claude setup-token`), `CLAUDE_CONFIG_DIR`;
+  binary override `CLAUDE_CLI_COMMAND`. `ANTHROPIC_API_KEY` is deliberately **not** passed.
+- **Auth:** your own Claude subscription through the unmodified `claude` binary
+  (`claude auth login`). Anthropic permits `claude -p` on subscription limits. Worker runs
+  use the same plan quota as the Architect, so keep parallel runs low.
 - **Detect:** `which claude` · **Manual test:** `claude --version && claude -p "say hi"`.
 - **Experimental:** yes.
 

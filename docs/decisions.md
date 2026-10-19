@@ -53,3 +53,16 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-10-19 — APScheduler 3.x** (stable line; 4.x isn't stable). Cron is evaluated in UTC.
 - **2026-10-19 — Fallback UI is a single static HTML file** with no build step and no
   dependencies, served when `web/dist` is missing.
+- **2026-10-19 — Architect runs through `claude -p` on the user's Claude Pro subscription**
+  (new `claude_cli` provider kind, profile `architect-claude-cli`, preferred over
+  `architect-opus`). Basis: Anthropic's Help Center allows `claude -p` on subscription
+  limits, and its legal page reserves OAuth for native Anthropic apps. So the orchestrator
+  launches only the unmodified binary, never handles the token, and never forwards
+  `ANTHROPIC_API_KEY`. All tools are disabled (`--tools ""`, MCP denied) to enforce the
+  Architect's no-execution rule, and calls are serialised. No schema change was needed
+  (`providers.kind` is a free string).
+- **2026-10-19 — Claude Code Worker adapter no longer forwards `ANTHROPIC_API_KEY`**, for
+  the same reason (subscription auth, no silent API billing).
+- **2026-10-19 — Qwen default stays on the Token Plan** (user's decision, reconfirmed after
+  learning that the interactive-only rule covers every model on the plan, DeepSeek/GLM
+  included, and also covers Qwen Cloud's Token Plan).

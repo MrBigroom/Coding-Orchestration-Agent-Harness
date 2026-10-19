@@ -38,6 +38,13 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "notes": "Official Anthropic API (API key auth).",
     },
     {
+        "name": "claude-subscription",
+        "kind": "claude_cli",
+        "notes": "Runs the official `claude` CLI (`claude -p`, tools disabled) signed in with "
+        "your Claude Pro/Max subscription. No API key; ANTHROPIC_API_KEY is never passed. "
+        "Uses your plan's usage limits; calls are serialised.",
+    },
+    {
         "name": "qwen-token-plan",
         "kind": "openai_compatible",
         "base_url": f"env:QWEN_OPENAI_BASE_URL|{TOKEN_PLAN_BASE_URL}",
@@ -75,6 +82,15 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
 
 # (name, role, provider, model, effort, enabled, notes). Model IDs are editable placeholders.
 DEFAULT_PROFILES: list[tuple[str, str, str, str, str | None, bool, str]] = [
+    (
+        "architect-claude-cli",
+        "architect",
+        "claude-subscription",
+        "claude-opus-5-5",
+        "high",
+        True,
+        "Architect via `claude -p` on your Claude subscription (preferred; no API key).",
+    ),
     (
         "architect-opus",
         "architect",
@@ -234,9 +250,9 @@ def choose_profile(session: Session, task: Task | None, role: str) -> ProfileCho
         if p:
             return ProfileChoice(p, "task tagged `mock`")
     if role in (Role.architect, Role.reviewer):
-        p = _first(session, "architect-opus")
+        p = _first(session, "architect-claude-cli", "architect-opus")
         if p:
-            return ProfileChoice(p, "architect/review uses the Opus profile")
+            return ProfileChoice(p, f"architect/review uses Opus via {p.name}")
     if role == Role.supervisor:
         p = _first(session, "supervisor-qwen-max", "supervisor-sonnet")
         if p:
@@ -244,7 +260,7 @@ def choose_profile(session: Session, task: Task | None, role: str) -> ProfileCho
     escalated = bool(task and (task.source == TaskSource.escalation or "escalate" in tags))
     if role == Role.agent or (task and task.kind in (TaskKind.agent, TaskKind.maintenance)):
         if escalated:
-            p = _first(session, "architect-opus")
+            p = _first(session, "architect-claude-cli", "architect-opus")
             if p:
                 return ProfileChoice(p, "agent task explicitly escalated")
         if "hermes" in tags:
