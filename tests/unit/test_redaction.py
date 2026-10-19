@@ -43,3 +43,19 @@ def test_sensitive_paths_and_diff_stripping():
     diff = "diff --git a/.env b/.env\n+SECRET=1\ndiff --git a/app.py b/app.py\n+print('hi')\n"
     out = strip_sensitive_files_from_diff(diff)
     assert "SECRET=1" not in out and "print('hi')" in out and "sensitive file omitted" in out
+
+
+def test_dotenv_loaded_without_overriding(tmp_path, monkeypatch):
+    import os
+
+    from orchestrator.core.config import load_env_file
+
+    (tmp_path / ".env").write_text("ZZ_TEST_PROVIDER_KEY=from-file\nZZ_ALREADY_SET=from-file\n")
+    monkeypatch.setenv("ZZ_ALREADY_SET", "from-env")
+    monkeypatch.delenv("ZZ_TEST_PROVIDER_KEY", raising=False)
+    load_env_file(tmp_path / ".env")
+    try:
+        assert os.environ["ZZ_TEST_PROVIDER_KEY"] == "from-file"
+        assert os.environ["ZZ_ALREADY_SET"] == "from-env"
+    finally:
+        os.environ.pop("ZZ_TEST_PROVIDER_KEY", None)

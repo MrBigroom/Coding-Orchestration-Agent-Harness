@@ -97,8 +97,18 @@ class Settings(BaseSettings):
             Path(p).mkdir(parents=True, exist_ok=True)
 
 
+def load_env_file(path: str | Path = ".env") -> None:
+    """Export provider keys etc. from .env into os.environ (never overriding real env vars).
+    pydantic-settings only maps ORCHESTRATOR_* fields; providers read their own variables."""
+    from dotenv import load_dotenv
+
+    if Path(path).is_file():
+        load_dotenv(path, override=False)
+
+
 @lru_cache
 def get_settings() -> Settings:
+    load_env_file()
     return Settings()
 
 
