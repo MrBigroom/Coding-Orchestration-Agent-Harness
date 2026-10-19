@@ -39,3 +39,29 @@ def test_schedule_rejects_bad_template(session):
                 name="bad", cron_expression="0 2 * * *", task_template_json={"kind": "nope"}
             ),
         )
+
+
+def test_scheduler_runner_registers_enabled_schedules(session):
+    from orchestrator.core.schemas import ScheduleUpdate
+    from orchestrator.services.scheduler_service import SchedulerRunner
+
+    a = scheduler_service.create(session, ScheduleCreate(name="a", cron_expression="*/5 * * * *"))
+    b = scheduler_service.create(session, ScheduleCreate(name="b", cron_expression="0 3 * * *"))
+    scheduler_service.update(session, b, ScheduleUpdate(enabled=False))
+    runner = SchedulerRunner()
+    runner.sync()
+    ids = {j.id for j in runner.scheduler.get_jobs()}
+    assert f"schedule-{a.id}" in ids and f"schedule-{b.id}" not in ids
+
+
+def test_fire_by_id_creates_task(session):
+    from sqlmodel import select
+
+    from orchestrator.core.models import Task
+    from orchestrator.services.scheduler_service import _fire_by_id
+
+    s = scheduler_service.create(session, ScheduleCreate(
+        name="c", cron_expression="* * * * *", task_template_json={"title": "tick"}))
+    _fire_by_id(s.id)
+    titles = [t.title for t in session.exec(select(Task))]
+    assert "tick" in titles

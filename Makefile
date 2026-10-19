@@ -1,7 +1,7 @@
 # coding-orchestrator — common tasks. See also `justfile` (same targets).
 SHELL := /bin/bash
 VENV  := .venv/bin
-PORT  ?= 8321
+PORT  ?= $(or $(ORCHESTRATOR_BIND_PORT),8321)
 FILE  ?= memory-export.json
 
 .PHONY: setup dev start test lint format doctor demo build clean memory-export memory-import
