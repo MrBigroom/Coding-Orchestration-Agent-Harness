@@ -49,10 +49,10 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "kind": "openai_compatible",
         "base_url": f"env:QWEN_OPENAI_BASE_URL|{TOKEN_PLAN_BASE_URL}",
         "api_key_env": "QWEN_API_KEY",
-        "notes": "Alibaba Model Studio (Token Plan by default). WARNING: Token Plan terms restrict "
-        "use to interactive coding tools and forbid automated scripts/backends; "
-        "violations can suspend the plan. Point QWEN_OPENAI_BASE_URL at the "
-        "pay-as-you-go endpoint to avoid this.",
+        "notes": "Alibaba Model Studio / Qwen Cloud Token Plan. Support confirmed manually "
+        "triggered tasks (incl. headless `qwen -p` and API calls) are permitted; avoid "
+        "high-frequency automated scripts, account sharing, and training third-party "
+        "models. See docs/providers.md.",
     },
     {
         "name": "deepseek",

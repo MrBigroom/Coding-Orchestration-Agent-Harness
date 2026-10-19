@@ -77,13 +77,26 @@ validation error attached, and a second failure is a clear `ProviderError`.
   covers every model on the plan, including `deepseek-v4.1-flash` and `glm-5.3`. It also
   covers harness runs the orchestrator launches unattended (e.g. `qwen -p`), not only
   direct API calls.
-- ⚠️ **Terms of use.** Alibaba's Token Plan documentation says the plan is *for
-  interactive use only within compatible AI coding and agent tools, not for automated
-  scripts or application backends*, and violations may suspend the subscription or revoke
-  the key. The background queue worker, schedules, and direct API calls from this
-  orchestrator are automated use. The default follows your explicit choice. To stay
-  within the terms, point `QWEN_OPENAI_BASE_URL` at the pay-as-you-go compatible-mode
-  endpoint for your region, or limit Token Plan usage to interactive harness sessions.
+- ✅ **Support confirmation (Alibaba Cloud International Support, 2026-10-19).** We
+  described this harness to them: a single user on a local machine clicks Run per task,
+  and the harness launches `qwen -p` with the Token Plan key, which edits code and runs
+  tests. Their answer:
+  - Manually triggering individual tasks "is fully permitted", as long as you avoid
+    **high-frequency automated scripts**, **sharing the account among multiple users**,
+    and **using the service to train third-party models**.
+  - Model Studio "monitors request characteristics at the API level rather than
+    identifying specific client tools". Any tool making legitimate calls through the
+    standard APIs, without bypassing security measures or abusing quotas, is treated the
+    same, so direct API calls from the orchestrator are in the same category as `qwen -p`.
+  - `deepseek-v4.1-flash` and `glm-5.3` are included in the Personal Edition and can be
+    used normally.
+  - Use the API key and base URL that belong to your Token Plan, and never put the key in
+    a public repository.
+- **Staying within it in this harness:** start tasks yourself; keep `max_parallel_runs`
+  low; don't put frequent cron schedules on Token Plan profiles; keep
+  `max_review_rounds` modest (each CHANGES_REQUESTED round triggers another Worker run
+  without a click). The written docs still describe the plan as "interactive use only",
+  so if your usage pattern changes significantly, check again with support.
 - Prefix caching is automatic where supported. `cached_tokens` is recorded when returned.
 
 ## DeepSeek direct (`provider deepseek`, disabled by default)

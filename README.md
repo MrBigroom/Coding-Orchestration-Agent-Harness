@@ -85,12 +85,13 @@ key's env var, and the GUI shows whether a key is set, never its value.
 > by accident. Reviews draw on your Pro usage limits. When a limit is hit, the review
 > comes back `NEEDS_HUMAN` and the task blocks instead of failing silently.
 
-> ⚠️ **Token Plan terms.** Alibaba documents the Token Plan as being for *interactive* use
-> in coding/agent tools. Automated scripts and application backends are not allowed, and
-> breaking this can suspend the plan or revoke the key. This project defaults to the
-> Token Plan endpoint because you asked for it. For unattended runs (queue worker,
-> cron), set `QWEN_OPENAI_BASE_URL` to the pay-as-you-go compatible-mode endpoint.
-> Details: [`docs/providers.md`](docs/providers.md).
+> **Token Plan terms (confirmed by Alibaba Cloud support, 2026-10-19).** Tasks you trigger
+> manually, which then run Qwen Code headlessly (`qwen -p`), are allowed. So are direct
+> calls through the standard API, and the plan's DeepSeek/GLM models. Still not allowed:
+> high-frequency automated scripts, sharing the account among several people, and using
+> outputs to train third-party models. Keep your key out of public repos (`.env` is
+> gitignored). In practice, use the Token Plan for tasks you start yourself, and avoid
+> frequent cron schedules on it. Details: [`docs/providers.md`](docs/providers.md).
 
 Model IDs are editable placeholders (Models & Providers page, or `/api/model-profiles`).
 See [`docs/providers.md`](docs/providers.md).
