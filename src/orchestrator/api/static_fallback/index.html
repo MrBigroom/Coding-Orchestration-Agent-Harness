@@ -1,1 +1,188 @@
-<!doctype html><title>coding-orchestrator</title><p>placeholder</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Coding Orchestrator (fallback UI)</title>
+<!-- Fallback UI: served when the React build (web/dist) is missing. No external resources. -->
+<style>
+  :root { --bg:#0d1117; --panel:#151b23; --panel2:#1c2430; --line:#2a3442; --ink:#e6edf3; --muted:#8b98a8;
+          --accent:#6aa7ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#a371f7; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; display:flex; min-height:100vh; }
+  nav { width:200px; background:var(--panel); border-right:1px solid var(--line); padding:14px 8px; flex-shrink:0; }
+  nav h1 { font-size:14px; margin:0 8px 2px; } nav small { color:var(--muted); margin:0 8px 14px; display:block; }
+  nav a { display:block; padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; cursor:pointer; }
+  nav a.active, nav a:hover { background:rgba(106,167,255,.12); color:var(--accent); }
+  main { flex:1; padding:22px 28px; min-width:0; }
+  h2 { font-size:18px; margin:0 0 14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
+  .stat b { display:block; font-size:22px; } .stat span { color:var(--muted); font-size:11px; text-transform:uppercase; }
+  table { width:100%; border-collapse:collapse; } th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; padding:6px 8px; }
+  td { border-top:1px solid var(--line); padding:6px 8px; vertical-align:top; }
+  button { background:var(--panel2); border:1px solid var(--line); color:var(--ink); border-radius:6px; padding:4px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); } button.primary { color:var(--accent); border-color:var(--accent); } button.danger { color:var(--bad); border-color:var(--bad); }
+  input, select, textarea { background:var(--bg); border:1px solid var(--line); color:var(--ink); border-radius:6px; padding:5px 8px; font:inherit; width:100%; }
+  label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; margin:8px 0 3px; }
+  pre { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:420px; white-space:pre-wrap; }
+  .b { display:inline-block; border:1px solid var(--line); border-radius:4px; padding:0 6px; font-size:12px; color:var(--muted); }
+  .ok { color:var(--ok); border-color:var(--ok); } .warn { color:var(--warn); border-color:var(--warn); } .bad { color:var(--bad); border-color:var(--bad); } .info { color:var(--info); border-color:var(--info); }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; } .muted { color:var(--muted); } .err { color:var(--bad); margin-bottom:10px; }
+  .note { background:rgba(210,153,34,.1); border:1px solid var(--warn); color:var(--warn); padding:8px 10px; border-radius:6px; margin-bottom:14px; font-size:13px; }
+</style>
+</head>
+<body>
+<nav>
+  <h1>coding-orchestrator</h1><small>fallback UI</small>
+  <a data-view="dashboard">Dashboard</a><a data-view="tasks">Tasks</a><a data-view="memory">Memory</a>
+  <a data-view="prompt">Prompt Cache</a><a data-view="adapters">Adapters</a><a data-view="providers">Providers</a>
+  <a data-view="schedules">Schedules</a><a data-view="buildlog">Build Log</a><a data-view="settings">Settings</a>
+</nav>
+<main id="main"></main>
+<script>
+"use strict";
+const $main = document.getElementById("main");
+const TONE = { accepted:"ok", completed:"ok", pass:"ok", APPROVED:"ok", approved:"ok", ready:"ok", queued:"info", review:"info",
+  in_progress:"warn", running:"warn", testing:"warn", pending:"warn", CHANGES_REQUESTED:"warn", blocked:"bad", failed:"bad",
+  rejected:"bad", timeout:"bad", fail:"bad", NEEDS_HUMAN:"bad" };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const badge = (v) => v ? `<span class="b ${TONE[v] || ""}">${esc(v)}</span>` : '<span class="muted">—</span>';
+function token() { try { return localStorage.getItem("orchestrator.token") || ""; } catch { return ""; } }
+async function api(path, opts = {}) {
+  const headers = { ...(opts.body ? { "Content-Type": "application/json" } : {}) };
+  if (token()) headers["X-Orchestrator-Token"] = token();
+  const res = await fetch("/api" + path, { ...opts, headers });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (res.status === 401) { const t = prompt("ORCHESTRATOR_TOKEN required:"); if (t) { try { localStorage.setItem("orchestrator.token", t); } catch {} location.reload(); } }
+  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  return data;
+}
+const post = (p, body = {}) => api(p, { method: "POST", body: JSON.stringify(body) });
+const patch = (p, body) => api(p, { method: "PATCH", body: JSON.stringify(body) });
+let timer = null;
+function show(html) { $main.innerHTML = html; }
+async function guard(fn) { try { await fn(); } catch (e) { const d = document.createElement("div"); d.className = "err"; d.textContent = e.message; $main.prepend(d); } }
+
+const views = {
+  async dashboard() {
+    const d = await api("/dashboard");
+    const stat = (k, v) => `<div class="card stat"><span>${k}</span><b>${v}</b></div>`;
+    const list = (ts) => ts.length ? ts.map((t) => `<div class="row"><a href="#task/${t.id}">${esc(t.short_id)} ${esc(t.title)}</a> ${badge(t.status)}</div>`).join("") : '<span class="muted">none</span>';
+    show(`<div class="note">React build not found — this is the fallback UI. Run <code>make build</code> for the full GUI.</div>
+      <h2>Dashboard</h2><div class="grid">${stat("Active runs", d.active_runs.length)}${stat("Queued", d.queued.length)}${stat("Blocked", d.blocked.length)}
+      ${stat("Failed", d.failed.length)}${stat("Accepted", d.counts.accepted || 0)}${stat("Memory pending", d.memory_pending)}</div>
+      <div class="grid" style="grid-template-columns:1fr 1fr 1fr"><div class="card"><b>Queued</b>${list(d.queued)}</div><div class="card"><b>Blocked</b>${list(d.blocked)}</div><div class="card"><b>Failed</b>${list(d.failed)}</div></div>
+      <div class="card"><b>Recent activity</b><table>${d.recent_activity.map((e) => `<tr><td class="muted">${esc(e.timestamp)}</td><td>${esc(e.role)}</td><td>${esc(e.event)}</td><td>${esc(e.details)}</td></tr>`).join("")}</table></div>`);
+  },
+  async tasks() {
+    const [tasks, projects] = await Promise.all([api("/tasks"), api("/projects")]);
+    show(`<h2>Tasks</h2><div class="card"><b>Create task</b><div class="grid" style="grid-template-columns:2fr 1fr 1fr 1fr">
+      <div><label>Title</label><input id="t-title"></div><div><label>Project</label><select id="t-proj"><option value="">(none)</option>${projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
+      <div><label>Kind</label><select id="t-kind"><option>coding</option><option>agent</option><option>review</option><option>maintenance</option></select></div>
+      <div><label>Tags (comma)</label><input id="t-tags" placeholder="mock"></div></div>
+      <label>Definition of Done (one per line)</label><textarea id="t-dod" rows="3"></textarea><div class="row" style="margin-top:8px"><button class="primary" id="t-create">Create &amp; queue</button></div></div>
+      <div class="card"><table><tr><th>ID</th><th>Title</th><th>Status</th><th>Kind</th><th>Tags</th><th></th></tr>
+      ${tasks.map((t) => `<tr><td>${esc(t.short_id)}</td><td><a href="#task/${t.id}">${esc(t.title)}</a><div class="muted">${esc(t.branch_name || "")}</div></td><td>${badge(t.status)}</td><td>${esc(t.kind)}</td><td class="muted">${esc(t.tags.join(", "))}</td>
+      <td class="row"><button data-act="run" data-id="${t.id}" class="primary">Run</button><button data-act="dry" data-id="${t.id}">Dry-run</button><button data-act="cancel" data-id="${t.id}" class="danger">Cancel</button></td></tr>`).join("")}</table></div><pre id="t-out" hidden></pre>`);
+    document.getElementById("t-create").onclick = () => guard(async () => {
+      await post("/tasks", { title: document.getElementById("t-title").value, project_id: Number(document.getElementById("t-proj").value) || null,
+        kind: document.getElementById("t-kind").value, tags: document.getElementById("t-tags").value.split(",").map((s) => s.trim()).filter(Boolean),
+        definition_of_done: document.getElementById("t-dod").value.split("\n").map((s) => s.trim()).filter(Boolean), queue: true });
+      views.tasks();
+    });
+    $main.querySelectorAll("button[data-act]").forEach((b) => b.onclick = () => guard(async () => {
+      const id = b.dataset.id, out = document.getElementById("t-out");
+      if (b.dataset.act === "dry") { out.hidden = false; out.textContent = JSON.stringify(await api(`/tasks/${id}/dry-run`), null, 2); return; }
+      if (b.dataset.act === "cancel" && !confirm("Cancel this task?")) return;
+      await post(`/tasks/${id}/${b.dataset.act}`); views.tasks();
+    }));
+  },
+  async task(id) {
+    const t = await api(`/tasks/${id}`);
+    const run = t.runs[0];
+    show(`<h2>${esc(t.short_id)} · ${esc(t.title)} ${badge(t.status)}</h2>
+      ${t.merge_command ? `<div class="note">Merge gate disabled — merge manually:<br><code>${esc(t.merge_command)}</code></div>` : ""}
+      <div class="card row"><span>handoff ${badge(t.handoff_status)}</span><span>review ${badge(t.review_status)}</span><span>verification ${badge(t.verification_status)}</span><span>merge ${badge(t.merge_status)}</span>
+      <span style="flex:1"></span><button class="primary" data-a="run">Run</button><button data-a="accept">Accept</button><button class="danger" data-a="reject">Reject</button><button data-a="escalate">Escalate</button></div>
+      <div class="card"><b>Definition of Done</b><ol>${t.definition_of_done.map((d) => `<li>${esc(d)}</li>`).join("")}</ol></div>
+      ${run ? `<div class="card"><div class="row"><b>Run ${esc(run.short_id)}</b> ${badge(run.status)} <span class="muted">${esc(run.command_preview || "")}</span></div>
+        <div class="row" style="margin:8px 0">${["stdout.log", "patch.diff", "handoff.md", "handoff.json", "review.md", "verification.md", "test.log"].map((n) => `<button data-art="${n}">${n}</button>`).join("")}</div><pre id="art">select an artifact</pre></div>` : '<div class="card muted">No runs yet.</div>'}`);
+    $main.querySelectorAll("button[data-a]").forEach((b) => b.onclick = () => guard(async () => {
+      if ((b.dataset.a === "reject" || b.dataset.a === "accept") && !confirm(`${b.dataset.a} this task?`)) return;
+      await post(`/tasks/${id}/${b.dataset.a}`, { reason: "fallback UI" }); views.task(id);
+    }));
+    $main.querySelectorAll("button[data-art]").forEach((b) => b.onclick = () => guard(async () => {
+      const d = await api(`/artifacts/${run.id}/${b.dataset.art}`);
+      document.getElementById("art").textContent = typeof d === "string" ? d : JSON.stringify(d, null, 2);
+    }));
+    if (run && !["completed", "failed", "cancelled", "timeout"].includes(run.status)) timer = setTimeout(() => views.task(id), 2000);
+  },
+  async memory() {
+    const m = await api("/memory");
+    show(`<h2>Memory</h2><div class="card"><table><tr><th>#</th><th>Category / scope</th><th>Content</th><th>Status</th><th></th></tr>
+      ${m.map((e) => `<tr><td>${e.id}</td><td>${esc(e.category)}/${esc(e.scope)}<div class="muted">${esc(e.project_slug || e.role || "")}</div></td><td>${esc(e.content)}</td>
+      <td>${badge(e.approved ? "approved" : e.rejected ? "rejected" : "pending")}</td><td class="row"><button data-m="approve" data-id="${e.id}" class="primary">Approve</button><button data-m="reject" data-id="${e.id}" class="danger">Reject</button></td></tr>`).join("")}</table></div>
+      <div class="card row"><button id="m-export">Export JSON</button></div><pre id="m-out" hidden></pre>`);
+    $main.querySelectorAll("button[data-m]").forEach((b) => b.onclick = () => guard(async () => { await post(`/memory/${b.dataset.id}/${b.dataset.m}`); views.memory(); }));
+    document.getElementById("m-export").onclick = () => guard(async () => { const o = document.getElementById("m-out"); o.hidden = false; o.textContent = JSON.stringify(await api("/memory/export"), null, 2); });
+  },
+  async prompt() {
+    const tasks = await api("/tasks");
+    show(`<h2>Prompt cache preview</h2><div class="card row"><select id="p-role" style="width:auto"><option>worker</option><option>architect</option><option>supervisor</option><option>agent</option></select>
+      <select id="p-task" style="width:auto"><option value="">(no task)</option>${tasks.map((t) => `<option value="${t.id}">${esc(t.short_id)} ${esc(t.title)}</option>`).join("")}</select><button class="primary" id="p-go">Preview</button></div><div id="p-out"></div>`);
+    document.getElementById("p-go").onclick = () => guard(async () => {
+      const r = await post("/prompt-preview", { role: document.getElementById("p-role").value, task_id: Number(document.getElementById("p-task").value) || null });
+      document.getElementById("p-out").innerHTML = `${r.warnings.map((w) => `<div class="err">⚠ ${esc(w)}</div>`).join("") || '<div class="b ok">ordering OK</div>'}
+        <div class="card">static ≈${r.static_tokens} · dynamic ≈${r.dynamic_tokens} · cacheable ${Math.round(r.cacheable_fraction * 100)}%</div>
+        <div class="card"><table><tr><th>#</th><th>Section</th><th>Kind</th><th>Breakpoint</th><th>≈Tokens</th></tr>${r.sections.map((s) => `<tr><td>${s.index + 1}</td><td>${esc(s.name)}</td><td>${badge(s.static ? "static" : "dynamic")}</td><td>${s.cache_breakpoint ? "✓" : ""}</td><td>${s.empty ? "—" : s.tokens}</td></tr>`).join("")}</table></div>`;
+    });
+  },
+  async adapters() {
+    const a = await api("/adapters");
+    show(`<h2>Adapters</h2><div class="card"><table><tr><th>Name</th><th>Enabled</th><th>Detected</th><th>Command</th><th>Args template</th></tr>
+      ${a.map((x) => `<tr><td>${esc(x.name)} ${x.experimental ? '<span class="b warn">experimental</span>' : ""}</td><td>${x.enabled ? "yes" : "no"}</td><td>${badge(x.detected ? "pass" : "fail")}</td><td><code>${esc(x.command)}</code></td><td><code>${esc(JSON.stringify(x.args_template))}</code></td></tr>`).join("")}</table>
+      <p class="muted">Edit templates with <code>orchestrator adapters set NAME --args '[...]'</code> or the full GUI.</p></div>`);
+  },
+  async providers() {
+    const [p, m] = await Promise.all([api("/providers"), api("/model-profiles")]);
+    show(`<h2>Providers</h2><div class="card"><table><tr><th>Name</th><th>Kind</th><th>Key env</th><th>Key set</th><th>Status</th></tr>
+      ${p.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.kind)}</td><td><code>${esc(x.api_key_env || "—")}</code></td><td>${x.api_key_env ? (x.api_key_set ? "yes" : "no") : "—"}</td><td>${x.enabled ? (x.configured ? badge("ready") : esc(x.problems.join("; "))) : "disabled"}</td></tr>`).join("")}</table></div>
+      <h2>Model profiles</h2><div class="card"><table><tr><th>Name</th><th>Role</th><th>Model</th><th>Effort</th><th>Enabled</th></tr>
+      ${m.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.role)}</td><td><code>${esc(x.model_name)}</code></td><td>${esc(x.effort || "—")}</td><td>${x.enabled ? "yes" : "no"}</td></tr>`).join("")}</table></div>`);
+  },
+  async schedules() {
+    const s = await api("/schedules");
+    show(`<h2>Schedules</h2><div class="card"><table><tr><th>Name</th><th>Cron</th><th>Enabled</th><th>Next run</th><th></th></tr>
+      ${s.map((x) => `<tr><td>${esc(x.name)}</td><td><code>${esc(x.cron_expression)}</code></td><td>${x.enabled ? "yes" : "no"}</td><td>${esc(x.next_run_at || "—")}</td><td><button data-s="${x.id}">Run now</button></td></tr>`).join("")}</table>
+      <p class="muted">Create schedules with <code>orchestrator schedule add NAME "CRON" --template '{...}'</code>.</p></div>`);
+    $main.querySelectorAll("button[data-s]").forEach((b) => b.onclick = () => guard(async () => { await post(`/schedules/${b.dataset.s}/run`); views.schedules(); }));
+  },
+  async buildlog() {
+    const l = await api("/build-log?limit=300");
+    show(`<h2>Build log</h2><div class="card"><table><tr><th>Time</th><th>Phase</th><th>Role</th><th>Event</th><th>Details</th></tr>
+      ${l.map((e) => `<tr><td class="muted">${esc(e.timestamp)}</td><td>${esc(e.phase || "")}</td><td>${esc(e.role)}</td><td>${esc(e.event)}</td><td>${esc(e.details)}</td></tr>`).join("")}</table></div>`);
+  },
+  async settings() {
+    const s = await api("/settings");
+    const keys = ["merge_enabled", "auto_merge_enabled", "supervisor_microfixes_enabled", "scheduler_enabled", "worker_enabled", "allow_gui_commands"];
+    show(`<h2>Settings</h2><div class="card">${keys.map((k) => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${k}</span><input type="checkbox" data-k="${k}" style="width:auto" ${s[k] ? "checked" : ""}></div>`).join("")}
+      <p class="muted">Bind ${esc(s.bind_host)}:${esc(s.bind_port)} · token auth ${s.token_auth_enabled ? "on" : "off"}</p></div>`);
+    $main.querySelectorAll("input[data-k]").forEach((i) => i.onchange = () => guard(async () => { await patch("/settings", { values: { [i.dataset.k]: i.checked } }); }));
+  },
+};
+
+function route() {
+  clearTimeout(timer);
+  const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view || (view === "task" && a.dataset.view === "tasks")));
+  show('<span class="muted">loading…</span>');
+  guard(() => (views[view] || views.dashboard)(arg));
+}
+document.querySelectorAll("nav a").forEach((a) => a.onclick = () => { location.hash = a.dataset.view; });
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
