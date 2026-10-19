@@ -123,7 +123,15 @@ def suggest_from_handoff(session: Session, suggestions: list[MemorySuggestion],
                          role: str = "worker") -> list[MemoryEntry]:
     """Store worker/architect suggestions as unapproved entries for Supervisor review."""
     created = []
+    existing = {(e.category, e.scope, e.project_slug, e.content.strip())
+                for e in list_entries(session)}
     for s in suggestions:
+        key = (s.category, slugify(s.scope),
+               slugify(project_slug) if s.category == "project" and project_slug else None,
+               redact(s.content.strip()))
+        if key in existing:
+            continue
+        existing.add(key)
         try:
             scope = slugify(s.scope)
             created.append(create(session, MemoryCreate(

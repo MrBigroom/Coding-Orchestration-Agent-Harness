@@ -27,6 +27,8 @@ def configure_logging(level: str = "INFO") -> None:
     handler.addFilter(RedactingFilter())
     root.addHandler(handler)
     root.setLevel(level.upper())
+    for noisy in ("alembic", "apscheduler", "httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

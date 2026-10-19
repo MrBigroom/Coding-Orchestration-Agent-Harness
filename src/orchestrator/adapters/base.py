@@ -100,7 +100,7 @@ def render_args(template: list[str], values: dict[str, str]) -> list[str]:
     return out
 
 
-class BaseHarnessAdapter(ABC):
+class BaseHarnessAdapter(ABC):  # noqa: B024 - concrete defaults, subclass per harness
     kind: str = "base"
     experimental: bool = True
     default_command: str = ""

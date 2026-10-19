@@ -36,10 +36,8 @@ _GENERIC_COUNT = re.compile(r"(?i)\b(\d+)\s+(tests?\s+)?(passed|failed|skipped|o
 def parse_test_counts(output: str) -> dict[str, int]:
     """Best-effort pass/fail/skip counts from pytest or generic test runners."""
     counts = {"passed": 0, "failed": 0, "skipped": 0}
-    m = None
-    for m in _PYTEST_SUMMARY.finditer(output):
-        pass
-    source = m.group("body") if m else output
+    matches = list(_PYTEST_SUMMARY.finditer(output))
+    source = matches[-1].group("body") if matches else output
     found = False
     for n, kind in _COUNT.findall(source):
         found = True

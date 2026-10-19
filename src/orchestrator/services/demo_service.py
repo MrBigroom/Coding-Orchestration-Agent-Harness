@@ -100,6 +100,8 @@ async def run_demo(session: Session, extra_tags: list[str] | None = None) -> dic
         approved = memory_service.approve(session, pending[0].id or 0)
         steps.append(f"{len(pending)} memory suggestion(s) from handoff; approved #{approved.id}"
                      f" ({approved.category}/{approved.scope})")
+    else:
+        steps.append("no new memory suggestions (identical suggestions already indexed)")
     return {"task": task.short_id, "task_id": task.id, "run_id": run_id,
             "status": task.status, "outcome": outcome, "steps": steps,
             "approved_memory_id": approved.id if approved else None}

@@ -9,7 +9,7 @@ from fastapi import Header, HTTPException, Query, status
 
 from orchestrator.core.config import get_settings
 
-TOKEN_HEADER = "X-Orchestrator-Token"
+TOKEN_HEADER = "X-Orchestrator-Token"  # noqa: S105 - header name, not a secret
 
 # Minimal env passed to every child process; adapters add their declared vars on top.
 BASE_ENV_ALLOWLIST = (

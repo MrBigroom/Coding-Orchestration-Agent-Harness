@@ -24,7 +24,8 @@ from orchestrator.utils.json_output import JSONExtractionError, extract_json
 
 _VERDICT = re.compile(r"(?im)^\s*VERDICT:\s*(APPROVED|CHANGES_REQUESTED|NEEDS_HUMAN)\s*$")
 _FINDING = re.compile(r"(?m)^\s*(?:-|\d+[.)])\s+(.+)$")
-_EXEC_CLAIM = re.compile(r"(?i)\bI\s+(?:have\s+)?(?:ran|run|re-ran|reran|executed|grepped|tested)\b")
+_EXEC_CLAIM = re.compile(
+    r"(?i)\bI\s+(?:have\s+)?(?:ran|run|re-ran|reran|executed|grepped|tested)\b")
 
 AMBIGUOUS = ReviewFinding(file_or_area="review output",
                           issue="review output was ambiguous or unparseable; raw output stored",

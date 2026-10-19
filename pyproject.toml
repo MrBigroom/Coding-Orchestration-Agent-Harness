@@ -57,8 +57,10 @@ ignore = [
   "S607",  # partial executable path — binaries are resolved via PATH by design
   "B008",  # FastAPI/Typer default-call idiom
   "S311",  # non-crypto random is fine for short ids
+  "UP047", # keep TypeVar generics (readable on 3.12)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S108"]
-"src/orchestrator/migrations/**" = ["E501"]
+"src/orchestrator/migrations/**" = ["E501", "W291"]
+"src/orchestrator/prompts/**" = ["E501"]

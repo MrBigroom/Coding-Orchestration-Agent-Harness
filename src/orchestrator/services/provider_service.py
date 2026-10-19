@@ -26,13 +26,14 @@ M = TypeVar("M", bound=BaseModel)
 
 # Default base URL for Alibaba Model Studio Token Plan (OpenAI-compatible). The user chose
 # Token Plan as default; see docs/providers.md for the ToS caveat about automated use.
-TOKEN_PLAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+TOKEN_PLAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"  # noqa: S105
 
 DEFAULT_PROVIDERS: list[dict[str, Any]] = [
     {"name": "mock", "kind": "mock", "notes": "Offline deterministic provider (demo/tests)."},
     {"name": "anthropic", "kind": "anthropic", "base_url": "env:ANTHROPIC_BASE_URL",
      "api_key_env": "ANTHROPIC_API_KEY", "notes": "Official Anthropic API (API key auth)."},
-    {"name": "qwen-token-plan", "kind": "openai_compatible", "base_url": f"env:QWEN_OPENAI_BASE_URL|{TOKEN_PLAN_BASE_URL}",
+    {"name": "qwen-token-plan", "kind": "openai_compatible",
+     "base_url": f"env:QWEN_OPENAI_BASE_URL|{TOKEN_PLAN_BASE_URL}",
      "api_key_env": "QWEN_API_KEY",
      "notes": "Alibaba Model Studio (Token Plan by default). WARNING: Token Plan terms restrict "
               "use to interactive coding tools and forbid automated scripts/backends; "
@@ -61,7 +62,8 @@ DEFAULT_PROFILES: list[tuple[str, str, str, str, str | None, bool, str]] = [
      "Default cheap worker / direct-API fallback."),
     ("worker-deepseek-flash", "worker", "qwen-token-plan", "deepseek-v4.1-flash", None, True,
      "DeepSeek worker via Token Plan (direct API model id would be `deepseek-flash`)."),
-    ("worker-glm", "worker", "qwen-token-plan", "glm-5.3", None, True, "GLM worker via Token Plan."),
+    ("worker-glm", "worker", "qwen-token-plan", "glm-5.3", None, True,
+     "GLM worker via Token Plan."),
     ("agent-flash", "agent", "qwen-token-plan", "qwen3.8-flash", None, True,
      "Background/cron agent tasks."),
     ("hermes-local", "agent", "hermes", "hermes", None, False,
