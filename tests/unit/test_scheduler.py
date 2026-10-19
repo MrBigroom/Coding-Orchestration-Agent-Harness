@@ -60,8 +60,10 @@ def test_fire_by_id_creates_task(session):
     from orchestrator.core.models import Task
     from orchestrator.services.scheduler_service import _fire_by_id
 
-    s = scheduler_service.create(session, ScheduleCreate(
-        name="c", cron_expression="* * * * *", task_template_json={"title": "tick"}))
+    s = scheduler_service.create(
+        session,
+        ScheduleCreate(name="c", cron_expression="* * * * *", task_template_json={"title": "tick"}),
+    )
     _fire_by_id(s.id)
     titles = [t.title for t in session.exec(select(Task))]
     assert "tick" in titles
