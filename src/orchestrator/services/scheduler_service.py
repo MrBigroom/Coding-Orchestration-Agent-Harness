@@ -11,9 +11,9 @@ from sqlmodel import Session, select
 
 from orchestrator.core.db import session_scope
 from orchestrator.core.logging import get_logger
-from orchestrator.core.models import Schedule, Task, TaskKind, TaskSource, utcnow
-from orchestrator.core.schemas import ScheduleCreate, ScheduleUpdate, TaskCreate
-from orchestrator.services import log_service, task_service
+from orchestrator.core.models import Schedule, Task, TaskKind, TaskRisk, TaskSource, utcnow
+from orchestrator.core.schemas import AgentRun, ScheduleCreate, ScheduleUpdate, TaskCreate
+from orchestrator.services import agent_service, log_service, task_service
 
 log = get_logger(__name__)
 
@@ -50,13 +50,37 @@ def _template(raw: dict[str, Any], schedule_name: str) -> TaskCreate:
     return TaskCreate.model_validate(data)
 
 
+def _agent_run(raw: dict[str, Any], schedule_name: str) -> AgentRun:
+    """For agent schedules the template only carries the request (and optional title, risk
+    and DoD); model, harness and project come from the agent."""
+    request = str(raw.get("description") or raw.get("title") or "").strip()
+    if not request:
+        raise ValueError(f"schedule {schedule_name!r}: agent schedules need a description")
+    return AgentRun(
+        request=request,
+        title=raw.get("title") or None,
+        risk=raw.get("risk", TaskRisk.low),
+        definition_of_done=raw.get("definition_of_done", []),
+        queue=raw.get("queue", True),
+    )
+
+
+def _validate(session: Session, raw: dict[str, Any], name: str, agent_id: int | None) -> None:
+    if agent_id:
+        agent_service.get(session, agent_id)
+        _agent_run(raw, name)
+    else:
+        _template(raw, name)
+
+
 def create(session: Session, data: ScheduleCreate) -> Schedule:
     times = validate_cron(data.cron_expression)
-    _template(data.task_template_json, data.name)  # validate template up front
+    _validate(session, data.task_template_json, data.name, data.agent_id)
     sched = Schedule(
         name=data.name,
         cron_expression=data.cron_expression,
         task_template_json=data.task_template_json,
+        agent_id=data.agent_id,
         enabled=data.enabled,
         next_run_at=times[0] if times and data.enabled else None,
     )
@@ -70,9 +94,12 @@ def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
     if data.cron_expression is not None:
         validate_cron(data.cron_expression)
         sched.cron_expression = data.cron_expression
+    if data.agent_id is not None:
+        sched.agent_id = data.agent_id or None
     if data.task_template_json is not None:
-        _template(data.task_template_json, sched.name)
         sched.task_template_json = data.task_template_json
+    if data.agent_id is not None or data.task_template_json is not None:
+        _validate(session, sched.task_template_json, sched.name, sched.agent_id)
     if data.enabled is not None:
         sched.enabled = data.enabled
     times = validate_cron(sched.cron_expression)
@@ -95,8 +122,18 @@ def get(session: Session, ref: str | int) -> Schedule:
 
 
 def fire(session: Session, sched: Schedule) -> Task:
-    """Create a task from the schedule's template (and queue it unless template says not)."""
-    task = task_service.create(session, _template(sched.task_template_json, sched.name))
+    """Create a task from the schedule's template (and queue it unless template says not).
+    Agent schedules run the agent, so the task uses the agent's model, harness and project."""
+    if sched.agent_id:
+        task = agent_service.run(
+            session,
+            agent_service.get(session, sched.agent_id),
+            _agent_run(sched.task_template_json, sched.name),
+            source=TaskSource.schedule,
+            created_by=f"schedule:{sched.name}",
+        )
+    else:
+        task = task_service.create(session, _template(sched.task_template_json, sched.name))
     sched.last_run_at = utcnow()
     times = validate_cron(sched.cron_expression)
     sched.next_run_at = times[0] if sched.enabled and times else None
@@ -106,6 +143,35 @@ def fire(session: Session, sched: Schedule) -> Task:
         session, "schedule_fired", f"{sched.name} -> {task.short_id}", task_id=task.id
     )
     return task
+
+
+def token_plan_warning(
+    session: Session, expr: str, agent_id: int | None = None, profile: str | None = None
+) -> str | None:
+    """Token Plan terms rule out high-frequency automation (docs/providers.md). Warn when a
+    schedule on a Token Plan model fires more often than once a day."""
+    try:
+        times = validate_cron(expr, count=4)
+    except CronError:
+        return None
+    gaps = [(b - a).total_seconds() for a, b in zip(times, times[1:], strict=False)]
+    if not gaps or min(gaps) >= 86400:
+        return None
+    if agent_id:
+        try:
+            agent = agent_service.get(session, agent_id)
+        except KeyError:
+            return None
+        profile = agent_service.routing(session, agent).get("profile")
+    elif not profile:
+        profile = "agent-flash"  # default for scheduled agent-kind tasks
+    if not agent_service.uses_token_plan(session, profile):
+        return None
+    return (
+        f"Runs more than once a day on a Token Plan model ({profile}). The Token Plan "
+        "terms exclude high-frequency automated use; prefer daily or less, or a "
+        "pay-as-you-go/local model."
+    )
 
 
 class SchedulerRunner:

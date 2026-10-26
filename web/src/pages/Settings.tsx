@@ -1,6 +1,6 @@
 import { patch } from "../api/client";
 import { getToken, setToken } from "../api/client";
-import { Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
+import { Card, ErrorNote, PageHeader, ThemeSwitch, Toggle } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { useState } from "react";
 
@@ -52,11 +52,16 @@ export default function Settings() {
               ))}
             </div>
           </Card>
+          <Card title="Appearance">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">Theme <span className="block text-xs text-muted">Saved in this browser. System follows your OS setting.</span></span>
+              <ThemeSwitch full />
+            </div>
+          </Card>
           <Card title="Server">
             <dl className="grid grid-cols-2 gap-y-2 text-sm">
               <dt className="text-muted">Bind</dt><dd className="mono">{String(data.bind_host)}:{String(data.bind_port)}</dd>
               <dt className="text-muted">Token auth</dt><dd>{data.token_auth_enabled ? "enabled (ORCHESTRATOR_TOKEN)" : "disabled"}</dd>
-              <dt className="text-muted">Theme</dt><dd>dark</dd>
             </dl>
           </Card>
           <Card title="This browser's token">

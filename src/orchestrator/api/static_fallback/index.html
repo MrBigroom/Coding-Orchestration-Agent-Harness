@@ -35,7 +35,7 @@
 <body>
 <nav>
   <h1>coding-orchestrator</h1><small>fallback UI</small>
-  <a data-view="dashboard">Dashboard</a><a data-view="tasks">Tasks</a><a data-view="memory">Memory</a>
+  <a data-view="dashboard">Dashboard</a><a data-view="tasks">Tasks</a><a data-view="agents">Agents</a><a data-view="memory">Memory</a>
   <a data-view="prompt">Prompt Cache</a><a data-view="adapters">Adapters</a><a data-view="providers">Providers</a>
   <a data-view="schedules">Schedules</a><a data-view="buildlog">Build Log</a><a data-view="settings">Settings</a>
 </nav>
@@ -152,11 +152,23 @@ const views = {
       <h2>Model profiles</h2><div class="card"><table><tr><th>Name</th><th>Role</th><th>Model</th><th>Effort</th><th>Enabled</th></tr>
       ${m.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.role)}</td><td><code>${esc(x.model_name)}</code></td><td>${esc(x.effort || "—")}</td><td>${x.enabled ? "yes" : "no"}</td></tr>`).join("")}</table></div>`);
   },
+  async agents() {
+    const a = await api("/agents");
+    show(`<h2>Agents</h2><div class="card"><table><tr><th>Name</th><th>Model</th><th>Harness</th><th>Project</th><th>Request</th><th></th></tr>
+      ${a.map((x) => `<tr><td>${esc(x.name)}</td><td><code>${esc(x.model_profile || "auto")}</code></td><td><code>${esc(x.harness_adapter || "auto")}</code></td><td>${esc(x.project_id || "—")}</td><td><input data-req="${x.id}" placeholder="what should it do?"></td><td><button data-a="${x.id}" ${x.enabled ? "" : "disabled"}>Run</button></td></tr>`).join("")}</table>
+      <p class="muted">Create agents with <code>orchestrator agent add NAME --model PROFILE --project PROJECT --instructions "..."</code>.</p></div>`);
+    $main.querySelectorAll("button[data-a]").forEach((b) => b.onclick = () => guard(async () => {
+      const request = $main.querySelector(`input[data-req="${b.dataset.a}"]`).value.trim();
+      if (!request) return;
+      const t = await post(`/agents/${b.dataset.a}/run`, { request });
+      location.hash = `task/${t.id}`;
+    }));
+  },
   async schedules() {
     const s = await api("/schedules");
     show(`<h2>Schedules</h2><div class="card"><table><tr><th>Name</th><th>Cron</th><th>Enabled</th><th>Next run</th><th></th></tr>
       ${s.map((x) => `<tr><td>${esc(x.name)}</td><td><code>${esc(x.cron_expression)}</code></td><td>${x.enabled ? "yes" : "no"}</td><td>${esc(x.next_run_at || "—")}</td><td><button data-s="${x.id}">Run now</button></td></tr>`).join("")}</table>
-      <p class="muted">Create schedules with <code>orchestrator schedule add NAME "CRON" --template '{...}'</code>.</p></div>`);
+      <p class="muted">Create schedules with <code>orchestrator schedule add NAME "CRON" --agent AGENT --template '{"description": "..."}'</code>.</p></div>`);
     $main.querySelectorAll("button[data-s]").forEach((b) => b.onclick = () => guard(async () => { await post(`/schedules/${b.dataset.s}/run`); views.schedules(); }));
   },
   async buildlog() {

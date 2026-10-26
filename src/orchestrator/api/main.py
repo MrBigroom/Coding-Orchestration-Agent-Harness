@@ -158,6 +158,7 @@ def create_app() -> FastAPI:
         return err(400, str(e))
 
     from orchestrator.api.routes import (
+        agents,
         artifacts,
         core,
         memory,
@@ -167,7 +168,7 @@ def create_app() -> FastAPI:
         ws,
     )
 
-    for module in (core, tasks, artifacts, providers, schedules, memory):
+    for module in (core, tasks, artifacts, providers, schedules, memory, agents):
         app.include_router(module.router, prefix="/api")
     app.include_router(ws.router)
 

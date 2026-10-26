@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, post } from "../api/client";
 import type { Project, Task } from "../api/types";
 import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Pre, lines } from "../components/ui";
@@ -63,7 +63,8 @@ function CreateTask({ projects, onCreated }: { projects: Project[]; onCreated: (
 }
 
 export default function Tasks() {
-  const [filters, setFilters] = useState({ status: "", project_id: "", kind: "", risk: "", tag: "" });
+  const [params] = useSearchParams();
+  const [filters, setFilters] = useState({ status: params.get("status") ?? "", project_id: "", kind: "", risk: "", tag: "" });
   const query = useMemo(() => {
     const q = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => v && q.set(k, v));
@@ -72,7 +73,7 @@ export default function Tasks() {
   }, [filters]);
   const { data: tasks, error, reload } = useApi<Task[]>(query, 5000);
   const { data: projects } = useApi<Project[]>("/projects");
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(params.get("new") === "1");
   const [preview, setPreview] = useState<{ id: number; data: unknown } | null>(null);
   const act = useAction();
   const action = (t: Task, verb: string, body?: unknown) => act.run(async () => { await post(`/tasks/${t.id}/${verb}`, body); await reload(); });

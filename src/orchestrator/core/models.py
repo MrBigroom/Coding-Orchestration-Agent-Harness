@@ -152,6 +152,27 @@ class Task(SQLModel, table=True):
     merge_status: str | None = None
     created_by: str = "user"
     source: str = Field(default=TaskSource.manual, sa_column=Column(String(16), nullable=False))
+    # Saved agent that created this task (soft reference: agents can be deleted).
+    agent_id: int | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Agent(SQLModel, table=True):
+    """A saved, reusable agent: instructions + model (+ optional project and harness).
+    Each run creates a task; with a project it goes through the full worker gate."""
+
+    __tablename__ = "agents"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    description: str = ""
+    instructions: str = Field(default="", sa_column=Column(Text, nullable=False))
+    model_profile: str | None = None
+    harness_adapter: str | None = None
+    project_id: int | None = Field(default=None, foreign_key="projects.id")
+    tags: list[str] = _json([])
+    enabled: bool = True
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -216,6 +237,8 @@ class Schedule(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     cron_expression: str
     task_template_json: dict[str, Any] = _json({})
+    # When set, each fire runs this saved agent with the template's description as the request.
+    agent_id: int | None = Field(default=None, index=True)
     enabled: bool = True
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None

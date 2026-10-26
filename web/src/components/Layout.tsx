@@ -1,19 +1,25 @@
 import { useEffect, useState, type ReactNode } from "react";
+import {
+  Bot, Brain, CalendarClock, Cpu, DatabaseZap, FolderGit2, LayoutDashboard, ListChecks,
+  ScrollText, Settings, Workflow, Wrench, type LucideIcon,
+} from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { getToken, setToken } from "../api/client";
+import { ThemeSwitch } from "./ui";
 
-const NAV = [
-  ["/", "Dashboard"],
-  ["/tasks", "Tasks"],
-  ["/projects", "Projects"],
-  ["/models", "Models & Providers"],
-  ["/adapters", "Adapters"],
-  ["/memory", "Memory"],
-  ["/prompt-preview", "Prompt Cache"],
-  ["/schedules", "Schedules"],
-  ["/build-log", "Build Log"],
-  ["/settings", "Settings"],
-] as const;
+const NAV: readonly (readonly [string, string, LucideIcon])[] = [
+  ["/", "Dashboard", LayoutDashboard],
+  ["/tasks", "Tasks", ListChecks],
+  ["/agents", "Agents", Bot],
+  ["/schedules", "Scheduled Tasks", CalendarClock],
+  ["/projects", "Projects", FolderGit2],
+  ["/models", "Models & Providers", Cpu],
+  ["/adapters", "Adapters", Wrench],
+  ["/memory", "Memory", Brain],
+  ["/prompt-preview", "Prompt Cache", DatabaseZap],
+  ["/build-log", "Build Log", ScrollText],
+  ["/settings", "Settings", Settings],
+];
 
 export default function Layout({ children }: { children: ReactNode }) {
   const [needToken, setNeedToken] = useState(false);
@@ -27,27 +33,36 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
-        <div className="px-4 py-4">
-          <div className="text-sm font-semibold tracking-wide">coding-orchestrator</div>
-          <div className="text-xs text-muted">local control plane</div>
+      <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-panel">
+        <div className="flex items-center gap-2.5 px-4 py-5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl text-white" style={{ background: "var(--gradient-brand)" }}>
+            <Workflow size={17} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <div>
+            <div className="text-sm font-semibold leading-tight">coding-orchestrator</div>
+            <div className="text-xs text-muted">local control plane</div>
+          </div>
         </div>
         <nav className="flex-1 space-y-0.5 px-2">
-          {NAV.map(([to, label]) => (
+          {NAV.map(([to, label, Icon]) => (
             <NavLink key={to} to={to} end={to === "/"}
               className={({ isActive }) =>
-                `block rounded-md px-3 py-1.5 text-sm ${isActive ? "bg-accent/15 text-accent" : "text-muted hover:bg-panel-2 hover:text-ink"}`}>
+                `flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors ${isActive ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-panel-2 hover:text-ink"}`}>
+              <Icon size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
               {label}
             </NavLink>
           ))}
         </nav>
-        <div className="px-4 py-3 text-xs text-muted">127.0.0.1 · no telemetry</div>
+        <div className="space-y-3 border-t border-line px-4 py-3">
+          <ThemeSwitch />
+          <div className="text-xs text-muted">127.0.0.1 · no telemetry</div>
+        </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto px-8 py-6">{children}</main>
+      <main className="min-w-0 flex-1 overflow-auto px-8 py-7">{children}</main>
 
       {needToken && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <form className="card w-full max-w-sm p-5" onSubmit={(e) => { e.preventDefault(); setToken(draft.trim()); setNeedToken(false); location.reload(); }}>
+          <form className="card w-full max-w-sm p-5 shadow-(--shadow-pop)" onSubmit={(e) => { e.preventDefault(); setToken(draft.trim()); setNeedToken(false); location.reload(); }}>
             <h3 className="mb-1 font-semibold">Token required</h3>
             <p className="mb-3 text-sm text-muted">This server has ORCHESTRATOR_TOKEN set. Enter it to continue.</p>
             <input className="input mb-4" type="password" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />

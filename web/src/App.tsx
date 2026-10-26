@@ -1,6 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import Adapters from "./pages/Adapters";
+import Agents from "./pages/Agents";
 import BuildLog from "./pages/BuildLog";
 import Dashboard from "./pages/Dashboard";
 import Memory from "./pages/Memory";
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/adapters" element={<Adapters />} />
         <Route path="/memory" element={<Memory />} />
         <Route path="/prompt-preview" element={<PromptPreview />} />
+        <Route path="/agents" element={<Agents />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/build-log" element={<BuildLog />} />
         <Route path="/settings" element={<Settings />} />

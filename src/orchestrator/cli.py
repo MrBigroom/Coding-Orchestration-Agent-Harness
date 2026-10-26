@@ -27,6 +27,7 @@ providers_app = typer.Typer(help="Model providers.", no_args_is_help=True)
 models_app = typer.Typer(help="Model profiles.", no_args_is_help=True)
 schedule_app = typer.Typer(help="Cron schedules.", no_args_is_help=True)
 memory_app = typer.Typer(help="Shared memory.", no_args_is_help=True)
+agent_app = typer.Typer(help="Saved agents.", no_args_is_help=True)
 for sub, name in (
     (project_app, "project"),
     (task_app, "task"),
@@ -35,6 +36,7 @@ for sub, name in (
     (models_app, "models"),
     (schedule_app, "schedule"),
     (memory_app, "memory"),
+    (agent_app, "agent"),
 ):
     app.add_typer(sub, name=name)
 
@@ -801,25 +803,35 @@ def schedule_add(
     name: str,
     cron: str,
     template: str = typer.Option("{}", help="Task template JSON (TaskCreate)."),
+    agent: str | None = typer.Option(
+        None, help="Run this saved agent; the template's description is the request."
+    ),
     disabled: bool = typer.Option(False),
 ) -> None:
     from orchestrator.core.schemas import ScheduleCreate
-    from orchestrator.services import scheduler_service
+    from orchestrator.services import agent_service, scheduler_service
 
     _ensure_ready()
     with _session() as s:
+        agent_id = agent_service.get(s, agent).id if agent else None
         sc = scheduler_service.create(
             s,
             ScheduleCreate(
                 name=name,
                 cron_expression=cron,
                 task_template_json=json.loads(template),
+                agent_id=agent_id,
                 enabled=not disabled,
             ),
         )
         console.print(
             f"[green]added[/green] schedule #{sc.id} {sc.name}; next run {sc.next_run_at}"
         )
+        warning = scheduler_service.token_plan_warning(
+            s, cron, agent_id, sc.task_template_json.get("assigned_provider_profile")
+        )
+        if warning:
+            err.print(f"[yellow]warning:[/yellow] {warning}")
 
 
 @schedule_app.command("list")
@@ -1028,3 +1040,84 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------- agents
+
+
+@agent_app.command("add")
+@handled
+def agent_add(
+    name: str,
+    instructions: str = typer.Option("", help="Standing instructions for every run."),
+    description: str = typer.Option(""),
+    model: str | None = typer.Option(None, help="Model profile name (default: automatic)."),
+    harness: str | None = typer.Option(None, help="Harness adapter (default: routed by model)."),
+    project: str | None = typer.Option(None, help="Project (without one it can't edit code)."),
+    tag: list[str] = typer.Option([], help="Tags added to every run (repeatable)."),
+) -> None:
+    from orchestrator.core.schemas import AgentCreate
+    from orchestrator.services import agent_service, project_service
+
+    _ensure_ready()
+    with _session() as s:
+        project_id = project_service.get(s, project).id if project else None
+        a = agent_service.create(
+            s,
+            AgentCreate(
+                name=name,
+                instructions=instructions,
+                description=description,
+                model_profile=model,
+                harness_adapter=harness,
+                project_id=project_id,
+                tags=tag,
+            ),
+        )
+        r = agent_service.routing(s, a)
+        console.print(f"[green]added[/green] agent #{a.id} {a.name}")
+        console.print(f"  model:   {r['profile']}  ({r['profile_reason']})")
+        console.print(f"  harness: {r['harness'] or '-'}  ({r['harness_reason']})")
+
+
+@agent_app.command("list")
+@handled
+def agent_list() -> None:
+    from orchestrator.services import agent_service
+
+    _ensure_ready()
+    with _session() as s:
+        table = Table("id", "name", "model", "harness", "project", "enabled")
+        for a in agent_service.list_agents(s):
+            r = agent_service.routing(s, a)
+            table.add_row(
+                str(a.id),
+                a.name,
+                r["profile"] or "-",
+                r["harness"] or "-",
+                str(a.project_id or "-"),
+                "yes" if a.enabled else "no",
+            )
+    console.print(table)
+
+
+@agent_app.command("run")
+@handled
+def agent_run(
+    agent: str,
+    request: str,
+    title: str | None = typer.Option(None),
+    dod: list[str] = typer.Option([], help="Definition of Done item (repeatable)."),
+    no_queue: bool = typer.Option(False, help="Create the task without queueing it."),
+) -> None:
+    from orchestrator.core.schemas import AgentRun
+    from orchestrator.services import agent_service
+
+    _ensure_ready()
+    with _session() as s:
+        t = agent_service.run(
+            s,
+            agent_service.get(s, agent),
+            AgentRun(request=request, title=title, definition_of_done=dod, queue=not no_queue),
+        )
+        console.print(f"[green]created[/green] {t.short_id} ({t.status}): {t.title}")
