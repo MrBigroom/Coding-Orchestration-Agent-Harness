@@ -28,6 +28,9 @@ models_app = typer.Typer(help="Model profiles.", no_args_is_help=True)
 schedule_app = typer.Typer(help="Cron schedules.", no_args_is_help=True)
 memory_app = typer.Typer(help="Shared memory.", no_args_is_help=True)
 agent_app = typer.Typer(help="Saved agents.", no_args_is_help=True)
+desktop_app = typer.Typer(
+    help="Desktop app: run it (no subcommand), install/uninstall the launcher, stop the server."
+)
 for sub, name in (
     (project_app, "project"),
     (task_app, "task"),
@@ -37,6 +40,7 @@ for sub, name in (
     (schedule_app, "schedule"),
     (memory_app, "memory"),
     (agent_app, "agent"),
+    (desktop_app, "desktop"),
 ):
     app.add_typer(sub, name=name)
 
@@ -183,6 +187,53 @@ def serve(
         reload=reload,
         log_level=s.log_level.lower(),
     )
+
+
+@desktop_app.callback(invoke_without_command=True)
+def desktop(
+    ctx: typer.Context,
+    debug: bool = typer.Option(False, help="Enable the web inspector."),
+) -> None:
+    """Open the GUI in a native window (starts or attaches to the server)."""
+    if ctx.invoked_subcommand:
+        return
+    from orchestrator import desktop as d
+
+    try:
+        d.run(debug=debug)
+    except d.DesktopError as e:
+        err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(1) from e
+
+
+@desktop_app.command("install")
+def desktop_install() -> None:
+    """Add the app-menu launcher and icon for the current user (~/.local/share)."""
+    from orchestrator import desktop as d
+
+    for path in d.install(Path.cwd()):
+        console.print(f"[green]installed[/green] {path}")
+    console.print(f"Working directory for .env: {Path.cwd()}")
+
+
+@desktop_app.command("uninstall")
+def desktop_uninstall() -> None:
+    """Remove the launcher and icon."""
+    from orchestrator import desktop as d
+
+    removed = d.uninstall()
+    for path in removed:
+        console.print(f"removed {path}")
+    if not removed:
+        console.print("nothing installed")
+
+
+@desktop_app.command("stop")
+def desktop_stop() -> None:
+    """Stop a server the desktop app left running in the background."""
+    from orchestrator import desktop as d
+
+    console.print("stopped" if d.stop_background() else "no background server running")
 
 
 @app.command("open")

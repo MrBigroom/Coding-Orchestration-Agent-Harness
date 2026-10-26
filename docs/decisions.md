@@ -127,3 +127,12 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   System), applied before first paint. This replaces the spec's "dark by default"; the
   server `theme` setting is kept for API compatibility. No Qwen logos or brand marks are
   used.
+- **2026-10-26 — Desktop app = pywebview window + user launcher, not a bundled binary.**
+  `orchestrator desktop` opens the GUI in a WebKitGTK window, and
+  `orchestrator desktop install` writes a `.desktop` entry and icon to `~/.local/share`
+  that run this repo's venv. The server runs as a detached `orchestrator serve` child, so
+  it can outlive the window when the user chooses "Keep running". The app attaches to an
+  existing server instead of starting a second one, and only stops servers it started.
+  We rejected an AppImage (~150 MB, rebuild per change) and Tauri (extra Rust build, still
+  needs Python). pywebview is an optional extra (`.[desktop]`), so the core install stays
+  headless.

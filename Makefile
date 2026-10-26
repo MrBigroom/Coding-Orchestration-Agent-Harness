@@ -4,7 +4,7 @@ VENV  := .venv/bin
 PORT  ?= $(or $(ORCHESTRATOR_BIND_PORT),8321)
 FILE  ?= memory-export.json
 
-.PHONY: setup dev start test lint format doctor demo build clean memory-export memory-import
+.PHONY: setup dev start test lint format doctor demo build clean memory-export memory-import desktop desktop-install desktop-uninstall
 
 setup:          ## venv + deps (+ npm if present), init home, alembic upgrade head
 	./scripts/setup.sh
@@ -32,6 +32,15 @@ demo:
 
 build:          ## build the React GUI
 	./scripts/build.sh
+
+desktop:        ## open the GUI in a native window (starts or attaches to the server)
+	$(VENV)/orchestrator desktop
+
+desktop-install:   ## install pywebview, build the GUI, add the app-menu launcher + icon
+	./scripts/desktop-install.sh
+
+desktop-uninstall: ## remove the launcher + icon
+	$(VENV)/orchestrator desktop uninstall
 
 clean:          ## remove build/test caches (never touches ORCHESTRATOR_HOME data)
 	rm -rf web/dist .pytest_cache .ruff_cache build dist *.egg-info

@@ -27,6 +27,10 @@ dev = [
   "pytest>=8",
   "ruff>=0.6",
 ]
+# Native desktop window (WebKitGTK). Needs the system GTK3 + WebKit2GTK 4.1 libraries.
+desktop = [
+  "pywebview[gtk]>=5",
+]
 
 [project.scripts]
 orchestrator = "orchestrator.cli:main"

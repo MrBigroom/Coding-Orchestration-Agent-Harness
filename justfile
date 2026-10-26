@@ -29,6 +29,15 @@ demo *ARGS:
 build:
     ./scripts/build.sh
 
+desktop:
+    {{venv}}/orchestrator desktop
+
+desktop-install:
+    ./scripts/desktop-install.sh
+
+desktop-uninstall:
+    {{venv}}/orchestrator desktop uninstall
+
 clean:
     rm -rf web/dist .pytest_cache .ruff_cache build dist *.egg-info
     find . -name __pycache__ -type d -prune -not -path "./web/node_modules/*" -exec rm -rf {} +
