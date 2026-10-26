@@ -1,41 +1,81 @@
 @import "tailwindcss";
 @config "../../tailwind.config.js";
 
-/* Dark theme by default; system fonts only (no external CDNs). */
+/* Design tokens modelled on Qwen Cloud's console: Inter / Roboto Mono (bundled via main.tsx, no CDN),
+   violet accent, soft panels, 18px cards and pill buttons. Light is the base palette;
+   [data-theme="dark"] on <html> swaps the colors (set before first paint by the inline script in index.html; see src/theme.ts). */
 @theme {
-  --color-bg: #0d1117;
-  --color-panel: #151b23;
-  --color-panel-2: #1c2430;
-  --color-line: #2a3442;
-  --color-ink: #e6edf3;
-  --color-muted: #8b98a8;
-  --color-accent: #6aa7ff;
-  --color-ok: #3fb950;
-  --color-warn: #d29922;
-  --color-bad: #f85149;
-  --color-info: #a371f7;
-  --font-sans: ui-sans-serif, system-ui, "Inter", "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, monospace;
+  --color-bg: #f9fafd;
+  --color-panel: #ffffff;
+  --color-panel-2: #f2f4f8;
+  --color-line: #e6e9ef;
+  --color-line-strong: #d1d7e2;
+  --color-ink: #0b0c0f;
+  --color-ink-2: #535b6b;
+  --color-muted: #707889;
+  --color-accent: #653aff;
+  --color-accent-soft: #f1edff;
+  --color-on-accent: #ffffff;
+  --color-ok: #0da740;
+  --color-warn: #c2780a;
+  --color-bad: #e5484d;
+  --color-info: #2d6beb;
+  --color-pink: #d64eff;
+  --color-orange: #ff9064;
+  --font-sans: "Inter Variable", "Inter", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --radius-card: 18px;
+  --shadow-card: 0 8px 24px rgb(83 91 107 / 0.06);
+  --shadow-pop: 0 16px 48px rgb(83 91 107 / 0.1);
+  --gradient-brand: linear-gradient(90deg, #5200fc 17%, #d64eff 47%, #ff9064 94%);
+}
+
+[data-theme="dark"] {
+  --color-bg: #0b0c0f;
+  --color-panel: #14161b;
+  --color-panel-2: #1c1f26;
+  --color-line: #272b34;
+  --color-line-strong: #353a45;
+  --color-ink: #f2f4f8;
+  --color-ink-2: #c3c9d4;
+  --color-muted: #8e96a7;
+  --color-accent: #8b6bff;
+  --color-accent-soft: #221a40;
+  --color-on-accent: #ffffff;
+  --color-ok: #3ccf6e;
+  --color-warn: #f5b33b;
+  --color-bad: #ff6b6f;
+  --color-info: #5b9bff;
+  --shadow-card: 0 8px 24px rgb(0 0 0 / 0.25);
+  --shadow-pop: 0 16px 48px rgb(0 0 0 / 0.4);
+  --gradient-brand: linear-gradient(90deg, #8a5cff 10%, #e07bff 50%, #ffa27f 95%);
+  color-scheme: dark;
 }
 
 html, body, #root { height: 100%; }
-body { background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans); }
-::selection { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
+html { color-scheme: light; }
+body {
+  background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased; font-feature-settings: "cv11", "ss01";
+}
+::selection { background: color-mix(in srgb, var(--color-accent) 25%, transparent); }
 pre, code, .mono { font-family: var(--font-mono); }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-panel-2 px-3 py-1.5 text-sm
-      text-ink hover:border-accent/60 hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line-strong bg-panel px-3.5 py-1.5 text-sm
+      font-medium text-ink transition-colors hover:border-accent/60 hover:bg-panel-2 disabled:cursor-not-allowed disabled:opacity-50;
   }
-  .btn-primary { @apply border-accent/70 bg-accent/15 text-accent hover:bg-accent/25; }
-  .btn-danger { @apply border-bad/60 text-bad hover:bg-bad/10; }
+  .btn-primary { @apply border-ink bg-ink text-bg hover:border-ink hover:bg-ink/85; }
+  .btn-accent { @apply border-accent bg-accent text-on-accent hover:border-accent hover:bg-accent/90; }
+  .btn-danger { @apply border-bad/50 text-bad hover:bg-bad/10; }
   .input {
-    @apply w-full rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-ink outline-none
-      placeholder:text-muted focus:border-accent;
+    @apply w-full rounded-xl border border-line-strong bg-panel px-3 py-1.5 text-sm text-ink outline-none
+      transition-colors placeholder:text-muted focus:border-accent focus:ring-3 focus:ring-accent/15;
   }
-  .label { @apply mb-1 block text-xs font-medium uppercase tracking-wide text-muted; }
-  .card { @apply rounded-lg border border-line bg-panel; }
-  .th { @apply px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted; }
+  .label { @apply mb-1 block text-xs font-medium text-ink-2; }
+  .card { @apply rounded-(--radius-card) border border-line bg-panel shadow-(--shadow-card); }
+  .th { @apply px-3 py-2 text-left text-xs font-medium text-muted; }
   .td { @apply border-t border-line px-3 py-2 align-top text-sm; }
+  .text-gradient { background: var(--gradient-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
 }

@@ -118,3 +118,12 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   with an assigned profile and harness. With a project it is `coding` and fully gated;
   without one it is `agent` (direct API). Schedules on Token Plan models that fire more
   than once a day get a warning, not a block. See `agents.md`.
+- **2026-10-26 — GUI design: Qwen Cloud-style light and dark themes.** The tokens come
+  from qwencloud.com: Inter / Roboto Mono, ink `#0B0C0F`, page `#F9FAFD`, panels
+  `#F2F4F8`, borders `#E6E9EF`, violet accent `#653AFF` on `#F1EDFF`, the
+  violet→pink→orange heading gradient, 18px cards and pill buttons. The dark theme uses
+  the same shapes with a matching dark palette. Fonts ship with the build (`@fontsource`),
+  so there are still no external requests. The theme is a per-browser preference (default
+  System), applied before first paint. This replaces the spec's "dark by default"; the
+  server `theme` setting is kept for API compatibility. No Qwen logos or brand marks are
+  used.

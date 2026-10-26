@@ -44,6 +44,11 @@ Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `max_parallel_runs_per_project`, `scheduler_enabled`, `worker_enabled`,
 `allow_gui_commands`, `max_review_rounds` (default 3), and `theme` (dark).
 
+The React GUI doesn't read the stored `theme` setting. Theme is a per-browser choice
+(Light / Dark / System, default System) made in the sidebar or on Settings → Appearance,
+and saved in the browser's `localStorage` under `orchestrator.theme`. The fallback UI is
+dark only.
+
 ## Provider variables
 
 `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `QWEN_OPENAI_BASE_URL`, `QWEN_API_KEY`,

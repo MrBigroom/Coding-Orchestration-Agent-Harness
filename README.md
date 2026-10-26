@@ -69,7 +69,8 @@ cron. See [`docs/agents.md`](docs/agents.md).
 The GUI covers the same workflows. Its pages are Dashboard, Tasks, Task Detail (live
 logs, diff, handoff, review, verification, accept/reject/escalate, retry with a
 different harness/model), Agents, Scheduled Tasks, Projects, Models & Providers,
-Adapters, Memory, Prompt Cache, Build Log, and Settings.
+Adapters, Memory, Prompt Cache, Build Log, and Settings. It has light and dark themes
+(switch in the sidebar or on Settings), with fonts bundled locally.
 
 ## Adding real providers
 

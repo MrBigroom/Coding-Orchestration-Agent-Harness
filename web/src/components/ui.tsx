@@ -1,4 +1,6 @@
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { useTheme, type ThemePref } from "../theme";
 
 const TONE: Record<string, string> = {
   accepted: "ok", completed: "ok", pass: "ok", APPROVED: "ok", approved: "ok", merged: "ok", ready: "ok",
@@ -14,13 +16,14 @@ const TONE_CLASS: Record<string, string> = {
   bad: "border-bad/40 bg-bad/10 text-bad",
   info: "border-info/40 bg-info/10 text-info",
   muted: "border-line bg-panel-2 text-muted",
+  accent: "border-accent/30 bg-accent-soft text-accent",
 };
 
 export function Badge({ value, tone }: { value: string | null | undefined; tone?: string }) {
   if (!value) return <span className="text-muted">—</span>;
   const t = tone ?? TONE[value] ?? "muted";
   return (
-    <span className={`inline-block whitespace-nowrap rounded border px-1.5 py-0.5 text-xs font-medium ${TONE_CLASS[t]}`}>
+    <span className={`inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${TONE_CLASS[t]}`}>
       {value.replace(/_/g, " ")}
     </span>
   );
@@ -32,12 +35,12 @@ export function Card({ title, actions, children, className = "" }: {
   return (
     <section className={`card ${className}`}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+        <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
           <h2 className="text-sm font-semibold">{title}</h2>
           <div className="flex flex-wrap items-center gap-2">{actions}</div>
         </header>
       )}
-      <div className="p-4">{children}</div>
+      <div className="p-5">{children}</div>
     </section>
   );
 }
@@ -46,8 +49,8 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-xl font-semibold">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-ink-2">{subtitle}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-2">{actions}</div>
     </div>
@@ -89,7 +92,7 @@ export function ConfirmButton({ label, message, onConfirm, danger = true, disabl
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>
-          <div role="dialog" aria-modal="true" className="card w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" className="card w-full max-w-md p-5 shadow-(--shadow-pop)" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-2 font-semibold">{label}?</h3>
             <p className="mb-5 text-sm text-muted">{message}</p>
             <div className="flex justify-end gap-2">
@@ -118,8 +121,8 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
   return (
     <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
       className="inline-flex items-center gap-2 text-sm">
-      <span className={`relative h-5 w-9 rounded-full border transition ${checked ? "border-accent bg-accent/40" : "border-line bg-panel-2"}`}>
-        <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-ink transition-all ${checked ? "left-4.5" : "left-0.5"}`} />
+      <span className={`relative h-5 w-9 rounded-full transition-colors ${checked ? "bg-accent" : "bg-line-strong"}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${checked ? "left-4.5" : "left-0.5"}`} />
       </span>
       {label}
     </button>
@@ -134,4 +137,23 @@ export function fmtTime(s: string | null | undefined): string {
 
 export function lines(s: string): string[] {
   return s.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+const THEMES: [ThemePref, string, typeof Sun][] = [["light", "Light", Sun], ["dark", "Dark", Moon], ["system", "System", Monitor]];
+
+/** Segmented Light / Dark / System control. `full` shows labels next to the icons. */
+export function ThemeSwitch({ full = false }: { full?: boolean }) {
+  const [pref, setPref] = useTheme();
+  return (
+    <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-full border border-line bg-panel-2 p-0.5">
+      {THEMES.map(([value, label, Icon]) => (
+        <button key={value} type="button" role="radio" aria-checked={pref === value} title={label}
+          onClick={() => setPref(value)}
+          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs transition-colors ${pref === value ? "bg-panel text-ink shadow-(--shadow-card)" : "text-muted hover:text-ink"}`}>
+          <Icon size={14} aria-hidden="true" />
+          {(full || pref === value) && <span>{label}</span>}
+        </button>
+      ))}
+    </div>
+  );
 }
