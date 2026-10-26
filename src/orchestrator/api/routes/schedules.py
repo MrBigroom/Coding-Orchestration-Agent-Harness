@@ -23,6 +23,8 @@ def dump(obj: Any) -> dict[str, Any]:
 
 class CronCheck(BaseModel):
     cron_expression: str
+    agent_id: int | None = None
+    model_profile: str | None = None
 
 
 @router.get("/schedules")
@@ -50,10 +52,19 @@ def run_schedule(schedule_id: int, session: Session = SessionDep) -> dict[str, A
     return dump(task)
 
 
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(schedule_id: int, session: Session = SessionDep) -> None:
+    session.delete(scheduler_service.get(session, schedule_id))
+    session.commit()
+
+
 @router.post("/schedules/validate")
-def validate(body: CronCheck) -> dict[str, Any]:
+def validate(body: CronCheck, session: Session = SessionDep) -> dict[str, Any]:
     try:
         times = scheduler_service.validate_cron(body.cron_expression)
-        return {"valid": True, "next_runs": [t.isoformat() for t in times]}
+        warning = scheduler_service.token_plan_warning(
+            session, body.cron_expression, body.agent_id, body.model_profile
+        )
+        return {"valid": True, "next_runs": [t.isoformat() for t in times], "warning": warning}
     except scheduler_service.CronError as e:
         return {"valid": False, "error": str(e)}

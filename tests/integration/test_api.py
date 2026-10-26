@@ -15,7 +15,7 @@ def client(initialized):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert r.json()["db_revision"] == "0001_baseline"
+    assert r.json()["db_revision"] == "0002_agents"
 
 
 def test_task_creation_and_validation(client):
@@ -174,3 +174,28 @@ def test_fallback_ui_served(client, monkeypatch):
     assert r.status_code == 200 and "<html" in r.text.lower()
     assert client.get("/tasks/1").status_code == 200  # SPA route
     assert client.get("/api/nope").status_code == 404
+
+
+def test_agents_api(client):
+    r = client.post("/api/agents", json={"name": "helper", "model_profile": "mock-agent"})
+    assert r.status_code == 201
+    aid = r.json()["id"]
+    assert client.post("/api/agents", json={"name": "helper"}).status_code == 400
+    r = client.post(f"/api/agents/{aid}/run", json={"request": "say hi", "queue": False})
+    assert r.status_code == 201 and r.json()["agent_id"] == aid
+    body = client.get(f"/api/agents/{aid}").json()
+    assert body["routing"]["profile"] == "mock-agent" and len(body["recent_tasks"]) == 1
+    s = client.post(
+        "/api/schedules",
+        json={
+            "name": "hourly",
+            "cron_expression": "0 * * * *",
+            "agent_id": aid,
+            "task_template_json": {"description": "ping"},
+        },
+    ).json()
+    assert client.delete(f"/api/agents/{aid}").status_code == 400
+    assert client.delete(f"/api/schedules/{s['id']}").status_code == 204
+    assert client.delete(f"/api/agents/{aid}").status_code == 204
+    v = client.post("/api/schedules/validate", json={"cron_expression": "*/5 * * * *"}).json()
+    assert v["valid"] and v["warning"]

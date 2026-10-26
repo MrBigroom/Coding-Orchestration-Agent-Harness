@@ -57,6 +57,7 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
 
 export const post = <T = unknown>(path: string, json?: unknown) => api<T>(path, { method: "POST", json: json ?? {} });
 export const patch = <T = unknown>(path: string, json: unknown) => api<T>(path, { method: "PATCH", json });
+export const del = <T = unknown>(path: string) => api<T>(path, { method: "DELETE" });
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";

@@ -110,3 +110,11 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-10-26 — Redaction no longer hides token counts.** Keys ending in `tokens` with
   an all-digit value (`"inputTokens": 400`, `max_tokens=16000`) are usage numbers, not
   secrets. Singular `token` keys are still redacted.
+- **2026-10-26 — Saved agents and agent schedules (revision `0002_agents`).** These are
+  additive contract changes: a new `agents` table, nullable soft-reference
+  `tasks.agent_id` and `schedules.agent_id` (no FK, so deleting an agent keeps its
+  tasks), and new `/api/agents` routes plus `DELETE /api/schedules/{id}`. Existing
+  request and response shapes only gain optional fields. An agent run is an ordinary task
+  with an assigned profile and harness. With a project it is `coding` and fully gated;
+  without one it is `agent` (direct API). Schedules on Token Plan models that fire more
+  than once a day get a warning, not a block. See `agents.md`.

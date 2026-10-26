@@ -168,6 +168,7 @@ class TaskCreate(BaseModel):
     assigned_harness_adapter: str | None = None
     source: TaskSource = TaskSource.manual
     created_by: str = "user"
+    agent_id: int | None = None
     queue: bool = False
 
     @field_validator("tags")
@@ -264,13 +265,60 @@ class ScheduleCreate(BaseModel):
     name: str
     cron_expression: str
     task_template_json: dict[str, Any] = Field(default_factory=dict)
+    agent_id: int | None = None
     enabled: bool = True
 
 
 class ScheduleUpdate(BaseModel):
     cron_expression: str | None = None
     task_template_json: dict[str, Any] | None = None
+    # 0 detaches the schedule from its agent.
+    agent_id: int | None = None
     enabled: bool | None = None
+
+
+def _norm_tag_list(v: list[str]) -> list[str]:
+    return sorted({t.strip().lower() for t in v if t.strip()})
+
+
+class AgentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9 _.-]*$")
+    description: str = ""
+    instructions: str = ""
+    model_profile: str | None = None
+    harness_adapter: str | None = None
+    project_id: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v: list[str]) -> list[str]:
+        return _norm_tag_list(v)
+
+
+class AgentUpdate(BaseModel):
+    description: str | None = None
+    instructions: str | None = None
+    # Empty string clears model/harness (back to automatic routing); 0 clears the project.
+    model_profile: str | None = None
+    harness_adapter: str | None = None
+    project_id: int | None = None
+    tags: list[str] | None = None
+    enabled: bool | None = None
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else _norm_tag_list(v)
+
+
+class AgentRun(BaseModel):
+    request: str = Field(min_length=1)
+    title: str | None = Field(default=None, max_length=300)
+    risk: TaskRisk = TaskRisk.low
+    definition_of_done: list[str] = Field(default_factory=list)
+    queue: bool = True
 
 
 class MemoryCreate(BaseModel):

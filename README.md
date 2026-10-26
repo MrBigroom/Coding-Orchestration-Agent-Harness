@@ -57,12 +57,19 @@ orchestrator task run T-1             # worker → verification → review → g
 orchestrator task show T-1
 orchestrator prompt-preview --role architect --task T-1
 orchestrator memory list --status pending
+orchestrator agent add deps --project myapp --model worker-deepseek-flash --instructions "…"
+orchestrator agent run deps "Update the patch-level dependencies"
 ```
+
+**Agents** are saved instructions + model (+ project/harness). Each run becomes a task
+that goes through the harness routed for the agent's model. With a project it gets the
+full worktree → tests → Architect review gate. **Scheduled tasks** can run an agent on a
+cron. See [`docs/agents.md`](docs/agents.md).
 
 The GUI covers the same workflows. Its pages are Dashboard, Tasks, Task Detail (live
 logs, diff, handoff, review, verification, accept/reject/escalate, retry with a
-different harness/model), Projects, Models & Providers, Adapters, Memory, Prompt Cache,
-Schedules, Build Log, and Settings.
+different harness/model), Agents, Scheduled Tasks, Projects, Models & Providers,
+Adapters, Memory, Prompt Cache, Build Log, and Settings.
 
 ## Adding real providers
 

@@ -24,6 +24,7 @@ export interface Task {
   verification_status: string | null;
   merge_status: string | null;
   source: string;
+  agent_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -149,6 +150,7 @@ export interface Schedule {
   name: string;
   cron_expression: string;
   task_template_json: Record<string, unknown>;
+  agent_id: number | null;
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -184,4 +186,32 @@ export interface PreviewReport {
   cacheable_fraction: number;
   warnings: string[];
   ok: boolean;
+}
+
+export interface Agent {
+  id: number;
+  name: string;
+  description: string;
+  instructions: string;
+  model_profile: string | null;
+  harness_adapter: string | null;
+  project_id: number | null;
+  tags: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentRouting {
+  profile: string | null;
+  model?: string;
+  profile_reason: string;
+  token_plan?: boolean;
+  harness: string | null;
+  harness_reason: string;
+}
+
+export interface AgentDetail extends Agent {
+  routing: AgentRouting;
+  recent_tasks: Task[];
 }

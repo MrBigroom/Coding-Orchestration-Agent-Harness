@@ -51,6 +51,7 @@ def create(session: Session, data: TaskCreate) -> Task:
         assigned_harness_adapter=data.assigned_harness_adapter,
         source=data.source.value,
         created_by=data.created_by,
+        agent_id=data.agent_id,
         status=TaskStatus.draft,
     )
     session.add(task)
