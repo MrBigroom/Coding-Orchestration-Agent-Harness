@@ -168,7 +168,7 @@ export default function Dashboard() {
       <ErrorNote error={error} />
       {data && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:col-span-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:col-span-3">
             <StatTile label="Active runs" value={data.active_runs.length} icon={Zap} tone="warn" to="/tasks?status=in_progress" />
             <StatTile label="Queued" value={data.queued.length} icon={Hourglass} tone="info" to="/tasks?status=queued" />
             <StatTile label="In review" value={data.review.length} icon={ScanEye} tone="accent" to="/tasks?status=review" />

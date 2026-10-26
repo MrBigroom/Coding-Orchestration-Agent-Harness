@@ -31,6 +31,17 @@ make start     # http://127.0.0.1:8321  (API docs at /api/docs)
 Without `make`: `./scripts/setup.sh`, `.venv/bin/orchestrator demo`,
 `.venv/bin/orchestrator serve`. `just` users get the same targets via the `justfile`.
 
+### Desktop app
+
+```bash
+make desktop-install   # pywebview (GTK) + GUI build + "Coding Orchestrator" app-menu launcher
+make desktop           # or open it from your app launcher
+```
+
+The app opens the GUI in a native window. It attaches to an orchestrator that is already
+running, or starts one in the background. When you close it with tasks still running, it
+asks whether to keep the server running. See [`docs/desktop.md`](docs/desktop.md).
+
 ### What the demo does
 
 `orchestrator demo` initialises `ORCHESTRATOR_HOME`. It copies the sample project there as
