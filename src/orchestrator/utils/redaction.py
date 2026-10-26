@@ -36,7 +36,16 @@ _ASSIGNMENT = re.compile(
     """
 )
 
+# Token *counts* ("inputTokens": 400, max_tokens=16000) are usage numbers, not secrets.
+_TOKEN_COUNT_KEY = re.compile(r"(?i)tokens$")
+
 _SECRET_ENV_HINT = re.compile(r"(?i)(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)")
+
+
+def _redact_assignment(m: re.Match[str]) -> str:
+    if m.group("val").isdigit() and _TOKEN_COUNT_KEY.search(m.group("key")):
+        return m.group(0)
+    return f"{m.group('key')}{m.group('sep')}{REDACTED}"
 
 
 def _env_secret_values() -> Iterable[str]:
@@ -57,7 +66,7 @@ def redact(text: str | None, extra_secrets: Iterable[str] = ()) -> str:
             out = pat.sub(lambda m: m.group(1) + REDACTED, out)
         else:
             out = pat.sub(REDACTED, out)
-    out = _ASSIGNMENT.sub(lambda m: f"{m.group('key')}{m.group('sep')}{REDACTED}", out)
+    out = _ASSIGNMENT.sub(_redact_assignment, out)
     return out
 
 

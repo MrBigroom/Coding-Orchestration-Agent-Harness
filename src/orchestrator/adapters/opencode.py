@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 from orchestrator.adapters.base import BaseHarnessAdapter
+from orchestrator.adapters.common import JsonOutputMixin
 
 
-class OpenCodeAdapter(BaseHarnessAdapter):
-    """OpenCode (opencode.ai). Non-interactive mode is `opencode run "<message>"`.
+class OpenCodeAdapter(JsonOutputMixin, BaseHarnessAdapter):
+    """OpenCode (opencode.ai). Non-interactive mode is `opencode run "<message>"`;
+    `--format json` prints events, including per-step token usage.
 
-    Experimental: flags were checked against public docs on 2026-10-19 but not exercised
-    by this project's tests. Verify with `opencode run --help`. Model selection uses
-    `-m provider/model`. The process cwd is the worktree, so no --cwd flag is passed.
+    Experimental: checked against OpenCode 1.19.4 on 2026-10-26 with a local mock API.
+    Model selection uses `-m provider/model`. The process cwd is the worktree, so no --cwd
+    flag is passed.
     """
 
     kind = "opencode"
     experimental = True
     default_command = "opencode"
-    default_args = ["run", "?--model={model}", "{prompt}"]
+    default_args = ["run", "--format", "json", "?--model={model}", "{prompt}"]
     default_env_vars = [
         "OPENCODE_CONFIG",
         "ANTHROPIC_API_KEY",

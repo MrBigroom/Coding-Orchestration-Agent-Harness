@@ -10,6 +10,7 @@ from orchestrator.adapters.claude_cli import ClaudeCliAdapter
 from orchestrator.adapters.deepseek_harness import DeepSeekHarnessAdapter
 from orchestrator.adapters.mock_harness import MockHarnessAdapter
 from orchestrator.adapters.opencode import OpenCodeAdapter
+from orchestrator.adapters.pi import PiAdapter
 from orchestrator.adapters.qwen_code import QwenCodeAdapter
 from orchestrator.adapters.zcode import ZCodeAdapter
 
@@ -21,6 +22,7 @@ ADAPTER_CLASSES: dict[str, type[BaseHarnessAdapter]] = {
         DeepSeekHarnessAdapter,
         ZCodeAdapter,
         QwenCodeAdapter,
+        PiAdapter,
         AiderAdapter,
         ClaudeCliAdapter,
     )
@@ -32,6 +34,7 @@ COMMAND_ENV = {
     "deepseek_harness": "DEEPSEEK_HARNESS_COMMAND",
     "zcode": "ZCODE_COMMAND",
     "qwen_code": "QWEN_CODE_COMMAND",
+    "pi": "PI_COMMAND",
     "aider": "AIDER_COMMAND",
     "claude_cli": "CLAUDE_CLI_COMMAND",
 }

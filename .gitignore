@@ -29,3 +29,6 @@ build-log.jsonl
 worktrees/
 runs/
 *.tsbuildinfo
+
+# Harness bench installs/logs
+scripts/harness-bench/.work/

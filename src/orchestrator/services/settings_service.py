@@ -20,6 +20,9 @@ EDITABLE: dict[str, type] = {
     "allow_gui_commands": bool,
     "max_review_rounds": int,
     "theme": str,
+    # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code
+    # defaults in adapter_service.DEFAULT_HARNESS_ROUTES.
+    "harness_routing": dict,
 }
 
 
@@ -36,6 +39,7 @@ def defaults() -> dict[str, Any]:
         "allow_gui_commands": s.allow_gui_commands,
         "max_review_rounds": 3,
         "theme": "dark",
+        "harness_routing": {},
     }
 
 
@@ -67,6 +71,14 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be a positive integer")
         if typ is str and not isinstance(val, str):
             raise ValueError(f"{key} must be a string")
+        if typ is dict and not (
+            isinstance(val, dict)
+            and all(
+                isinstance(k, str) and isinstance(v, list) and all(isinstance(a, str) for a in v)
+                for k, v in val.items()
+            )
+        ):
+            raise ValueError(f"{key} must map strings to lists of adapter names")
         row = session.get(Setting, key) or Setting(key=key)
         row.value_json = val
         row.updated_at = utcnow()

@@ -36,6 +36,14 @@ def test_leaves_normal_text_alone():
     assert "QWEN_API_KEY" in redact(text)
 
 
+def test_token_counts_are_not_secrets():
+    usage = '{"inputTokens":400,"totalTokens":1007,"cache_read_input_tokens": 600}'
+    assert redact(usage) == usage
+    assert redact("max_tokens=16000") == "max_tokens=16000"
+    assert REDACTED in redact('{"access_token": "abcd1234efgh"}')
+    assert REDACTED in redact("API_TOKEN=12345678")  # singular key: still redacted
+
+
 def test_sensitive_paths_and_diff_stripping():
     assert is_sensitive_path(".env") and is_sensitive_path("config/.env.local")
     assert is_sensitive_path("keys/id_ed25519") and is_sensitive_path("certs/server.pem")

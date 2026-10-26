@@ -76,3 +76,37 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   default, headless harness runs). The Token Plan guard and Interactive Worker mode are
   **parked**. Revisit them if usage becomes high-frequency or scheduled, or if the
   published terms change.
+- **2026-10-26 — Harness routing by worker model, ordered by token efficiency.** The
+  first-request overhead of 10 harnesses was measured against a local mock API
+  (`scripts/harness-bench`). It ranges from ~0.7k (Aider) to ~13k + a ~6k side call
+  (stock Qwen Code). Published per-task totals differ about 7× (DeepSeek Harness vs
+  Claude Code/OpenCode on DeepSeek V4). Defaults: `deepseek*` → DeepSeek Harness, `qwen*`
+  and `glm*` → Pi, then Qwen Code (Qwen) and OpenCode. The routes are overridable with
+  the new `harness_routing` setting, a key in the existing settings table, so there is no
+  schema/API change. Existing harness tags and explicit assignment still take precedence.
+- **2026-10-26 — Per-run harness token usage in `runs.usage`** (existing column), parsed
+  from each harness's JSON output (Pi, dsh, Qwen Code, OpenCode, Claude Code) or Aider's
+  `Tokens:` lines. Routing switches to the lowest weighted tokens per accepted task once
+  at least two candidates each have ≥ 3 accepted tasks on the model. There's no
+  automatic exploration. Parsers live in `adapters/common.py`, outside the frozen
+  adapter interface. Adapters only override `run`/`parse_result`.
+- **2026-10-26 — Adapter fixes from real CLI runs:**
+  - **DeepSeek Harness:** the real headless form is `dsh --profile headless --json -`
+    (the spec's `run --cwd --prompt-file` didn't exist). It is routed to any
+    OpenAI-compatible endpoint (Token Plan by default) via a per-run `DSH_HOME` patch.
+  - **Qwen Code:** `--approval-mode auto-edit` hid the shell tool in `-p` mode, so
+    `--allowed-tools run_shell_command` is added (shell is auto-approved inside the
+    isolated worktree). Managed auto-memory is off (it cost a ~6k-token extra call per
+    run), and `skill`/`notebook_edit` are excluded.
+  - **Pi:** new adapter.
+  - **Upgrade path:** unedited rows holding a previous default template are upgraded at
+    seed time; edited rows are left alone.
+- **2026-10-26 — Explicit cache markers only inside harness agent loops.** Pi/dsh send
+  `cache_control` (system, last tool, newest message) for `qwen3.8-max`/`qwen3.8-flash`.
+  Those are the explicit-cache models on Qwen Cloud: 10% hit vs 20% implicit, 125% write,
+  5-minute TTL. DeepSeek/GLM are implicit-only, so they get no markers. The
+  orchestrator's own single provider calls stay on the implicit cache, because they
+  rarely recur within 5 minutes.
+- **2026-10-26 — Redaction no longer hides token counts.** Keys ending in `tokens` with
+  an all-digit value (`"inputTokens": 400`, `max_tokens=16000`) are usage numbers, not
+  secrets. Singular `token` keys are still redacted.

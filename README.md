@@ -103,16 +103,24 @@ Each adapter is a **command + argv template stored in the DB** and editable in t
 
 | Adapter | Command | Default args | Status |
 |---|---|---|---|
-| OpenCode | `opencode` | `run ?--model={model} {prompt}` | experimental, docs-checked |
-| DeepSeek Harness | `dsh` | `run --cwd {cwd} --prompt-file {prompt_file}` | experimental, **flags unverified** |
+| Pi | `pi` | `--mode json --no-session --provider orchestrator --model {model} "…"` (prompt on stdin) | experimental, mock-API-checked |
+| OpenCode | `opencode` | `run --format json ?--model={model} {prompt}` | experimental, mock-API-checked |
+| DeepSeek Harness | `dsh` | `--profile headless --json -` (prompt on stdin) | experimental, mock-API-checked |
 | ZCode | `zcode-cli` | `run --cwd {cwd} --prompt-file {prompt_file}` | experimental, **binary/flags unverified** |
-| Qwen Code | `qwen` | `--approval-mode auto-edit ?--model={model} -p {prompt}` | experimental, docs-checked |
+| Qwen Code | `qwen` | `--auth-type openai --approval-mode auto-edit --allowed-tools run_shell_command … -o json -p {prompt}` | experimental, mock-API-checked |
 | Aider | `aider` | `--yes-always ?--model={model} --message-file {prompt_file}` | experimental |
-| Claude Code (Worker) | `claude` | `-p {prompt} --permission-mode acceptEdits ?--model={model}` | experimental, disabled by default (subscription auth) |
+| Claude Code (Worker) | `claude` | `-p {prompt} --output-format json --permission-mode acceptEdits ?--model={model}` | experimental, disabled by default (subscription auth) |
 | Mock | python | built-in | tested |
 
 `orchestrator adapters detect` shows which binaries are on `PATH`. Manual verification
 steps for each adapter: [`docs/adapters.md`](docs/adapters.md).
+
+Worker runs are routed to the harness that suits the worker model, and the most
+token-efficient one comes first (deepseek → DeepSeek Harness, Qwen/GLM → Pi, then Qwen
+Code/OpenCode). Each run's real token usage is recorded, and routing switches once
+measured data shows a cheaper harness per accepted task. See
+[`docs/harness-routing.md`](docs/harness-routing.md). To measure harness overhead
+yourself, run `scripts/harness-bench/bench.sh`.
 
 ## How memory works
 
@@ -157,9 +165,10 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
-- **Real harness adapters are untested here.** Their default templates come from public
-  docs (OpenCode, Qwen Code, Aider, Claude Code) or are placeholders from the spec (DeepSeek
-  Harness, ZCode). Verify each one with the steps in `docs/adapters.md` before relying on it.
+- **Real harness adapters are not tested against real models.** Pi, DeepSeek Harness,
+  Qwen Code and OpenCode were run against a local mock API (`scripts/harness-bench`).
+  Aider and Claude Code templates come from public docs. ZCode is still a placeholder from
+  the spec. Verify each one with the steps in `docs/adapters.md` before relying on it.
 - **Real providers are untested here** (no keys in CI). Request shapes are unit-tested
   without network calls.
 - The LLM Supervisor is **recommendation-only**. All gate decisions come from the

@@ -25,6 +25,7 @@ def test_all_required_adapters_exist_and_real_ones_are_experimental():
         "deepseek_harness",
         "zcode",
         "qwen_code",
+        "pi",
         "aider",
         "claude_cli",
     }

@@ -44,6 +44,7 @@ from orchestrator.services import (
     provider_service,
     supervisor_service,
     task_service,
+    usage_service,
 )
 from orchestrator.services.prompt_builder import DynamicState
 from orchestrator.utils.git import head_sha
@@ -84,9 +85,11 @@ def _project(session: Session, task: Task) -> Project | None:
 def dry_run(session: Session, task: Task) -> RoutePlan:
     """What would run, without executing anything or touching git."""
     project = _project(session, task)
-    harness = adapter_service.choose_harness(session, task)
     role = Role.agent if task.kind == TaskKind.agent else Role.worker
     profile = provider_service.choose_profile(session, task, role)
+    harness = adapter_service.choose_harness(
+        session, task, profile.profile.name, profile.profile.model_name
+    )
     preview = None
     wt = None
     if task.kind != TaskKind.agent and project:
@@ -225,10 +228,13 @@ async def _execute(
         return await _execute_direct(session, task, run, project, profile_override)
 
     assert project is not None
-    harness_name = harness_override or adapter_service.choose_harness(session, task).adapter
     if profile_override:
         task.assigned_provider_profile = profile_override
     profile = provider_service.choose_profile(session, task, Role.worker).profile
+    harness_name = (
+        harness_override
+        or adapter_service.choose_harness(session, task, profile.name, profile.model_name).adapter
+    )
     if harness_name is None:
         if task.risk == "low":
             return await _execute_direct(session, task, run, project, profile_override)
@@ -313,6 +319,12 @@ async def _execute(
     result = await adapter.run(ctx, process_service.run_process)
     finished = utcnow()
     duration = int((finished - started).total_seconds() * 1000)
+    if result.stdout_path and result.stdout_path.is_file():
+        usage = usage_service.harness_usage(
+            adapter.spec.kind, result.stdout_path.read_text(errors="replace"), ctx.model
+        )
+        if usage:
+            run.usage = usage  # persisted by the next _set_run commit
     artifact_service.write_json(
         run.id,
         "run.json",

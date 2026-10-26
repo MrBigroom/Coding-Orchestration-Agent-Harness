@@ -25,8 +25,25 @@ leftovers with a labelled recovery commit and synthesizes a handoff. A synthesiz
 counts as a missing artifact at review.
 
 > "Experimental" means the adapter is implemented and configurable, but this project's
-> tests do not exercise it against the real CLI. Flags were checked against public docs
-> on 2026-10-19 where noted. **Verify manually before relying on an adapter.**
+> tests don't run it against a real model. "Mock-API-checked" means the real CLI was run
+> through the adapter against a local mock API on 2026-10-26 (`scripts/harness-bench`):
+> argv, stdin, per-run config, cache markers and usage parsing all worked.
+> **Verify manually before relying on an adapter.**
+
+**Managed config (Pi, DeepSeek Harness, Qwen Code):**
+- **Endpoint:** each run is pointed at the endpoint in `capabilities.provider`. The
+  default is `{"base_url_env": "QWEN_OPENAI_BASE_URL", "base_url_default": <Token Plan>,
+  "api_key_env": "QWEN_API_KEY"}`.
+- **Per-run config:** the files these harnesses need go into a temporary directory that
+  is deleted after the run, so they never land in `runs/<id>`. Keys are referenced by
+  env-var **name** only.
+- **Using your own config:** set `capabilities.provider` to `null` to keep the harness's
+  own `~/.<harness>` config. For Pi, also drop `--provider orchestrator` from the template.
+
+**Token usage:** usage the harness prints is parsed into `runs.usage`. It covers Pi,
+DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
+`--output-format json`, and Aider via its `Tokens:` lines. See
+[`harness-routing.md`](harness-routing.md).
 
 ---
 
@@ -39,31 +56,61 @@ counts as a missing artifact at review.
 - **Env:** none · **Detect:** always available · **Test:** `orchestrator demo`
 - **Experimental:** no (covered by integration tests).
 
+## Pi (`pi`)
+
+- **Purpose:** minimal coding agent: 4 tools and a ~1.4k-token request prefix, the
+  smallest among full agents. It is the first choice for Qwen and GLM worker models.
+- **Install:** `npm i -g @earendil-works/pi-coding-agent` (the old `@mariozechner/…`
+  package is deprecated).
+- **Template:** `pi --mode json --no-session --provider orchestrator --model {model}
+  "Carry out the task described above."`. The prompt goes on stdin, and Pi prepends it to
+  the message, so prompt size isn't limited by argv. Pi rejects `--model=<id>`, so the
+  model is a separate argument.
+- **Managed config:** a temporary `PI_CODING_AGENT_DIR/models.json` defines the
+  `orchestrator` provider (`apiKey: "$QWEN_API_KEY"`). For `qwen3.8-max`/`qwen3.8-flash`
+  it adds `compat.cacheControlFormat: "anthropic"`, so Pi marks the system prompt, last
+  tool and newest message for Qwen Cloud's explicit cache. `PI_OFFLINE=1`,
+  `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0` are also set.
+- **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`; binary override `PI_COMMAND`.
+- **Detect:** `which pi` · **Manual test:** `pi --version && pi --help`.
+- **Experimental:** yes (mock-API-checked, Pi 1.4.0).
+
 ## OpenCode (`opencode`)
 
-- **Purpose:** preferred general, model-agnostic harness (default when no tag routes elsewhere).
-- **Template:** `opencode run ?--model={model} {prompt}`. Non-interactive mode is
-  `opencode run "<message>"` with `-m provider/model`. The worktree is the process cwd, so
-  no `--cwd` is passed.
+- **Purpose:** general, model-agnostic harness and the fallback after each model's
+  preferred harnesses.
+- **Template:** `opencode run --format json ?--model={model} {prompt}`. `--format json`
+  prints events with per-step token usage. Use `-m provider/model` to pick the model. The
+  worktree is the process cwd, so no `--cwd` is passed.
 - **Env:** `OPENCODE_CONFIG`, plus whichever provider keys your OpenCode config uses
   (`ANTHROPIC_API_KEY`, `QWEN_API_KEY`, …). Override the binary with `OPENCODE_COMMAND`.
 - **Detect:** `which opencode` · **Manual test:** `opencode --version && opencode run --help`,
   then `orchestrator task create "…" --project X --harness opencode` + `task dry-run`.
-- **Experimental:** yes. The model value must be in OpenCode's `provider/model` form;
-  set it on the task's profile or edit the template.
+- **Experimental:** yes (mock-API-checked, OpenCode 1.19.4). The model value must be in
+  OpenCode's `provider/model` form; set it on the task's profile or edit the template.
+  OpenCode sends no explicit cache markers to OpenAI-compatible providers, so it relies
+  on the implicit cache. It also makes one extra ~520-token title call per run.
 
 ## DeepSeek Harness (`deepseek_harness`)
 
-- **Purpose:** official DeepSeek agent harness; preferred for `deepseek`-tagged tasks when installed.
-- **Template:** `dsh run --cwd {cwd} --prompt-file {prompt_file}`. **These flags are the
-  product spec's placeholders and are UNVERIFIED.** DeepSeek documents a headless mode,
-  but the exact flags weren't confirmed.
-- **Env:** `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`; binary override `DEEPSEEK_HARNESS_COMMAND`.
+- **Purpose:** official DeepSeek agent harness. It is the first choice for `deepseek*`
+  worker models; in published tests it used about 7× fewer tokens per task than Claude
+  Code or OpenCode on DeepSeek V4.
+- **Template:** `dsh --profile headless --json -`. `-` reads the task from stdin, and
+  `--json` prints run events with per-step usage.
+- **Managed config:** a temporary `DSH_HOME` with a home-level `cordis.patch.yml` adds an
+  OpenAI-compatible `orchestrator` route (`apiKeyEnv: QWEN_API_KEY`) and makes the task's
+  model the default. That means the Token Plan's `deepseek-v4.1-flash` works without a
+  DeepSeek account. With `capabilities.provider: null`, dsh uses its own DeepSeek login
+  (`DEEPSEEK_API_KEY`).
+- **Env:** `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `QWEN_API_KEY`; binary override
+  `DEEPSEEK_HARNESS_COMMAND`.
 - **Detect:** `which dsh`. Make sure it resolves to the official npm package
   `@deepseek-ai/dsh` (developer preview, needs Node ≥ 22.19). An unrelated community
   Python package also installs a `dsh` binary.
-- **Manual test:** `dsh --version && dsh --help`, then edit the template to match.
-- **Experimental:** yes.
+- **Manual test:** `dsh --version && dsh --profile headless --help`.
+- **Experimental:** yes (mock-API-checked, dsh 0.2.1-rc.2). It makes one extra ~140-token
+  title call per run.
 
 ## ZCode (`zcode`)
 
@@ -77,15 +124,26 @@ counts as a missing artifact at review.
 
 ## Qwen Code (`qwen_code`)
 
-- **Purpose:** Qwen-optimised harness; preferred for `qwen`-tagged tasks when installed.
-- **Template:** `qwen --approval-mode auto-edit ?--model={model} -p {prompt}`. The binary is
-  `qwen` (not `qwen-code`). `-p` runs one prompt headlessly. `auto-edit` allows file edits
-  but doesn't auto-approve shell commands. Use `--yolo` only if you accept unattended
-  shell execution inside the worktree.
+- **Purpose:** Qwen's own harness, used for `qwen`-tagged tasks and as the second choice
+  for Qwen models.
+- **Template:** `qwen --auth-type openai --approval-mode auto-edit --allowed-tools
+  run_shell_command --exclude-tools skill notebook_edit -o json ?--model={model} -p
+  {prompt}`. The binary is `qwen` (not `qwen-code`).
+  - **Shell tool:** with `auto-edit` alone, `-p` mode doesn't offer the shell tool at all,
+    so the worker couldn't run tests or commit. `--allowed-tools run_shell_command`
+    restores it and **auto-approves shell commands** inside the isolated worktree.
+  - **Excluded tools:** dropping `skill`/`notebook_edit` saves about 1.7k tokens per call.
+  - **JSON output:** `-o json` prints a result object with usage.
+- **Managed config:** a temporary system-settings file
+  (`QWEN_CODE_SYSTEM_SETTINGS_PATH`) turns off managed auto-memory. Otherwise every run
+  makes a second, roughly 6k-token "memory extraction" call. `QWEN_API_KEY` and the base
+  URL are mapped to Qwen Code's `OPENAI_*` variables. Overall the run goes from about
+  13.1k + 5.8k tokens over two calls to about 9.1k in one call.
 - **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
   `OPENAI_MODEL`; binary override `QWEN_CODE_COMMAND`.
 - **Detect:** `which qwen` · **Manual test:** `qwen --version && qwen --help`.
-- **Experimental:** yes (docs-checked).
+- **Experimental:** yes (mock-API-checked, Qwen Code 0.26.1). Over the OpenAI-compatible
+  API it sends no explicit cache markers, so it relies on the implicit cache.
 
 ## Aider (`aider`)
 
@@ -100,7 +158,8 @@ counts as a missing artifact at review.
 ## Claude Code CLI (`claude_cli`)
 
 - **Purpose:** optional headless Claude Code runs, e.g. for escalations. **Disabled by default.**
-- **Template:** `claude -p {prompt} --permission-mode acceptEdits ?--model={model}`.
+- **Template:** `claude -p {prompt} --output-format json --permission-mode acceptEdits
+  ?--model={model}`. The JSON result carries token usage, including cache reads.
 - **Env:** `CLAUDE_CODE_OAUTH_TOKEN` (optional, from `claude setup-token`), `CLAUDE_CONFIG_DIR`;
   binary override `CLAUDE_CLI_COMMAND`. `ANTHROPIC_API_KEY` is deliberately **not** passed.
 - **Auth:** your own Claude subscription through the unmodified `claude` binary
@@ -114,6 +173,13 @@ counts as a missing artifact at review.
 1. An explicit `assigned_harness_adapter` on the task always wins.
 2. `mock`/`mock-*` tags → mock.
 3. `deepseek` → DeepSeek Harness, `glm` → ZCode, `qwen` → Qwen Code, when installed and enabled.
-4. Otherwise OpenCode, then Aider.
-5. No harness: low-risk tasks fall back to a **direct API worker** (output stored as an
+4. The worker model's preferred harnesses, the first installed one winning, or the one
+   with the lowest measured tokens per accepted task once there's enough data
+   ([`harness-routing.md`](harness-routing.md)).
+5. Otherwise OpenCode, then Aider.
+6. No harness: low-risk tasks fall back to a **direct API worker** (output stored as an
    artifact, no repo changes). Anything else is **blocked**.
+
+Existing databases are upgraded at `orchestrator init` / startup. An adapter row is
+moved to the new default template only if it still holds an earlier version's default,
+so templates you've edited are never overwritten.

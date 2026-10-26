@@ -36,6 +36,11 @@ review loop.
 - **OpenAI-compatible (Qwen/DeepSeek/GLM/local)**: all static sections are concatenated
   into one stable `system` message. Providers with automatic prefix caching can reuse it,
   and `prompt_tokens_details.cached_tokens` is recorded when the provider returns it.
+  No explicit markers are sent. These are single calls minutes apart, and an explicit
+  write costs 125% on Qwen Cloud.
+- **Harness runs**: Pi and DeepSeek Harness on `qwen3.8-*` send explicit
+  `cache_control` markers each turn. See [`harness-routing.md`](harness-routing.md#caching-qwen-cloud--model-studio-context-cache)
+  for the Qwen Cloud cache rules and what the orchestrator does with them.
 
 ## Truncation rules
 
