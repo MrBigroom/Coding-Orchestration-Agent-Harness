@@ -90,6 +90,9 @@ async def lifespan(app: FastAPI):
         from orchestrator.services import bootstrap
 
         bootstrap.init()
+    else:
+        # Existing installations must follow new migrations too, not just fresh ones.
+        db.upgrade()
     if not s.is_local_bind:
         log.warning(
             "!!! Orchestrator bound to %s — reachable beyond localhost. Token auth is %s.",

@@ -18,6 +18,19 @@ def test_health(client):
     assert r.json()["db_revision"] == "0002_agents"
 
 
+def test_startup_upgrades_existing_database(initialized):
+    from orchestrator.api.main import create_app
+    from orchestrator.core import db
+
+    db.dispose_engines()
+    db.downgrade(revision="0001_baseline")
+    assert db.current_revision() == "0001_baseline"
+
+    with TestClient(create_app()) as c:
+        assert c.get("/api/health").json()["db_revision"] == "0002_agents"
+        assert c.get("/api/dashboard").status_code == 200
+
+
 def test_task_creation_and_validation(client):
     r = client.post("/api/tasks", json={"title": "Do thing", "tags": ["Mock", " qwen "]})
     assert r.status_code == 201
