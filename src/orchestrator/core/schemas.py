@@ -269,6 +269,9 @@ class ScheduleCreate(BaseModel):
     timezone: str = "UTC"
     task_template_json: dict[str, Any] = Field(default_factory=dict)
     agent_id: int | None = None
+    run_mode: Literal["pipeline", "standalone"] = "pipeline"
+    access: Literal["read", "write"] = "read"
+    time_limit_minutes: int = Field(default=30, ge=1, le=1440)
     enabled: bool = True
 
 
@@ -280,6 +283,9 @@ class ScheduleUpdate(BaseModel):
     task_template_json: dict[str, Any] | None = None
     # 0 detaches the schedule from its agent.
     agent_id: int | None = None
+    run_mode: Literal["pipeline", "standalone"] | None = None
+    access: Literal["read", "write"] | None = None
+    time_limit_minutes: int | None = Field(default=None, ge=1, le=1440)
     enabled: bool | None = None
 
 

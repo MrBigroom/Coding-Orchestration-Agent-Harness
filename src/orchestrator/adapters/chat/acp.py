@@ -13,6 +13,15 @@ START_TIMEOUT = 60
 # `ask` for what an agent changes; OpenCode otherwise allows both by default.
 OPENCODE_ASK = {"edit": "ask", "bash": "ask", "webfetch": "ask"}
 ALLOW_KINDS = ("allow_once", "allow_always")
+ACTION_KINDS = {
+    "read": "read",
+    "search": "read",
+    "think": "read",
+    "edit": "write",
+    "delete": "write",
+    "move": "write",
+}
+PATH_KEYS = ("path", "file_path", "filePath", "absolute_path")
 
 
 def _flatten(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -24,6 +33,14 @@ def _flatten(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             flat.append(option)
     return flat
+
+
+def _action(call: dict[str, Any]) -> dict[str, Any]:
+    raw = call.get("rawInput") if isinstance(call.get("rawInput"), dict) else {}
+    paths = [loc["path"] for loc in call.get("locations") or [] if loc.get("path")]
+    paths += [str(raw[k]) for k in PATH_KEYS if raw.get(k)]
+    kind = ACTION_KINDS.get(call.get("kind"), "other")
+    return {"kind": kind, "paths": list(dict.fromkeys(paths))}
 
 
 class AcpDriver(ChatDriver):
@@ -334,7 +351,8 @@ class AcpDriver(ChatDriver):
         approval_id = f"permission-{request_id}"
         raw = call.get("rawInput")
         detail = json.dumps(raw, indent=2) if raw else text_of(call.get("content"))
-        self.ask(approval_id, call.get("title") or "Allow this action?", detail, options)
+        title = call.get("title") or "Allow this action?"
+        self.ask(approval_id, title, detail, options, _action(call))
         self.approvals[approval_id]["request_id"] = request_id
 
     def _on_update(self, update: dict[str, Any]) -> None:

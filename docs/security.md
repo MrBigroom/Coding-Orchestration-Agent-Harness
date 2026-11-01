@@ -89,6 +89,29 @@ its own gates:
   the stored transcript.
 - **No review.** Sessions skip the supervisor, verification and review gate.
 
+## Standalone runs
+
+A [standalone run](agents.md#standalone-runs) is a Chat session with nobody watching, so it
+has no human approval and no review:
+
+- **Off by default.** `allow_unattended_sessions` must be on, and it's checked on every run.
+  This setting and `allow_interactive_sessions` never sync between devices.
+- **Denied unless it can be identified.** In **Read and report**, the run denies anything that
+  isn't a read or a write inside its output folder. Paths are resolved first, so `..` and
+  symlinks can't leave the folder.
+- **Not a sandbox.** Only DeepSeek Harness enforces its mode with an OS sandbox. For the others,
+  these limits depend on the harness asking first. Pi's are the orchestrator's prompt gate, and
+  a command a harness treats as read-only runs without being checked.
+- **Can make changes approves shell commands.** Changes land on a separate branch, but a
+  worktree limits where an agent starts, not what it can reach. Use it only for agents you'd
+  trust with your user account, because prompt injection from anything the agent reads could
+  run commands.
+- **Contained blast radius for reads.** Read and report works in a throwaway copy, so a write
+  that slips through doesn't reach your checkout. If that copy was changed, it's kept and the
+  run says so.
+
+The same environment allowlist and redaction as Chat apply, and each run has a time limit.
+
 ## No destructive git defaults
 
 - Every run happens in an isolated worktree on a phase branch. The main checkout is only

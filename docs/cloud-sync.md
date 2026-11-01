@@ -14,7 +14,9 @@ The following stay on each device:
 
 - API keys, Supabase credentials, access tokens, and `.env` values
 - Project checkout paths, worktree paths, artifact paths, and evidence paths
-- Worker/scheduler enablement, parallelism limits, and permission to run GUI commands
+- Worker/scheduler enablement, parallelism limits, and permission to run GUI commands, Chat
+  sessions or standalone runs
+- Chat sessions, standalone run records, and agent output folders
 - Automatic-sync enablement and cadence, which are configured independently on each device
 - Git repositories, worktrees, run artifacts, and SQLite WAL files
 

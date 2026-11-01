@@ -868,6 +868,9 @@ def schedule_add(
     agent: str | None = typer.Option(
         None, help="Run this saved agent; the template's description is the request."
     ),
+    run_mode: str = typer.Option("pipeline", help="pipeline, or standalone (needs --agent)."),
+    access: str = typer.Option("read", help="Standalone only: read or write."),
+    time_limit: int = typer.Option(30, help="Standalone only: minutes before a run is stopped."),
     disabled: bool = typer.Option(False),
 ) -> None:
     from orchestrator.core.schemas import ScheduleCreate
@@ -885,6 +888,9 @@ def schedule_add(
                 timezone=timezone,
                 task_template_json=json.loads(template),
                 agent_id=agent_id,
+                run_mode=run_mode,
+                access=access,
+                time_limit_minutes=time_limit,
                 enabled=not disabled,
             ),
         )
@@ -947,7 +953,7 @@ def schedule_disable(schedule: str) -> None:
 @schedule_app.command("run")
 @handled
 def schedule_run(schedule: str) -> None:
-    """Fire a schedule now (creates and queues its task)."""
+    """Fire a pipeline schedule now (creates and queues its task)."""
     from orchestrator.services import scheduler_service
 
     _ensure_ready()

@@ -307,10 +307,12 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
         <span className="text-xs text-muted">{chat.adapter}</span>
         {chat.branch_name
           ? <span className="mono flex items-center gap-1 text-xs text-muted"><GitBranch size={13} aria-hidden="true" />{chat.branch_name}</span>
-          : <span className="flex items-center gap-1 text-xs text-warn"><TriangleAlert size={13} aria-hidden="true" />project checkout</span>}
+          : chat.standalone
+            ? <span className="text-xs text-muted">standalone run</span>
+            : <span className="flex items-center gap-1 text-xs text-warn"><TriangleAlert size={13} aria-hidden="true" />project checkout</span>}
         <div className="ml-auto flex items-center gap-2">
           {usage.requests ? <span className="text-xs text-muted" title={`${compact(usage.cache_read_input_tokens)} of the input came from cache, over ${usage.requests} requests`}>{compact(usage.input_tokens)} in · {compact(usage.output_tokens)} out</span> : null}
-          <button className="btn" onClick={() => setShowChanges((v) => !v)}>Changes</button>
+          {chat.project_id !== null && <button className="btn" onClick={() => setShowChanges((v) => !v)}>Changes</button>}
           {!ended && <ConfirmButton label="End session" message="Stops the harness process. The transcript and any branch stay." disabled={act.busy}
             onConfirm={() => void act.run(async () => { await post(`/chat/sessions/${chat.id}/close`); onChanged(); })} />}
           {ended && <ConfirmButton label="Delete" message="Deletes the transcript and the worktree. A worktree with uncommitted changes is kept, and the branch always stays." disabled={act.busy}
@@ -325,6 +327,11 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
       </div>
       {ended
         ? <div className="border-t border-line px-6 py-3 text-center text-xs text-muted">This session has ended ({status.replace(/_/g, " ")}). Its transcript is read-only.</div>
+        : chat.standalone
+        ? <div className="flex items-center justify-center gap-3 border-t border-line px-6 py-3 text-xs text-muted">
+            A standalone run is answering its own approvals, so it can't take instructions.
+            <button className="btn" disabled={locked} onClick={() => send({ type: "interrupt" })}>Stop run</button>
+          </div>
         : <Composer working={working} disabled={locked} onSend={(text) => send({ type: "prompt", text })} onStop={() => send({ type: "interrupt" })}
             placeholder={working ? "Send more instructions…" : "Message the agent. Shift+Enter for a new line."}
             controls={<>

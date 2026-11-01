@@ -50,9 +50,11 @@ def update_schedule(
 
 
 @router.post("/schedules/{schedule_id}/run")
-def run_schedule(schedule_id: int, session: Session = SessionDep) -> dict[str, Any]:
-    task = scheduler_service.fire(session, scheduler_service.get(session, schedule_id))
-    return dump(task)
+async def run_schedule(schedule_id: int, session: Session = SessionDep) -> dict[str, Any]:
+    sched = scheduler_service.get(session, schedule_id)
+    if sched.run_mode == "standalone":
+        return dump(await scheduler_service.fire_standalone(session, sched))
+    return dump(scheduler_service.fire(session, sched))
 
 
 @router.delete("/schedules/{schedule_id}", status_code=204)

@@ -46,7 +46,8 @@ class MockDriver(ChatDriver):
             allowed = self.options.permission == "yolo"
             if not allowed:
                 self._answer = asyncio.get_running_loop().create_future()
-                self.ask("write-1", "Allow write?", name, OPTIONS)
+                action = {"kind": "write", "paths": [name]}
+                self.ask("write-1", "Allow write?", name, OPTIONS, action)
                 allowed = await self._answer == "allow"
             self.emit({"type": "tool_start", "id": name, "name": "write", "input": {"path": name}})
             if allowed:

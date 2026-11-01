@@ -3,6 +3,7 @@ APScheduler 3.x."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -15,9 +16,17 @@ from sqlmodel import Session, select
 
 from orchestrator.core.db import session_scope
 from orchestrator.core.logging import get_logger
-from orchestrator.core.models import Schedule, Task, TaskKind, TaskRisk, TaskSource, utcnow
+from orchestrator.core.models import (
+    Schedule,
+    StandaloneRun,
+    Task,
+    TaskKind,
+    TaskRisk,
+    TaskSource,
+    utcnow,
+)
 from orchestrator.core.schemas import AgentRun, ScheduleCreate, ScheduleUpdate, TaskCreate
-from orchestrator.services import agent_service, log_service, task_service
+from orchestrator.services import agent_service, log_service, standalone_service, task_service
 
 log = get_logger(__name__)
 
@@ -144,8 +153,14 @@ def _check_name(session: Session, name: str, own_id: int | None = None) -> None:
         raise ValueError(f"a schedule named {name!r} already exists")
 
 
+def _check_run_mode(run_mode: str, agent_id: int | None) -> None:
+    if run_mode == "standalone" and not agent_id:
+        raise ValueError("a standalone schedule needs an agent")
+
+
 def create(session: Session, data: ScheduleCreate) -> Schedule:
     _check_name(session, data.name)
+    _check_run_mode(data.run_mode, data.agent_id)
     if bool(data.cron_expression) == bool(data.run_at):
         raise CronError("set either a cron expression or a run time")
     _zone(data.timezone)
@@ -160,6 +175,9 @@ def create(session: Session, data: ScheduleCreate) -> Schedule:
         timezone=data.timezone,
         task_template_json=data.task_template_json,
         agent_id=data.agent_id,
+        run_mode=data.run_mode,
+        access=data.access,
+        time_limit_minutes=data.time_limit_minutes,
         enabled=data.enabled,
     )
     sched.next_run_at = _next_run(sched)
@@ -191,6 +209,13 @@ def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
         sched.name = data.name
     if data.agent_id is not None:
         sched.agent_id = data.agent_id or None
+    if data.run_mode is not None:
+        sched.run_mode = data.run_mode
+    if data.access is not None:
+        sched.access = data.access
+    if data.time_limit_minutes is not None:
+        sched.time_limit_minutes = data.time_limit_minutes
+    _check_run_mode(sched.run_mode, sched.agent_id)
     if data.task_template_json is not None:
         sched.task_template_json = data.task_template_json
     if data.agent_id is not None or data.task_template_json is not None:
@@ -220,6 +245,8 @@ def fire(session: Session, sched: Schedule) -> Task:
     Agent schedules run the agent, so the task uses the agent's model, harness and project.
     A one-time schedule turns itself off once its time has come; running it by hand before
     then leaves it pending."""
+    if sched.run_mode == "standalone":
+        raise ValueError("standalone schedules run inside the server; use the GUI or the API")
     if sched.agent_id:
         task = agent_service.run(
             session,
@@ -230,6 +257,26 @@ def fire(session: Session, sched: Schedule) -> Task:
         )
     else:
         task = task_service.create(session, _template(sched.task_template_json, sched.name))
+    _mark_fired(session, sched, task.short_id, task.id)
+    return task
+
+
+async def fire_standalone(session: Session, sched: Schedule) -> StandaloneRun:
+    """Run the schedule's agent outside the pipeline. Needs the server's event loop."""
+    assert sched.agent_id
+    run = await standalone_service.launch(
+        session,
+        agent_service.get(session, sched.agent_id),
+        _agent_run(sched.task_template_json, sched.name).request,
+        schedule_id=sched.id,
+        access=sched.access,
+        time_limit_minutes=sched.time_limit_minutes,
+    )
+    _mark_fired(session, sched, f"standalone run #{run.id} ({run.status})")
+    return run
+
+
+def _mark_fired(session: Session, sched: Schedule, result: str, task_id: int | None = None) -> None:
     now = utcnow()
     sched.last_run_at = now
     note = ""
@@ -242,9 +289,8 @@ def fire(session: Session, sched: Schedule) -> Task:
     session.add(sched)
     session.commit()
     log_service.log_event(
-        session, "schedule_fired", f"{sched.name} -> {task.short_id}{note}", task_id=task.id
+        session, "schedule_fired", f"{sched.name} -> {result}{note}", task_id=task_id
     )
-    return task
 
 
 def token_plan_warning(
@@ -307,7 +353,7 @@ class SchedulerRunner:
         for r in rows:
             try:
                 self.scheduler.add_job(
-                    _fire_by_id,
+                    _run_job,
                     _job_trigger(r),
                     args=[r.id],
                     id=f"schedule-{r.id}",
@@ -323,6 +369,15 @@ def _job_trigger(sched: Schedule) -> CronTrigger | DateTrigger:
     if sched.run_at:
         return DateTrigger(max(sched.run_at, datetime.now(UTC)), timezone=UTC)
     return _cron_trigger(sched.cron_expression, sched.timezone)
+
+
+async def _run_job(schedule_id: int) -> None:
+    with session_scope() as session:
+        sched = session.get(Schedule, schedule_id)
+        if sched and sched.enabled and sched.run_mode == "standalone":
+            await fire_standalone(session, sched)
+            return
+    await asyncio.to_thread(_fire_by_id, schedule_id)
 
 
 def _fire_by_id(schedule_id: int) -> None:

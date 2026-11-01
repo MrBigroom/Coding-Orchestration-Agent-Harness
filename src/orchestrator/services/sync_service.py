@@ -38,6 +38,8 @@ from orchestrator.core.models import (
 LOCAL_ONLY_SETTINGS = frozenset(
     {
         "allow_gui_commands",
+        "allow_interactive_sessions",
+        "allow_unattended_sessions",
         "max_parallel_runs",
         "max_parallel_runs_per_project",
         "scheduler_enabled",

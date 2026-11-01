@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     allow_gui_commands: bool = False
     # Let the GUI start interactive harness sessions, which run agents with shell access.
     allow_interactive_sessions: bool = False
+    allow_unattended_sessions: bool = False
 
     # Optional Supabase synchronization. Credentials stay device-local in the environment.
     supabase_url: str | None = None
@@ -96,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def chats_root(self) -> Path:
         return self.home / "chats"
+
+    @property
+    def agent_outputs_root(self) -> Path:
+        return self.home / "agent-outputs"
 
     @property
     def is_local_bind(self) -> bool:

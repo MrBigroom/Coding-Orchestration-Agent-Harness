@@ -166,3 +166,14 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   at 09:00 across daylight saving. One-time runs that were missed still run, since they exist
   for a specific job, while repeating schedules skip them. Numeric cron weekdays are now spelled
   out before they reach APScheduler, which counts from Monday and was running them a day late.
+
+- **2026-11-02 — Standalone agent runs reuse Chat sessions (revision `0006_standalone_runs`).**
+  Schedules gain `run_mode`, `access` and `time_limit_minutes`, and a new `standalone_runs`
+  table records each run. We built on the Chat drivers rather than the batch adapters because
+  they give a live transcript and a real approval point on each harness, where the run can
+  apply a policy. Approval events now carry a structured `action` so the decision never depends
+  on matching display text, and unknown requests are denied in read access. Read access uses a
+  detached worktree, because a branch per run would pile up and branches are never deleted.
+  `chat_sessions.project_id` became nullable so agents with no project can run in their output
+  folder. `allow_interactive_sessions` also moved to the local-only settings, because it had
+  been syncing between devices by mistake.

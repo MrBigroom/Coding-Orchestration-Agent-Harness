@@ -9,6 +9,8 @@ from orchestrator.adapters.chat.base import RESPONSE_TIMEOUT, ChatDriver, Driver
 from orchestrator.adapters.common import _n
 
 ALWAYS = "always"
+READ_TOOLS = {"Read", "Grep", "Glob", "LS"}
+EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
 class ClaudeDriver(ChatDriver):
@@ -216,7 +218,10 @@ class ClaudeDriver(ChatDriver):
             options.append({"id": ALWAYS, "label": "Always allow", "tone": "allow"})
         options.append({"id": "deny", "label": "Deny", "tone": "deny"})
         tool = request.get("tool_name") or "tool"
-        self.ask(approval_id, f"Allow {tool}?", json.dumps(tool_input, indent=2), options)
+        action = {"kind": "read" if tool in READ_TOOLS else "other", "paths": []}
+        if tool in EDIT_TOOLS:
+            action = {"kind": "write", "paths": [str(tool_input.get("file_path") or "")]}
+        self.ask(approval_id, f"Allow {tool}?", json.dumps(tool_input, indent=2), options, action)
         self.approvals[approval_id].update(input=tool_input, suggestions=suggestions)
 
     def _on_control_response(self, response: dict[str, Any]) -> None:

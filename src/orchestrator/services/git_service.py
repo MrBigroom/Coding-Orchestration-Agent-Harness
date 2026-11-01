@@ -63,6 +63,25 @@ def _ensure_excluded(repo: Path) -> None:
             )
 
 
+def ensure_snapshot(
+    repo: Path, project_slug: str, key: int | str, base_branch: str
+) -> WorktreeInfo:
+    """A throwaway worktree of the base branch on a detached HEAD, so it leaves no branch."""
+    if not is_repo(repo):
+        raise GitError(f"{repo} is not a git repository")
+    if not branch_exists(repo, base_branch):
+        raise GitError(f"base branch {base_branch!r} does not exist in {repo}")
+    path = worktree_path(project_slug, key)
+    marker = _marker(project_slug, key)
+    _ensure_excluded(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "prune"], repo, check=False)
+    run_git(["worktree", "add", "--detach", str(path), base_branch], repo)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"{path}\n(detached)\n")
+    return WorktreeInfo(path, "", created=True)
+
+
 def ensure_worktree(
     repo: Path, project_slug: str, task_id: int | str, branch: str, base_branch: str
 ) -> WorktreeInfo:

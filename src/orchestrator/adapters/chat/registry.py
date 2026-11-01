@@ -30,6 +30,8 @@ class HarnessProfile:
     # False when the harness names models its own way, so the list arrives once it starts.
     uses_profile_models: bool = True
     note: str | None = None
+    # Starting permission mode for standalone runs, by access level.
+    unattended: dict[str, str] = field(default_factory=dict)
 
 
 YOLO = "Runs every tool without asking."
@@ -46,6 +48,7 @@ HARNESSES: dict[str, HarnessProfile] = {
         ["off", "minimal", "low", "medium", "high"],
         "medium",
         note="Pi has no permission system; the orchestrator adds prompts, not a sandbox.",
+        unattended={"read": "report", "write": "ask"},
     ),
     "qwen_code": HarnessProfile(
         AcpDriver,
@@ -57,6 +60,7 @@ HARNESSES: dict[str, HarnessProfile] = {
             Mode("yolo", "Yolo", YOLO, dangerous=True),
         ],
         "default",
+        unattended={"read": "default", "write": "default"},
     ),
     "opencode": HarnessProfile(
         AcpDriver,
@@ -66,6 +70,7 @@ HARNESSES: dict[str, HarnessProfile] = {
         ],
         "build",
         uses_profile_models=False,
+        unattended={"read": "build", "write": "build"},
     ),
     "deepseek_harness": HarnessProfile(
         AcpDriver,
@@ -78,6 +83,7 @@ HARNESSES: dict[str, HarnessProfile] = {
         ["off", "low", "high", "max"],
         "high",
         note="Sandbox mode is fixed at start. Workspace mode writes without asking.",
+        unattended={"read": "read-only", "write": "workspace-write"},
     ),
     "claude_cli": HarnessProfile(
         ClaudeDriver,
@@ -91,6 +97,7 @@ HARNESSES: dict[str, HarnessProfile] = {
         "manual",
         ["low", "medium", "high", "xhigh", "max"],
         "medium",
+        unattended={"read": "manual", "write": "manual"},
     ),
     "mock": HarnessProfile(
         MockDriver,
@@ -101,6 +108,7 @@ HARNESSES: dict[str, HarnessProfile] = {
         "ask",
         ["low", "high"],
         "low",
+        unattended={"read": "ask", "write": "ask"},
     ),
 }
 

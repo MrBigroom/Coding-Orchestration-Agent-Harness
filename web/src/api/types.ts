@@ -153,6 +153,9 @@ export interface Schedule {
   timezone: string;
   task_template_json: Record<string, unknown>;
   agent_id: number | null;
+  run_mode: "pipeline" | "standalone";
+  access: "read" | "write";
+  time_limit_minutes: number;
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -218,15 +221,40 @@ export interface AgentDetail extends Agent {
   recent_tasks: Task[];
 }
 
+export interface StandaloneRun {
+  id: number;
+  title: string;
+  chat_id: number | null;
+  schedule_id: number | null;
+  access: "read" | "write";
+  adapter: string | null;
+  model: string | null;
+  status: string;
+  report_path: string | null;
+  summary: string;
+  files: string[];
+  blocked: string[];
+  usage: { input_tokens?: number; output_tokens?: number };
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface AgentOutputs {
+  folder: string;
+  runs: StandaloneRun[];
+}
+
 export interface ChatSession {
   id: number;
   title: string;
-  project_id: number;
+  project_id: number | null;
+  standalone: boolean;
   adapter: string;
   model: string | null;
   effort: string | null;
   permission: string | null;
-  workspace: "worktree" | "checkout";
+  workspace: string;
   cwd: string;
   branch_name: string | null;
   status: string;

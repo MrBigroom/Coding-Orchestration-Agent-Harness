@@ -88,6 +88,16 @@ class Role(StrEnum):
     agent = "agent"
 
 
+class StandaloneStatus(StrEnum):
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    timeout = "timeout"
+    stopped = "stopped"
+    skipped = "skipped"
+    interrupted = "interrupted"
+
+
 class ChatStatus(StrEnum):
     starting = "starting"
     idle = "idle"
@@ -252,6 +262,10 @@ class Schedule(SQLModel, table=True):
     task_template_json: dict[str, Any] = _json({})
     # When set, each fire runs this saved agent with the template's description as the request.
     agent_id: int | None = Field(default=None, index=True)
+    # "pipeline" creates a task; "standalone" runs the agent on its own (agent schedules only).
+    run_mode: str = "pipeline"
+    access: str = "read"  # standalone only: "read" or "write"
+    time_limit_minutes: int = 30  # standalone only
     enabled: bool = True
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
@@ -314,13 +328,16 @@ class ChatSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     title: str = ""
-    project_id: int = Field(foreign_key="projects.id", index=True)
+    # Empty for a standalone run of an agent with no project.
+    project_id: int | None = Field(default=None, foreign_key="projects.id", index=True)
     adapter: str
     model: str | None = None
     effort: str | None = None
     permission: str | None = None
     # "worktree" (isolated branch, the default) or "checkout" (the project's own files).
+    # Standalone runs also use "snapshot" (detached worktree) and "folder" (no project).
     workspace: str = "worktree"
+    standalone: bool = False
     cwd: str
     branch_name: str | None = None
     status: str = Field(
@@ -404,3 +421,30 @@ class SyncState(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value_json: Any = Field(default=None, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StandaloneRun(SQLModel, table=True):
+    """One run of an agent outside the task pipeline. Its transcript is the linked chat
+    session and its report is a Markdown file in the agent's output folder."""
+
+    __tablename__ = "standalone_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    agent_id: int = Field(index=True)
+    schedule_id: int | None = Field(default=None, index=True)
+    chat_id: int | None = None
+    title: str = ""
+    access: str = "read"
+    adapter: str | None = None
+    model: str | None = None
+    status: str = Field(
+        default=StandaloneStatus.running, sa_column=Column(String(32), nullable=False, index=True)
+    )
+    report_path: str | None = None
+    summary: str = Field(default="", sa_column=Column(Text, nullable=False))
+    files: list[str] = _json([])
+    blocked: list[str] = _json([])
+    usage: dict[str, Any] = _json({})
+    error: str | None = Field(default=None, sa_column=Column(Text))
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: datetime | None = None

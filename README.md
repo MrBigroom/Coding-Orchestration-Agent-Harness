@@ -75,7 +75,8 @@ orchestrator agent run deps "Update the patch-level dependencies"
 **Agents** are saved instructions + model (+ project/harness). Each run becomes a task
 that goes through the harness routed for the agent's model. With a project it gets the
 full worktree → tests → Architect review gate. **Scheduled tasks** can run an agent on a
-cron. See [`docs/agents.md`](docs/agents.md).
+cron or at a set time, through that pipeline or as a standalone session that saves its own
+report. See [`docs/agents.md`](docs/agents.md).
 
 The GUI covers the same workflows. Its pages are Dashboard, Tasks, Task Detail (live
 logs, diff, handoff, review, verification, accept/reject/escalate, retry with a

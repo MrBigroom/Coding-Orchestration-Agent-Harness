@@ -1,9 +1,9 @@
 # Agents and scheduled tasks
 
 An **agent** is a saved, reusable definition: a name, standing instructions, a model
-profile, and optionally a project and a harness. Running it, by hand or from a schedule,
-creates a task. Agents add no new execution path. Every run goes through the same task
-machinery as a task you create yourself.
+profile, and optionally a project and a harness. Running it, by hand or from a pipeline
+schedule, creates a task that goes through the same machinery as a task you create yourself.
+A [standalone schedule](#standalone-runs) runs the agent on its own instead.
 
 ## What a run does
 
@@ -35,7 +35,7 @@ does one of two things:
   project come from the agent.
 - **Creates a task** (no agent): the template is a `TaskCreate` body, as before.
 
-Scheduled tasks are queued, and the queue worker runs them like any other task.
+Pipeline schedules are queued, and the queue worker runs them like any other task.
 
 **Time zones.** Each schedule stores an IANA `timezone`, so a repeating run keeps its local
 time across daylight-saving changes. The GUI uses your browser's zone. The API and CLI default
@@ -54,6 +54,53 @@ adds an extra run and leaves the planned one in place.
 than once a day, `POST /api/schedules/validate`, the GUI and `orchestrator schedule add`
 all show a warning. It's a warning, not a block.
 
+## Standalone runs
+
+An agent schedule can be **Standalone** instead of **Pipeline**. A standalone run starts a
+harness session directly, with no task, Supervisor, verification or review. It costs no
+review tokens, and an agent with no project still gets the harness's tools.
+
+Turn it on with `allow_unattended_sessions` in Settings. It's off by default and stays on one
+device, and a run started while it's off is recorded as skipped. The server must be running,
+and a run ends if the server stops. Run these from the GUI or the API; `orchestrator schedule
+run` only fires pipeline schedules.
+
+**Where it works**
+
+| | Agent has a project | No project |
+|---|---|---|
+| **Read and report** | A throwaway detached copy of the base branch, removed afterwards | The output folder |
+| **Can make changes** | A worktree on its own `chat/<id>-<project>` branch, kept for review | The output folder |
+
+**What it may do.** Nobody can answer an approval, so the run answers them itself:
+
+| Request | Read and report | Can make changes |
+|---|---|---|
+| Reading | Allowed | Allowed |
+| Writing a file | Output folder only | Working directory and output folder |
+| Shell commands, web fetches, anything else | Denied | Allowed |
+| A request it can't identify | Denied | Allowed |
+
+Denied requests are listed in the report under **Blocked**. If a denial ends the agent's turn
+before it has reported, which Qwen Code and OpenCode do, the run tells it to carry on, up to
+three times. Some harnesses decide things
+before asking: Qwen Code and Claude Code run read-only commands without a prompt. Pi uses the
+same read-only command list as Plan mode. In Read and report, DeepSeek Harness's OS sandbox and
+OpenCode's workspace limit both stop writes to the output folder, so only the report is saved. See
+[security.md](security.md#standalone-runs) for what these limits do and don't guarantee.
+
+**Output.** Each agent has a folder at `<home>/agent-outputs/<agent>/`. The agent's last message
+is saved to `reports/<date>-<time>-run<id>.md`, with any blocked actions and errors, and
+secrets are redacted. The Agents page lists each run under **Outputs**, with its status, tokens,
+report and any files it wrote. **Session** opens the transcript on the Chat page. It's read-only,
+and only **Stop run** works while the run is going.
+
+**Limits.** Each run has a time limit (default 30 minutes) and ends when the agent's first turn
+ends. A run is skipped if the same schedule's previous run is still going, or if two standalone
+runs are already active. These runs don't use Chat's four session slots. Harnesses are chosen
+from the agent's route, and those without a session protocol (ZCode, Aider) are passed over.
+Only the agent's own harness setting can make a run fail for that reason.
+
 ## CLI
 
 ```bash
@@ -65,6 +112,8 @@ orchestrator schedule add weekly-deps "0 3 * * 1" --agent deps \
     --template '{"description": "Update patch-level dependencies"}'
 orchestrator schedule add release-check --at "2026-11-20 09:00" --timezone Asia/Kuala_Lumpur \
     --agent deps --template '{"description": "Check the release branch"}'
+orchestrator schedule add daily-report "0 8 * * *" --agent deps --run-mode standalone \
+    --access read --time-limit 15 --template '{"description": "Report outdated dependencies"}'
 ```
 
 ## API
@@ -73,7 +122,10 @@ orchestrator schedule add release-check --at "2026-11-20 09:00" --timezone Asia/
 (`{"request", "title"?, "risk"?, "definition_of_done"?, "queue"?}`),
 `DELETE /api/schedules/{id}`. Schedules accept an optional `agent_id`, a `timezone`, and
 either `cron_expression` or `run_at`. A `run_at` with no offset is read in `timezone`, and
-`POST /api/schedules/validate` takes the same fields. A PATCH can also change `name`, and
+`POST /api/schedules/validate` takes the same fields. Schedules also take `run_mode`
+(`pipeline` or `standalone`), `access` (`read` or `write`) and `time_limit_minutes`. Standalone
+runs are at `GET /api/agents/{id}/outputs`, `GET /api/standalone-runs/{id}/report` and
+`POST /api/standalone-runs/{id}/stop`. A PATCH can also change `name`, and
 edits only affect future runs. In a PATCH, setting `cron_expression` or `run_at` clears the
 other, `agent_id: 0` detaches the agent, an empty `model_profile`/`harness_adapter` restores
 automatic routing, and `project_id: 0` clears the project.

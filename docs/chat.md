@@ -4,6 +4,9 @@ The **Chat** page talks to a coding harness directly, the way that harness's own
 Unlike a task, a session has no supervisor, verification or review. Use tasks for work you
 want gated and Chat for work you want to steer yourself.
 
+[Standalone runs](agents.md#standalone-runs) also appear here, with a read-only transcript and a
+**Stop run** button.
+
 Chat is off by default. Turn it on from the Chat page or with `allow_interactive_sessions`
 in Settings. [security.md](security.md#interactive-sessions-chat) explains why.
 

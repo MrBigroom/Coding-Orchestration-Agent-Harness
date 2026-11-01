@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { del, patch, post } from "../api/client";
 import type { Agent, ModelProfile, Project, Schedule } from "../api/types";
 import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Toggle, fmtTime } from "../components/ui";
@@ -12,7 +13,8 @@ const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 
 const BLANK = { name: "", mode: "agent" as "agent" | "task", agent_id: "", title: "", request: "",
   model_profile: "", project_id: "", when: "repeat" as "once" | "repeat", run_at: "", frequency: "daily",
-  time: "02:00", weekday: "1", monthday: "1", cron: "0 2 * * *", timezone: TIME_ZONE, advanced: false, template: "{}" };
+  time: "02:00", weekday: "1", monthday: "1", cron: "0 2 * * *", timezone: TIME_ZONE, advanced: false, template: "{}",
+  run_mode: "pipeline" as "pipeline" | "standalone", access: "read" as "read" | "write", time_limit: "30" };
 
 function buildCron(f: typeof BLANK): string {
   if (f.frequency === "cron") return f.cron;
@@ -82,12 +84,14 @@ function fromSchedule(s: Schedule): typeof BLANK {
     when: s.run_at ? "once" : "repeat", run_at: s.run_at ? localInput(s.run_at, s.timezone) : "",
     cron: s.cron_expression || BLANK.cron, timezone: s.timezone,
     advanced: !request, template: JSON.stringify(t, null, 2),
+    run_mode: s.run_mode, access: s.access, time_limit: String(s.time_limit_minutes),
   };
 }
 
 export default function Schedules() {
   const { data, error, reload } = useApi<Schedule[]>("/schedules", 10000);
   const agents = useApi<Agent[]>("/agents");
+  const settings = useApi<Record<string, unknown>>("/settings");
   const profiles = useApi<ModelProfile[]>("/model-profiles");
   const projects = useApi<Project[]>("/projects");
   const [f, setF] = useState(BLANK);
@@ -98,6 +102,11 @@ export default function Schedules() {
   const set = (k: keyof typeof BLANK) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const once = f.when === "once";
   const cron = buildCron(f);
+  const standalone = f.mode === "agent" && f.run_mode === "standalone";
+  const running = {
+    run_mode: standalone ? "standalone" : "pipeline", access: f.access,
+    time_limit_minutes: Number(f.time_limit) || 30,
+  };
   const timing = once
     ? { run_at: f.run_at, timezone: f.timezone }
     : { cron_expression: cron, timezone: f.timezone };
@@ -129,7 +138,7 @@ export default function Schedules() {
     try { template = buildTemplate(f, editing?.task_template_json); } catch { throw new Error("task template must be valid JSON"); }
     if (editing) {
       await patch(`/schedules/${editing.id}`, {
-        name: f.name, task_template_json: template, timezone: f.timezone,
+        name: f.name, task_template_json: template, timezone: f.timezone, ...running,
         agent_id: f.mode === "agent" ? Number(f.agent_id) : 0,
         ...(sameTime ? {} : timing),
         // A new time gives a finished one-time schedule another run.
@@ -140,16 +149,16 @@ export default function Schedules() {
       return;
     }
     await post("/schedules", {
-      name: f.name, ...timing, task_template_json: template, enabled: true,
+      name: f.name, ...timing, ...running, task_template_json: template, enabled: true,
       agent_id: f.mode === "agent" ? Number(f.agent_id) : null,
     });
-    setF({ ...BLANK, mode: f.mode, agent_id: f.agent_id });
+    setF({ ...BLANK, mode: f.mode, agent_id: f.agent_id, run_mode: f.run_mode, access: f.access });
     await reload();
   });
 
   const agentName = (id: number | null) => agents.data?.find((a) => a.id === id)?.name ?? `#${id}`;
   const target = (s: Schedule) => s.agent_id
-    ? <span>agent <span className="mono">{agentName(s.agent_id)}</span></span>
+    ? <span>agent <span className="mono">{agentName(s.agent_id)}</span>{s.run_mode === "standalone" && <> <Badge value="standalone" /></>}</span>
     : <span className="mono">{String(s.task_template_json.assigned_provider_profile ?? "auto model")}</span>;
   const ready = f.name.trim() && (sameTime || cronCheck?.valid)
     && (f.advanced || f.request.trim()) && (f.mode === "task" || f.agent_id);
@@ -219,6 +228,36 @@ export default function Schedules() {
                     {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </Field>
+              </>
+            )}
+            {f.mode === "agent" && (
+              <>
+                <div className="flex gap-1 rounded-md border border-line p-0.5 text-sm">
+                  {(["pipeline", "standalone"] as const).map((m) => (
+                    <button key={m} type="button" onClick={() => setF({ ...f, run_mode: m })}
+                      className={`flex-1 rounded px-2 py-1 ${f.run_mode === m ? "bg-accent/15 text-accent" : "text-muted hover:text-ink"}`}>
+                      {m === "pipeline" ? "Pipeline" : "Standalone"}
+                    </button>
+                  ))}
+                </div>
+                {standalone ? (
+                  <>
+                    <div className="text-xs text-muted">Runs in its own harness session, with no task or review. Its report goes to the agent's Outputs.</div>
+                    {settings.data && !settings.data.allow_unattended_sessions && (
+                      <div className="rounded-md border border-warn/40 bg-warn/10 p-2 text-xs text-warn">Standalone runs are off, so this schedule will be skipped. Turn them on in <Link className="underline" to="/settings">Settings</Link>.</div>
+                    )}
+                    <Field label="Access">
+                      <select className="input" value={f.access} onChange={set("access")}>
+                        <option value="read">Read and report</option>
+                        <option value="write">Can make changes</option>
+                      </select>
+                    </Field>
+                    {f.access === "write" && <div className="rounded-md border border-warn/40 bg-warn/10 p-2 text-xs text-warn">Approves shell commands with nobody watching. Changes stay on a separate branch, but a worktree doesn't limit what the agent can reach.</div>}
+                    <Field label="Time limit (minutes)">
+                      <input type="number" min={1} max={1440} className="input" value={f.time_limit} onChange={set("time_limit")} />
+                    </Field>
+                  </>
+                ) : <div className="text-xs text-muted">Creates a task, then goes through the queue, verification and review.</div>}
               </>
             )}
             {f.advanced ? (

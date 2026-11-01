@@ -79,8 +79,9 @@ def history(chat_id: int) -> list[dict[str, Any]]:
 
 
 class LiveSession:
-    def __init__(self, chat_id: int) -> None:
+    def __init__(self, chat_id: int, standalone: bool = False) -> None:
         self.id = chat_id
+        self.standalone = standalone  # nobody is attached; standalone_service answers for it
         self.driver: ChatDriver | None = None
         self.status: str = ChatStatus.starting
         self.subscribers: set[asyncio.Queue] = set()
@@ -262,6 +263,9 @@ class ChatManager:
     def discard(self, chat_id: int) -> None:
         self.live.pop(chat_id, None)
 
+    def unattended_count(self) -> int:
+        return sum(s.standalone for s in self.live.values())
+
     async def close_all(self) -> None:
         await asyncio.gather(*(s.shutdown() for s in list(self.live.values())))
 
@@ -295,6 +299,12 @@ def _models_for(session: Session, adapter_name: str) -> list[str]:
         if adapter_name in adapter_service.route_for(routes, p.name, p.model_name)
     ]
     return list(dict.fromkeys(names))
+
+
+def harness_problem(session: Session, adapter_name: str) -> str | None:
+    """Why this adapter can't run a session right now, or None if it can."""
+    row = adapter_service.get_row(session, adapter_name)
+    return _reason_unavailable(row, adapter_service.get_adapter(session, adapter_name).detect())
 
 
 def _reason_unavailable(row: HarnessAdapter, detected: bool) -> str | None:
@@ -338,9 +348,20 @@ def harnesses(session: Session) -> dict[str, Any]:
     }
 
 
-def _workspace(chat: ChatSession, project: Project, body: ChatSessionCreate) -> None:
-    if body.workspace == "checkout":
+def _workspace(chat: ChatSession, project: Project | None, folder: Path | None) -> None:
+    if not project:
+        assert folder
+        chat.cwd = str(folder)
+        return
+    if chat.workspace == "checkout":
         chat.cwd = project.path
+        return
+    if chat.workspace == "snapshot":
+        chat.cwd = str(
+            git_service.ensure_snapshot(
+                Path(project.path), project.slug, f"chat-{chat.id}", project.base_branch
+            ).path
+        )
         return
     branch = f"chat/{chat.id}-{slugify(project.slug)}"
     info = git_service.ensure_worktree(
@@ -352,39 +373,71 @@ def _workspace(chat: ChatSession, project: Project, body: ChatSessionCreate) -> 
 
 async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
     _require_enabled(session)
-    if len(manager.live) >= MAX_LIVE_SESSIONS:
+    if len(manager.live) - manager.unattended_count() >= MAX_LIVE_SESSIONS:
         raise ChatError(f"at most {MAX_LIVE_SESSIONS} sessions can run at once; end one first")
     project = session.get(Project, body.project_id)
     if not project:
         raise KeyError(f"project {body.project_id} not found")
     row = adapter_service.get_row(session, body.adapter)
-    adapter = adapter_service.get_adapter(session, body.adapter)
-    if reason := _reason_unavailable(row, adapter.detect()):
+    profile = HARNESSES.get(row.kind)
+    permission = body.permission or (profile.default_permission if profile else None)
+    if profile and permission and permission not in {m.id for m in profile.permissions}:
+        raise ChatError(f"{body.adapter} has no permission mode {permission!r}")
+    return await open_session(
+        session,
+        adapter=body.adapter,
+        project=project,
+        model=body.model,
+        effort=body.effort,
+        permission=permission,
+        workspace=body.workspace,
+    )
+
+
+async def open_session(
+    session: Session,
+    *,
+    adapter: str,
+    project: Project | None,
+    workspace: str,
+    model: str | None = None,
+    effort: str | None = None,
+    permission: str | None = None,
+    title: str = "",
+    folder: Path | None = None,
+    standalone: bool = False,
+    output_dir: Path | None = None,
+) -> ChatSession:
+    """Create a session row and workspace, and start the harness."""
+    row = adapter_service.get_row(session, adapter)
+    harness = adapter_service.get_adapter(session, adapter)
+    if reason := _reason_unavailable(row, harness.detect()):
         raise ChatError(reason)
     profile = HARNESSES[row.kind]
-    permission = body.permission or profile.default_permission
-    if permission and permission not in {m.id for m in profile.permissions}:
-        raise ChatError(f"{body.adapter} has no permission mode {permission!r}")
-    effort = body.effort or profile.default_effort
-    model = body.model
-    if not model and profile.uses_profile_models:
+    permission = permission or profile.default_permission
+    effort = effort or profile.default_effort
+    if not profile.uses_profile_models:
+        model = None
+    elif not model:
         known = ["mock-worker"] if row.kind == "mock" else _models_for(session, row.name)
         model = known[0] if known else None
     chat = ChatSession(
-        project_id=body.project_id,
-        adapter=body.adapter,
+        title=title,
+        project_id=project.id if project else None,
+        adapter=adapter,
         model=model,
         effort=effort,
         permission=permission,
-        workspace=body.workspace,
-        cwd=project.path,
+        workspace=workspace,
+        standalone=standalone,
+        cwd=project.path if project else str(folder),
     )
     session.add(chat)
     session.commit()
     session.refresh(chat)
     assert chat.id is not None
     try:
-        _workspace(chat, project, body)
+        _workspace(chat, project, folder)
     except Exception:
         session.delete(chat)
         session.commit()
@@ -393,7 +446,7 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
     session.commit()
     session.refresh(chat)
 
-    live = LiveSession(chat.id)
+    live = LiveSession(chat.id, standalone)
     manager.live[chat.id] = live
     options = DriverOptions(
         cwd=Path(chat.cwd),
@@ -402,8 +455,9 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
         effort=effort,
         permission=permission,
         models=_models_for(session, row.name) if profile.uses_profile_models else [],
+        output_dir=output_dir,
     )
-    live.spawn(live.start(profile.driver(adapter, options, live.emit)))
+    live.spawn(live.start(profile.driver(harness, options, live.emit)))
     return chat
 
 
@@ -421,8 +475,13 @@ def list_sessions(session: Session) -> list[ChatSession]:
 
 async def handle(session: Session, live: LiveSession, message: dict[str, Any]) -> None:
     """One message from the GUI."""
-    _require_enabled(session)
     kind = message.get("type")
+    if live.standalone:  # nobody steers a standalone run; Stop ends it
+        if kind != "interrupt":
+            raise ChatError("this is a standalone run, so it can only be stopped")
+        await live.shutdown()
+        return
+    _require_enabled(session)
     if kind == "prompt":
         await live.prompt(str(message.get("text") or ""))
         return
@@ -449,13 +508,22 @@ async def close(chat_id: int) -> None:
 
 
 def _project(session: Session, chat: ChatSession) -> Project:
-    project = session.get(Project, chat.project_id)
+    project = session.get(Project, chat.project_id or 0)
     if not project:
         raise KeyError(f"project {chat.project_id} not found")
     return project
 
 
 def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
+    if chat.project_id is None:  # a standalone run's output folder
+        return {
+            "isolated": True,
+            "branch": None,
+            "base_branch": "",
+            "merge_enabled": False,
+            "uncommitted": "",
+            "diffstat": "",
+        }
     project = _project(session, chat)
     path = Path(chat.cwd)
     result: dict[str, Any] = {
@@ -496,18 +564,22 @@ def merge(session: Session, chat: ChatSession) -> str:
     )
 
 
+def remove_worktree(project: Project, chat: ChatSession) -> str:
+    key = f"chat-{chat.id}"
+    info = {
+        "path": git_service.worktree_path(project.slug, key),
+        "marker": git_service._marker(project.slug, key),
+    }
+    return git_service.remove_worktree(Path(project.path), info, dry_run=False)
+
+
 def delete(session: Session, chat: ChatSession) -> None:
     """Remove the transcript and worktree. A dirty worktree stays, and the branch always does."""
     if manager.get(chat.id or 0):
         raise ChatError("end the session before deleting it")
-    project = session.get(Project, chat.project_id)
-    if chat.workspace == "worktree" and project:
-        key = f"chat-{chat.id}"
-        info = {
-            "path": git_service.worktree_path(project.slug, key),
-            "marker": git_service._marker(project.slug, key),
-        }
-        git_service.remove_worktree(Path(project.path), info, dry_run=False)
+    project = session.get(Project, chat.project_id or 0)
+    if chat.workspace in ("worktree", "snapshot") and project:
+        remove_worktree(project, chat)
     shutil.rmtree(_transcript(chat.id or 0).parent, ignore_errors=True)
     session.delete(chat)
     session.commit()

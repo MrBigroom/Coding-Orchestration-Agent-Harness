@@ -12,6 +12,7 @@ from orchestrator.adapters.common import _n, wants_explicit_cache
 GATE = Path(__file__).with_name("pi_gate.ts")
 PROVIDER = "orchestrator"
 FAILED_STOP_REASONS = {"length", "error"}
+EDIT_TITLES = {"Allow edit?", "Allow write?"}
 
 
 class PiDriver(ChatDriver):
@@ -55,6 +56,8 @@ class PiDriver(ChatDriver):
             self._write_models()
         self._mode_file.write_text(self.options.permission or "ask")
         env["ORCHESTRATOR_PI_MODE_FILE"] = str(self._mode_file)
+        if self.options.output_dir:
+            env["ORCHESTRATOR_OUTPUT_DIR"] = str(self.options.output_dir)
         argv = [self.adapter.spec.command, "--mode", "rpc", "--no-session", "--no-approve"]
         argv += ["--extension", str(GATE)]
         if self._managed:
@@ -211,7 +214,8 @@ class PiDriver(ChatDriver):
                 {"id": o, "label": o, "tone": "deny" if o == "Deny" else "allow"}
                 for o in record.get("options") or []
             ]
-            self.ask(str(record["id"]), title, detail, options)
+            action = {"kind": "write" if title in EDIT_TITLES else "other", "paths": [detail]}
+            self.ask(str(record["id"]), title, detail, options, action)
         elif method == "notify":
             self.emit({"type": "notice", "message": str(record.get("message") or "")})
         elif method in ("confirm", "input", "editor"):

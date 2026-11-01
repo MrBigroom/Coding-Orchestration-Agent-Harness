@@ -6,7 +6,8 @@ events, which `services.chat_service` persists and streams to the GUI:
 
   {"type": "text" | "thinking", "delta": str}
   {"type": "tool_start", "id", "name", "input"}, {"type": "tool_end", "id", "output", "error"}
-  {"type": "approval", "id", "title", "detail", "options": [{"id", "label", "tone"}]}
+  {"type": "approval", "id", "title", "detail", "options": [{"id", "label", "tone"}],
+   "action": {"kind": "read" | "write" | "other", "paths": [str]}}
   {"type": "approval_resolved", "id", "choice"}
   {"type": "status", "status": "busy" | "idle"}
   {"type": "usage", ...the shape documented in adapters.common}
@@ -50,6 +51,8 @@ class DriverOptions:
     permission: str | None = None
     # Models the session may switch to, for harnesses the orchestrator configures.
     models: list[str] = field(default_factory=list)
+    # Standalone runs only: the one folder a read-access run may write to.
+    output_dir: Path | None = None
 
 
 class ChatProcess:
@@ -232,7 +235,15 @@ class ChatDriver(ABC):
         self.usage = {k: self.usage.get(k, 0) + v for k, v in turn.items()}
         self.emit({"type": "usage", **self.usage})
 
-    def ask(self, approval_id: str, title: str, detail: str, options: list[dict[str, str]]) -> None:
+    def ask(
+        self,
+        approval_id: str,
+        title: str,
+        detail: str,
+        options: list[dict[str, str]],
+        action: dict[str, Any] | None = None,
+    ) -> None:
+        """`action` is what standalone runs decide on; without it they refuse the request."""
         self.approvals[approval_id] = {"options": options}
         self.emit(
             {
@@ -241,6 +252,7 @@ class ChatDriver(ABC):
                 "title": title,
                 "detail": detail,
                 "options": options,
+                "action": action,
             }
         )
 
