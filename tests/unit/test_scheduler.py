@@ -222,3 +222,43 @@ def test_late_run_is_noted_in_the_log(session):
     scheduler_service.fire(session, s)
     notes = [e.details for e in session.exec(select(BuildLogEntry))]
     assert any("late" in n and "was due" in n for n in notes)
+
+
+def test_renaming_a_schedule(session):
+    a = scheduler_service.create(session, ScheduleCreate(name="a", cron_expression="0 2 * * *"))
+    scheduler_service.create(session, ScheduleCreate(name="b", cron_expression="0 2 * * *"))
+    scheduler_service.update(session, a, ScheduleUpdate(name="a"))
+    scheduler_service.update(session, a, ScheduleUpdate(name="renamed"))
+    assert a.name == "renamed"
+    for name in ("b", " "):
+        with pytest.raises(ValueError):
+            scheduler_service.update(session, a, ScheduleUpdate(name=name))
+    assert a.name == "renamed"
+
+
+def test_names_stay_unique(session):
+    scheduler_service.create(session, ScheduleCreate(name="a", cron_expression="0 2 * * *"))
+    with pytest.raises(ValueError):
+        scheduler_service.create(session, ScheduleCreate(name="a", cron_expression="0 3 * * *"))
+
+
+def test_changing_the_template_keeps_a_finished_schedule_off(session):
+    s = scheduler_service.create(
+        session, ScheduleCreate(name="kept", run_at=later(), task_template_json={"title": "t"})
+    )
+    s.run_at = later(minutes=-1)
+    scheduler_service.fire(session, s)
+    scheduler_service.update(session, s, ScheduleUpdate(task_template_json={"title": "new"}))
+    assert s.enabled is False and s.next_run_at is None
+    assert s.task_template_json == {"title": "new"}
+
+
+def test_changing_the_time_moves_the_next_run(session):
+    s = scheduler_service.create(session, ScheduleCreate(name="m", cron_expression="0 2 * * *"))
+    scheduler_service.update(
+        session, s, ScheduleUpdate(cron_expression="0 9 * * *", timezone="Asia/Kuala_Lumpur")
+    )
+    assert s.next_run_at.hour == 1 and s.timezone == "Asia/Kuala_Lumpur"
+    when = later(days=3)
+    scheduler_service.update(session, s, ScheduleUpdate(run_at=when))
+    assert s.next_run_at == when

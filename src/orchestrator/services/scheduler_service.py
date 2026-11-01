@@ -136,7 +136,16 @@ def _validate(session: Session, raw: dict[str, Any], name: str, agent_id: int | 
         _template(raw, name)
 
 
+def _check_name(session: Session, name: str, own_id: int | None = None) -> None:
+    if not name.strip():
+        raise ValueError("a schedule needs a name")
+    other = session.exec(select(Schedule).where(Schedule.name == name)).first()
+    if other and other.id != own_id:
+        raise ValueError(f"a schedule named {name!r} already exists")
+
+
 def create(session: Session, data: ScheduleCreate) -> Schedule:
+    _check_name(session, data.name)
     if bool(data.cron_expression) == bool(data.run_at):
         raise CronError("set either a cron expression or a run time")
     _zone(data.timezone)
@@ -163,6 +172,8 @@ def create(session: Session, data: ScheduleCreate) -> Schedule:
 def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
     if data.cron_expression is not None and data.run_at:
         raise CronError("set either a cron expression or a run time")
+    if data.name is not None:
+        _check_name(session, data.name, sched.id)
     zone = data.timezone or sched.timezone
     _zone(zone)
     if data.cron_expression is not None:
@@ -176,6 +187,8 @@ def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
     elif sched.run_at and data.enabled and not sched.enabled:
         check_run_time(sched.run_at)
     sched.timezone = zone
+    if data.name is not None:
+        sched.name = data.name
     if data.agent_id is not None:
         sched.agent_id = data.agent_id or None
     if data.task_template_json is not None:

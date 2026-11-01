@@ -273,6 +273,7 @@ class ScheduleCreate(BaseModel):
 
 
 class ScheduleUpdate(BaseModel):
+    name: str | None = None
     cron_expression: str | None = None
     run_at: datetime | None = None
     timezone: str | None = None

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { del, patch, post } from "../api/client";
 import type { Agent, ModelProfile, Project, Schedule } from "../api/types";
 import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Toggle, fmtTime } from "../components/ui";
@@ -12,7 +12,7 @@ const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 
 const BLANK = { name: "", mode: "agent" as "agent" | "task", agent_id: "", title: "", request: "",
   model_profile: "", project_id: "", when: "repeat" as "once" | "repeat", run_at: "", frequency: "daily",
-  time: "02:00", weekday: "1", monthday: "1", cron: "0 2 * * *", advanced: false, template: "{}" };
+  time: "02:00", weekday: "1", monthday: "1", cron: "0 2 * * *", timezone: TIME_ZONE, advanced: false, template: "{}" };
 
 function buildCron(f: typeof BLANK): string {
   if (f.frequency === "cron") return f.cron;
@@ -20,12 +20,6 @@ function buildCron(f: typeof BLANK): string {
   const [hour, minute] = f.time.split(":").map(Number);
   const days = { daily: "* * *", weekdays: "* * 1-5", weekly: `* * ${f.weekday}`, monthly: `${f.monthday} * *` };
   return `${minute} ${hour} ${days[f.frequency as keyof typeof days]}`;
-}
-
-// Now, in the form a datetime-local input uses.
-function localNow(): string {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
 function whenOf(s: Schedule): string {
@@ -39,15 +33,55 @@ function finished(s: Schedule): string | null {
   return s.last_run_at && new Date(s.last_run_at) >= new Date(s.run_at) ? "done" : "not run";
 }
 
-function buildTemplate(f: typeof BLANK): Record<string, unknown> {
+const defaultTitle = (request: string) => request.split("\n")[0].slice(0, 80);
+
+// `base` is the template being edited: fields the form doesn't show stay as they were.
+function buildTemplate(f: typeof BLANK, base: Record<string, unknown> = {}): Record<string, unknown> {
   if (f.advanced) return JSON.parse(f.template);
-  if (f.mode === "agent") return { description: f.request, ...(f.title ? { title: f.title } : {}) };
+  const { title: _title, assigned_provider_profile: _profile, ...kept } = base;
+  if (f.mode === "agent") return { ...kept, description: f.request, ...(f.title ? { title: f.title } : {}) };
+  const sameProject = f.project_id === String(base.project_id ?? "");
   return {
-    title: f.title || f.request.split("\n")[0].slice(0, 80),
+    ...kept,
+    title: f.title || defaultTitle(f.request),
     description: f.request,
     project_id: f.project_id ? Number(f.project_id) : null,
-    kind: f.project_id ? "coding" : "agent",
+    kind: sameProject && base.kind ? base.kind : f.project_id ? "coding" : "agent",
     ...(f.model_profile ? { assigned_provider_profile: f.model_profile } : {}),
+  };
+}
+
+// Repeating schedules the picker can show reopen in it; anything else stays Custom cron.
+function parseCron(cron: string): Partial<typeof BLANK> {
+  const m = /^(\d{1,2}) (\d{1,2}) (\*|\d{1,2}) \* (\*|\d|1-5)$/.exec(cron);
+  if (!m) return { frequency: "cron" };
+  const [, minute, hour, dom, dow] = m;
+  const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  if (dom === "*" && dow === "*") return { frequency: "daily", time };
+  if (dom === "*" && dow === "1-5") return { frequency: "weekdays", time };
+  if (dom === "*") return { frequency: "weekly", time, weekday: String(Number(dow) % 7) };
+  if (dow === "*") return { frequency: "monthly", time, monthday: String(Number(dom)) };
+  return { frequency: "cron" };
+}
+
+// A moment as a datetime-local value in the given time zone.
+function localInput(moment: string, zone: string): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(moment)).replace(" ", "T");
+}
+
+function fromSchedule(s: Schedule): typeof BLANK {
+  const t = s.task_template_json;
+  const request = String(t.description ?? "");
+  const title = String(t.title ?? "");
+  return {
+    ...BLANK, ...(s.run_at ? {} : parseCron(s.cron_expression)),
+    name: s.name, mode: s.agent_id ? "agent" : "task", agent_id: String(s.agent_id ?? ""),
+    title: title === defaultTitle(request) ? "" : title, request,
+    model_profile: String(t.assigned_provider_profile ?? ""), project_id: String(t.project_id ?? ""),
+    when: s.run_at ? "once" : "repeat", run_at: s.run_at ? localInput(s.run_at, s.timezone) : "",
+    cron: s.cron_expression || BLANK.cron, timezone: s.timezone,
+    advanced: !request, template: JSON.stringify(t, null, 2),
   };
 }
 
@@ -58,16 +92,21 @@ export default function Schedules() {
   const projects = useApi<Project[]>("/projects");
   const [f, setF] = useState(BLANK);
   const [cronCheck, setCronCheck] = useState<CronCheck | null>(null);
+  const [editing, setEditing] = useState<Schedule | null>(null);
+  const form = useRef<HTMLDivElement>(null);
   const act = useAction();
   const set = (k: keyof typeof BLANK) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const once = f.when === "once";
   const cron = buildCron(f);
   const timing = once
-    ? { run_at: f.run_at, timezone: TIME_ZONE }
-    : { cron_expression: cron, timezone: TIME_ZONE };
+    ? { run_at: f.run_at, timezone: f.timezone }
+    : { cron_expression: cron, timezone: f.timezone };
+  // An unchanged one-time schedule keeps its time, even a past one.
+  const sameTime = once && !!editing?.run_at && f.timezone === editing.timezone
+    && f.run_at === localInput(editing.run_at, editing.timezone);
 
   useEffect(() => {
-    if (once ? !f.run_at : !cron) { setCronCheck(null); return; }
+    if (sameTime || (once ? !f.run_at : !cron)) { setCronCheck(null); return; }
     const t = setTimeout(() => {
       post<CronCheck>("/schedules/validate", {
         ...timing,
@@ -76,11 +115,30 @@ export default function Schedules() {
       }).then(setCronCheck).catch(() => setCronCheck(null));
     }, 300);
     return () => clearTimeout(t);
-  }, [once, f.run_at, cron, f.mode, f.agent_id, f.model_profile]);
+  }, [once, sameTime, f.run_at, cron, f.timezone, f.mode, f.agent_id, f.model_profile]);
 
-  const create = () => act.run(async () => {
+  const startEdit = (s: Schedule) => {
+    setEditing(s);
+    setF(fromSchedule(s));
+    form.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
+  const stopEdit = () => { setEditing(null); setF(BLANK); };
+
+  const save = () => act.run(async () => {
     let template: Record<string, unknown>;
-    try { template = buildTemplate(f); } catch { throw new Error("task template must be valid JSON"); }
+    try { template = buildTemplate(f, editing?.task_template_json); } catch { throw new Error("task template must be valid JSON"); }
+    if (editing) {
+      await patch(`/schedules/${editing.id}`, {
+        name: f.name, task_template_json: template, timezone: f.timezone,
+        agent_id: f.mode === "agent" ? Number(f.agent_id) : 0,
+        ...(sameTime ? {} : timing),
+        // A new time gives a finished one-time schedule another run.
+        ...(finished(editing) && !sameTime ? { enabled: true } : {}),
+      });
+      stopEdit();
+      await reload();
+      return;
+    }
     await post("/schedules", {
       name: f.name, ...timing, task_template_json: template, enabled: true,
       agent_id: f.mode === "agent" ? Number(f.agent_id) : null,
@@ -93,7 +151,7 @@ export default function Schedules() {
   const target = (s: Schedule) => s.agent_id
     ? <span>agent <span className="mono">{agentName(s.agent_id)}</span></span>
     : <span className="mono">{String(s.task_template_json.assigned_provider_profile ?? "auto model")}</span>;
-  const ready = f.name.trim() && cronCheck?.valid
+  const ready = f.name.trim() && (sameTime || cronCheck?.valid)
     && (f.advanced || f.request.trim()) && (f.mode === "task" || f.agent_id);
 
   return (
@@ -106,7 +164,7 @@ export default function Schedules() {
           <table className="w-full">
             <thead><tr>{["Name", "Runs", "When", "Enabled", "Last run", "Next run", ""].map((h) => <th key={h} className="th">{h}</th>)}</tr></thead>
             <tbody>{data?.map((s) => (
-              <tr key={s.id}>
+              <tr key={s.id} className={editing?.id === s.id ? "bg-accent/5" : ""}>
                 <td className="td font-medium">{s.name}<div className="max-w-xs truncate text-xs text-muted">{String(s.task_template_json.title ?? s.task_template_json.description ?? "")}</div></td>
                 <td className="td text-xs">{target(s)}</td>
                 <td className={`td whitespace-nowrap text-xs ${s.run_at ? "" : "mono"}`} title={s.run_at ? `Runs ${fmtTime(s.run_at)}` : s.timezone}>{whenOf(s)}</td>
@@ -118,16 +176,17 @@ export default function Schedules() {
                 <td className="td">
                   <div className="flex justify-end gap-2">
                     <button className="btn" onClick={() => act.run(async () => { await post(`/schedules/${s.id}/run`); await reload(); })}>Run now</button>
+                    <button className="btn" onClick={() => startEdit(s)}>Edit</button>
                     <ConfirmButton label="Delete" message={`Delete schedule ${s.name}? Tasks it already created are kept.`}
-                      onConfirm={() => act.run(async () => { await del(`/schedules/${s.id}`); await reload(); })} />
+                      onConfirm={() => act.run(async () => { await del(`/schedules/${s.id}`); if (editing?.id === s.id) stopEdit(); await reload(); })} />
                   </div>
                 </td>
               </tr>))}</tbody>
           </table>
           {data && !data.length && <Empty>No scheduled tasks yet.</Empty>}
         </div>
-        <Card title="New scheduled task">
-          <div className="space-y-3">
+        <Card title={editing ? "Edit schedule" : "New scheduled task"}>
+          <div ref={form} className="space-y-3">
             <Field label="Name"><input className="input" value={f.name} onChange={set("name")} placeholder="nightly-deps" /></Field>
             <div className="flex gap-1 rounded-md border border-line p-0.5 text-sm">
               {(["agent", "task"] as const).map((m) => (
@@ -183,7 +242,7 @@ export default function Schedules() {
             </div>
             {once ? (
               <Field label="Date and time">
-                <input type="datetime-local" className="input" min={localNow()} value={f.run_at} onChange={set("run_at")} />
+                <input type="datetime-local" className="input" min={localInput(new Date().toISOString(), f.timezone)} value={f.run_at} onChange={set("run_at")} />
               </Field>
             ) : (
               <>
@@ -218,17 +277,24 @@ export default function Schedules() {
                 )}
               </>
             )}
-            <div className="text-xs text-muted">Times are in {TIME_ZONE}.</div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              Times are in {f.timezone}.
+              {f.timezone !== TIME_ZONE && <button type="button" className="text-accent hover:underline" onClick={() => setF({ ...f, timezone: TIME_ZONE })}>Use my time zone</button>}
+            </div>
+            {sameTime && editing && finished(editing) && <div className="text-xs text-muted">This schedule has finished. Choose a later time to run it again.</div>}
             {cronCheck && (cronCheck.valid
               ? <div className="text-xs text-muted"><Badge value="valid" tone="ok" /> {once ? "runs" : "next"}: {cronCheck.next_runs?.map(fmtTime).join(" · ")}</div>
               : <div className="text-xs text-bad">{cronCheck.error}</div>)}
             {cronCheck?.warning && <div className="rounded-md border border-warn/40 bg-warn/10 p-2 text-xs text-warn">{cronCheck.warning}</div>}
             <label className="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" checked={f.advanced}
-                onChange={(e) => setF({ ...f, advanced: e.target.checked, template: e.target.checked ? JSON.stringify(buildTemplate({ ...f, advanced: false }), null, 2) : f.template })} />
+                onChange={(e) => setF({ ...f, advanced: e.target.checked, template: e.target.checked ? JSON.stringify(buildTemplate({ ...f, advanced: false }, editing?.task_template_json), null, 2) : f.template })} />
               edit the raw template JSON
             </label>
-            <button className="btn btn-primary" disabled={!ready || act.busy} onClick={create}>Create</button>
+            <div className="flex gap-2">
+              <button className="btn btn-primary" disabled={!ready || act.busy} onClick={save}>{editing ? "Save" : "Create"}</button>
+              {editing && <button className="btn" onClick={stopEdit}>Cancel</button>}
+            </div>
           </div>
         </Card>
       </div>

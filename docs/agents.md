@@ -44,8 +44,8 @@ to UTC.
 **Weekdays.** Cron weekdays follow the crontab standard: 0 and 7 are Sunday, and 1 is Monday.
 
 **One-time schedules.** Set `run_at` instead of a cron. A time in the past is refused. Once
-the schedule has run it turns itself off and stays in the list, and turning it back on needs a
-new time. If the server is off at that time, it runs at the next startup and the build log
+the schedule has run it turns itself off and stays in the list. To run it again, edit it and
+choose a new time. If the server is off at that time, it runs at the next startup and the build log
 marks it as late. Repeating schedules skip runs they missed. **Run now** on a one-time schedule
 adds an extra run and leaves the planned one in place.
 
@@ -73,9 +73,9 @@ orchestrator schedule add release-check --at "2026-11-20 09:00" --timezone Asia/
 (`{"request", "title"?, "risk"?, "definition_of_done"?, "queue"?}`),
 `DELETE /api/schedules/{id}`. Schedules accept an optional `agent_id`, a `timezone`, and
 either `cron_expression` or `run_at`. A `run_at` with no offset is read in `timezone`, and
-`POST /api/schedules/validate` takes the same fields. In a PATCH, setting
-`cron_expression` or `run_at` clears the other,
-`agent_id: 0` detaches the agent, an empty `model_profile`/`harness_adapter` restores
+`POST /api/schedules/validate` takes the same fields. A PATCH can also change `name`, and
+edits only affect future runs. In a PATCH, setting `cron_expression` or `run_at` clears the
+other, `agent_id: 0` detaches the agent, an empty `model_profile`/`harness_adapter` restores
 automatic routing, and `project_id: 0` clears the project.
 
 You can't delete an agent while a schedule uses it. Deleting an agent keeps its past tasks.
