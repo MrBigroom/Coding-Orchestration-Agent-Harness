@@ -16,15 +16,19 @@ from orchestrator.core.models import HarnessAdapter, Task, TaskRisk
 LEGACY_DEFAULT_ARGS: dict[str, list[list[str]]] = {
     "qwen_code": [["--approval-mode", "auto-edit", "?--model={model}", "-p", "{prompt}"]],
     "deepseek_harness": [["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]],
+    "zcode": [["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]],
     "opencode": [["run", "?--model={model}", "{prompt}"]],
     "claude_cli": [["-p", "{prompt}", "--permission-mode", "acceptEdits", "?--model={model}"]],
 }
+LEGACY_DEFAULT_COMMANDS = {"zcode": ["zcode-cli"]}
 
 
 def _upgrade_unedited(row: HarnessAdapter, spec: AdapterSpec) -> bool:
     if list(row.args_template_json) not in LEGACY_DEFAULT_ARGS.get(row.kind, []):
         return False
     row.args_template_json = list(spec.args_template)
+    if row.command in LEGACY_DEFAULT_COMMANDS.get(row.kind, []):
+        row.command = spec.command
     row.capabilities_json = {**spec.capabilities, **dict(row.capabilities_json)}
     row.env_vars_json = list(dict.fromkeys([*row.env_vars_json, *spec.env_vars]))
     row.notes = ADAPTER_CLASSES[spec.kind].description
@@ -117,6 +121,7 @@ class HarnessChoice:
 DEFAULT_HARNESS_ROUTES: dict[str, list[str]] = {
     "deepseek": ["deepseek_harness", "pi", "opencode", "aider"],
     "qwen": ["pi", "qwen_code", "opencode", "aider"],
+    "kimi": ["pi", "opencode", "aider"],
     "glm": ["pi", "opencode", "aider"],
     "claude": ["claude_cli", "opencode"],
 }

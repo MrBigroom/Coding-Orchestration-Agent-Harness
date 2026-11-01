@@ -50,6 +50,20 @@ CLAUDE = json.dumps(
         },
     }
 )
+ZCODE = json.dumps(
+    {
+        "sessionId": "sess_test",
+        "response": "OK",
+        "usage": {
+            "modelRequestCount": 1,
+            "inputTokens": 1000,
+            "cacheReadTokens": 600,
+            "cacheWriteTokens": 0,
+            "outputTokens": 7,
+        },
+        "projection": {"totalTokenCount": 1007},
+    }
+).replace('"totalTokenCount": 1007', '"totalTokenCount": [REDACTED]')
 _PI_MSG = {
     "role": "assistant",
     "content": [{"type": "text", "text": "OK"}],
@@ -112,6 +126,7 @@ def test_parse_usage_normalises_every_json_harness():
         ("pi", PI),
         ("deepseek_harness", DSH),
         ("opencode", OPENCODE),
+        ("zcode", ZCODE),
     ):
         usage = parse_usage(kind, out)
         assert usage is not None, kind
@@ -147,6 +162,7 @@ def test_final_text_from_json_modes():
     assert final_text("pi", PI) == "OK"
     assert final_text("deepseek_harness", DSH) == "OK"
     assert final_text("opencode", OPENCODE) == "OK"
+    assert final_text("zcode", ZCODE) == "OK"
 
 
 def test_weighted_tokens_discounts_cache_and_weights_output():
@@ -214,6 +230,29 @@ def test_qwen_disables_memory_and_maps_token_plan_env(tmp_path, monkeypatch):
     assert env["OPENAI_API_KEY"] == "sk-q" and env["OPENAI_MODEL"] == "qwen3.8-max"
     argv = qwen.build_command(_ctx(tmp_path, "qwen3.8-max"))
     assert "run_shell_command" in argv and argv[argv.index("-o") + 1] == "json"
+
+
+def test_zcode_config_uses_token_plan_without_writing_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("QWEN_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("QWEN_OPENAI_BASE_URL", "https://example.test/v1")
+    zcode = _adapter("zcode")
+    ctx = _ctx(tmp_path, "glm-5.3")
+    env = zcode.prepare(ctx, tmp_path)
+    raw = (tmp_path / ".zcode" / "cli" / "config.json").read_text()
+    config = json.loads(raw)
+    assert "sk-secret-value" not in raw
+    assert config["provider"]["qwen"] == {
+        "kind": "openai-compatible",
+        "options": {"baseURL": "https://example.test/v1"},
+        "models": {"glm-5.3": {"id": "glm-5.3"}},
+    }
+    assert config["model"] == "qwen/glm-5.3"
+    assert env == {"HOME": str(tmp_path), "ZCODE_STORAGE_DIR": str(tmp_path / ".zcode")}
+    assert "QWEN_API_KEY" in zcode.child_env_names()
+    argv = zcode.build_command(ctx)
+    assert argv[argv.index("--cwd") + 1] == str(tmp_path)
+    assert argv[argv.index("--mode") + 1] == "yolo"
+    assert argv[-2:] == ["--prompt", "do the thing"]
 
 
 def test_provider_null_leaves_harness_config_alone(tmp_path):

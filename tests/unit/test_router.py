@@ -92,6 +92,18 @@ def test_harness_follows_worker_model(session, monkeypatch):
     assert adapter_service.choose_harness(session, glm).adapter == "pi"
 
 
+def test_kimi_models_prefer_pi(session, monkeypatch):
+    monkeypatch.setattr(adapter_service, "available", lambda s, name: name in {"pi", "opencode"})
+    task = _task(session)
+    choice = adapter_service.choose_harness(session, task, model="kimi-k3.1-pro")
+    assert choice.adapter == "pi" and "kimi-k3.1-pro" in choice.reason
+    assert adapter_service.route_for(adapter_service.DEFAULT_HARNESS_ROUTES, None, "kimi-k3") == [
+        "pi",
+        "opencode",
+        "aider",
+    ]
+
+
 def test_harness_routing_setting_overrides_defaults(session, monkeypatch):
     from orchestrator.services import settings_service
 
@@ -142,8 +154,12 @@ def test_unedited_legacy_adapter_templates_are_upgraded(session):
     row.capabilities_json = {"experimental": True}
     custom = adapter_service.get_row(session, "qwen_code")
     custom.args_template_json = ["--yolo", "-p", "{prompt}"]
+    zcode = adapter_service.get_row(session, "zcode")
+    zcode.command = "zcode-cli"
+    zcode.args_template_json = ["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]
     session.add(row)
     session.add(custom)
+    session.add(zcode)
     session.commit()
     adapter_service.seed_defaults(session)
     assert adapter_service.get_row(session, "deepseek_harness").args_template_json[:2] == [
@@ -156,6 +172,17 @@ def test_unedited_legacy_adapter_templates_are_upgraded(session):
     assert adapter_service.get_row(session, "qwen_code").args_template_json == [
         "--yolo",
         "-p",
+        "{prompt}",
+    ]
+    upgraded = adapter_service.get_row(session, "zcode")
+    assert upgraded.command == "zcode"
+    assert upgraded.args_template_json == [
+        "--cwd",
+        "{cwd}",
+        "--mode",
+        "yolo",
+        "--json",
+        "--prompt",
         "{prompt}",
     ]
 

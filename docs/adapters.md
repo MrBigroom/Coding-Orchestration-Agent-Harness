@@ -30,7 +30,7 @@ counts as a missing artifact at review.
 > argv, stdin, per-run config, cache markers and usage parsing all worked.
 > **Verify manually before relying on an adapter.**
 
-**Managed config (Pi, DeepSeek Harness, Qwen Code):**
+**Managed config (Pi, DeepSeek Harness, Qwen Code, ZCode):**
 - **Endpoint:** each run is pointed at the endpoint in `capabilities.provider`. The
   default is `{"base_url_env": "QWEN_OPENAI_BASE_URL", "base_url_default": <Token Plan>,
   "api_key_env": "QWEN_API_KEY"}`.
@@ -41,9 +41,9 @@ counts as a missing artifact at review.
   own `~/.<harness>` config. For Pi, also drop `--provider orchestrator` from the template.
 
 **Token usage:** usage the harness prints is parsed into `runs.usage`. It covers Pi,
-DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
-`--output-format json`, and Aider via its `Tokens:` lines. See
-[`harness-routing.md`](harness-routing.md).
+DeepSeek Harness, Qwen Code, ZCode and OpenCode via their JSON modes, Claude Code via
+`--output-format json`, and Aider via its `Tokens:` lines. Redacted numeric fields are
+tolerated in saved ZCode JSON. See [`harness-routing.md`](harness-routing.md).
 
 ---
 
@@ -115,12 +115,23 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 ## ZCode (`zcode`)
 
 - **Purpose:** Z.ai harness for GLM models; preferred for `glm`-tagged tasks when installed.
-- **Template:** `zcode-cli run --cwd {cwd} --prompt-file {prompt_file}`. **Binary name and
-  flags are UNVERIFIED.** ZCode is primarily a desktop app. Reports mention an Agent CLI in
-  its source, but no stable headless CLI was confirmed.
-- **Env:** `GLM_API_KEY`, `GLM_OPENAI_BASE_URL`; binary override `ZCODE_COMMAND`.
-- **Detect:** `which zcode-cli` (or your `ZCODE_COMMAND`) · **Manual test:** `<binary> --help`.
-- **Experimental:** yes.
+- **Template:** `zcode --cwd {cwd} --mode yolo --json --prompt {prompt}`. These flags were
+  checked against the actual parser in ZCode 3.10.2's bundled CLI 0.16.5. Its help also
+  advertises `--settings` and `--max-turns`, but that parser rejects them, so the adapter
+  does not use them.
+- **Managed config:** an isolated temporary `HOME` contains `.zcode/cli/config.json` with an
+  OpenAI-compatible provider and the selected model. The provider id comes from the key env
+  var (`QWEN_API_KEY` → `qwen`), allowing ZCode to resolve the secret itself; no key is
+  written to the file. `ZCODE_STORAGE_DIR` is isolated too. With `capabilities.provider:
+  null`, ZCode uses its normal configuration instead.
+- **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`, `GLM_API_KEY`, `GLM_OPENAI_BASE_URL`;
+  binary override `ZCODE_COMMAND`.
+- **Detect:** `which zcode`, then the bundled `/opt/ZCode/resources/glm/zcode.cjs` via
+  `/usr/bin/node` (or another detected Node). This also supports installations where `zcode`
+  exists only as a shell function. **Manual test:** `zcode --version` or
+  `/usr/bin/node /opt/ZCode/resources/glm/zcode.cjs --version`.
+- **Experimental:** yes (full adapter run mock-API-checked with CLI 0.16.5, including usage
+  and final-response parsing). No authenticated real-model run has been performed.
 
 ## Qwen Code (`qwen_code`)
 

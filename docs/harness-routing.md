@@ -32,8 +32,14 @@ harnesses is how many tokens they spend:
    |---|---|
    | `deepseek` | deepseek_harness → pi → opencode → aider |
    | `qwen` | pi → qwen_code → opencode → aider |
+   | `kimi` | pi → opencode → aider |
    | `glm` | pi → opencode → aider |
    | `claude` | claude_cli → opencode |
+
+   These are starting routes, not universal benchmark rankings. Exact DeepSeek V4.1 Flash
+   1017 results lean toward Pi for cost/quality and DeepSeek Harness for a marginal quality-
+   first option; Qwen3.8 cross-harness evidence is smaller and does not include every route.
+   Keep overrides model-specific and let measured accepted-task usage settle close calls.
 
    Override or extend the routes with the `harness_routing` setting. Keys are a model-name
    prefix (longest match wins) or an exact profile name:

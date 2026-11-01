@@ -79,7 +79,12 @@ def _json_doc(text: str) -> Any:
     try:
         return json.loads(text.strip())
     except json.JSONDecodeError:
-        return None
+        # Persisted logs pass through secret redaction. Keys containing "token" can
+        # therefore gain an unquoted [REDACTED] value (notably ZCode totalTokenCount).
+        try:
+            return json.loads(text.strip().replace("[REDACTED]", "null"))
+        except json.JSONDecodeError:
+            return None
 
 
 def _usage(inp: int, cached: int, out: int, requests: int | None, total_input: bool) -> dict:
@@ -117,6 +122,20 @@ def _qwen(text: str) -> dict | None:
                 total_input=True,
             )
     return None
+
+
+def _zcode(text: str) -> dict | None:
+    doc = _json_doc(text)
+    if not isinstance(doc, dict) or not isinstance(doc.get("usage"), dict):
+        return None
+    u = doc["usage"]
+    return _usage(
+        _n(u.get("inputTokens")),
+        _n(u.get("cacheReadTokens")),
+        _n(u.get("outputTokens")),
+        _n(u.get("modelRequestCount")) or None,
+        total_input=True,
+    )
 
 
 def _claude(text: str) -> dict | None:
@@ -202,6 +221,7 @@ def _aider(text: str) -> dict | None:
 
 USAGE_PARSERS = {
     "qwen_code": _qwen,
+    "zcode": _zcode,
     "claude_cli": _claude,
     "pi": _pi,
     "deepseek_harness": _dsh,
@@ -229,6 +249,10 @@ def final_text(kind: str, stdout: str) -> str | None:
         for e in reversed(events or list(_json_lines(stdout))):
             if isinstance(e, dict) and e.get("type") == "result":
                 return e.get("result") if isinstance(e.get("result"), str) else None
+    if kind == "zcode":
+        doc = _json_doc(stdout)
+        if isinstance(doc, dict) and isinstance(doc.get("response"), str):
+            return doc["response"]
     if kind == "pi":
         for e in reversed(list(_json_lines(stdout))):
             msg = e.get("message") or {}

@@ -19,7 +19,7 @@ The task gets:
 - `assigned_provider_profile` = the agent's model (empty means normal routing).
 - `assigned_harness_adapter` = the agent's harness. Empty means the harness is routed
   from the model, as described in [`harness-routing.md`](harness-routing.md): deepseek →
-  DeepSeek Harness, Qwen/GLM → Pi, and so on, with the measured-efficiency override.
+  DeepSeek Harness, Qwen/GLM/Kimi → Pi, and so on, with the measured-efficiency override.
 - tags = the agent's tags + `agent:<name>`, and `agent_id` = the agent.
 
 The Agents page (and `GET /api/agents/{id}`) shows which model and harness the next run
