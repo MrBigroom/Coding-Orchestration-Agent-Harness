@@ -371,7 +371,7 @@ async def _execute(
             session, task, TaskStatus.planned, "run cancelled", role="supervisor"
         )
         return {"run_id": run.id, "status": run.status}
-    if result.timed_out or result.exit_code != 0:
+    if result.timed_out or result.exit_code != 0 or result.error:
         status = RunStatus.timeout if result.timed_out else RunStatus.failed
         _set_run(
             session,

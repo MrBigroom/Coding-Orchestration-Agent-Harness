@@ -275,6 +275,15 @@ def final_text(kind: str, stdout: str) -> str | None:
     return None
 
 
+def pi_stop_reason(stdout: str) -> str | None:
+    """Why Pi's last assistant message ended, e.g. `stop`, `length` or `error`."""
+    for e in reversed(list(_json_lines(stdout))):
+        msg = e.get("message") or {}
+        if e.get("type") == "message_end" and msg.get("role") == "assistant":
+            return msg.get("stopReason")
+    return None
+
+
 # ---------------------------------------------------------------- adapter mixins
 
 
@@ -300,7 +309,10 @@ class JsonOutputMixin:
 class ManagedConfigMixin:
     """For adapters that need a per-run config file: `prepare(ctx, tmp)` writes it into a
     temporary directory (deleted after the run, never under the artifacts dir) and returns
-    extra environment variables for the child. Secrets are referenced by env-var name only."""
+    extra environment variables for the child. Secrets are referenced by env-var name only.
+    `stdout_to_file` sends the child's stdout to a file in that directory instead of a pipe."""
+
+    stdout_to_file = False
 
     def prepare(self, ctx: RunContext, tmp: Path) -> dict[str, str]:
         return {}
@@ -314,6 +326,7 @@ class ManagedConfigMixin:
 
     async def run(self, ctx: RunContext, runner) -> AdapterResult:
         with tempfile.TemporaryDirectory(prefix=f"orch-{self.kind}-") as tmp:  # type: ignore[attr-defined]
+            capture = {"stdout_file": Path(tmp) / "stdout.raw"} if self.stdout_to_file else {}
             return await runner(
                 argv=self.build_command(ctx),  # type: ignore[attr-defined]
                 cwd=ctx.cwd,
@@ -323,4 +336,5 @@ class ManagedConfigMixin:
                 timeout_seconds=ctx.timeout_seconds,
                 stdin_data=self.stdin_bytes(ctx),  # type: ignore[attr-defined]
                 extra_env=self.prepare(ctx, Path(tmp)),
+                **capture,
             )

@@ -11,9 +11,10 @@ class ClaudeCliAdapter(JsonOutputMixin, BaseHarnessAdapter):
     with your own Claude subscription (Anthropic allows `claude -p` on subscription
     limits). ANTHROPIC_API_KEY is deliberately not passed through, so runs never silently
     switch to API billing; `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) is passed
-    if set. `--permission-mode acceptEdits` lets it edit files without prompting; shell
-    commands still need explicit allow rules. `--output-format json` adds token usage
-    (including cache reads) to the result.
+    if set. `--permission-mode acceptEdits` lets it edit files without prompting, and
+    `--allowedTools Bash` auto-approves shell commands inside the isolated worktree;
+    without it the worker can't run tests or commit in `-p` mode. `--output-format json`
+    adds token usage (including cache reads) to the result.
     """
 
     kind = "claude_cli"
@@ -27,6 +28,8 @@ class ClaudeCliAdapter(JsonOutputMixin, BaseHarnessAdapter):
         "--permission-mode",
         "acceptEdits",
         "?--model={model}",
+        "--allowedTools",
+        "Bash",
     ]
     default_env_vars = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"]
     description = "Optional Claude Code headless runs (reserve for escalations)."

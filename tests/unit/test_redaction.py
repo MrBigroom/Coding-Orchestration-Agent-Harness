@@ -1,3 +1,5 @@
+import time
+
 from orchestrator.utils.redaction import (
     REDACTED,
     is_sensitive_path,
@@ -41,6 +43,14 @@ def test_token_counts_are_not_secrets():
     assert redact(usage) == usage
     assert redact("max_tokens=16000") == "max_tokens=16000"
     assert REDACTED in redact('{"access_token": "abcd1234efgh"}')
+
+
+def test_long_unbroken_text_redacts_quickly():
+    started = time.monotonic()
+    for text in ("x" * 1_000_000, "token" * 200_000, "secret-" * 150_000):
+        redact(text)
+    assert time.monotonic() - started < 5
+    assert REDACTED in redact("x" * 1000 + " MY_LONG_API_KEY_NAME=abcd1234")
     assert REDACTED in redact("API_TOKEN=12345678")  # singular key: still redacted
 
 

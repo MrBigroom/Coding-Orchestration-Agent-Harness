@@ -136,3 +136,9 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   We rejected an AppImage (~150 MB, rebuild per change) and Tauri (extra Rust build, still
   needs Python). pywebview is an optional extra (`.[desktop]`), so the core install stays
   headless.
+
+- **2026-11-01 — Pi first for DeepSeek and GLM, including tagged tasks.** A dry run put Pi
+  about 2.5× cheaper than DeepSeek Harness and 2.3× cheaper than ZCode by weighted tokens,
+  with the same hidden-test pass rate. The `deepseek` and `glm` tags now pick the worker
+  profile only, so they follow the Pi-first route. The `qwen` tag still selects Qwen Code,
+  because that comparison was too close to call.

@@ -26,10 +26,13 @@ _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]{8,}"),
 ]
 
-# KEY=value / "key": "value" style assignments where the key name looks secret.
+# KEY=value / "key": "value" style assignments where the key name looks secret. The
+# lookbehind and the bounded suffix keep matching linear on long unbroken text: harness logs
+# can hold megabytes of it, and this runs on the event loop.
 _ASSIGNMENT = re.compile(
     r"""(?ix)
-    (?P<key>[A-Z0-9_\-]*(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_\-]*)
+    (?<![A-Z0-9_\-])
+    (?P<key>[A-Z0-9_\-]*(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_\-]{0,64})
     (?P<sep>["']?\s*[:=]\s*["']?)
     (?!(?-i:[A-Z_][A-Z0-9_]*)(?:[\s"',}]|$))   # an UPPER_CASE env var NAME is not a secret
     (?P<val>[^\s"',}]{4,})

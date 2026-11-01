@@ -890,8 +890,7 @@ Routing intent:
 - Architect/planning/final high-risk review: Opus profile.
 - Supervisor/dispatch/review: Sonnet profile or Qwen3.8-Max profile.
 - Coding worker:
-  - if tag includes deepseek and DeepSeek Harness adapter available, prefer DeepSeek Harness
-  - if tag includes glm and ZCode adapter available, prefer ZCode
+  - if tag includes deepseek or glm, pick that worker profile and use its model route
   - if tag includes qwen and Qwen Code adapter available, prefer Qwen Code
   - otherwise prefer OpenCode if available
   - fallback to Aider if available

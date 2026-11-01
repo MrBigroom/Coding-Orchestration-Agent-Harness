@@ -23,22 +23,24 @@ harnesses is how many tokens they spend:
 
 1. Explicit `assigned_harness_adapter` on the task.
 2. `mock` tags.
-3. Harness tags: `deepseek` → DeepSeek Harness, `glm` → ZCode, `qwen` → Qwen Code (when
-   installed).
+3. The `qwen` tag → Qwen Code (when installed). The `deepseek` and `glm` tags pick the
+   worker profile only, so their harness comes from the route below.
 4. **The worker model's route.** The worker profile is chosen first, then its route is
    looked up and the first installed adapter is used:
 
    | Model prefix | Route |
    |---|---|
-   | `deepseek` | deepseek_harness → pi → opencode → aider |
+   | `deepseek` | pi → deepseek_harness → opencode → aider |
    | `qwen` | pi → qwen_code → opencode → aider |
    | `kimi` | pi → opencode → aider |
-   | `glm` | pi → opencode → aider |
+   | `glm` | pi → zcode → opencode → aider |
    | `claude` | claude_cli → opencode |
 
-   These are starting routes, not universal benchmark rankings. Exact DeepSeek V4.1 Flash
-   1017 results lean toward Pi for cost/quality and DeepSeek Harness for a marginal quality-
-   first option; Qwen3.8 cross-harness evidence is smaller and does not include every route.
+   These are starting routes, not universal benchmark rankings. A dry run on 2026-11-01
+   (two fixture tasks, four runs per pair, all passing hidden tests) put Pi about 2.5×
+   cheaper than DeepSeek Harness on DeepSeek V4.1 Flash 1017 and about 2.3× cheaper than
+   ZCode on GLM-5.3, by weighted tokens. Qwen3.8-Max was a close call: Qwen Code used fewer
+   tokens, Pi came out cheaper at explicit-cache rates, and the ranges overlapped.
    Keep overrides model-specific and let measured accepted-task usage settle close calls.
 
    Override or extend the routes with the `harness_routing` setting. Keys are a model-name

@@ -18,7 +18,18 @@ LEGACY_DEFAULT_ARGS: dict[str, list[list[str]]] = {
     "deepseek_harness": [["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]],
     "zcode": [["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]],
     "opencode": [["run", "?--model={model}", "{prompt}"]],
-    "claude_cli": [["-p", "{prompt}", "--permission-mode", "acceptEdits", "?--model={model}"]],
+    "claude_cli": [
+        ["-p", "{prompt}", "--permission-mode", "acceptEdits", "?--model={model}"],
+        [
+            "-p",
+            "{prompt}",
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "acceptEdits",
+            "?--model={model}",
+        ],
+    ],
 }
 LEGACY_DEFAULT_COMMANDS = {"zcode": ["zcode-cli"]}
 
@@ -119,10 +130,10 @@ class HarnessChoice:
 # Overridden/extended by the `harness_routing` setting, whose keys may also be exact
 # profile names. Unavailable adapters are skipped.
 DEFAULT_HARNESS_ROUTES: dict[str, list[str]] = {
-    "deepseek": ["deepseek_harness", "pi", "opencode", "aider"],
+    "deepseek": ["pi", "deepseek_harness", "opencode", "aider"],
     "qwen": ["pi", "qwen_code", "opencode", "aider"],
     "kimi": ["pi", "opencode", "aider"],
-    "glm": ["pi", "opencode", "aider"],
+    "glm": ["pi", "zcode", "opencode", "aider"],
     "claude": ["claude_cli", "opencode"],
 }
 
@@ -181,9 +192,8 @@ def choose_harness(
         return HarnessChoice(task.assigned_harness_adapter, "explicitly assigned on task")
     if "mock" in tags or any(t.startswith("mock-") for t in tags):
         return HarnessChoice("mock", "task tagged for the mock harness")
-    for tag, name in (("deepseek", "deepseek_harness"), ("glm", "zcode"), ("qwen", "qwen_code")):
-        if tag in tags and available(session, name):
-            return HarnessChoice(name, f"task tagged `{tag}` and {name} is available")
+    if "qwen" in tags and available(session, "qwen_code"):
+        return HarnessChoice("qwen_code", "task tagged `qwen` and qwen_code is available")
     if profile is None and model is None:
         profile, model = _worker_profile(session, task)
     candidates = [

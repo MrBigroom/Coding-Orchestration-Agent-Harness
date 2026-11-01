@@ -228,8 +228,20 @@ def test_qwen_disables_memory_and_maps_token_plan_env(tmp_path, monkeypatch):
     settings = json.loads(Path(env["QWEN_CODE_SYSTEM_SETTINGS_PATH"]).read_text())
     assert settings["memory"]["enableManagedAutoMemory"] is False
     assert env["OPENAI_API_KEY"] == "sk-q" and env["OPENAI_MODEL"] == "qwen3.8-max"
+    assert env["HOME"] == str(tmp_path)
     argv = qwen.build_command(_ctx(tmp_path, "qwen3.8-max"))
     assert "run_shell_command" in argv and argv[argv.index("-o") + 1] == "json"
+
+
+def test_qwen_keeps_own_home_when_provider_is_null(tmp_path):
+    spec = next(s for s in default_specs() if s.kind == "qwen_code")
+    spec.capabilities["provider"] = None
+    assert "HOME" not in build_adapter(spec).prepare(_ctx(tmp_path, "qwen3.8-max"), tmp_path)
+
+
+def test_claude_template_allows_shell_commands():
+    spec = next(s for s in default_specs() if s.kind == "claude_cli")
+    assert spec.args_template[-2:] == ["--allowedTools", "Bash"]
 
 
 def test_zcode_config_uses_token_plan_without_writing_secret(tmp_path, monkeypatch):

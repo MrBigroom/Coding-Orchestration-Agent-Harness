@@ -28,7 +28,7 @@ class ZCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
         "GLM_API_KEY",
         "GLM_OPENAI_BASE_URL",
     ]
-    description = "Z.ai harness for GLM models; preferred for `glm`-tagged tasks."
+    description = "Z.ai harness for GLM models; second choice after Pi."
     verify_hint = "zcode --version && zcode --help"
     bundled_cli = Path("/opt/ZCode/resources/glm/zcode.cjs")
 
