@@ -50,7 +50,8 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-10-19 — Tailwind v4 with `tailwind.config.js` via `@config`** to keep the spec's
   file layout while using the current major version. Frontend: React 19, Vite 8,
   TypeScript 7.
-- **2026-10-19 — APScheduler 3.x** (stable line; 4.x isn't stable). Cron is evaluated in UTC.
+- **2026-10-19 — APScheduler 3.x** (stable line; 4.x isn't stable). Cron was evaluated in UTC
+  until per-schedule time zones arrived on 2026-11-01.
 - **2026-10-19 — Fallback UI is a single static HTML file** with no build step and no
   dependencies, served when `web/dist` is missing.
 - **2026-10-19 — Architect runs through `claude -p` on the user's Claude Pro subscription**
@@ -157,3 +158,11 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `command` setting. It now runs as middleware on every HTTP request and WebSocket, so a new
   route can't miss it. We kept the token-less local default rather than requiring a token,
   because the check needs no setup.
+
+- **2026-11-01 — Schedules gain one-time runs and time zones (revision `0005_schedule_times`).**
+  `schedules` adds `run_at` and `timezone`, and existing rows stay on UTC. A one-time schedule
+  keeps an empty `cron_expression`, because making the column nullable would add a table
+  rebuild for no benefit. Storing a time zone rather than converting to a UTC cron keeps "09:00"
+  at 09:00 across daylight saving. One-time runs that were missed still run, since they exist
+  for a specific job, while repeating schedules skip them. Numeric cron weekdays are now spelled
+  out before they reach APScheduler, which counts from Monday and was running them a day late.

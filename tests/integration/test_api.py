@@ -16,7 +16,7 @@ def client(initialized):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert r.json()["db_revision"] == "0004_chat_sessions"
+    assert r.json()["db_revision"] == "0005_schedule_times"
 
 
 def test_startup_upgrades_existing_database(initialized):
@@ -28,7 +28,7 @@ def test_startup_upgrades_existing_database(initialized):
     assert db.current_revision() == "0001_baseline"
 
     with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
-        assert c.get("/api/health").json()["db_revision"] == "0004_chat_sessions"
+        assert c.get("/api/health").json()["db_revision"] == "0005_schedule_times"
         assert c.get("/api/dashboard").status_code == 200
 
 
@@ -285,3 +285,20 @@ def test_a_token_replaces_the_local_host_check(initialized, monkeypatch):
         assert c.get("/api/settings").status_code == 401
         refused = {**token, "origin": "https://evil.example"}
         assert c.get("/api/settings", headers=refused).status_code == 403
+
+
+def test_one_time_schedule_api(client):
+    body = {
+        "run_at": "2099-01-02T09:00",
+        "timezone": "Asia/Kuala_Lumpur",
+        "task_template_json": {"title": "t"},
+    }
+    v = client.post("/api/schedules/validate", json=body).json()
+    assert v["valid"] and v["next_runs"] == ["2099-01-02T01:00:00+00:00"]
+    r = client.post("/api/schedules", json={"name": "once", **body})
+    assert r.status_code == 201
+    assert r.json()["run_at"].startswith("2099-01-02T01:00")
+    assert r.json()["cron_expression"] == ""
+    past = {**body, "run_at": "2020-01-02T09:00"}
+    assert client.post("/api/schedules/validate", json=past).json()["valid"] is False
+    assert client.post("/api/schedules", json={"name": "past", **past}).status_code == 400

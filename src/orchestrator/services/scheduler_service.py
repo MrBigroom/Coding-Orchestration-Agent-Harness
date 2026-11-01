@@ -1,12 +1,16 @@
-"""Cron schedules that create (and queue) tasks from a template. Uses APScheduler 3.x."""
+"""Cron and one-time schedules that create (and queue) tasks from a template. Uses
+APScheduler 3.x."""
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from sqlmodel import Session, select
 
 from orchestrator.core.db import session_scope
@@ -22,14 +26,52 @@ class CronError(ValueError):
     pass
 
 
-def validate_cron(expr: str, count: int = 3) -> list[datetime]:
-    """Validate a 5-field crontab expression; return the next `count` fire times (UTC)."""
-    if len(expr.split()) != 5:
-        raise CronError("cron expression must have exactly 5 fields (min hour dom month dow)")
+DAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+LATE_SECONDS = 300
+
+
+def _zone(name: str) -> ZoneInfo:
     try:
-        trigger = CronTrigger.from_crontab(expr, timezone=UTC)
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError) as e:
+        raise CronError(f"unknown time zone: {name!r}") from e
+
+
+def _day_names(field: str) -> str:
+    """Spell out numeric weekdays. Crontab counts from Sunday (0 or 7), but APScheduler reads
+    the same digits counting from Monday, which would run every schedule a day late."""
+    names: list[str] = []
+    for item in field.split(","):
+        m = re.fullmatch(r"(\*|\d)(?:-(\d))?(?:/(\d+))?", item)
+        if not m:
+            names.append(item)
+            continue
+        first, last, step = m.groups()
+        start, end = (0, 6) if first == "*" else (int(first), int(last or first))
+        if end > 7 or start > end or step == "0":
+            raise CronError(f"invalid day of week: {item!r}")
+        if step and not last and first != "*":
+            end = 6
+        names += [DAY_NAMES[d % 7] for d in range(start, end + 1, int(step or 1))]
+    return ",".join(dict.fromkeys(names))
+
+
+def _cron_trigger(expr: str, timezone: str = "UTC") -> CronTrigger:
+    fields = expr.split()
+    if len(fields) != 5:
+        raise CronError("cron expression must have exactly 5 fields (min hour dom month dow)")
+    zone = _zone(timezone)
+    if fields[4] != "*":
+        fields[4] = _day_names(fields[4])
+    try:
+        return CronTrigger.from_crontab(" ".join(fields), timezone=zone)
     except (ValueError, KeyError) as e:
         raise CronError(f"invalid cron expression: {e}") from e
+
+
+def validate_cron(expr: str, count: int = 3, timezone: str = "UTC") -> list[datetime]:
+    """Validate a 5-field crontab expression; return the next `count` fire times (UTC)."""
+    trigger = _cron_trigger(expr, timezone)
     times: list[datetime] = []
     prev = None
     now = datetime.now(UTC)
@@ -37,9 +79,30 @@ def validate_cron(expr: str, count: int = 3) -> list[datetime]:
         nxt = trigger.get_next_fire_time(prev, prev or now)
         if nxt is None:
             break
-        times.append(nxt)
+        times.append(nxt.astimezone(UTC))
         prev = nxt
     return times
+
+
+def run_time(value: datetime, timezone: str = "UTC") -> datetime:
+    """The UTC moment of a one-time schedule. A value with no offset is read in `timezone`."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_zone(timezone))
+    return value.astimezone(UTC)
+
+
+def check_run_time(when: datetime) -> None:
+    if when <= datetime.now(UTC):
+        raise CronError("that time has already passed; choose a later one")
+
+
+def _next_run(sched: Schedule) -> datetime | None:
+    if not sched.enabled:
+        return None
+    if sched.run_at:
+        return sched.run_at
+    times = validate_cron(sched.cron_expression, timezone=sched.timezone)
+    return times[0] if times else None
 
 
 def _template(raw: dict[str, Any], schedule_name: str) -> TaskCreate:
@@ -74,16 +137,23 @@ def _validate(session: Session, raw: dict[str, Any], name: str, agent_id: int | 
 
 
 def create(session: Session, data: ScheduleCreate) -> Schedule:
-    times = validate_cron(data.cron_expression)
+    if bool(data.cron_expression) == bool(data.run_at):
+        raise CronError("set either a cron expression or a run time")
+    _zone(data.timezone)
+    run_at = run_time(data.run_at, data.timezone) if data.run_at else None
+    if run_at:
+        check_run_time(run_at)
     _validate(session, data.task_template_json, data.name, data.agent_id)
     sched = Schedule(
         name=data.name,
         cron_expression=data.cron_expression,
+        run_at=run_at,
+        timezone=data.timezone,
         task_template_json=data.task_template_json,
         agent_id=data.agent_id,
         enabled=data.enabled,
-        next_run_at=times[0] if times and data.enabled else None,
     )
+    sched.next_run_at = _next_run(sched)
     session.add(sched)
     session.commit()
     session.refresh(sched)
@@ -91,9 +161,21 @@ def create(session: Session, data: ScheduleCreate) -> Schedule:
 
 
 def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
+    if data.cron_expression is not None and data.run_at:
+        raise CronError("set either a cron expression or a run time")
+    zone = data.timezone or sched.timezone
+    _zone(zone)
     if data.cron_expression is not None:
-        validate_cron(data.cron_expression)
+        validate_cron(data.cron_expression, timezone=zone)
         sched.cron_expression = data.cron_expression
+        sched.run_at = None
+    if data.run_at:
+        sched.run_at = run_time(data.run_at, zone)
+        sched.cron_expression = ""
+        check_run_time(sched.run_at)
+    elif sched.run_at and data.enabled and not sched.enabled:
+        check_run_time(sched.run_at)
+    sched.timezone = zone
     if data.agent_id is not None:
         sched.agent_id = data.agent_id or None
     if data.task_template_json is not None:
@@ -102,8 +184,7 @@ def update(session: Session, sched: Schedule, data: ScheduleUpdate) -> Schedule:
         _validate(session, sched.task_template_json, sched.name, sched.agent_id)
     if data.enabled is not None:
         sched.enabled = data.enabled
-    times = validate_cron(sched.cron_expression)
-    sched.next_run_at = times[0] if sched.enabled and times else None
+    sched.next_run_at = _next_run(sched)
     sched.updated_at = utcnow()
     session.add(sched)
     session.commit()
@@ -123,7 +204,9 @@ def get(session: Session, ref: str | int) -> Schedule:
 
 def fire(session: Session, sched: Schedule) -> Task:
     """Create a task from the schedule's template (and queue it unless template says not).
-    Agent schedules run the agent, so the task uses the agent's model, harness and project."""
+    Agent schedules run the agent, so the task uses the agent's model, harness and project.
+    A one-time schedule turns itself off once its time has come; running it by hand before
+    then leaves it pending."""
     if sched.agent_id:
         task = agent_service.run(
             session,
@@ -134,13 +217,19 @@ def fire(session: Session, sched: Schedule) -> Task:
         )
     else:
         task = task_service.create(session, _template(sched.task_template_json, sched.name))
-    sched.last_run_at = utcnow()
-    times = validate_cron(sched.cron_expression)
-    sched.next_run_at = times[0] if sched.enabled and times else None
+    now = utcnow()
+    sched.last_run_at = now
+    note = ""
+    if sched.run_at and now >= sched.run_at:
+        sched.enabled = False
+        sched.updated_at = now
+        if (now - sched.run_at).total_seconds() > LATE_SECONDS:
+            note = f" (late: was due {sched.run_at:%Y-%m-%d %H:%M} UTC)"
+    sched.next_run_at = _next_run(sched)
     session.add(sched)
     session.commit()
     log_service.log_event(
-        session, "schedule_fired", f"{sched.name} -> {task.short_id}", task_id=task.id
+        session, "schedule_fired", f"{sched.name} -> {task.short_id}{note}", task_id=task.id
     )
     return task
 
@@ -175,7 +264,8 @@ def token_plan_warning(
 
 
 class SchedulerRunner:
-    """Keeps APScheduler jobs in sync with enabled schedules (reloaded periodically)."""
+    """Keeps APScheduler jobs in sync with enabled schedules (reloaded periodically).
+    A one-time schedule whose time passed while the server was off runs on the next sync."""
 
     def __init__(self) -> None:
         self.scheduler = AsyncIOScheduler(timezone=UTC)
@@ -194,7 +284,7 @@ class SchedulerRunner:
     def sync(self) -> None:
         with session_scope() as session:
             rows = list(session.exec(select(Schedule).where(Schedule.enabled == True)))  # noqa: E712
-            sig = tuple((r.id, r.cron_expression, r.updated_at) for r in rows)
+            sig = tuple((r.id, r.cron_expression, r.run_at, r.updated_at) for r in rows)
         if sig == self._signature:
             return
         self._signature = sig
@@ -205,15 +295,21 @@ class SchedulerRunner:
             try:
                 self.scheduler.add_job(
                     _fire_by_id,
-                    CronTrigger.from_crontab(r.cron_expression, timezone=UTC),
+                    _job_trigger(r),
                     args=[r.id],
                     id=f"schedule-{r.id}",
-                    misfire_grace_time=300,
+                    misfire_grace_time=None if r.run_at else 300,
                     coalesce=True,
                     max_instances=1,
                 )
             except ValueError as e:
                 log.warning("skipping schedule %s: %s", r.name, e)
+
+
+def _job_trigger(sched: Schedule) -> CronTrigger | DateTrigger:
+    if sched.run_at:
+        return DateTrigger(max(sched.run_at, datetime.now(UTC)), timezone=UTC)
+    return _cron_trigger(sched.cron_expression, sched.timezone)
 
 
 def _fire_by_id(schedule_id: int) -> None:

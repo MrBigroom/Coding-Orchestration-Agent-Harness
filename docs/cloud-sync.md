@@ -18,6 +18,11 @@ The following stay on each device:
 - Automatic-sync enablement and cadence, which are configured independently on each device
 - Git repositories, worktrees, run artifacts, and SQLite WAL files
 
+Schedules sync, but each device with its scheduler on runs them itself. To avoid duplicate
+runs, leave the scheduler on for one device only. This matters most for one-time schedules: a
+device that was off at the chosen time runs a missed schedule at startup, which can happen
+before it pulls the news that another device already ran it.
+
 Memory Markdown is regenerated locally. JSON database records, not rendered Markdown, are
 the memory synchronization source.
 

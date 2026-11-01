@@ -245,7 +245,10 @@ class Schedule(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
+    # Empty for a one-time schedule, which sets run_at instead.
     cron_expression: str
+    run_at: datetime | None = None
+    timezone: str = "UTC"  # IANA name; the cron's hours are read in this zone
     task_template_json: dict[str, Any] = _json({})
     # When set, each fire runs this saved agent with the template's description as the request.
     agent_id: int | None = Field(default=None, index=True)

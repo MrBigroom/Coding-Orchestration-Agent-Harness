@@ -107,3 +107,30 @@ def test_matching_seeded_memory_is_adopted_not_duplicated(initialized):
         assert len(session.exec(select(MemoryEntry)).all()) == before
         mapping = session.get(sync_service.SyncEntity, remote_id)
         assert mapping.local_id == str(memory.id) and mapping.dirty is False
+
+
+def test_one_time_schedule_survives_a_sync_round_trip(initialized):
+    from orchestrator.core.models import Schedule
+    from orchestrator.core.schemas import ScheduleCreate
+    from orchestrator.services import scheduler_service
+
+    spec = next(s for s in sync_service.SPECS if s.model is Schedule)
+    with session_scope() as session:
+        sched = scheduler_service.create(
+            session,
+            ScheduleCreate(name="here", run_at="2099-01-02T09:00", timezone="Asia/Kuala_Lumpur"),
+        )
+        payload = sync_service.canonical_payload(session, spec, sched)
+    payload["name"] = "there"
+    record = {
+        "entity_type": "schedule",
+        "entity_id": str(uuid4()),
+        "version": 1,
+        "origin_device": "other-device",
+        "payload": payload,
+    }
+    with session_scope() as session:
+        sync_service.apply_remote_records(session, [record])
+        row = session.exec(select(Schedule).where(Schedule.name == "there")).one()
+        assert row.timezone == "Asia/Kuala_Lumpur" and row.cron_expression == ""
+        assert row.run_at.isoformat().startswith("2099-01-02T01:00")

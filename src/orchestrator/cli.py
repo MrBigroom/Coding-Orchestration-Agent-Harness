@@ -8,6 +8,7 @@ import shutil
 import sys
 import webbrowser
 from collections.abc import Callable
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ task_app = typer.Typer(help="Create, run, and gate tasks.", no_args_is_help=True
 adapters_app = typer.Typer(help="External harness adapters.", no_args_is_help=True)
 providers_app = typer.Typer(help="Model providers.", no_args_is_help=True)
 models_app = typer.Typer(help="Model profiles.", no_args_is_help=True)
-schedule_app = typer.Typer(help="Cron schedules.", no_args_is_help=True)
+schedule_app = typer.Typer(help="Cron and one-time schedules.", no_args_is_help=True)
 memory_app = typer.Typer(help="Shared memory.", no_args_is_help=True)
 agent_app = typer.Typer(help="Saved agents.", no_args_is_help=True)
 sync_app = typer.Typer(help="Supabase cloud synchronization.", no_args_is_help=True)
@@ -856,7 +857,13 @@ def models_list() -> None:
 @handled
 def schedule_add(
     name: str,
-    cron: str,
+    cron: str = typer.Argument("", help="5-field cron. Leave out when using --at."),
+    at: datetime | None = typer.Option(
+        None,
+        formats=["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"],
+        help="Run once at this date and time.",
+    ),
+    timezone: str = typer.Option("UTC", help="IANA time zone for the cron or --at."),
     template: str = typer.Option("{}", help="Task template JSON (TaskCreate)."),
     agent: str | None = typer.Option(
         None, help="Run this saved agent; the template's description is the request."
@@ -874,6 +881,8 @@ def schedule_add(
             ScheduleCreate(
                 name=name,
                 cron_expression=cron,
+                run_at=at,
+                timezone=timezone,
                 task_template_json=json.loads(template),
                 agent_id=agent_id,
                 enabled=not disabled,
@@ -898,12 +907,12 @@ def schedule_list() -> None:
 
     _ensure_ready()
     with _session() as s:
-        table = Table("id", "name", "cron", "enabled", "last run", "next run")
+        table = Table("id", "name", "when", "enabled", "last run", "next run")
         for sc in s.exec(select(Schedule)):
             table.add_row(
                 str(sc.id),
                 sc.name,
-                sc.cron_expression,
+                sc.cron_expression or "once",
                 "yes" if sc.enabled else "no",
                 str(sc.last_run_at or "-"),
                 str(sc.next_run_at or "-"),

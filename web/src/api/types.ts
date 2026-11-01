@@ -149,6 +149,8 @@ export interface Schedule {
   id: number;
   name: string;
   cron_expression: string;
+  run_at: string | null;
+  timezone: string;
   task_template_json: Record<string, unknown>;
   agent_id: number | null;
   enabled: boolean;

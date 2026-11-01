@@ -263,7 +263,10 @@ class AdapterUpdate(BaseModel):
 
 class ScheduleCreate(BaseModel):
     name: str
-    cron_expression: str
+    # Set exactly one of these. A run_at without an offset is read in `timezone`.
+    cron_expression: str = ""
+    run_at: datetime | None = None
+    timezone: str = "UTC"
     task_template_json: dict[str, Any] = Field(default_factory=dict)
     agent_id: int | None = None
     enabled: bool = True
@@ -271,6 +274,8 @@ class ScheduleCreate(BaseModel):
 
 class ScheduleUpdate(BaseModel):
     cron_expression: str | None = None
+    run_at: datetime | None = None
+    timezone: str | None = None
     task_template_json: dict[str, Any] | None = None
     # 0 detaches the schedule from its agent.
     agent_id: int | None = None
