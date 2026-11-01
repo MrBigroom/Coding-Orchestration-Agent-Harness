@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     anthropic_refusal_fallback: bool = True
     # Let GUI/API trigger project commands (test/lint/build) directly. Off by default.
     allow_gui_commands: bool = False
+    # Let the GUI start interactive harness sessions, which run agents with shell access.
+    allow_interactive_sessions: bool = False
 
     # Optional Supabase synchronization. Credentials stay device-local in the environment.
     supabase_url: str | None = None
@@ -90,6 +92,10 @@ class Settings(BaseSettings):
     @property
     def build_log_path(self) -> Path:
         return self.home / "build-log.jsonl"
+
+    @property
+    def chats_root(self) -> Path:
+        return self.home / "chats"
 
     @property
     def is_local_bind(self) -> bool:

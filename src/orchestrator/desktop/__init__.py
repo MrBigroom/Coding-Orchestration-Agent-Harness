@@ -3,7 +3,7 @@
 The launcher attaches to an orchestrator that is already running on the configured port.
 Otherwise it starts `orchestrator serve` as a detached child process, so the server can
 keep running in the background after the window closes. On close it stops the server it
-owns, unless runs are active or queued; then it asks.
+owns, unless runs or chat sessions are active or tasks are queued; then it asks.
 
 Install the launcher (app-menu entry + icon) with `orchestrator desktop install`."""
 
@@ -140,13 +140,13 @@ def ensure_server() -> Server:
     raise DesktopError(f"the server did not start within 45 s; see {logfile}")
 
 
-def activity(url: str) -> tuple[int, int]:
-    """(active runs, queued tasks); (0, 0) when the dashboard can't be read."""
+def activity(url: str) -> tuple[int, int, int]:
+    """(active runs, queued tasks, live chats); zeros when the dashboard can't be read."""
     try:
         d = httpx.get(f"{url}/api/dashboard", headers=_headers(), timeout=3).json()
-        return len(d.get("active_runs", [])), len(d.get("queued", []))
+        return len(d.get("active_runs", [])), len(d.get("queued", [])), d.get("live_chats", 0)
     except (httpx.HTTPError, ValueError, AttributeError):
-        return 0, 0
+        return 0, 0, 0
 
 
 def stop_server(pid: int, timeout: float = 15) -> None:
@@ -257,15 +257,17 @@ def run(debug: bool = False) -> None:
     def on_closing() -> bool:
         if not owned or decided.is_set():
             return True
-        active, queued = activity(server.url)
-        if active or queued:
+        active, queued, chats = activity(server.url)
+        if active or queued or chats:
             parts = [f"{active} run(s) active"] if active else []
             if queued:
                 parts.append(f"{queued} task(s) queued")
+            if chats:
+                parts.append(f"{chats} chat session(s) open")
             message = (
                 f"{' and '.join(parts)}. Keep the orchestrator running in the background so "
                 "they can finish? Reopen the app to see them, or run `orchestrator desktop "
-                "stop` later. Stopping now interrupts active runs."
+                "stop` later. Stopping now interrupts active runs and ends chat sessions."
             )
             ask_close(window.native, message, answer)
             return False  # keep the window open until the user decides

@@ -33,7 +33,7 @@ change in its Definition of Done.
   always `{"error": str, "detail": any}`.
 - **WebSocket event shapes under `/ws`**: `/ws/runs/{run_id}/logs` emits
   `{"type":"log","run_id","stream","line"}`, `{"type":"status","run_id","status"}`,
-  `{"type":"end","run_id","status"}`.
+  `{"type":"end","run_id","status"}`. `/ws/chat/{id}` is documented in `chat.md`.
 - **Task/run state machine transitions**: `src/orchestrator/core/state.py`.
 - **handoff.json schema**:
   ```json

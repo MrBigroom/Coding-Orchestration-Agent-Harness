@@ -28,6 +28,7 @@ from orchestrator.core.schemas import (
 from orchestrator.core.state import ACTIVE_RUN_STATES
 from orchestrator.services import (
     adapter_service,
+    chat_service,
     log_service,
     memory_service,
     process_service,
@@ -74,6 +75,7 @@ def dashboard(session: Session = SessionDep) -> dict[str, Any]:
     return {
         "active_runs": [dump(r) for r in runs],
         "queued": [dump(t) for t in tasks if t.status == TaskStatus.queued],
+        "live_chats": len(chat_service.manager.live),
         "blocked": [dump(t) for t in tasks if t.status == TaskStatus.blocked],
         "review": [dump(t) for t in tasks if t.status == TaskStatus.review],
         "failed": [dump(t) for t in failed],

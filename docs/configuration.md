@@ -42,7 +42,7 @@ the providers/adapters when they run.
 Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `auto_merge_enabled`, `supervisor_microfixes_enabled`, `max_parallel_runs`,
 `max_parallel_runs_per_project`, `scheduler_enabled`, `worker_enabled`,
-`allow_gui_commands`, `max_review_rounds` (default 3), and `theme` (dark).
+`allow_gui_commands`, `allow_interactive_sessions`, `max_review_rounds` (default 3), and `theme` (dark).
 
 The React GUI doesn't read the stored `theme` setting. Theme is a per-browser choice
 (Light / Dark / System, default System) made in the sidebar or on Settings → Appearance,

@@ -357,3 +357,12 @@ class ErrorBody(BaseModel):
 
 class TimestampedOut(ORMModel):
     created_at: datetime | None = None
+
+
+class ChatSessionCreate(BaseModel):
+    project_id: int
+    adapter: str
+    model: str | None = None
+    effort: str | None = None
+    permission: str | None = None
+    workspace: Literal["worktree", "checkout"] = "worktree"

@@ -31,6 +31,7 @@ const BOOLS: [string, string][] = [
   ["scheduler_enabled", "Scheduler enabled (takes effect on restart)"],
   ["worker_enabled", "Background queue worker enabled"],
   ["allow_gui_commands", "Allow running project test/lint/build commands from the GUI"],
+  ["allow_interactive_sessions", "Allow interactive harness sessions in Chat (agents get shell access)"],
 ];
 const NUMS: [string, string][] = [
   ["max_parallel_runs", "Max parallel runs"],

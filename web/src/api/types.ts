@@ -215,3 +215,63 @@ export interface AgentDetail extends Agent {
   routing: AgentRouting;
   recent_tasks: Task[];
 }
+
+export interface ChatSession {
+  id: number;
+  title: string;
+  project_id: number;
+  adapter: string;
+  model: string | null;
+  effort: string | null;
+  permission: string | null;
+  workspace: "worktree" | "checkout";
+  cwd: string;
+  branch_name: string | null;
+  status: string;
+  usage: Partial<ChatUsage>;
+  error: string | null;
+  updated_at: string;
+}
+
+export interface ChatUsage {
+  input_tokens: number;
+  cache_read_input_tokens: number;
+  uncached_input_tokens: number;
+  output_tokens: number;
+  requests: number;
+}
+
+export interface PermissionMode {
+  id: string;
+  label: string;
+  description?: string | null;
+  dangerous?: boolean;
+}
+
+export interface ChatHarness {
+  name: string;
+  kind: string;
+  available: boolean;
+  reason: string | null;
+  models: string[];
+  efforts: string[];
+  default_effort: string | null;
+  permissions: PermissionMode[];
+  default_permission: string | null;
+  note: string | null;
+}
+
+export interface ChatCatalog {
+  enabled: boolean;
+  harnesses: ChatHarness[];
+}
+
+export interface ChatChanges {
+  isolated: boolean;
+  branch: string | null;
+  base_branch: string;
+  merge_enabled: boolean;
+  merge_command?: string;
+  uncommitted: string;
+  diffstat: string;
+}

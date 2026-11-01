@@ -39,9 +39,9 @@ Web storage (theme, token) is kept in `$ORCHESTRATOR_HOME/desktop-webview`.
 The app only ever stops a server it started:
 
 - **Nothing active or queued:** the server stops with the window.
-- **Runs active or tasks queued:** a dialog offers **Keep running** (the server stays up
+- **Runs active, tasks queued or chat sessions open:** a dialog offers **Keep running** (the server stays up
   in the background; reopen the app to reattach), **Stop server** (active runs are
-  interrupted and recovered as failed on the next start), or **Cancel**.
+  interrupted and recovered as failed on the next start, and chat sessions end), or **Cancel**.
 
 To stop a background server later, run `orchestrator desktop stop`.
 

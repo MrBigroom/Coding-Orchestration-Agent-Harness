@@ -88,6 +88,16 @@ class Role(StrEnum):
     agent = "agent"
 
 
+class ChatStatus(StrEnum):
+    starting = "starting"
+    idle = "idle"
+    busy = "busy"
+    awaiting_approval = "awaiting_approval"
+    closed = "closed"
+    failed = "failed"
+    interrupted = "interrupted"
+
+
 class MemoryCategory(StrEnum):
     global_ = "global"
     project = "project"
@@ -291,6 +301,32 @@ class HarnessAdapter(SQLModel, table=True):
     enabled: bool = True
     capabilities_json: dict[str, Any] = _json({})
     notes: str | None = Field(default=None, sa_column=Column(Text))
+
+
+class ChatSession(SQLModel, table=True):
+    """An interactive harness session. The transcript lives in
+    <home>/chats/<id>/events.jsonl; this row holds what lists and controls need."""
+
+    __tablename__ = "chat_sessions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = ""
+    project_id: int = Field(foreign_key="projects.id", index=True)
+    adapter: str
+    model: str | None = None
+    effort: str | None = None
+    permission: str | None = None
+    # "worktree" (isolated branch, the default) or "checkout" (the project's own files).
+    workspace: str = "worktree"
+    cwd: str
+    branch_name: str | None = None
+    status: str = Field(
+        default=ChatStatus.starting, sa_column=Column(String(32), nullable=False, index=True)
+    )
+    usage: dict[str, Any] = _json({})
+    error: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class MemoryEntry(SQLModel, table=True):

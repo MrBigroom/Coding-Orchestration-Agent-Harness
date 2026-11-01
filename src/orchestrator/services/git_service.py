@@ -36,13 +36,13 @@ class WorktreeInfo:
     created: bool
 
 
-def _marker(project_slug: str, task_id: int) -> Path:
+def _marker(project_slug: str, task_id: int | str) -> Path:
     root = get_settings().worktree_root
     assert root
     return root / project_slug / ".managed" / str(task_id)
 
 
-def worktree_path(project_slug: str, task_id: int) -> Path:
+def worktree_path(project_slug: str, task_id: int | str) -> Path:
     root = get_settings().worktree_root
     assert root
     return root / project_slug / str(task_id)
@@ -64,7 +64,7 @@ def _ensure_excluded(repo: Path) -> None:
 
 
 def ensure_worktree(
-    repo: Path, project_slug: str, task_id: int, branch: str, base_branch: str
+    repo: Path, project_slug: str, task_id: int | str, branch: str, base_branch: str
 ) -> WorktreeInfo:
     if not is_repo(repo):
         raise GitError(f"{repo} is not a git repository")

@@ -83,6 +83,14 @@ different harness/model), Agents, Scheduled Tasks, Projects, Models & Providers,
 Adapters, Memory, Prompt Cache, Build Log, and Settings. It has light and dark themes
 (switch in the sidebar or on Settings), with fonts bundled locally.
 
+## Chat with a harness directly
+
+The **Chat** page is an interactive session with a coding harness: an input box, model
+picker, effort slider, permission modes, approval prompts, and a Stop button. It works with
+Pi, Qwen Code, OpenCode, DeepSeek Harness and Claude Code. It's off until you turn it on,
+because sessions run agents with shell access and skip the review gate. See
+[docs/chat.md](docs/chat.md).
+
 ## Adding real providers
 
 Put keys in `.env` (copied from `.env.example`). The DB stores only the **name** of each

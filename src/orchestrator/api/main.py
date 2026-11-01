@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from orchestrator import __version__
 from orchestrator.core.config import get_settings
 from orchestrator.core.logging import configure_logging, get_logger
+from orchestrator.core.security import SameOriginMiddleware
 from orchestrator.core.state import InvalidTransition
 from orchestrator.providers.base import ProviderError
 from orchestrator.utils.git import GitError
@@ -106,11 +107,15 @@ async def lifespan(app: FastAPI):
 
         background.scheduler = SchedulerRunner()
         background.scheduler.start()
+    from orchestrator.services import chat_service
     from orchestrator.services.sync_runner import sync_runner
 
+    with db.session_scope() as session:
+        chat_service.recover(session)
     # Always run the preference loop so enabling sync in Settings needs no restart.
     sync_loop_task = asyncio.create_task(sync_runner.run_loop())
     yield
+    await chat_service.manager.close_all()
     sync_loop_task.cancel()
     with suppress(asyncio.CancelledError):
         await sync_loop_task
@@ -131,6 +136,7 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         redoc_url=None,
     )
+    app.add_middleware(SameOriginMiddleware)
 
     def err(status: int, error: str, detail=None) -> JSONResponse:
         return JSONResponse(status_code=status, content={"error": error, "detail": detail})
@@ -170,6 +176,7 @@ def create_app() -> FastAPI:
     from orchestrator.api.routes import (
         agents,
         artifacts,
+        chat,
         core,
         memory,
         providers,
@@ -179,7 +186,7 @@ def create_app() -> FastAPI:
         ws,
     )
 
-    for module in (core, tasks, artifacts, providers, schedules, memory, agents, sync):
+    for module in (core, tasks, artifacts, providers, schedules, memory, agents, sync, chat):
         app.include_router(module.router, prefix="/api")
     app.include_router(ws.router)
 

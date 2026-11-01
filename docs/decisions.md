@@ -142,3 +142,18 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   with the same hidden-test pass rate. The `deepseek` and `glm` tags now pick the worker
   profile only, so they follow the Pi-first route. The `qwen` tag still selects Qwen Code,
   because that comparison was too close to call.
+
+- **2026-11-01 — Chat drives harness protocols, in a native page.** Interactive sessions use
+  each harness's session protocol: Pi RPC, ACP for Qwen Code, OpenCode and DeepSeek Harness,
+  and stream-json for Claude Code. We rejected embedding `dsh web`, which covers one harness
+  and adds a second UI, and driving a TUI through a PTY, which would mean scraping a screen.
+  Drivers sit beside `adapters.base` rather than changing it, because a chat turn isn't a
+  run. Controls come from what each harness reports at runtime, since the real options
+  differ per harness and per model. Sessions don't survive a server restart in this version.
+
+
+- **2026-11-01 — The same-origin check covers the whole server.** It started on Chat only,
+  but with no token set, a DNS-rebinding page could also reach routes like the adapter
+  `command` setting. It now runs as middleware on every HTTP request and WebSocket, so a new
+  route can't miss it. We kept the token-less local default rather than requiring a token,
+  because the check needs no setup.

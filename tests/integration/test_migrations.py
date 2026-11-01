@@ -16,7 +16,7 @@ def test_upgrade_downgrade_populated_db(initialized, tmp_path):
         memory_service.create(
             s, MemoryCreate(category="global", scope="patterns", content="m", approved=True)
         )
-    assert db.current_revision() == "0003_sync"
+    assert db.current_revision() == "0004_chat_sessions"
     db_path = str(initialized / "orchestrator.db")
     db.dispose_engines()
 
@@ -45,7 +45,7 @@ def test_upgrade_downgrade_populated_db(initialized, tmp_path):
             "sync_entities",
             "sync_state",
         } <= tables
-    assert db.current_revision() == "0003_sync"
+    assert db.current_revision() == "0004_chat_sessions"
 
 
 def test_models_match_migration(initialized):

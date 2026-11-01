@@ -17,6 +17,20 @@ With `ORCHESTRATOR_TOKEN` set, every `/api/*` route except the data-free
 `?token=` because browsers can't set headers on upgrades. The GUI asks for the token on a
 401 and keeps it in this browser's localStorage.
 
+## Other websites are refused
+
+Any page in your browser can send requests and open WebSockets to `127.0.0.1`, and DNS
+rebinding can point a hostile domain at this server. So every HTTP request and WebSocket,
+including the GUI's own pages, must have:
+
+- a local `Host`, or the configured bind host. With a token set, any `Host` is accepted,
+  because a hostile page can't know the token and every `/api/*` route still needs it.
+- an `Origin` matching that `Host`, if it sends one. Browsers send it on these requests, and
+  CLI tools and scripts don't.
+
+Refused requests get a 403, and WebSockets close with code 4403. A reverse proxy must pass
+the browser's `Host` through unchanged.
+
 ## Secret redaction
 
 `utils/redaction.py` scrubs provider keys (`sk-ant-…`, `sk-…`), GitHub/GitLab/Slack/AWS/
@@ -48,9 +62,32 @@ root (400). A unit test and an API test cover encoded traversal attempts.
   never inherited.
 - Each child gets its own process group, so timeouts and cancellation kill descendants
   too (SIGTERM, then SIGKILL).
-- Nothing arbitrary can run from the GUI. The only command endpoint runs a project's
-  *configured* test/lint/build command, is off by default (`allow_gui_commands`), and
-  checks `allowed_commands`.
+- The only GUI endpoint that runs a command itself runs a project's *configured*
+  test/lint/build command, is off by default (`allow_gui_commands`), and checks
+  `allowed_commands`.
+- Chat is the one way to reach arbitrary execution from the GUI, because it drives a coding
+  agent that has a shell. See below.
+
+## Interactive sessions (Chat)
+
+A chat session gives a browser page control of an agent running as your user, so it has
+its own gates:
+
+- **Off by default.** `allow_interactive_sessions` must be turned on, and it's checked on
+  every message as well as when a session starts.
+- **Other websites are refused**, as for the rest of the server. See
+  [above](#other-websites-are-refused).
+- **Isolated by default.** A session gets its own worktree and branch unless you choose
+  the project checkout, which the GUI flags. Merging goes through the `merge_enabled` gate.
+- **Asks first by default.** Yolo modes need a confirmation. What "ask" means depends on the
+  harness; see [chat.md](chat.md#permission-modes). Only DeepSeek Harness enforces its mode
+  with an OS sandbox. For the others, modes are prompts inside the agent, not a boundary, and
+  a worktree limits where an agent starts, not what it can reach.
+- **Minimal environment and redaction.** Children get the same allowlisted environment as
+  batch runs, and transcripts are redacted before they reach disk. Text shown live is
+  redacted per chunk, so a secret split across chunks can appear on screen, though not in
+  the stored transcript.
+- **No review.** Sessions skip the supervisor, verification and review gate.
 
 ## No destructive git defaults
 
