@@ -106,7 +106,14 @@ async def lifespan(app: FastAPI):
 
         background.scheduler = SchedulerRunner()
         background.scheduler.start()
+    from orchestrator.services.sync_runner import sync_runner
+
+    # Always run the preference loop so enabling sync in Settings needs no restart.
+    sync_loop_task = asyncio.create_task(sync_runner.run_loop())
     yield
+    sync_loop_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await sync_loop_task
     if background.loop_task:
         background.loop_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -167,11 +174,12 @@ def create_app() -> FastAPI:
         memory,
         providers,
         schedules,
+        sync,
         tasks,
         ws,
     )
 
-    for module in (core, tasks, artifacts, providers, schedules, memory, agents):
+    for module in (core, tasks, artifacts, providers, schedules, memory, agents, sync):
         app.include_router(module.router, prefix="/api")
     app.include_router(ws.router)
 

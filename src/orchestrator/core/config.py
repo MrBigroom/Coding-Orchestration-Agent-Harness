@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     # Let GUI/API trigger project commands (test/lint/build) directly. Off by default.
     allow_gui_commands: bool = False
 
+    # Optional Supabase synchronization. Credentials stay device-local in the environment.
+    supabase_url: str | None = None
+    supabase_publishable_key: str | None = None
+    supabase_email: str | None = None
+    supabase_password: str | None = None
+    supabase_sync_batch_size: int = Field(default=100, gt=0, le=1000)
+    supabase_sync_enabled: bool = False
+    supabase_sync_interval_seconds: int = Field(default=60, ge=15, le=86400)
+
     @model_validator(mode="after")
     def _derive_paths(self) -> Settings:
         self.home = Path(self.home).expanduser()

@@ -28,6 +28,7 @@ models_app = typer.Typer(help="Model profiles.", no_args_is_help=True)
 schedule_app = typer.Typer(help="Cron schedules.", no_args_is_help=True)
 memory_app = typer.Typer(help="Shared memory.", no_args_is_help=True)
 agent_app = typer.Typer(help="Saved agents.", no_args_is_help=True)
+sync_app = typer.Typer(help="Supabase cloud synchronization.", no_args_is_help=True)
 desktop_app = typer.Typer(
     help="Desktop app: run it (no subcommand), install/uninstall the launcher, stop the server."
 )
@@ -40,6 +41,7 @@ for sub, name in (
     (schedule_app, "schedule"),
     (memory_app, "memory"),
     (agent_app, "agent"),
+    (sync_app, "sync"),
     (desktop_app, "desktop"),
 ):
     app.add_typer(sub, name=name)
@@ -89,6 +91,8 @@ def _ensure_ready() -> None:
         from orchestrator.services import bootstrap
 
         bootstrap.init()
+    else:
+        db.upgrade()
 
 
 def _print_json(data: Any) -> None:
@@ -1083,6 +1087,33 @@ def memory_import(
         else:
             n = memory_service.import_all(s, json.loads(file.read_text()))
     console.print(f"imported {n} entr{'y' if n == 1 else 'ies'}")
+
+
+@sync_app.command("status")
+@handled
+def sync_status() -> None:
+    """Show locally tracked, pending, synchronized, and conflicted records."""
+    from orchestrator.services import sync_service
+
+    _ensure_ready()
+    with _session() as s:
+        sync_service.scan_local(s)
+        _print_json(sync_service.status(s))
+
+
+@sync_app.command("now")
+@handled
+def sync_now() -> None:
+    """Pull remote changes, then push pending local changes to Supabase."""
+    from orchestrator.services.sync_transport import SupabaseSyncClient
+
+    async def run() -> dict[str, Any]:
+        async with SupabaseSyncClient() as client:
+            with _session() as s:
+                return await client.sync_once(s)
+
+    _ensure_ready()
+    _print_json(asyncio.run(run()))
 
 
 def main() -> None:

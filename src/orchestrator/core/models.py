@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Column, String, Text
+from sqlalchemy import JSON, Column, Index, String, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -327,6 +327,40 @@ class BuildLogEntry(SQLModel, table=True):
 
 class Setting(SQLModel, table=True):
     __tablename__ = "settings"
+
+    key: str = Field(primary_key=True)
+    value_json: Any = Field(default=None, sa_column=Column(JSON))
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SyncEntity(SQLModel, table=True):
+    """Maps a local row to its portable cloud identity and synchronization version."""
+
+    __tablename__ = "sync_entities"
+    __table_args__ = (
+        Index("ix_sync_entities_entity_type_local_id", "entity_type", "local_id", unique=True),
+    )
+
+    uuid: str = Field(primary_key=True)
+    entity_type: str = Field(index=True)
+    local_id: str
+    payload_hash: str
+    synced_hash: str | None = None
+    version: int = 1
+    synced_version: int = 0
+    dirty: bool = True
+    origin_device: str = ""
+    modified_at: datetime = Field(default_factory=utcnow)
+    synced_at: datetime | None = None
+    conflict_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+
+class SyncState(SQLModel, table=True):
+    """Device-local synchronization cursors and configuration; never cloud-synchronized."""
+
+    __tablename__ = "sync_state"
 
     key: str = Field(primary_key=True)
     value_json: Any = Field(default=None, sa_column=Column(JSON))

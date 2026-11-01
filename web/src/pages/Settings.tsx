@@ -1,10 +1,28 @@
-import { patch } from "../api/client";
-import { getToken, setToken } from "../api/client";
-import { Card, ErrorNote, PageHeader, ThemeSwitch, Toggle } from "../components/ui";
+import { getToken, patch, post, setToken } from "../api/client";
+import { Badge, Card, ErrorNote, PageHeader, ThemeSwitch, Toggle, fmtTime } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { useState } from "react";
 
-type S = Record<string, string | number | boolean>;
+type S = Record<string, string | number | boolean | null>;
+type SyncResult = {
+  pulled: Record<string, number>;
+  pushed: Record<string, number>;
+};
+type SyncStatus = {
+  configured: boolean;
+  enabled: boolean;
+  running: boolean;
+  interval_seconds: number;
+  tracked: number;
+  pending: number;
+  conflicts: number;
+  synced: number;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_result: SyncResult | null;
+};
 
 const BOOLS: [string, string][] = [
   ["merge_enabled", "Merge gate enabled (allows --no-ff merges of accepted phase branches)"],
@@ -22,13 +40,23 @@ const NUMS: [string, string][] = [
 
 export default function Settings() {
   const { data, error, setData } = useApi<S>("/settings");
+  const { data: sync, error: syncError, reload: reloadSync } = useApi<SyncStatus>("/sync/status", 5000);
   const act = useAction();
+  const syncAct = useAction();
   const [token, setTok] = useState(getToken());
   const update = (key: string, value: unknown) => act.run(async () => setData(await patch<S>("/settings", { values: { [key]: value } })));
+  const updateSync = (key: string, value: unknown) => act.run(async () => {
+    setData(await patch<S>("/settings", { values: { [key]: value } }));
+    await reloadSync();
+  });
+  const runSync = () => syncAct.run(async () => {
+    await post<SyncResult>("/sync/run");
+    await reloadSync();
+  });
   return (
     <>
       <PageHeader title="Settings" subtitle="Defaults come from ORCHESTRATOR_* env vars; changes here are stored in SQLite." />
-      <ErrorNote error={error ?? act.error} />
+      <ErrorNote error={error ?? act.error ?? syncError ?? syncAct.error} />
       {data && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <Card title="Gates & execution">
@@ -51,6 +79,68 @@ export default function Settings() {
                 </div>
               ))}
             </div>
+          </Card>
+          <Card title="Cloud Sync" className="xl:col-span-2" actions={sync && (
+            <Badge value={sync.running ? "running" : sync.configured ? "configured" : "not configured"}
+              tone={sync.running ? "info" : sync.configured ? "ok" : "muted"} />
+          )}>
+            {!sync ? <p className="text-sm text-muted">Loading synchronization status…</p> : (
+              <div className="space-y-5">
+                <p className="text-sm text-muted">
+                  SQLite remains authoritative. Supabase synchronization is optional and never uploads data until credentials are configured.
+                </p>
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-sm">Automatic background sync
+                        <span className="block text-xs text-muted">Off by default; applies without restarting the server.</span>
+                      </span>
+                      <Toggle checked={sync.enabled} disabled={!sync.configured || act.busy}
+                        onChange={(v) => updateSync("supabase_sync_enabled", v)} />
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <label className="text-sm" htmlFor="sync-interval">Sync interval
+                        <span className="block text-xs text-muted">15 seconds to 24 hours</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input id="sync-interval" className="input w-28" type="number" min={15} max={86400}
+                          defaultValue={sync.interval_seconds} disabled={act.busy}
+                          onBlur={(e) => Number(e.target.value) !== sync.interval_seconds &&
+                            updateSync("supabase_sync_interval_seconds", Number(e.target.value))} />
+                        <span className="text-xs text-muted">seconds</span>
+                      </div>
+                    </div>
+                    <button className="btn btn-primary" disabled={!sync.configured || sync.running || syncAct.busy}
+                      onClick={runSync}>{syncAct.busy || sync.running ? "Syncing…" : "Sync now"}</button>
+                    <p className="text-xs text-muted">Manual sync works even when automatic sync is off.</p>
+                    {!sync.configured && (
+                      <p className="rounded-md border border-line bg-panel-2 p-3 text-xs text-muted">
+                        Add the device-local Supabase URL, publishable key, email, and password to <span className="mono">.env</span>,
+                        then restart the server. Follow <span className="mono">docs/cloud-sync.md</span>. Credentials are never stored in SQLite or synchronized.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <dt className="text-muted">Tracked records</dt><dd>{sync.tracked}</dd>
+                      <dt className="text-muted">Pending upload</dt><dd>{sync.pending}</dd>
+                      <dt className="text-muted">Synchronized</dt><dd>{sync.synced}</dd>
+                      <dt className="text-muted">Conflicts</dt><dd className={sync.conflicts ? "text-bad" : ""}>{sync.conflicts}</dd>
+                      <dt className="text-muted">Last success</dt><dd>{fmtTime(sync.last_success_at)}</dd>
+                    </dl>
+                    {sync.last_result && (
+                      <p className="mt-3 text-xs text-muted">
+                        Last transfer: {sync.last_result.pulled.applied ?? 0} remote records applied, {sync.last_result.pushed.pushed ?? 0} local records uploaded.
+                      </p>
+                    )}
+                    {sync.last_error && <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">{sync.last_error}</p>}
+                  </div>
+                </div>
+                <p className="border-t border-line pt-3 text-xs text-muted">
+                  Database records only. Credentials, local paths, repositories, worktrees, artifacts, and evidence files stay on this device.
+                </p>
+              </div>
+            )}
           </Card>
           <Card title="Appearance">
             <div className="flex items-center justify-between gap-4">
