@@ -1,5 +1,6 @@
 import { ArrowUp, Bot, ChevronRight, CircleAlert, FileText, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
@@ -28,6 +29,7 @@ function Prose({ text }: { text: string }) {
 }
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const DROP_PANE = "chat-pane";
 // The server's limits (chat_service); a prompt over them is refused.
 const MAX_IMAGES = 4;
 const MAX_FILES = 5;
@@ -316,13 +318,54 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
     setProblem("");
     setText("");
   };
-  const files = (list: FileList | null) => [...(list ?? [])];
+  const files = (list: FileList | null | undefined) => [...(list ?? [])];
+
+  // The whole session pane takes dropped files, not just this box.
+  const [dragging, setDragging] = useState(false);
+  const addRef = useRef(add);
+  addRef.current = add;
+  useEffect(() => {
+    const pane = document.getElementById(DROP_PANE);
+    if (disabled || !pane) return;
+    let depth = 0;  // dragenter and dragleave fire for every child crossed
+    const carriesFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+    const enter = (e: DragEvent) => { if (carriesFiles(e)) { depth += 1; setDragging(true); } };
+    const leave = (e: DragEvent) => { if (carriesFiles(e) && --depth <= 0) { depth = 0; setDragging(false); } };
+    const drop = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      void addRef.current(files(e.dataTransfer?.files));
+    };
+    pane.addEventListener("dragenter", enter);
+    pane.addEventListener("dragleave", leave);
+    pane.addEventListener("drop", drop);
+    return () => {
+      pane.removeEventListener("dragenter", enter);
+      pane.removeEventListener("dragleave", leave);
+      pane.removeEventListener("drop", drop);
+      setDragging(false);
+    };
+  }, [disabled]);
+  // A file dropped anywhere else would make the browser open it in place of the app.
+  useEffect(() => {
+    const ignore = (e: DragEvent) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); };
+    window.addEventListener("dragover", ignore);
+    window.addEventListener("drop", ignore);
+    return () => { window.removeEventListener("dragover", ignore); window.removeEventListener("drop", ignore); };
+  }, []);
+  const pane = document.getElementById(DROP_PANE);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-5">
-      <div className="relative rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent"
-        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
-        onDrop={(e) => { if (disabled) return; e.preventDefault(); void add(files(e.dataTransfer.files)); }}>
+      {dragging && pane && createPortal(
+        <div className="pointer-events-none absolute inset-3 z-30 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-panel/90 text-center">
+          <Paperclip size={28} className="text-accent" aria-hidden="true" />
+          <div className="text-lg font-medium">Drop to attach</div>
+          <div className="text-sm text-muted">{images === false ? "This model doesn't take images, so they're attached as files." : "Images go to the model; other files are saved for the agent to open."}</div>
+        </div>, pane)}
+      <div className="relative rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent">
         {attached.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {attached.map((a, i) => (
@@ -623,7 +666,7 @@ export default function Chat() {
           ))}
         </div>
       </aside>
-      <div className="min-w-0 flex-1">{body()}</div>
+      <div id={DROP_PANE} className="relative min-w-0 flex-1">{body()}</div>
     </div>
   );
 }

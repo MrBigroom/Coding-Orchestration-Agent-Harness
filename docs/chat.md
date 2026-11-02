@@ -18,8 +18,8 @@ send a message. You can also pick an agent; see [Chatting with an agent](#chatti
 
 - **Replies** render as Markdown: headings, bold, lists, tables, links and code. Your own
   messages stay as typed.
-- **Images and files:** attach with the paperclip button, or paste or drop them into the
-  message box. See [Images](#images) and [Files](#files).
+- **Images and files:** attach with the paperclip button, paste them into the message box,
+  or drop them anywhere on the session. See [Images](#images) and [Files](#files).
 - **Slash commands:** type `/` to pick from the commands the harness offers. See
   [Slash commands](#slash-commands).
 - **Model, effort and permission** can change during a session, except where noted below.
