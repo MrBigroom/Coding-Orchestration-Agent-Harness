@@ -12,7 +12,8 @@ in Settings. [security.md](security.md#interactive-sessions-chat) explains why.
 
 ## Using it
 
-Pick a project, harness, workspace, model, effort and permission mode, then send a message.
+Pick a project (or **No project**), harness, workspace, model, effort and permission mode, then
+send a message.
 **Enter** sends and **Shift+Enter** adds a line.
 
 - **Model, effort and permission** can change during a session, except where noted below.
@@ -20,11 +21,11 @@ Pick a project, harness, workspace, model, effort and permission mode, then send
 - **Sending during a turn:** Pi takes the message as steering after the current tool call.
   Other harnesses queue it until the turn ends.
 - **Stop** ends the current turn and keeps the session. **End session** stops the process.
-- **Changes** shows what the session did. On a worktree session, it also offers the merge,
+- **Changes** shows what a project session did. On a worktree session, it also offers the merge,
   which needs the session ended and `merge_enabled` on. Otherwise it shows the manual
   command. Anything uncommitted is committed as a labelled recovery commit first.
 - **Delete** removes the transcript and worktree. A dirty worktree stays, and the branch
-  always stays.
+  always stays. A session with no project loses its folder too, including any files in it.
 
 ## Workspaces
 
@@ -33,6 +34,8 @@ Pick a project, harness, workspace, model, effort and permission mode, then send
 - **Project checkout:** the agent edits your files directly, with no branch to discard.
   `dsh` can't start here if the project's `.env` sets `DEEPSEEK_BASE_URL`, because it refuses
   that variable in a `.env` file.
+- **No project:** the agent starts in a new empty folder, `<home>/chats/<id>/workspace`, shown
+  in the session header. It isn't a git repository, so there's no branch, **Changes** or merge.
 
 ## Harnesses
 

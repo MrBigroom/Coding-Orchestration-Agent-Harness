@@ -328,14 +328,14 @@ class ChatSession(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     title: str = ""
-    # Empty for a standalone run of an agent with no project.
+    # Empty for a session with no project, or a standalone run of an agent with none.
     project_id: int | None = Field(default=None, foreign_key="projects.id", index=True)
     adapter: str
     model: str | None = None
     effort: str | None = None
     permission: str | None = None
-    # "worktree" (isolated branch, the default) or "checkout" (the project's own files).
-    # Standalone runs also use "snapshot" (detached worktree) and "folder" (no project).
+    # "worktree" (isolated branch, the default), "checkout" (the project's own files) or
+    # "folder" (no project). Standalone runs also use "snapshot" (detached worktree).
     workspace: str = "worktree"
     standalone: bool = False
     cwd: str

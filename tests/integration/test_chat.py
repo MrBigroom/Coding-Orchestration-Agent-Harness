@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -181,6 +182,40 @@ def test_session_flow_in_a_worktree(enabled, project, tmp_path):
 
 
 @requires_git
+def test_session_without_a_project(enabled):
+    r = enabled.post("/api/chat/sessions", json={"adapter": "mock", "workspace": "checkout"})
+    assert r.status_code == 201, r.text
+    chat = r.json()
+    folder = Path(chat["cwd"])
+    assert chat["project_id"] is None
+    assert chat["workspace"] == "folder"
+    assert chat["branch_name"] is None
+    assert folder.is_dir() and not list(folder.iterdir())
+
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": "add a note"})
+        approval = until(ws, "approval")
+        ws.send_json({"type": "approval", "id": approval["id"], "choice": "allow"})
+        assert until(ws, "tool_end")["error"] is False
+        until(ws, "status", status="idle")
+    assert (folder / "mock-chat-1.md").is_file()
+
+    changes = enabled.get(f"/api/chat/sessions/{chat['id']}/changes").json()
+    assert changes["branch"] is None and changes["merge_enabled"] is False
+    assert enabled.post(f"/api/chat/sessions/{chat['id']}/merge").status_code == 400
+
+    # The session owns this folder, so it goes with the session.
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    assert enabled.delete(f"/api/chat/sessions/{chat['id']}").status_code == 204
+    assert not folder.exists()
+
+
+def test_unknown_project_is_rejected(enabled):
+    r = enabled.post("/api/chat/sessions", json={"project_id": 999, "adapter": "mock"})
+    assert r.status_code == 404
+
+
 def test_denied_tool_writes_nothing(enabled, project):
     chat = start(enabled, project)
     with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:

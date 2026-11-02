@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronRight, CircleAlert, GitBranch, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert } from "lucide-react";
+import { ArrowUp, ChevronRight, CircleAlert, FolderOpen, GitBranch, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, del, patch, post } from "../api/client";
@@ -205,7 +205,6 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
     onCreated(chat, text);
   });
 
-  if (!projects.length) return <Empty>Add a project first. A session needs a repository to work in.</Empty>;
   return (
     <div className="flex h-full flex-col justify-center">
       <div className="mx-auto w-full max-w-3xl px-6 pb-4">
@@ -214,7 +213,8 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
         <ErrorNote error={act.error} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Project">
-            <select className="input" value={projectId ?? ""} onChange={(e) => setProjectId(Number(e.target.value))}>
+            <select className="input" value={projectId ?? ""} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">No project</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
@@ -224,14 +224,17 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
             </select>
           </Field>
           <Field label="Workspace">
-            <select className="input" value={workspace} onChange={(e) => setWorkspace(e.target.value as "worktree" | "checkout")}>
-              <option value="worktree">New worktree (isolated branch)</option>
-              <option value="checkout">Project checkout (your files)</option>
-            </select>
+            {projectId === null
+              ? <select className="input" disabled><option>New empty folder</option></select>
+              : <select className="input" value={workspace} onChange={(e) => setWorkspace(e.target.value as "worktree" | "checkout")}>
+                  <option value="worktree">New worktree (isolated branch)</option>
+                  <option value="checkout">Project checkout (your files)</option>
+                </select>}
           </Field>
         </div>
         {harness?.note && <p className="mt-2 text-xs text-muted">{harness.note}</p>}
-        {workspace === "checkout" && <p className="mt-2 flex items-center gap-1.5 text-xs text-warn"><TriangleAlert size={14} aria-hidden="true" />The agent will change your project's files directly, with no branch to review or discard.</p>}
+        {projectId === null && <p className="mt-2 text-xs text-muted">The agent starts in a new empty folder, which is deleted with the session. The folder isn't a sandbox: the permission mode decides what it can reach elsewhere.</p>}
+        {projectId !== null && workspace === "checkout" && <p className="mt-2 flex items-center gap-1.5 text-xs text-warn"><TriangleAlert size={14} aria-hidden="true" />The agent will change your project's files directly, with no branch to review or discard.</p>}
       </div>
       <Composer working={false} disabled={act.busy || !harness?.available} onSend={(t) => void start(t)} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
         controls={harness && <>
@@ -309,13 +312,15 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
           ? <span className="mono flex items-center gap-1 text-xs text-muted"><GitBranch size={13} aria-hidden="true" />{chat.branch_name}</span>
           : chat.standalone
             ? <span className="text-xs text-muted">standalone run</span>
+            : chat.workspace === "folder"
+            ? <span className="mono flex min-w-0 items-center gap-1 text-xs text-muted" title={chat.cwd}><FolderOpen size={13} className="shrink-0" aria-hidden="true" /><span className="max-w-xs truncate">{chat.cwd}</span></span>
             : <span className="flex items-center gap-1 text-xs text-warn"><TriangleAlert size={13} aria-hidden="true" />project checkout</span>}
         <div className="ml-auto flex items-center gap-2">
           {usage.requests ? <span className="text-xs text-muted" title={`${compact(usage.cache_read_input_tokens)} of the input came from cache, over ${usage.requests} requests`}>{compact(usage.input_tokens)} in · {compact(usage.output_tokens)} out</span> : null}
           {chat.project_id !== null && <button className="btn" onClick={() => setShowChanges((v) => !v)}>Changes</button>}
           {!ended && <ConfirmButton label="End session" message="Stops the harness process. The transcript and any branch stay." disabled={act.busy}
             onConfirm={() => void act.run(async () => { await post(`/chat/sessions/${chat.id}/close`); onChanged(); })} />}
-          {ended && <ConfirmButton label="Delete" message="Deletes the transcript and the worktree. A worktree with uncommitted changes is kept, and the branch always stays." disabled={act.busy}
+          {ended && <ConfirmButton label="Delete" message={chat.workspace === "folder" && !chat.standalone ? "Deletes the transcript and this session's folder, with any files in it." : "Deletes the transcript and the worktree. A worktree with uncommitted changes is kept, and the branch always stays."} disabled={act.busy}
             onConfirm={() => void act.run(async () => { await del(`/chat/sessions/${chat.id}`); onChanged(); navigate("/chat"); })} />}
         </div>
       </header>

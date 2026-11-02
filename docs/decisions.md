@@ -177,3 +177,9 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `chat_sessions.project_id` became nullable so agents with no project can run in their output
   folder. `allow_interactive_sessions` also moved to the local-only settings, because it had
   been syncing between devices by mistake.
+
+- **2026-11-02 — Chat sessions can run without a project.** A session with no project gets
+  `<home>/chats/<id>/workspace`, beside its transcript but apart from it, so the agent can't
+  edit its own transcript by accident and deleting the session removes both. We chose a new
+  empty folder over letting you pick any path, because a chosen folder would need its own
+  checks and would turn Delete into a question of whose files those are.

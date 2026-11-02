@@ -78,11 +78,12 @@ its own gates:
 - **Other websites are refused**, as for the rest of the server. See
   [above](#other-websites-are-refused).
 - **Isolated by default.** A session gets its own worktree and branch unless you choose
-  the project checkout, which the GUI flags. Merging goes through the `merge_enabled` gate.
+  the project checkout, which the GUI flags, or no project, which gives it a new empty folder.
+  Merging goes through the `merge_enabled` gate.
 - **Asks first by default.** Yolo modes need a confirmation. What "ask" means depends on the
   harness; see [chat.md](chat.md#permission-modes). Only DeepSeek Harness enforces its mode
   with an OS sandbox. For the others, modes are prompts inside the agent, not a boundary, and
-  a worktree limits where an agent starts, not what it can reach.
+  a worktree or folder limits where an agent starts, not what it can reach.
 - **Minimal environment and redaction.** Children get the same allowlisted environment as
   batch runs, and transcripts are redacted before they reach disk. Text shown live is
   redacted per chunk, so a secret split across chunks can appear on screen, though not in

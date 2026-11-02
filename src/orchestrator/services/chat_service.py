@@ -350,7 +350,9 @@ def harnesses(session: Session) -> dict[str, Any]:
 
 def _workspace(chat: ChatSession, project: Project | None, folder: Path | None) -> None:
     if not project:
-        assert folder
+        # Inside the chat's own folder, so deleting the session removes it too.
+        folder = folder or _transcript(chat.id or 0).parent / "workspace"
+        folder.mkdir(parents=True, exist_ok=True)
         chat.cwd = str(folder)
         return
     if chat.workspace == "checkout":
@@ -375,9 +377,11 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
     _require_enabled(session)
     if len(manager.live) - manager.unattended_count() >= MAX_LIVE_SESSIONS:
         raise ChatError(f"at most {MAX_LIVE_SESSIONS} sessions can run at once; end one first")
-    project = session.get(Project, body.project_id)
-    if not project:
-        raise KeyError(f"project {body.project_id} not found")
+    project = None
+    if body.project_id is not None:
+        project = session.get(Project, body.project_id)
+        if not project:
+            raise KeyError(f"project {body.project_id} not found")
     row = adapter_service.get_row(session, body.adapter)
     profile = HARNESSES.get(row.kind)
     permission = body.permission or (profile.default_permission if profile else None)
@@ -390,7 +394,7 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
         model=body.model,
         effort=body.effort,
         permission=permission,
-        workspace=body.workspace,
+        workspace=body.workspace if project else "folder",
     )
 
 
@@ -430,7 +434,7 @@ async def open_session(
         permission=permission,
         workspace=workspace,
         standalone=standalone,
-        cwd=project.path if project else str(folder),
+        cwd=project.path if project else str(folder or ""),
     )
     session.add(chat)
     session.commit()
@@ -515,7 +519,7 @@ def _project(session: Session, chat: ChatSession) -> Project:
 
 
 def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
-    if chat.project_id is None:  # a standalone run's output folder
+    if chat.project_id is None:  # a plain folder, with no git to report on
         return {
             "isolated": True,
             "branch": None,
@@ -549,7 +553,7 @@ def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
 def merge(session: Session, chat: ChatSession) -> str:
     """Merge a finished session's branch, behind the same gate as task merges."""
     if chat.workspace != "worktree" or not chat.branch_name:
-        raise ChatError("this session worked in the project checkout; there is nothing to merge")
+        raise ChatError("this session has no branch, so there is nothing to merge")
     if manager.get(chat.id or 0):
         raise ChatError("end the session before merging its branch")
     if not settings_service.get(session, "merge_enabled"):

@@ -372,7 +372,7 @@ class TimestampedOut(ORMModel):
 
 
 class ChatSessionCreate(BaseModel):
-    project_id: int
+    project_id: int | None = None  # empty: the session gets its own empty folder
     adapter: str
     model: str | None = None
     effort: str | None = None
