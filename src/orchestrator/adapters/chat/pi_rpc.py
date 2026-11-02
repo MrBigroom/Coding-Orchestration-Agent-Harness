@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ from orchestrator.adapters.common import _n, takes_images, wants_explicit_cache
 
 GATE = Path(__file__).with_name("pi_gate.ts")
 PROVIDER = "orchestrator"
+# Your Pi MCP servers and their sign-ins, which a managed config folder would otherwise hide.
+MCP_FILES = ("mcp.json", "mcp-auth.json")
 FAILED_STOP_REASONS = {"length", "error"}
 EDIT_TITLES = {"Allow edit?", "Allow write?"}
 
@@ -31,6 +34,10 @@ class PiDriver(ChatDriver):
     `models.json` lists every model the session may switch to and marks them as reasoning
     models, so that the effort control reaches them, and those that take images as such.
     Pi's own report of the current model decides whether the GUI offers images.
+
+    Your MCP servers (`~/.pi/agent/mcp.json`) and their sign-ins are linked into that
+    folder, so a token Pi refreshes is saved back to your file. Each MCP use then passes
+    the gate like any other tool call. Batch runs have no gate, so they don't get them.
     """
 
     kind = "pi"
@@ -60,11 +67,18 @@ class PiDriver(ChatDriver):
         config["providers"][PROVIDER]["models"] = entries
         path.write_text(json.dumps(config, indent=2))
 
+    def _link_mcp(self) -> None:
+        own = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent")
+        for name in MCP_FILES:
+            if (own / name).is_file():
+                (self.tmp / name).symlink_to(own / name)
+
     async def start(self) -> None:
         env = self.prepared_env()
         self._managed = "PI_CODING_AGENT_DIR" in env
         if self._managed:
             self._write_models()
+            self._link_mcp()
         self._mode_file.write_text(self.options.permission or "ask")
         env["ORCHESTRATOR_PI_MODE_FILE"] = str(self._mode_file)
         if self.options.output_dir:
