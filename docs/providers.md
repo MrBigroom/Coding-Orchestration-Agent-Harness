@@ -68,7 +68,7 @@ validation error attached, and a second failure is a clear `ProviderError`.
   from your console.
 - **Profiles (all on this provider by default):** `supervisor-qwen-max` → `qwen3.8-max`
   (**primary supervisor**), `worker-qwen-flash` → `qwen3.8-flash`, `worker-deepseek-flash`
-  → `deepseek-v4.1-flash`, `worker-glm` → `glm-5.3`, `agent-flash` → `qwen3.8-flash`.
+  → `deepseek-v4.1-flash`, `worker-glm` → `glm-5.3`, `agent-flash` → `qwen3.8-flash`, `agent-qwen-max` → `qwen3.8-max`.
   These IDs match Model Studio's documented model IDs as of 2026-10-19.
 - **Qwen Cloud = Alibaba Model Studio.** Qwen Cloud's Token Plan (docs.qwencloud.com) and
   Alibaba Model Studio's Token Plan carry the same scope rule: interactive use inside

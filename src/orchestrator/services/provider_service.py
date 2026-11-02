@@ -155,6 +155,15 @@ DEFAULT_PROFILES: list[tuple[str, str, str, str, str | None, bool, str]] = [
         "Background/cron agent tasks.",
     ),
     (
+        "agent-qwen-max",
+        "agent",
+        "qwen-token-plan",
+        "qwen3.8-max",
+        None,
+        True,
+        "Harder agent work. Only used when an agent selects it.",
+    ),
+    (
         "hermes-local",
         "agent",
         "hermes",
