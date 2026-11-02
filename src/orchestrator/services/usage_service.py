@@ -19,7 +19,7 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from orchestrator.adapters.common import parse_usage
-from orchestrator.core.models import Run, Task, TaskStatus
+from orchestrator.core.models import ChatSession, Run, Task, TaskStatus
 
 CACHED_INPUT_WEIGHT = 0.2
 OUTPUT_WEIGHT = 3.0
@@ -102,3 +102,51 @@ def harness_stats(
     for key, tasks in accepted_by_pair.items():
         stats[key].accepted_tasks = len(tasks)
     return stats
+
+
+# Where cache stats come from: harness runs of pipeline tasks, Chat sessions, and
+# standalone runs (which are chat sessions nobody steers).
+CACHE_SOURCES = ("task", "chat", "standalone")
+
+
+def cache_stats(session: Session) -> list[dict[str, Any]]:
+    """Prompt-cache hit rate per (source, harness, model), for the Prompt Cache page.
+
+    A chat session is counted under the model it ended on, so one that switched models
+    mid-way is attributed to the last one."""
+    rows: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+
+    def add(key: tuple[str, str, str | None], usage: dict[str, Any]) -> None:
+        row = rows.setdefault(
+            key,
+            {
+                "source": key[0],
+                "harness": key[1],
+                "model": key[2],
+                "count": 0,
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        )
+        row["count"] += 1
+        row["requests"] += usage.get("requests", 0) or 0
+        row["input_tokens"] += usage.get("input_tokens", 0) or 0
+        row["cached_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+        row["output_tokens"] += usage.get("output_tokens", 0) or 0
+
+    for run in session.exec(select(Run).where(col(Run.harness_adapter).is_not(None))):
+        u = run.usage or {}
+        if u.get("source") == "harness" and u.get("input_tokens"):
+            add(("task", run.harness_adapter or "", u.get("model")), u)
+    for chat in session.exec(select(ChatSession)):
+        u = chat.usage or {}
+        if u.get("input_tokens"):
+            add(("standalone" if chat.standalone else "chat", chat.adapter, chat.model), u)
+    for row in rows.values():
+        row["cache_hit_rate"] = row["cached_input_tokens"] / row["input_tokens"]
+    order = {source: i for i, source in enumerate(CACHE_SOURCES)}
+    return sorted(
+        rows.values(), key=lambda r: (order[r["source"]], -r["input_tokens"], r["harness"])
+    )
