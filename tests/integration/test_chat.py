@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from orchestrator.adapters.chat.mock import MockDriver
 from orchestrator.core import config as config_mod
 from orchestrator.core.security import same_origin_ok
 from orchestrator.services import chat_service
+from orchestrator.utils.git import run_git
 from tests.conftest import make_repo, requires_git
 
 HOST = {"host": "127.0.0.1:8321"}
@@ -417,3 +419,100 @@ def test_restart_marks_open_sessions_interrupted(enabled, project):
     assert enabled.get(f"/api/chat/sessions/{chat['id']}").json()["status"] == "interrupted"
     with session_scope() as s:
         assert json.dumps(s.get(ChatSession, chat["id"]).usage) == "{}"
+
+
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+@requires_git
+def test_files_are_saved_where_the_agent_works_and_listed_for_it(enabled, project):
+    sent = []
+    original = MockDriver.prompt
+
+    async def record(self, text, images=None):
+        sent.append(text)
+        await original(self, text, images)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(MockDriver, "prompt", record)
+        chat = start(enabled, project, permission="yolo")
+        with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+            wait_ready(ws)
+            files = [{"name": "../notes v2.md", "data": b64(b"# Notes\n")}]
+            ws.send_json({"type": "prompt", "text": "read this", "files": files})
+            assert until(ws, "user")["files"] == [".orchestrator/attachments/1-notes-v2.md"]
+            until(ws, "status", status="idle")
+            ws.send_json({"type": "prompt", "text": "", "files": files})
+            assert until(ws, "user")["files"] == [".orchestrator/attachments/2-notes-v2.md"]
+            until(ws, "status", status="idle")
+
+    saved = Path(chat["cwd"]) / ".orchestrator" / "attachments" / "1-notes-v2.md"
+    assert saved.read_bytes() == b"# Notes\n"
+    assert sent[0] == (
+        "read this\n\nAttached files, saved in your working directory:\n"
+        "- .orchestrator/attachments/1-notes-v2.md"
+    )
+    assert sent[1].startswith("Attached files")
+    # Typed text stays as typed, and the files never reach the branch.
+    typed = [e["text"] for e in chat_service.history(chat["id"]) if e["type"] == "user"]
+    assert typed == ["read this", ""]
+    status = run_git(["status", "--porcelain", "--untracked-files=all"], Path(chat["cwd"]))
+    assert ".orchestrator" not in status.stdout
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+
+
+def test_a_file_alone_names_the_session(enabled):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock", "permission": "yolo"}).json()
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        files = [{"name": "report.csv", "data": b64(b"a,b\n1,2\n")}]
+        ws.send_json({"type": "prompt", "text": "", "files": files})
+        until(ws, "status", status="idle")
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    assert enabled.get(f"/api/chat/sessions/{chat['id']}").json()["title"] == "1-report.csv"
+    assert (Path(chat["cwd"]) / ".orchestrator/attachments/1-report.csv").is_file()
+
+
+@pytest.mark.parametrize(
+    ("files", "error"),
+    [
+        ([{"name": "a.txt", "data": "not base64!"}], "valid base64"),
+        ([{"name": "a.txt", "data": b64(b"x")}] * 6, "at most 5 files"),
+        (["a.txt"], "missing its name or contents"),
+    ],
+)
+def test_bad_files_are_refused(enabled, files, error):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": "look", "files": files})
+        assert error in until(ws, "error")["message"]
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    assert "look" not in chat_service._transcript(chat["id"]).read_text()
+
+
+def test_attachment_limits_cover_images_and_files_together(monkeypatch):
+    monkeypatch.setattr(chat_service, "MAX_FILE_BYTES", 10)
+    monkeypatch.setattr(chat_service, "MAX_ATTACHMENTS_TOTAL", 75)
+    with pytest.raises(chat_service.ChatError, match="under"):
+        chat_service.parse_attachments([], [{"name": "big", "data": b64(b"x" * 11)}])
+    image = {"data": PNG, "mime": "image/png"}  # 70 bytes
+    with pytest.raises(chat_service.ChatError, match="must total"):
+        chat_service.parse_attachments([image], [{"name": "f", "data": b64(b"x" * 10)}])
+    images, files = chat_service.parse_attachments([image], [{"name": "f", "data": b64(b"x")}])
+    assert len(images) == 1 and files[0].data == b"x"
+
+
+@pytest.mark.parametrize(
+    ("name", "safe"),
+    [
+        ("../../etc/passwd", "passwd"),
+        (".env", "env"),
+        ("my report (final).pdf", "my-report-final-.pdf"),
+        ("", "file"),
+        ("a" * 120 + ".txt", "a" * 76 + ".txt"),  # 80 characters
+    ],
+)
+def test_attached_file_names_are_made_safe(name, safe):
+    assert chat_service._safe_name(name) == safe
