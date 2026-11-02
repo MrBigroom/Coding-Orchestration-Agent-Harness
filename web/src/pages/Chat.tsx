@@ -73,7 +73,7 @@ function ChatImage({ chatId, name }: { chatId: number; name: string }) {
 function Disclosure({ summary, children, open = false }: { summary: ReactNode; children: ReactNode; open?: boolean }) {
   return (
     <details className="group rounded-xl border border-line bg-panel" open={open}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-ink-2 [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-ink-2 [&::-webkit-details-marker]:hidden">
         <ChevronRight size={14} className="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
         {summary}
       </summary>
@@ -134,18 +134,18 @@ function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: nu
           case "user": return (
             <div key={i} className="ml-auto w-fit max-w-[85%] space-y-2 rounded-2xl bg-accent-soft px-4 py-2.5">
               {item.images?.length ? <div className="flex flex-wrap justify-end gap-2">{item.images.map((name) => <ChatImage key={name} chatId={chatId} name={name} />)}</div> : null}
-              {item.text && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.text}</p>}
+              {item.text && <p className="whitespace-pre-wrap break-words text-base leading-relaxed">{item.text}</p>}
             </div>
           );
           case "assistant": return <Prose key={i} text={item.text} />;
-          case "thinking": return <Disclosure key={i} summary="Thinking"><p className="whitespace-pre-wrap text-xs text-muted">{item.text}</p></Disclosure>;
+          case "thinking": return <Disclosure key={i} summary="Thinking"><p className="whitespace-pre-wrap text-sm text-muted">{item.text}</p></Disclosure>;
           case "tool": return <ToolCard key={i} item={item} />;
           case "approval": return <ApprovalCard key={i} item={item} onAnswer={onAnswer} disabled={disabled} />;
-          case "notice": return <div key={i} className="text-center text-xs text-muted">{item.text}</div>;
-          case "error": return <div key={i} className="flex gap-2 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad"><CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span className="min-w-0 break-words">{item.text}</span></div>;
+          case "notice": return <div key={i} className="text-center text-sm text-muted">{item.text}</div>;
+          case "error": return <div key={i} className="flex gap-2 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-base text-bad"><CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span className="min-w-0 break-words">{item.text}</span></div>;
         }
       })}
-      {working && <div className="animate-pulse text-xs text-muted">Working…</div>}
+      {working && <div className="animate-pulse text-sm text-muted">Working…</div>}
       <div ref={end} />
     </div>
   );
@@ -256,7 +256,7 @@ function Composer({ onSend, onStop, working, disabled, images, placeholder, cont
             ))}
           </div>
         )}
-        <textarea aria-label="Message" rows={3} className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 text-sm outline-none placeholder:text-muted disabled:opacity-60"
+        <textarea aria-label="Message" rows={3} className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 text-base outline-none placeholder:text-muted disabled:opacity-60"
           placeholder={placeholder} value={text} disabled={disabled} onChange={(e) => setText(e.target.value)}
           onPaste={(e) => {
             const pasted = files(e.clipboardData.files).filter((f) => IMAGE_TYPES.includes(f.type));
