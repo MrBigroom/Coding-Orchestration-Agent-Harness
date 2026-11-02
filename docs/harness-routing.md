@@ -120,6 +120,9 @@ What the orchestrator does with this:
 - **Cache hit rate in the stats.** Recorded usage includes `cache_read_input_tokens`,
   so `harness_stats` reports a `cache_hit_rate` per (harness, model). That's how to
   check whether explicit caching is actually honoured on your Token Plan endpoint.
+  The **Prompt Cache** page shows the hit rate per source (tasks, Chat, standalone
+  runs), harness and model (`GET /api/cache-stats`). Chat is usually lower: a message sent
+  more than 5 minutes after the last request starts with an expired cache.
 
 What it deliberately doesn't do:
 - **No explicit markers on the orchestrator's own calls** (supervisor, agent tasks,

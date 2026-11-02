@@ -37,6 +37,7 @@ from orchestrator.services import (
     provider_service,
     settings_service,
     task_service,
+    usage_service,
 )
 
 router = APIRouter()
@@ -190,6 +191,11 @@ def _preview(session: Session, body: PromptPreviewRequest) -> dict[str, Any]:
 @router.post("/prompt-preview", dependencies=AUTH)
 def prompt_preview(body: PromptPreviewRequest, session: Session = SessionDep) -> dict[str, Any]:
     return _preview(session, body)
+
+
+@router.get("/cache-stats", dependencies=AUTH)
+def cache_stats(session: Session = SessionDep) -> dict[str, Any]:
+    return {"rows": usage_service.cache_stats(session)}
 
 
 @router.get("/prompt-preview", dependencies=AUTH)

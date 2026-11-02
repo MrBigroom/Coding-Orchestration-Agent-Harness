@@ -1,8 +1,67 @@
 import { useState } from "react";
 import { post } from "../api/client";
-import type { PreviewReport, Task } from "../api/types";
-import { Badge, Card, ErrorNote, Field, PageHeader } from "../components/ui";
+import type { CacheStatsRow, PreviewReport, Task } from "../api/types";
+import { Badge, Card, Empty, ErrorNote, Field, PageHeader } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
+
+const SOURCE: Record<CacheStatsRow["source"], [string, string]> = {
+  task: ["Tasks", "runs"],
+  chat: ["Chat", "sessions"],
+  standalone: ["Standalone", "runs"],
+};
+
+function tokens(n: number): string {
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/** Cache hits recorded so far, from harness runs of tasks, Chat sessions and standalone runs. */
+function CacheStats() {
+  const { data, error } = useApi<{ rows: CacheStatsRow[] }>("/cache-stats");
+  const rows = data?.rows ?? [];
+  return (
+    <Card title="Cache hit rate" className="mb-4">
+      <ErrorNote error={error} />
+      {data && !rows.length ? <Empty>No harness usage recorded yet.</Empty> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted">
+                <th className="pb-2 pr-4 font-medium">Source</th>
+                <th className="pb-2 pr-4 font-medium">Harness · model</th>
+                <th className="pb-2 pr-4 text-right font-medium">Requests</th>
+                <th className="pb-2 pr-4 text-right font-medium">Input</th>
+                <th className="pb-2 pr-4 text-right font-medium">From cache</th>
+                <th className="w-48 pb-2 font-medium">Hit rate</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map((r) => {
+                const [label, unit] = SOURCE[r.source];
+                const pct = Math.round(r.cache_hit_rate * 100);
+                return (
+                  <tr key={`${r.source}-${r.harness}-${r.model}`}>
+                    <td className="py-2 pr-4">{label}<div className="text-xs text-muted">{r.count} {r.count === 1 ? unit.slice(0, -1) : unit}</div></td>
+                    <td className="py-2 pr-4">{r.harness}<div className="mono text-xs text-muted">{r.model ?? "—"}</div></td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{r.requests || "—"}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{tokens(r.input_tokens)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{tokens(r.cached_input_tokens)}</td>
+                    <td className="py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded bg-panel-2"><div className={`h-1.5 rounded ${pct >= 85 ? "bg-ok" : pct >= 60 ? "bg-warn" : "bg-bad"}`} style={{ width: `${pct}%` }} /></div>
+                        <span className="w-10 text-right font-medium tabular-nums">{pct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-muted">Qwen Cloud keeps a cache for 5 minutes after its last use, so a Chat message sent after a longer pause starts with a full miss. Tool calls within a turn come seconds apart and usually hit.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 export default function PromptPreview() {
   const { data: tasks } = useApi<Task[]>("/tasks");
@@ -15,7 +74,8 @@ export default function PromptPreview() {
 
   return (
     <>
-      <PageHeader title="Prompt cache preview" subtitle="Static sections form the cached prefix; dynamic state must come last." />
+      <PageHeader title="Prompt cache" subtitle="How often the cache is hit, and how each prompt is laid out: static sections form the cached prefix, dynamic state comes last." />
+      <CacheStats />
       <ErrorNote error={act.error} />
       <Card className="mb-4">
         <div className="flex flex-wrap items-end gap-3">

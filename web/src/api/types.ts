@@ -183,6 +183,18 @@ export interface PreviewSection {
   excerpt: string;
 }
 
+export interface CacheStatsRow {
+  source: "task" | "chat" | "standalone";
+  harness: string;
+  model: string | null;
+  count: number;
+  requests: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  cache_hit_rate: number;
+}
+
 export interface PreviewReport {
   sections: PreviewSection[];
   static_tokens: number;
