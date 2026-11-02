@@ -2,14 +2,17 @@
 
 A chat is separate from the task pipeline: it has no supervisor or review gate. The harness
 process lives inside the server, so sessions end when the server stops; their transcripts
-stay. A transcript is <home>/chats/<id>/events.jsonl, written through secret redaction.
+stay. A transcript is <home>/chats/<id>/events.jsonl, written through secret redaction;
+images sent with a prompt are kept in images/ beside it, and the transcript names them.
 Consecutive text deltas are stored as one event so that redaction sees whole sentences.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import re
 import shutil
 from collections import deque
 from pathlib import Path
@@ -17,7 +20,7 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from orchestrator.adapters.chat.base import ChatDriver, DriverError, DriverOptions
+from orchestrator.adapters.chat.base import ChatDriver, DriverError, DriverOptions, Image
 from orchestrator.adapters.chat.registry import HARNESSES, UNSUPPORTED
 from orchestrator.core.config import get_settings
 from orchestrator.core.db import session_scope
@@ -47,6 +50,12 @@ MAX_LIVE_SESSIONS = 4
 MAX_TOOL_TEXT = 20_000
 ENDED = {ChatStatus.closed, ChatStatus.failed, ChatStatus.interrupted}
 STREAMED = {"text", "thinking"}
+IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+IMAGE_NAME = re.compile(r"\d+\.(png|jpg|gif|webp)")
+MAX_IMAGES = 4
+MAX_IMAGE_BYTES = 5_000_000
+# Base64 grows this by a third, which keeps a prompt under uvicorn's 16 MiB WebSocket limit.
+MAX_IMAGES_TOTAL = 10_000_000
 
 
 class ChatError(ValueError):
@@ -74,6 +83,43 @@ def _transcript(chat_id: int) -> Path:
     return get_settings().chats_root / str(chat_id) / "events.jsonl"
 
 
+def _images_dir(chat_id: int) -> Path:
+    return _transcript(chat_id).parent / "images"
+
+
+def image_path(chat_id: int, name: str) -> Path | None:
+    if not IMAGE_NAME.fullmatch(name):
+        return None
+    path = _images_dir(chat_id) / name
+    return path if path.is_file() else None
+
+
+def parse_images(raw: Any) -> list[Image]:
+    """Images sent with a prompt, as [{"data": base64, "mime"}], checked against the limits."""
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_IMAGES:
+        raise ChatError(f"send at most {MAX_IMAGES} images at a time")
+    images, total = [], 0
+    for item in raw:
+        mime = item.get("mime") if isinstance(item, dict) else None
+        if not isinstance(mime, str) or mime not in IMAGE_TYPES:
+            raise ChatError("images must be PNG, JPEG, GIF or WebP")
+        try:
+            size = len(base64.b64decode(str(item.get("data") or ""), validate=True))
+        except ValueError as e:
+            raise ChatError("an image wasn't valid base64") from e
+        if not size or size > MAX_IMAGE_BYTES:
+            raise ChatError(f"each image must be under {MAX_IMAGE_BYTES // 1_000_000} MB")
+        total += size
+        images.append(Image(data=str(item["data"]), mime=mime))
+    if total > MAX_IMAGES_TOTAL:
+        raise ChatError(
+            f"images in one message must total under {MAX_IMAGES_TOTAL // 1_000_000} MB"
+        )
+    return images
+
+
 def history(chat_id: int) -> list[dict[str, Any]]:
     live = manager.get(chat_id)
     if live:
@@ -92,7 +138,7 @@ class LiveSession:
         self.driver: ChatDriver | None = None
         self.status: str = ChatStatus.starting
         self.subscribers: set[asyncio.Queue] = set()
-        self.pending: deque[str] = deque()
+        self.pending: deque[tuple[str, list[Image]]] = deque()
         self.seq = 0
         self.closing = False
         self.exited = False
@@ -152,7 +198,7 @@ class LiveSession:
         self.status = status
         self._save(status=status)
         if status == ChatStatus.idle and self.pending and not self.closing:
-            self.spawn(self._send(self.pending.popleft()))
+            self.spawn(self._send(*self.pending.popleft()))
 
     def _sync_approval_status(self) -> None:
         waiting = bool(self.driver and self.driver.approvals)
@@ -209,35 +255,53 @@ class LiveSession:
             return
         self.emit({"type": "status", "status": ChatStatus.idle})
 
-    async def prompt(self, text: str) -> None:
-        if not text.strip():
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
+        images = images or []
+        if not text.strip() and not images:
             return
-        self.emit({"type": "user", "text": text})
+        if images and not (self.driver and self.driver.images):
+            raise ChatError("this model doesn't take images, so the message wasn't sent")
+        event: dict[str, Any] = {"type": "user", "text": text}
+        if images:
+            event["images"] = self._store(images)
+        self.emit(event)
         with session_scope() as s:
             row = s.get(ChatSession, self.id)
             if row and not row.title:
-                row.title = redact(" ".join(text.split()))[:80]
+                row.title = redact(" ".join(text.split()))[:80] or "Image"
                 s.add(row)
                 s.commit()
         if self.status == ChatStatus.starting:
-            self.pending.append(text)
+            self.pending.append((text, images))
             return
         working = self.status in (ChatStatus.busy, ChatStatus.awaiting_approval)
         if working and not self._can_steer():
-            self.pending.append(text)
+            self.pending.append((text, images))
             self.emit({"type": "notice", "message": "Queued until this turn ends."})
             return
-        await self._send(text)
+        await self._send(text, images)
+
+    def _store(self, images: list[Image]) -> list[str]:
+        """Keeps the images beside the transcript, which names them instead of holding them."""
+        folder = _images_dir(self.id)
+        folder.mkdir(exist_ok=True)
+        start = len(list(folder.iterdir()))
+        names = []
+        for n, image in enumerate(images, start + 1):
+            name = f"{n}.{IMAGE_TYPES[image.mime]}"
+            (folder / name).write_bytes(base64.b64decode(image.data))
+            names.append(name)
+        return names
 
     def _can_steer(self) -> bool:
         return bool(self.driver and self.driver.can_steer)
 
-    async def _send(self, text: str) -> None:
+    async def _send(self, text: str, images: list[Image] | None = None) -> None:
         assert self.driver
         if self.preamble:
             text, self.preamble = f"{self.preamble}\n\nRequest:\n{text}", ""
         try:
-            await self.driver.prompt(text)
+            await self.driver.prompt(text, images)
         except DriverError as e:
             self.emit({"type": "error", "message": str(e)})
 
@@ -510,7 +574,7 @@ async def handle(session: Session, live: LiveSession, message: dict[str, Any]) -
         return
     _require_enabled(session)
     if kind == "prompt":
-        await live.prompt(str(message.get("text") or ""))
+        await live.prompt(str(message.get("text") or ""), parse_images(message.get("images")))
         return
     if live.driver is None or live.status == ChatStatus.starting:
         raise ChatError("the harness is still starting")

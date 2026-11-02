@@ -34,7 +34,7 @@ def project(client, tmp_path):
 
 @pytest.fixture
 def hanging(monkeypatch):
-    async def forever(self, text):
+    async def forever(self, text, images=None):
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(MockDriver, "_run", forever)
@@ -177,7 +177,7 @@ def test_write_access_keeps_changes_on_a_branch(client, project):
 def test_a_turn_that_ends_on_a_denial_is_told_to_continue(client, project, monkeypatch):
     prompts = []
 
-    async def stops_when_denied(self, text):
+    async def stops_when_denied(self, text, images=None):
         prompts.append(text)
         try:
             if len(prompts) == 1:
@@ -201,7 +201,7 @@ def test_approvals_are_answered_while_a_prompt_is_in_progress(client, project, m
     """ACP's prompt call only returns when the turn ends, so it can't hold up the watcher."""
     turns = []
 
-    async def blocking_prompt(self, text):
+    async def blocking_prompt(self, text, images=None):
         self.emit({"type": "status", "status": "busy"})
         turns.append(text)
         self._answer = asyncio.get_running_loop().create_future()
@@ -221,7 +221,7 @@ def test_approvals_are_answered_while_a_prompt_is_in_progress(client, project, m
 def test_nudges_are_limited(client, project, monkeypatch):
     prompts = []
 
-    async def always_denied(self, text):
+    async def always_denied(self, text, images=None):
         prompts.append(text)
         try:
             self._answer = asyncio.get_running_loop().create_future()

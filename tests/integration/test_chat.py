@@ -223,9 +223,9 @@ def test_session_as_an_agent(enabled, project):
     sent = []
     original = MockDriver.prompt
 
-    async def record(self, text):
+    async def record(self, text, images=None):
         sent.append(text)
-        await original(self, text)
+        await original(self, text, images)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(MockDriver, "prompt", record)
@@ -305,6 +305,62 @@ def test_transcript_is_redacted_across_streamed_chunks(enabled, project):
     text = chat_service._transcript(chat["id"]).read_text()
     assert secret not in text
     assert "mock-chat-1.md" in text
+
+
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+
+
+def test_images_are_sent_and_kept_beside_the_transcript(enabled):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock", "permission": "yolo"}).json()
+    image = {"data": PNG, "mime": "image/png"}
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": "", "images": [image]})
+        assert until(ws, "user")["images"] == ["1.png"]
+        until(ws, "status", status="idle")
+        ws.send_json({"type": "prompt", "text": "and this", "images": [image]})
+        assert until(ws, "user")["images"] == ["2.png"]
+        until(ws, "status", status="idle")
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+
+    transcript = chat_service._transcript(chat["id"]).read_text()
+    assert PNG not in transcript  # the transcript names the images rather than holding them
+    assert "[1 image(s)]" in transcript  # the mock echoes what reached the driver
+    assert enabled.get(f"/api/chat/sessions/{chat['id']}").json()["title"] == "Image"
+    r = enabled.get(f"/api/chat/sessions/{chat['id']}/images/1.png")
+    assert r.status_code == 200 and r.content.startswith(b"\x89PNG")
+    for name in ("3.png", "events.jsonl", "..%2Fevents.jsonl", "1.svg"):
+        assert enabled.get(f"/api/chat/sessions/{chat['id']}/images/{name}").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("images", "error"),
+    [
+        ([{"data": PNG, "mime": "image/svg+xml"}], "PNG, JPEG, GIF or WebP"),
+        ([{"data": "not base64!", "mime": "image/png"}], "valid base64"),
+        ([{"data": PNG, "mime": "image/png"}] * 5, "at most 4"),
+    ],
+)
+def test_bad_images_are_refused(enabled, images, error):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": "look", "images": images})
+        assert error in until(ws, "error")["message"]
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    assert "look" not in chat_service._transcript(chat["id"]).read_text()
+
+
+def test_images_are_refused_when_the_model_cannot_take_them(enabled, monkeypatch):
+    monkeypatch.setattr(MockDriver, "images", False)
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json(
+            {"type": "prompt", "text": "look", "images": [{"data": PNG, "mime": "image/png"}]}
+        )
+        assert "doesn't take images" in until(ws, "error")["message"]
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
 
 
 @requires_git

@@ -16,6 +16,10 @@ Pick a project (or **No project**), harness, workspace, model, effort and permis
 send a message. You can also pick an agent; see [Chatting with an agent](#chatting-with-an-agent).
 **Enter** sends and **Shift+Enter** adds a line.
 
+- **Replies** render as Markdown: headings, bold, lists, tables, links and code. Your own
+  messages stay as typed.
+- **Images:** attach with the image button, or paste or drop them into the message box. See
+  [Images](#images).
 - **Model, effort and permission** can change during a session, except where noted below.
   Switching models starts a cold prompt cache, because caches are per model.
 - **Sending during a turn:** Pi takes the message as steering after the current tool call.
@@ -47,6 +51,24 @@ Unlike a [standalone run](agents.md#standalone-runs), you're there to answer app
 chat with an agent uses the permission mode you pick. Editing an agent doesn't change sessions
 already under way. Disabled agents aren't listed, and an agent with no usable harness shows as
 unavailable.
+
+## Images
+
+A message can carry up to four PNG, JPEG, GIF or WebP images, each under 5 MB and 10 MB
+together. They're saved in `<home>/chats/<id>/images/`, and the transcript names them rather
+than holding them. Deleting the session deletes them.
+
+The image button shows only when the current model takes images:
+
+- **Pi:** models named in the adapter's `image_models` capability, which defaults to
+  `qwen3.8-` and `deepseek-v4`. `glm-5.3` refuses images. Pi itself only passes images
+  to models marked this way, including images the agent opens with its `read` tool.
+- **Claude Code:** every Claude model.
+- **ACP harnesses:** whatever the harness reports when it starts (`promptCapabilities.image`).
+
+On a new session the harness hasn't started yet, so the button always shows there. The
+first message waits until the harness reports; if its model doesn't take images, the
+message isn't sent and the session shows why.
 
 ## Claude models
 
@@ -114,7 +136,7 @@ events, then `{"type":"end"}`. Event shapes are listed in `adapters/chat/base.py
 Clients send:
 
 ```json
-{"type": "prompt", "text": "..."}
+{"type": "prompt", "text": "...", "images": [{"data": "<base64>", "mime": "image/png"}]}
 {"type": "interrupt"}
 {"type": "approval", "id": "...", "choice": "<option id>"}
 {"type": "set_model", "value": "..."}
@@ -122,4 +144,5 @@ Clients send:
 {"type": "set_permission", "value": "..."}
 ```
 
-Transcripts are in `$ORCHESTRATOR_HOME/chats/<id>/events.jsonl`.
+`images` is optional. Transcripts are in `$ORCHESTRATOR_HOME/chats/<id>/events.jsonl`, and a
+session's images are served from `GET /api/chat/sessions/{id}/images/{name}`.

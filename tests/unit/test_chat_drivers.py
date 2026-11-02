@@ -12,7 +12,13 @@ import pytest
 
 from orchestrator.adapters.base import AdapterSpec
 from orchestrator.adapters.chat.acp import AcpDriver
-from orchestrator.adapters.chat.base import ChatDriver, DriverError, DriverOptions, text_of
+from orchestrator.adapters.chat.base import (
+    ChatDriver,
+    DriverError,
+    DriverOptions,
+    Image,
+    text_of,
+)
 from orchestrator.adapters.chat.claude_stream import ClaudeDriver
 from orchestrator.adapters.chat.pi_rpc import PiDriver
 from orchestrator.adapters.registry import build_adapter
@@ -68,7 +74,7 @@ for line in sys.stdin:
     method, i, p = m.get("method"), m.get("id"), m.get("params") or {}
     def ok(r): out({"jsonrpc": "2.0", "id": i, "result": r})
     def update(u): out({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": SID, "update": u}})
-    if method == "initialize": ok({"protocolVersion": 1})
+    if method == "initialize": ok({"protocolVersion": 1, "agentCapabilities": {"promptCapabilities": {"image": True}}})
     elif method == "session/new":
         ok({"sessionId": SID,
             "modes": {"currentModeId": "auto", "availableModes": [{"id": "default", "name": "Default"}, {"id": "auto", "name": "Auto"}]},
@@ -232,6 +238,9 @@ def test_pi_models_file_lists_every_switchable_model(tmp_path):
     assert models[0]["compat"]["cacheControlFormat"] == "anthropic"
     assert "cacheControlFormat" not in models[1]["compat"]
     assert not any(m["compat"]["supportsDeveloperRole"] for m in models)
+    # Pi treats a model as text-only unless told otherwise; glm-5.3 refuses images.
+    assert models[0]["input"] == ["text", "image"]
+    assert "input" not in models[1]
     assert config["providers"]["orchestrator"]["apiKey"] == "$KEY"
     driver._tmp.cleanup()
 
@@ -249,6 +258,7 @@ async def test_acp_reads_controls_from_the_harness_and_applies_choices(tmp_path)
         assert config["effort"] == "off"
         assert config["permission"] == "default"
         assert [m["id"] for m in config["permissions"]] == ["default", "auto"]
+        assert config["images"] is True  # from promptCapabilities
     finally:
         await driver.close()
 
@@ -374,3 +384,72 @@ async def test_missing_binary_raises(tmp_path):
 
 def test_text_of_handles_nested_blocks():
     assert text_of([{"type": "content", "content": {"text": "a"}}, {"text": "b"}]) == "a\nb"
+
+
+class Capture:
+    """Stands in for the harness process and keeps what the driver sends it."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, record: dict) -> None:
+        self.sent.append(record)
+
+    async def close(self) -> None:
+        return None
+
+
+async def sent_prompt(driver: ChatDriver, images: list[Image]) -> dict:
+    capture = Capture()
+    driver.process = capture  # type: ignore[assignment]
+    task = asyncio.create_task(driver.prompt("what is this?", images))
+    for _ in range(50):
+        if capture.sent:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    if turn := getattr(driver, "_turn", None):
+        turn.cancel()
+    return capture.sent[0]
+
+
+IMAGE = Image(data="iVBORw0KGgo=", mime="image/png")
+
+
+async def test_pi_sends_images_with_the_prompt(tmp_path):
+    driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
+    record = await sent_prompt(driver, [IMAGE])
+    assert record["message"] == "what is this?"
+    assert record["images"] == [{"type": "image", "data": IMAGE.data, "mimeType": "image/png"}]
+    driver._tmp.cleanup()
+
+
+async def test_pi_reports_whether_its_model_takes_images(tmp_path):
+    rec = Recorder()
+    driver = PiDriver(adapter("pi", stub(tmp_path, PI_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        assert rec.of("config")[0]["images"] is False  # the stub's model lists no input types
+    finally:
+        await driver.close()
+
+
+async def test_acp_sends_image_blocks_before_the_text(tmp_path):
+    driver = AcpDriver(adapter("qwen_code", "qwen"), options(tmp_path), Recorder())
+    record = await sent_prompt(driver, [IMAGE])
+    assert record["params"]["prompt"] == [
+        {"type": "image", "data": IMAGE.data, "mimeType": "image/png"},
+        {"type": "text", "text": "what is this?"},
+    ]
+    driver._tmp.cleanup()
+
+
+async def test_claude_sends_image_blocks_before_the_text(tmp_path):
+    driver = ClaudeDriver(adapter("claude_cli", "claude"), options(tmp_path), Recorder())
+    record = await sent_prompt(driver, [IMAGE])
+    source = {"type": "base64", "media_type": "image/png", "data": IMAGE.data}
+    assert record["message"]["content"] == [
+        {"type": "image", "source": source},
+        {"type": "text", "text": "what is this?"},
+    ]
+    driver._tmp.cleanup()

@@ -11,7 +11,8 @@ events, which `services.chat_service` persists and streams to the GUI:
   {"type": "approval_resolved", "id", "choice"}
   {"type": "status", "status": "busy" | "idle"}
   {"type": "usage", ...the shape documented in adapters.common}
-  {"type": "config", "model", "effort", "permission", "models", "efforts", "permissions"}
+  {"type": "config", "model", "effort", "permission", "models", "efforts", "permissions",
+   "images": bool}
   {"type": "notice" | "error", "message": str}
 """
 
@@ -53,6 +54,12 @@ class DriverOptions:
     models: list[str] = field(default_factory=list)
     # Standalone runs only: the one folder a read-access run may write to.
     output_dir: Path | None = None
+
+
+@dataclass
+class Image:
+    data: str  # base64
+    mime: str
 
 
 class ChatProcess:
@@ -152,6 +159,8 @@ class ChatDriver(ABC):
     kind = "base"
     # True when a prompt sent mid-turn steers the running agent instead of waiting.
     can_steer = False
+    # True when the current model takes images with a prompt; published in `config`.
+    images = False
 
     def __init__(self, adapter: BaseHarnessAdapter, options: DriverOptions, emit: Emit):
         self.adapter = adapter
@@ -168,7 +177,7 @@ class ChatDriver(ABC):
     async def start(self) -> None: ...
 
     @abstractmethod
-    async def prompt(self, text: str) -> None: ...
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None: ...
 
     @abstractmethod
     async def interrupt(self) -> None: ...

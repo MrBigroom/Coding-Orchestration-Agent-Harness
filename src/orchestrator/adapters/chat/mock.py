@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from orchestrator.adapters.chat.base import ChatDriver, DriverError
+from orchestrator.adapters.chat.base import ChatDriver, DriverError, Image
 
 OPTIONS = [
     {"id": "allow", "label": "Allow", "tone": "allow"},
@@ -16,6 +16,7 @@ class MockDriver(ChatDriver):
     the workspace, writes it if allowed, and answers. No process and no model."""
 
     kind = "mock"
+    images = True
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
@@ -30,11 +31,14 @@ class MockDriver(ChatDriver):
                 "model": self.options.model,
                 "effort": self.options.effort,
                 "permission": self.options.permission,
+                "images": True,
             }
         )
 
-    async def prompt(self, text: str) -> None:
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
         self.emit({"type": "status", "status": "busy"})
+        if images:
+            text = f"{text} [{len(images)} image(s)]".strip()
         self._turn = asyncio.create_task(self._run(text))
 
     async def _run(self, text: str) -> None:

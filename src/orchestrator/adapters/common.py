@@ -40,6 +40,9 @@ DEFAULT_PROVIDER: dict[str, Any] = {
 # (hit at 10% of input price vs 20% for the implicit cache). DeepSeek V4.x and GLM are
 # implicit-only there, so markers are never sent for them.
 DEFAULT_EXPLICIT_CACHE_MODELS = ["qwen3.8-max", "qwen3.8-flash"]
+# Model-name prefixes that take images, checked on the Token Plan on 2026-11-02 (glm-5.3
+# refuses them). Pi treats any model it isn't told about as text-only.
+DEFAULT_IMAGE_MODELS = ["qwen3.8-", "deepseek-v4"]
 
 
 def provider_settings(capabilities: dict[str, Any]) -> dict[str, Any] | None:
@@ -57,6 +60,13 @@ def wants_explicit_cache(model: str | None, capabilities: dict[str, Any]) -> boo
     if not model:
         return False
     prefixes = capabilities.get("explicit_cache_models", DEFAULT_EXPLICIT_CACHE_MODELS)
+    return any(model.startswith(p) for p in prefixes)
+
+
+def takes_images(model: str | None, capabilities: dict[str, Any]) -> bool:
+    if not model:
+        return False
+    prefixes = capabilities.get("image_models", DEFAULT_IMAGE_MODELS)
     return any(model.startswith(p) for p in prefixes)
 
 

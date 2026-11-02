@@ -5,7 +5,13 @@ import itertools
 import json
 from typing import Any
 
-from orchestrator.adapters.chat.base import RESPONSE_TIMEOUT, ChatDriver, DriverError, text_of
+from orchestrator.adapters.chat.base import (
+    RESPONSE_TIMEOUT,
+    ChatDriver,
+    DriverError,
+    Image,
+    text_of,
+)
 from orchestrator.adapters.common import _n
 
 ALWAYS = "always"
@@ -16,7 +22,7 @@ EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 class ClaudeDriver(ChatDriver):
     """Claude Code's stream-json mode (`claude -p --input-format stream-json`), the protocol
     its SDKs use. `--permission-prompt-tool stdio` sends each permission prompt here as a
-    `can_use_tool` control request.
+    `can_use_tool` control request. Every Claude model takes images.
 
     Runs on the signed-in subscription: like the batch adapter, ANTHROPIC_API_KEY is not
     passed through. Effort has no live control, so changing it restarts the process
@@ -56,6 +62,7 @@ class ClaudeDriver(ChatDriver):
                 "model": self._model,
                 "effort": self.options.effort,
                 "permission": self.options.permission,
+                "images": True,
             }
         )
 
@@ -79,16 +86,27 @@ class ClaudeDriver(ChatDriver):
         finally:
             self._waiting.pop(request_id, None)
 
-    async def prompt(self, text: str) -> None:
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
         assert self.process
         self._busy = True
         self.emit({"type": "status", "status": "busy"})
+        content: str | list[dict[str, Any]] = text
+        if images:
+            content = [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": i.mime, "data": i.data},
+                }
+                for i in images
+            ]
+            if text:
+                content.append({"type": "text", "text": text})
         await self.process.send(
             {
                 "type": "user",
                 "session_id": self._session_id or "",
                 "parent_tool_use_id": None,
-                "message": {"role": "user", "content": text},
+                "message": {"role": "user", "content": content},
             }
         )
 
