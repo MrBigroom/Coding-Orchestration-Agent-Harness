@@ -37,11 +37,12 @@ from orchestrator.core.models import (
     Project,
     utcnow,
 )
-from orchestrator.core.schemas import ChatSessionCreate
+from orchestrator.core.schemas import ChatSessionCreate, MemorySuggestion
 from orchestrator.services import (
     adapter_service,
     agent_service,
     git_service,
+    memory_service,
     settings_service,
 )
 from orchestrator.utils.git import is_repo, run_git, status_porcelain
@@ -64,6 +65,26 @@ MAX_FILE_BYTES = 5_000_000
 MAX_ATTACHMENTS_TOTAL = 10_000_000
 ATTACHMENTS = PurePath(git_service.ORCH_DIR, "attachments")
 UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+MAX_MEMORY_SUGGESTIONS = 5
+MEMORY_REQUEST = """Before we go on: look back over this conversation and suggest up to \
+{limit} things worth remembering for future work. Pick durable facts, preferences, \
+conventions, decisions or gotchas, not details that only matter to this one task. Don't use \
+any tools; answer from the conversation alone.
+
+Reply with only a JSON array in a ```json block. Each item is \
+{{"category": ..., "scope": ..., "content": "...", "tags": [...]}}:
+- "global", with scope "environment", "preferences" or "patterns"
+- "role", with scope "architect", "worker" or "supervisor"
+{project}
+Write each content as one or two self-contained sentences. Reply with [] if nothing is \
+worth keeping."""
+MEMORY_PROJECT = (
+    '- "project" (this session\'s project), with scope "conventions", "decisions" or "gotchas"'
+)
+MEMORY_NO_PROJECT = '- no "project" items: this session has no project'
+JSON_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
 class ChatError(ValueError):
@@ -159,6 +180,30 @@ def parse_attachments(raw_images: Any, raw_files: Any) -> tuple[list[Image], lis
     return images, files
 
 
+def parse_memory_suggestions(reply: str) -> list[MemorySuggestion] | None:
+    """The suggestions in an agent's reply to MEMORY_REQUEST, or None if it has no JSON
+    array. Items that don't fit the shape are dropped."""
+    blocks = JSON_BLOCK.findall(reply)
+    candidates = [blocks[-1]] if blocks else []
+    if "[" in reply and "]" in reply:
+        candidates.append(reply[reply.index("[") : reply.rindex("]") + 1])
+    for candidate in candidates:
+        try:
+            items = json.loads(candidate)
+        except ValueError:
+            continue
+        if not isinstance(items, list):
+            continue
+        suggestions = []
+        for item in items[:MAX_MEMORY_SUGGESTIONS]:
+            try:
+                suggestions.append(MemorySuggestion.model_validate(item))
+            except ValueError:
+                continue
+        return suggestions
+    return None
+
+
 def history(chat_id: int) -> list[dict[str, Any]]:
     live = manager.get(chat_id)
     if live:
@@ -182,6 +227,7 @@ class LiveSession:
         self.closing = False
         self.exited = False
         self._buffer: dict[str, Any] | None = None
+        self._memory_from: int | None = None  # seq where a memory-suggestion turn began
         self._tasks: set[asyncio.Task] = set()
         self._path = _transcript(chat_id)
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +282,8 @@ class LiveSession:
     def _on_status(self, status: str) -> None:
         self.status = status
         self._save(status=status)
+        if status == ChatStatus.idle and self._memory_from is not None:
+            self._collect_memory_suggestions()
         if status == ChatStatus.idle and self.pending and not self.closing:
             self.spawn(self._send(*self.pending.popleft()))
 
@@ -295,14 +343,19 @@ class LiveSession:
         self.emit({"type": "status", "status": ChatStatus.idle})
 
     async def prompt(
-        self, text: str, images: list[Image] | None = None, files: list[File] | None = None
+        self,
+        text: str,
+        images: list[Image] | None = None,
+        files: list[File] | None = None,
+        shown: str | None = None,
     ) -> None:
+        """`shown` replaces `text` in the transcript, for requests the GUI makes itself."""
         images, files = images or [], files or []
         if not text.strip() and not images and not files:
             return
         if images and not (self.driver and self.driver.images):
             raise ChatError("this model doesn't take images, so the message wasn't sent")
-        event: dict[str, Any] = {"type": "user", "text": text}
+        event: dict[str, Any] = {"type": "user", "text": shown if shown is not None else text}
         if images:
             event["images"] = self._store(images)
         if files:
@@ -358,6 +411,47 @@ class LiveSession:
             (folder / name).write_bytes(file.data)
             paths.append(str(ATTACHMENTS / name))
         return paths
+
+    async def suggest_memories(self) -> None:
+        """Asks the agent, in this session, for memory entries worth keeping. They're stored
+        unapproved, like a task handoff's suggestions, once its reply is in."""
+        if self.standalone:
+            raise ChatError("a standalone run can't be asked for memory suggestions")
+        if self.status != ChatStatus.idle:
+            raise ChatError("wait for the agent to finish this turn, then ask again")
+        project = MEMORY_PROJECT if self._project_slug() else MEMORY_NO_PROJECT
+        request = MEMORY_REQUEST.format(limit=MAX_MEMORY_SUGGESTIONS, project=project)
+        self._memory_from = self.seq
+        await self.prompt(request, shown="Suggest memories from this session")
+
+    def _project_slug(self) -> str | None:
+        with session_scope() as s:
+            row = s.get(ChatSession, self.id)
+            project = s.get(Project, row.project_id) if row and row.project_id else None
+            return project.slug if project else None
+
+    def _collect_memory_suggestions(self) -> None:
+        start, self._memory_from = self._memory_from, None
+        self.flush()
+        reply = "".join(
+            e.get("delta", "")
+            for e in history(self.id)
+            if e["type"] == "text" and e["seq"] > (start or 0)
+        )
+        suggestions = parse_memory_suggestions(reply)
+        if suggestions is None:
+            self.emit({"type": "notice", "message": "No memory suggestions could be read."})
+            return
+        with session_scope() as s:
+            added = memory_service.suggest_from_handoff(
+                s, suggestions, source=f"chat:{self.id}", project_slug=self._project_slug()
+            )
+        if added:
+            n = len(added)
+            message = f"Added {n} memory suggestion{'s' if n > 1 else ''} to review on Memory."
+        else:
+            message = "No new memory suggestions."
+        self.emit({"type": "notice", "message": message})
 
     def _can_steer(self) -> bool:
         return bool(self.driver and self.driver.can_steer)
@@ -647,6 +741,8 @@ async def handle(session: Session, live: LiveSession, message: dict[str, Any]) -
         raise ChatError("the harness is still starting")
     if kind == "interrupt":
         await live.interrupt()
+    elif kind == "suggest_memories":
+        await live.suggest_memories()
     elif kind == "approval":
         await live.driver.respond(str(message.get("id")), str(message.get("choice")))
     elif kind == "set_model":

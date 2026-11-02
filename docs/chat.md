@@ -22,6 +22,8 @@ send a message. You can also pick an agent; see [Chatting with an agent](#chatti
   or drop them anywhere on the session. See [Images](#images) and [Files](#files).
 - **Slash commands:** type `/` to pick from the commands the harness offers. See
   [Slash commands](#slash-commands).
+- **Memory:** save a message as a memory entry, or ask the agent to suggest some. See
+  [Memory](#memory).
 - **Model, effort and permission** can change during a session, except where noted below.
   Switching models starts a cold prompt cache, because caches are per model.
 - **Sending during a turn:** Pi takes the message as steering after the current tool call.
@@ -86,6 +88,22 @@ In a git workspace, `.orchestrator/` is excluded locally, so attachments never s
 **Changes** or reach the branch. In a project checkout they're still written into your
 project folder, under that excluded path. Deleting a session with no project deletes its
 folder and the files with it; in a worktree they go when the worktree is removed.
+
+## Memory
+
+Chat can add to the same [shared memory](../README.md#how-memory-works) that task prompts use:
+
+- **Save to memory:** hover over a message and click the bookmark. The text opens in a form
+  where you trim it and pick the category and scope: global, the session's project, or a
+  role. **Approve now** is ticked by default; untick it to leave the entry waiting for review
+  on the Memory page.
+- **Suggest memories:** the header button asks the agent, in this session, for up to five
+  entries worth keeping. It answers in the format task handoffs use, without running tools,
+  and the entries wait for review on the Memory page, marked `chat:<id>`. It's one more
+  turn of tokens, mostly cached if you ask within five minutes of the last reply. It's
+  available while the agent is idle, and not on standalone runs.
+
+Chat sessions don't read memory themselves; approved entries reach task prompts.
 
 ## Slash commands
 

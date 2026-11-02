@@ -1,4 +1,4 @@
-import { ArrowUp, Bot, ChevronRight, CircleAlert, FileText, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Bot, ChevronRight, CircleAlert, FileText, Lightbulb, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown, { type Components } from "react-markdown";
@@ -136,7 +136,76 @@ function ApprovalCard({ item, onAnswer, disabled }: { item: Extract<ChatItem, { 
   );
 }
 
-function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: number; items: ChatItem[]; working: boolean; onAnswer: (id: string, choice: string) => void; disabled: boolean }) {
+/** A "Save to memory" button that shows on hovering a message. */
+function SaveButton({ onSave, className = "" }: { onSave: () => void; className?: string }) {
+  return (
+    <button className={`rounded-md p-1 text-muted opacity-0 transition-opacity hover:bg-panel-2 hover:text-ink focus:opacity-100 group-hover:opacity-100 ${className}`}
+      title="Save to memory" aria-label="Save to memory" onClick={onSave}><BookmarkPlus size={15} aria-hidden="true" /></button>
+  );
+}
+
+const MEMORY_SCOPES: Record<string, string[]> = {
+  global: ["preferences", "environment", "patterns"],
+  project: ["conventions", "decisions", "gotchas"],
+  role: ["worker", "architect", "supervisor"],
+};
+
+/** Saves text from a session as a memory entry, through the same API as the Memory page. */
+function SaveMemoryDialog({ chat, text, onClose }: { chat: ChatSession; text: string; onClose: () => void }) {
+  const projects = useApi<Project[]>("/projects");
+  const slug = projects.data?.find((p) => p.id === chat.project_id)?.slug;
+  const categories = Object.keys(MEMORY_SCOPES).filter((c) => c !== "project" || chat.project_id !== null);
+  const [content, setContent] = useState(text.trim());
+  const [category, setCategory] = useState("global");
+  const [scope, setScope] = useState(MEMORY_SCOPES.global[0]);
+  const [approve, setApprove] = useState(true);
+  const [saved, setSaved] = useState(false);
+  const act = useAction();
+  const save = () => act.run(async () => {
+    await post("/memory", {
+      category, scope, content: content.trim(), approved: approve, source: `chat:${chat.id}`,
+      project_slug: category === "project" ? slug : null, role: category === "role" ? scope : null,
+    });
+    setSaved(true);
+    setTimeout(onClose, 900);
+  });
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="save-memory-title" className="card w-full max-w-lg p-5 shadow-(--shadow-pop)" onClick={(e) => e.stopPropagation()}>
+        <h3 id="save-memory-title" className="mb-1 flex items-center gap-2 font-semibold"><BookmarkPlus size={18} className="text-accent" aria-hidden="true" />Save to memory</h3>
+        <p className="mb-4 text-sm text-muted">Trim it to what's worth keeping. Approved entries go into future task prompts.</p>
+        <ErrorNote error={act.error} />
+        <Field label="Entry">
+          <textarea className="input min-h-32 w-full resize-y" value={content} autoFocus onChange={(e) => setContent(e.target.value)} />
+        </Field>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Field label="Category">
+            <select className="input w-full" value={category} onChange={(e) => { setCategory(e.target.value); setScope(MEMORY_SCOPES[e.target.value][0]); }}>
+              {categories.map((c) => <option key={c} value={c}>{c === "project" ? `project (${slug ?? "…"})` : c}</option>)}
+            </select>
+          </Field>
+          <Field label={category === "role" ? "Role" : "Scope"}>
+            <select className="input w-full" value={scope} onChange={(e) => setScope(e.target.value)}>
+              {MEMORY_SCOPES[category].map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} />
+          Approve now (otherwise it waits for review on the Memory page)
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-accent" disabled={!content.trim() || act.busy || saved || (category === "project" && !slug)} onClick={() => void save()}>
+            {saved ? "Saved" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Transcript({ chatId, items, working, onAnswer, onSave, disabled }: { chatId: number; items: ChatItem[]; working: boolean; onAnswer: (id: string, choice: string) => void; onSave?: (text: string) => void; disabled: boolean }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [items, working]);
   return (
@@ -144,7 +213,9 @@ function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: nu
       {items.map((item, i) => {
         switch (item.kind) {
           case "user": return (
-            <div key={i} className="ml-auto w-fit max-w-[85%] space-y-2 rounded-2xl bg-accent-soft px-4 py-2.5">
+            <div key={i} className="group flex items-start justify-end gap-1">
+            {onSave && item.text && <SaveButton className="mt-2" onSave={() => onSave(item.text)} />}
+            <div className="w-fit max-w-[85%] space-y-2 rounded-2xl bg-accent-soft px-4 py-2.5">
               {item.images?.length ? <div className="flex flex-wrap justify-end gap-2">{item.images.map((name) => <ChatImage key={name} chatId={chatId} name={name} />)}</div> : null}
               {item.files?.length ? (
                 <div className="flex flex-wrap justify-end gap-2">
@@ -157,8 +228,14 @@ function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: nu
               ) : null}
               {item.text && <p className="whitespace-pre-wrap break-words text-base leading-relaxed">{item.text}</p>}
             </div>
+            </div>
           );
-          case "assistant": return <Prose key={i} text={item.text} />;
+          case "assistant": return (
+            <div key={i} className="group relative">
+              <Prose text={item.text} />
+              {onSave && <SaveButton className="absolute -right-6 top-0" onSave={() => onSave(item.text)} />}
+            </div>
+          );
           case "thinking": return <Disclosure key={i} summary="Thinking"><p className="whitespace-pre-wrap text-sm text-muted">{item.text}</p></Disclosure>;
           case "tool": return <ToolCard key={i} item={item} />;
           case "approval": return <ApprovalCard key={i} item={item} onAnswer={onAnswer} disabled={disabled} />;
@@ -531,6 +608,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
   const session = useChatSession(chat.id);
   const { config, status, usage, items, send, live, connected } = session;
   const [showChanges, setShowChanges] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
   const act = useAction();
   const navigate = useNavigate();
   const sent = useRef(false);
@@ -575,6 +653,12 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
             : <span className="flex items-center gap-1 text-xs text-warn"><TriangleAlert size={13} aria-hidden="true" />project checkout</span>}
         <div className="ml-auto flex items-center gap-2">
           {usage.requests ? <span className="text-xs text-muted" title={`${compact(usage.cache_read_input_tokens)} of the input came from cache, over ${usage.requests} requests`}>{compact(usage.input_tokens)} in · {compact(usage.output_tokens)} out</span> : null}
+          {!ended && !chat.standalone && (
+            <button className="btn" disabled={locked || status !== "idle"} onClick={() => send({ type: "suggest_memories" })}
+              title="Ask the agent for memory entries worth keeping from this session. They wait for review on the Memory page.">
+              <Lightbulb size={14} aria-hidden="true" />Suggest memories
+            </button>
+          )}
           {chat.project_id !== null && <button className="btn" onClick={() => setShowChanges((v) => !v)}>Changes</button>}
           {!ended && <ConfirmButton label="End session" message="Stops the harness process. The transcript and any branch stay." disabled={act.busy}
             onConfirm={() => void act.run(async () => { await post(`/chat/sessions/${chat.id}/close`); onChanged(); })} />}
@@ -583,10 +667,11 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
         </div>
       </header>
       {showChanges && <ChangesPanel chat={chat} ended={ended} onDone={onChanged} />}
+      {saving !== null && <SaveMemoryDialog chat={chat} text={saving} onClose={() => setSaving(null)} />}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-6"><ErrorNote error={act.error} /></div>
         {!items.length && !ended && <Empty>{status === "starting" ? "Starting the harness…" : "Ready."}</Empty>}
-        <Transcript chatId={chat.id} items={items} working={working} onAnswer={(id, choice) => send({ type: "approval", id, choice })} disabled={locked} />
+        <Transcript chatId={chat.id} items={items} working={working} onAnswer={(id, choice) => send({ type: "approval", id, choice })} onSave={setSaving} disabled={locked} />
       </div>
       {ended
         ? <div className="border-t border-line px-6 py-3 text-center text-xs text-muted">This session has ended ({status.replace(/_/g, " ")}). Its transcript is read-only.</div>
