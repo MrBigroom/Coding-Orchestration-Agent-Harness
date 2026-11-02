@@ -75,13 +75,19 @@ function StatusChart({ counts }: { counts: Record<string, number> }) {
             title={`${p.s.replace(/_/g, " ")}: ${p.n}`} />
         ))}
       </div>
-      <ul className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+      <ul className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {parts.map((p) => (
           <li key={p.s}>
-            <Link to={`/tasks?status=${p.s}`} className="flex items-center gap-2 hover:text-accent">
-              <span className={`h-2.5 w-2.5 rounded-full ${BAR[p.tone]}`} />
-              <span className="text-ink-2">{p.s.replace(/_/g, " ")}</span>
-              <span className="ml-auto font-medium tabular-nums">{p.n}</span>
+            <Link to={`/tasks?status=${p.s}`}
+              className="flex items-stretch gap-3 rounded-xl border border-line bg-panel-2 px-3 py-2.5 transition hover:border-accent/40">
+              <span className={`w-1 shrink-0 rounded-full ${BAR[p.tone]}`} aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-xs capitalize text-ink-2">{p.s.replace(/_/g, " ")}</span>
+                <span className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-semibold tabular-nums leading-tight">{p.n}</span>
+                  <span className="text-xs tabular-nums text-muted">{Math.round((p.n / total) * 100)}%</span>
+                </span>
+              </span>
             </Link>
           </li>
         ))}
