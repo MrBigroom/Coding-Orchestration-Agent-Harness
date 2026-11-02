@@ -4,6 +4,8 @@ A chat is separate from the task pipeline: it has no supervisor or review gate. 
 process lives inside the server, so sessions end when the server stops; their transcripts
 stay. A transcript is <home>/chats/<id>/events.jsonl, written through secret redaction;
 images sent with a prompt are kept in images/ beside it, and the transcript names them.
+Other files are saved in the session's working directory, under .orchestrator/attachments/
+(git-excluded), and the message tells the agent where; it opens them with its own tools.
 Consecutive text deltas are stored as one event so that redaction sees whole sentences.
 """
 
@@ -15,7 +17,8 @@ import json
 import re
 import shutil
 from collections import deque
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePath
 from typing import Any
 
 from sqlmodel import Session, col, select
@@ -41,7 +44,7 @@ from orchestrator.services import (
     git_service,
     settings_service,
 )
-from orchestrator.utils.git import run_git, status_porcelain
+from orchestrator.utils.git import is_repo, run_git, status_porcelain
 from orchestrator.utils.redaction import redact
 from orchestrator.utils.slug import slugify
 
@@ -54,12 +57,23 @@ IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "ima
 IMAGE_NAME = re.compile(r"\d+\.(png|jpg|gif|webp)")
 MAX_IMAGES = 4
 MAX_IMAGE_BYTES = 5_000_000
-# Base64 grows this by a third, which keeps a prompt under uvicorn's 16 MiB WebSocket limit.
-MAX_IMAGES_TOTAL = 10_000_000
+MAX_FILES = 5
+MAX_FILE_BYTES = 5_000_000
+# Images and files together. Base64 grows this by a third, which keeps a prompt under
+# uvicorn's 16 MiB WebSocket limit.
+MAX_ATTACHMENTS_TOTAL = 10_000_000
+ATTACHMENTS = PurePath(git_service.ORCH_DIR, "attachments")
+UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class ChatError(ValueError):
     pass
+
+
+@dataclass
+class File:
+    name: str  # safe to use as a file name
+    data: bytes
 
 
 class ChatDisabled(ChatError):
@@ -94,30 +108,55 @@ def image_path(chat_id: int, name: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def parse_images(raw: Any) -> list[Image]:
-    """Images sent with a prompt, as [{"data": base64, "mime"}], checked against the limits."""
-    if not raw:
-        return []
-    if not isinstance(raw, list) or len(raw) > MAX_IMAGES:
-        raise ChatError(f"send at most {MAX_IMAGES} images at a time")
-    images, total = [], 0
-    for item in raw:
-        mime = item.get("mime") if isinstance(item, dict) else None
-        if not isinstance(mime, str) or mime not in IMAGE_TYPES:
-            raise ChatError("images must be PNG, JPEG, GIF or WebP")
-        try:
-            size = len(base64.b64decode(str(item.get("data") or ""), validate=True))
-        except ValueError as e:
-            raise ChatError("an image wasn't valid base64") from e
-        if not size or size > MAX_IMAGE_BYTES:
-            raise ChatError(f"each image must be under {MAX_IMAGE_BYTES // 1_000_000} MB")
-        total += size
-        images.append(Image(data=str(item["data"]), mime=mime))
-    if total > MAX_IMAGES_TOTAL:
+def _decode(data: Any, what: str) -> bytes:
+    try:
+        return base64.b64decode(str(data or ""), validate=True)
+    except ValueError as e:
+        raise ChatError(f"{what} wasn't valid base64") from e
+
+
+def _safe_name(name: Any) -> str:
+    stem = UNSAFE_NAME.sub("-", PurePath(str(name or "")).name).strip(".-")
+    if len(stem) > 80:
+        base, dot, ext = stem.rpartition(".")
+        stem = f"{base[: 79 - len(ext)]}.{ext}" if dot and len(ext) <= 10 else stem[:80]
+    return stem or "file"
+
+
+def parse_attachments(raw_images: Any, raw_files: Any) -> tuple[list[Image], list[File]]:
+    """Images ([{"data": base64, "mime"}]) and files ([{"name", "data": base64}]) sent with
+    a prompt, checked against the limits."""
+    images: list[Image] = []
+    files: list[File] = []
+    total = 0
+    if raw_images:
+        if not isinstance(raw_images, list) or len(raw_images) > MAX_IMAGES:
+            raise ChatError(f"send at most {MAX_IMAGES} images at a time")
+        for item in raw_images:
+            mime = item.get("mime") if isinstance(item, dict) else None
+            if not isinstance(mime, str) or mime not in IMAGE_TYPES:
+                raise ChatError("images must be PNG, JPEG, GIF or WebP")
+            size = len(_decode(item.get("data"), "an image"))
+            if not size or size > MAX_IMAGE_BYTES:
+                raise ChatError(f"each image must be under {MAX_IMAGE_BYTES // 1_000_000} MB")
+            total += size
+            images.append(Image(data=str(item["data"]), mime=mime))
+    if raw_files:
+        if not isinstance(raw_files, list) or len(raw_files) > MAX_FILES:
+            raise ChatError(f"send at most {MAX_FILES} files at a time")
+        for item in raw_files:
+            if not isinstance(item, dict):
+                raise ChatError("a file was missing its name or contents")
+            data = _decode(item.get("data"), "a file")
+            if len(data) > MAX_FILE_BYTES:
+                raise ChatError(f"each file must be under {MAX_FILE_BYTES // 1_000_000} MB")
+            total += len(data)
+            files.append(File(name=_safe_name(item.get("name")), data=data))
+    if total > MAX_ATTACHMENTS_TOTAL:
         raise ChatError(
-            f"images in one message must total under {MAX_IMAGES_TOTAL // 1_000_000} MB"
+            f"attachments in one message must total under {MAX_ATTACHMENTS_TOTAL // 1_000_000} MB"
         )
-    return images
+    return images, files
 
 
 def history(chat_id: int) -> list[dict[str, Any]]:
@@ -255,20 +294,27 @@ class LiveSession:
             return
         self.emit({"type": "status", "status": ChatStatus.idle})
 
-    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
-        images = images or []
-        if not text.strip() and not images:
+    async def prompt(
+        self, text: str, images: list[Image] | None = None, files: list[File] | None = None
+    ) -> None:
+        images, files = images or [], files or []
+        if not text.strip() and not images and not files:
             return
         if images and not (self.driver and self.driver.images):
             raise ChatError("this model doesn't take images, so the message wasn't sent")
         event: dict[str, Any] = {"type": "user", "text": text}
         if images:
             event["images"] = self._store(images)
+        if files:
+            event["files"] = paths = self._store_files(files)
+            listed = "\n".join(f"- {p}" for p in paths)
+            text = f"{text}\n\nAttached files, saved in your working directory:\n{listed}".strip()
         self.emit(event)
         with session_scope() as s:
             row = s.get(ChatSession, self.id)
             if row and not row.title:
-                row.title = redact(" ".join(text.split()))[:80] or "Image"
+                fallback = PurePath(event["files"][0]).name if files else "Image"
+                row.title = redact(" ".join(event["text"].split()))[:80] or fallback
                 s.add(row)
                 s.commit()
         if self.status == ChatStatus.starting:
@@ -292,6 +338,26 @@ class LiveSession:
             (folder / name).write_bytes(base64.b64decode(image.data))
             names.append(name)
         return names
+
+    def _store_files(self, files: list[File]) -> list[str]:
+        """Saves the files where the agent works, numbered so names never collide, and
+        returns their paths relative to that folder."""
+        with session_scope() as s:
+            row = s.get(ChatSession, self.id)
+            cwd = Path(row.cwd) if row else None
+        if cwd is None or not cwd.is_dir():
+            raise ChatError("this session has no working directory to save files in")
+        if is_repo(cwd):
+            git_service._ensure_excluded(cwd)
+        folder = cwd / ATTACHMENTS
+        folder.mkdir(parents=True, exist_ok=True)
+        start = len(list(folder.iterdir()))
+        paths = []
+        for n, file in enumerate(files, start + 1):
+            name = f"{n}-{file.name}"
+            (folder / name).write_bytes(file.data)
+            paths.append(str(ATTACHMENTS / name))
+        return paths
 
     def _can_steer(self) -> bool:
         return bool(self.driver and self.driver.can_steer)
@@ -574,7 +640,8 @@ async def handle(session: Session, live: LiveSession, message: dict[str, Any]) -
         return
     _require_enabled(session)
     if kind == "prompt":
-        await live.prompt(str(message.get("text") or ""), parse_images(message.get("images")))
+        images, files = parse_attachments(message.get("images"), message.get("files"))
+        await live.prompt(str(message.get("text") or ""), images, files)
         return
     if live.driver is None or live.status == ChatStatus.starting:
         raise ChatError("the harness is still starting")

@@ -1,4 +1,4 @@
-import { ArrowUp, Bot, ChevronRight, CircleAlert, FolderOpen, GitBranch, ImagePlus, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Bot, ChevronRight, CircleAlert, FileText, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
@@ -30,19 +30,29 @@ function Prose({ text }: { text: string }) {
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 // The server's limits (chat_service); a prompt over them is refused.
 const MAX_IMAGES = 4;
-const MAX_IMAGE_BYTES = 5_000_000;
-const MAX_IMAGES_TOTAL = 10_000_000;
+const MAX_FILES = 5;
+const MAX_ATTACHMENT_BYTES = 5_000_000;
+const MAX_ATTACHMENTS_TOTAL = 10_000_000;
 
 interface PromptImage { data: string; mime: string }
-interface Attachment extends PromptImage { url: string; size: number }
+interface PromptFile { name: string; data: string }
+/** Images go to the model as images; other files are saved where the agent works. */
+interface Attachment { image: boolean; name: string; data: string; mime: string; size: number; url?: string }
 
-function readImage(file: File): Promise<Attachment> {
+function readAttachment(file: File, image: boolean): Promise<Attachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve({ data: String(reader.result).split(",", 2)[1] ?? "", mime: file.type, url: URL.createObjectURL(file), size: file.size });
+    reader.onload = () => resolve({
+      image, name: file.name, data: String(reader.result).split(",", 2)[1] ?? "", mime: file.type, size: file.size,
+      url: image ? URL.createObjectURL(file) : undefined,
+    });
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function baseName(path: string): string {
+  return path.split("/").pop() ?? path;
 }
 
 /** An image sent in this session. The API needs the token header, so it loads through fetch. */
@@ -134,6 +144,15 @@ function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: nu
           case "user": return (
             <div key={i} className="ml-auto w-fit max-w-[85%] space-y-2 rounded-2xl bg-accent-soft px-4 py-2.5">
               {item.images?.length ? <div className="flex flex-wrap justify-end gap-2">{item.images.map((name) => <ChatImage key={name} chatId={chatId} name={name} />)}</div> : null}
+              {item.files?.length ? (
+                <div className="flex flex-wrap justify-end gap-2">
+                  {item.files.map((path) => (
+                    <span key={path} className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-sm" title={path}>
+                      <FileText size={14} className="shrink-0 text-muted" aria-hidden="true" /><span className="truncate">{baseName(path)}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {item.text && <p className="whitespace-pre-wrap break-words text-base leading-relaxed">{item.text}</p>}
             </div>
           );
@@ -235,7 +254,7 @@ function CommandMenu({ commands, active, onPick, onHover }: {
 }
 
 function Composer({ onSend, onStop, working, disabled, images, commands = [], placeholder, controls }: {
-  onSend: (text: string, images: PromptImage[]) => void; onStop?: () => void; working: boolean; disabled?: boolean;
+  onSend: (text: string, images: PromptImage[], files: PromptFile[]) => void; onStop?: () => void; working: boolean; disabled?: boolean;
   images: boolean | undefined; commands?: SlashCommand[]; placeholder: string; controls: ReactNode;
 }) {
   const [text, setText] = useState("");
@@ -245,7 +264,7 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
   const [dismissed, setDismissed] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
-  const canAttach = images !== false;
+  const asImage = (f: File) => images !== false && IMAGE_TYPES.includes(f.type);
   const matches = useMemo(() => matchCommands(commands, text), [commands, text]);
   const menuOpen = !disabled && !dismissed && matches.length > 0;
 
@@ -262,27 +281,37 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
   };
 
-  const add = async (files: File[]) => {
-    const wanted = files.filter((f) => IMAGE_TYPES.includes(f.type));
-    if (!wanted.length) return;
-    setProblem(wanted.length < files.length ? "Only PNG, JPEG, GIF and WebP images can be attached." : "");
-    const room = MAX_IMAGES - attached.length;
-    if (wanted.length > room) setProblem(`At most ${MAX_IMAGES} images per message.`);
-    const fitting = wanted.slice(0, Math.max(0, room)).filter((f) => f.size <= MAX_IMAGE_BYTES);
-    if (fitting.length < Math.min(wanted.length, room)) setProblem(`Each image must be under ${MAX_IMAGE_BYTES / 1_000_000} MB.`);
-    const total = attached.reduce((sum, a) => sum + a.size, 0) + fitting.reduce((sum, f) => sum + f.size, 0);
-    if (total > MAX_IMAGES_TOTAL) { setProblem(`Images in one message must total under ${MAX_IMAGES_TOTAL / 1_000_000} MB.`); return; }
-    const read = await Promise.all(fitting.map(readImage));
+  const add = async (picked: File[]) => {
+    if (!picked.length) return;
+    let problem = "";
+    const kept: File[] = [];
+    let images = attached.filter((a) => a.image).length;
+    let others = attached.length - images;
+    let total = attached.reduce((sum, a) => sum + a.size, 0);
+    for (const f of picked) {
+      const image = asImage(f);
+      if (f.size > MAX_ATTACHMENT_BYTES) { problem = `Each attachment must be under ${MAX_ATTACHMENT_BYTES / 1_000_000} MB.`; continue; }
+      if (image ? images >= MAX_IMAGES : others >= MAX_FILES) { problem = `At most ${MAX_IMAGES} images and ${MAX_FILES} files per message.`; continue; }
+      if (total + f.size > MAX_ATTACHMENTS_TOTAL) { problem = `Attachments in one message must total under ${MAX_ATTACHMENTS_TOTAL / 1_000_000} MB.`; continue; }
+      kept.push(f);
+      total += f.size;
+      if (image) images += 1; else others += 1;
+    }
+    setProblem(problem);
+    const read = await Promise.all(kept.map((f) => readAttachment(f, asImage(f))));
     setAttached((current) => [...current, ...read]);
   };
   const remove = (index: number) => setAttached((current) => {
-    URL.revokeObjectURL(current[index].url);
+    const url = current[index].url;
+    if (url) URL.revokeObjectURL(url);
     return current.filter((_, i) => i !== index);
   });
   const submit = () => {
     if ((!text.trim() && !attached.length) || disabled) return;
-    onSend(text, attached.map(({ data, mime }) => ({ data, mime })));
-    attached.forEach((a) => URL.revokeObjectURL(a.url));
+    onSend(text,
+      attached.filter((a) => a.image).map(({ data, mime }) => ({ data, mime })),
+      attached.filter((a) => !a.image).map(({ name, data }) => ({ name, data })));
+    attached.forEach((a) => a.url && URL.revokeObjectURL(a.url));
     setAttached([]);
     setProblem("");
     setText("");
@@ -292,14 +321,18 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-5">
       <div className="relative rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent"
-        onDragOver={(e) => { if (canAttach && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
-        onDrop={(e) => { if (!canAttach || disabled) return; e.preventDefault(); void add(files(e.dataTransfer.files)); }}>
+        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+        onDrop={(e) => { if (disabled) return; e.preventDefault(); void add(files(e.dataTransfer.files)); }}>
         {attached.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {attached.map((a, i) => (
-              <div key={a.url} className="group relative">
-                <img src={a.url} alt={`Attachment ${i + 1}`} className="h-16 w-16 rounded-lg border border-line object-cover" />
-                <button className="absolute -right-1.5 -top-1.5 rounded-full border border-line-strong bg-panel p-0.5 text-muted hover:text-ink" title="Remove image" aria-label={`Remove attachment ${i + 1}`} onClick={() => remove(i)}><X size={12} aria-hidden="true" /></button>
+              <div key={`${i}-${a.name}`} className="group relative">
+                {a.url
+                  ? <img src={a.url} alt={a.name} className="h-16 w-16 rounded-lg border border-line object-cover" />
+                  : <div className="flex h-16 max-w-48 items-center gap-2 rounded-lg border border-line bg-panel-2 px-3 text-sm" title={a.name}>
+                      <FileText size={16} className="shrink-0 text-muted" aria-hidden="true" /><span className="truncate">{a.name}</span>
+                    </div>}
+                <button className="absolute -right-1.5 -top-1.5 rounded-full border border-line-strong bg-panel p-0.5 text-muted hover:text-ink" title="Remove" aria-label={`Remove ${a.name}`} onClick={() => remove(i)}><X size={12} aria-hidden="true" /></button>
               </div>
             ))}
           </div>
@@ -310,19 +343,17 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
           aria-activedescendant={menuOpen ? `slash-${active}` : undefined}
           placeholder={placeholder} value={text} disabled={disabled} onChange={(e) => edit(e.target.value)} onBlur={() => setDismissed(true)}
           onPaste={(e) => {
-            const pasted = files(e.clipboardData.files).filter((f) => IMAGE_TYPES.includes(f.type));
+            const pasted = files(e.clipboardData.files);
             if (!pasted.length) return;
             e.preventDefault();
-            if (canAttach) void add(pasted);
-            else setProblem("This model doesn't take images.");
+            void add(pasted);
           }}
           onFocus={() => setDismissed(false)} onKeyDown={onKeyDown} />
         {problem && <p className="px-4 pb-1 text-xs text-warn">{problem}</p>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-3 pt-1">
-          {canAttach && <>
-            <input ref={picker} type="file" accept={IMAGE_TYPES.join(",")} multiple hidden onChange={(e) => { void add(files(e.target.files)); e.target.value = ""; }} />
-            <button className="btn h-8 w-8 justify-center p-0!" title="Attach images (or paste or drop them)" aria-label="Attach images" disabled={disabled || attached.length >= MAX_IMAGES} onClick={() => picker.current?.click()}><ImagePlus size={15} aria-hidden="true" /></button>
-          </>}
+          <input ref={picker} type="file" multiple hidden onChange={(e) => { void add(files(e.target.files)); e.target.value = ""; }} />
+          <button className="btn h-8 w-8 justify-center p-0!" title={images === false ? "Attach files (or paste or drop them). This model doesn't take images, so they go as files." : "Attach images or files (or paste or drop them)"}
+            aria-label="Attach files" disabled={disabled || attached.length >= MAX_IMAGES + MAX_FILES} onClick={() => picker.current?.click()}><Paperclip size={15} aria-hidden="true" /></button>
           {controls}
           <div className="ml-auto flex items-center gap-2">
             {working && onStop && <button className="btn btn-danger" title="Stop this turn" onClick={onStop}><Square size={13} aria-hidden="true" />Stop</button>}
@@ -334,7 +365,7 @@ function Composer({ onSend, onStop, working, disabled, images, commands = [], pl
   );
 }
 
-interface FirstPrompt { text: string; images: PromptImage[] }
+interface FirstPrompt { text: string; images: PromptImage[]; files: PromptFile[] }
 
 function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; projects: Project[]; onCreated: (chat: ChatSession, firstPrompt: FirstPrompt) => void }) {
   const ready = catalog.harnesses.filter((h) => h.available);
@@ -417,7 +448,7 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
         {projectId === null && <p className="mt-2 text-xs text-muted">The agent starts in a new empty folder, which is deleted with the session. The folder isn't a sandbox: the permission mode decides what it can reach elsewhere.</p>}
         {projectId !== null && workspace === "checkout" && <p className="mt-2 flex items-center gap-1.5 text-xs text-warn"><TriangleAlert size={14} aria-hidden="true" />The agent will change your project's files directly, with no branch to review or discard.</p>}
       </div>
-      <Composer working={false} disabled={act.busy || !harness?.available} images={undefined} onSend={(text, images) => void start({ text, images })} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
+      <Composer working={false} disabled={act.busy || !harness?.available} images={undefined} onSend={(text, images, files) => void start({ text, images, files })} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
         controls={harness && <>
           <ModelSelect value={model} models={[...harness.models.map((m) => ({ id: m, name: m })), ...otherModels.map((m) => ({ id: m, name: `${m} (Claude Code)` }))]} onChange={pickModel} />
           <EffortSlider value={effort} efforts={harness.efforts} onChange={setEffort} />
@@ -467,7 +498,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
     const ready = !initialPrompt?.images.length || config.images !== undefined;
     if (initialPrompt && live && connected && ready && !sent.current) {
       sent.current = true;
-      send({ type: "prompt", text: initialPrompt.text, images: initialPrompt.images });
+      send({ type: "prompt", text: initialPrompt.text, images: initialPrompt.images, files: initialPrompt.files });
     }
   }, [initialPrompt, live, connected, config.images, send]);
 
@@ -521,7 +552,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
             A standalone run is answering its own approvals, so it can't take instructions.
             <button className="btn" disabled={locked} onClick={() => send({ type: "interrupt" })}>Stop run</button>
           </div>
-        : <Composer working={working} disabled={locked} images={config.images} commands={config.commands} onSend={(text, images) => send({ type: "prompt", text, images })} onStop={() => send({ type: "interrupt" })}
+        : <Composer working={working} disabled={locked} images={config.images} commands={config.commands} onSend={(text, images, files) => send({ type: "prompt", text, images, files })} onStop={() => send({ type: "interrupt" })}
             placeholder={working ? "Send more instructions…" : "Message the agent. Shift+Enter for a new line."}
             controls={<>
               <ModelSelect value={config.model ?? chat.model ?? ""} models={models} disabled={locked || status === "starting"} onChange={(value) => send({ type: "set_model", value })} />

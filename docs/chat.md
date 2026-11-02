@@ -18,8 +18,8 @@ send a message. You can also pick an agent; see [Chatting with an agent](#chatti
 
 - **Replies** render as Markdown: headings, bold, lists, tables, links and code. Your own
   messages stay as typed.
-- **Images:** attach with the image button, or paste or drop them into the message box. See
-  [Images](#images).
+- **Images and files:** attach with the paperclip button, or paste or drop them into the
+  message box. See [Images](#images) and [Files](#files).
 - **Slash commands:** type `/` to pick from the commands the harness offers. See
   [Slash commands](#slash-commands).
 - **Model, effort and permission** can change during a session, except where noted below.
@@ -56,11 +56,12 @@ unavailable.
 
 ## Images
 
-A message can carry up to four PNG, JPEG, GIF or WebP images, each under 5 MB and 10 MB
-together. They're saved in `<home>/chats/<id>/images/`, and the transcript names them rather
+A message can carry up to four PNG, JPEG, GIF or WebP images, each under 5 MB, and images
+and files together stay under 10 MB. They're saved in `<home>/chats/<id>/images/`, and the transcript names them rather
 than holding them. Deleting the session deletes them.
 
-The image button shows only when the current model takes images:
+Images go to the model as images only when the current model takes them; otherwise they're
+attached as [files](#files). Which models take images:
 
 - **Pi:** models named in the adapter's `image_models` capability, which defaults to
   `qwen3.8-` and `deepseek-v4`. `glm-5.3` refuses images. Pi itself only passes images
@@ -68,9 +69,23 @@ The image button shows only when the current model takes images:
 - **Claude Code:** every Claude model.
 - **ACP harnesses:** whatever the harness reports when it starts (`promptCapabilities.image`).
 
-On a new session the harness hasn't started yet, so the button always shows there. The
-first message waits until the harness reports; if its model doesn't take images, the
-message isn't sent and the session shows why.
+On a new session the harness hasn't started yet, so images are sent as images. The first
+message waits until the harness reports; if its model doesn't take images, the message isn't
+sent and the session shows why.
+
+## Files
+
+Any other file, up to five per message and each under 5 MB, is saved in the session's
+working directory under `.orchestrator/attachments/`, numbered so names never clash
+(`1-notes.md`). The message the agent gets ends with their paths, and it opens them with its
+own tools, so what it can read depends on the harness: text and code always work, while
+PDFs and other binary files need a tool that can open them. Your message in the transcript
+shows the files by name and stays as typed.
+
+In a git workspace, `.orchestrator/` is excluded locally, so attachments never show up in
+**Changes** or reach the branch. In a project checkout they're still written into your
+project folder, under that excluded path. Deleting a session with no project deletes its
+folder and the files with it; in a worktree they go when the worktree is removed.
 
 ## Slash commands
 
@@ -178,7 +193,8 @@ events, then `{"type":"end"}`. Event shapes are listed in `adapters/chat/base.py
 Clients send:
 
 ```json
-{"type": "prompt", "text": "...", "images": [{"data": "<base64>", "mime": "image/png"}]}
+{"type": "prompt", "text": "...", "images": [{"data": "<base64>", "mime": "image/png"}],
+ "files": [{"name": "notes.md", "data": "<base64>"}]}
 {"type": "interrupt"}
 {"type": "approval", "id": "...", "choice": "<option id>"}
 {"type": "set_model", "value": "..."}
@@ -186,5 +202,5 @@ Clients send:
 {"type": "set_permission", "value": "..."}
 ```
 
-`images` is optional. Transcripts are in `$ORCHESTRATOR_HOME/chats/<id>/events.jsonl`, and a
+`images` and `files` are optional. Transcripts are in `$ORCHESTRATOR_HOME/chats/<id>/events.jsonl`, and a
 session's images are served from `GET /api/chat/sessions/{id}/images/{name}`.
