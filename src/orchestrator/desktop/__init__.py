@@ -233,6 +233,8 @@ def run(debug: bool = False) -> None:
     settings = get_settings()
     storage = settings.home / "desktop-webview"
     storage.mkdir(parents=True, exist_ok=True)
+    # The GUI is local, so this cache saves nothing and can pin the window to an old build.
+    shutil.rmtree(storage / "cache", ignore_errors=True)
 
     window = webview.create_window(
         APP_NAME,

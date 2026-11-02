@@ -203,7 +203,8 @@ def create_app() -> FastAPI:
         candidate = (root / path).resolve()
         if path and candidate.is_file() and root.resolve() in candidate.parents:
             return FileResponse(candidate)
-        return FileResponse(root / "index.html")
+        # Revalidated every time: it names the hashed assets, so a stale copy pins an old GUI.
+        return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

@@ -32,7 +32,8 @@ these are `webkit2gtk-4.1` and `python-gobject`'s dependencies.
    logs to `$ORCHESTRATOR_HOME/logs/desktop-server.log`. If the port is taken by
    something else, it picks a free port.
 
-Web storage (theme, token) is kept in `$ORCHESTRATOR_HOME/desktop-webview`.
+Web storage (theme, token) is kept in `$ORCHESTRATOR_HOME/desktop-webview`. Its HTTP cache is
+cleared on each launch, so the window always loads the GUI the server has.
 
 ## What happens when it closes
 

@@ -188,6 +188,7 @@ def test_websocket_streams_run_logs(client, initialized):
 def test_fallback_ui_served(client, monkeypatch):
     r = client.get("/")
     assert r.status_code == 200 and "<html" in r.text.lower()
+    assert r.headers["cache-control"] == "no-cache"  # or a new build stays hidden
     assert client.get("/tasks/1").status_code == 200  # SPA route
     assert client.get("/api/nope").status_code == 404
 
