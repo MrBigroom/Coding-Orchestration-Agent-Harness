@@ -10,6 +10,7 @@ from orchestrator.adapters.chat.base import (
     ChatDriver,
     DriverError,
     Image,
+    slash_commands,
     text_of,
 )
 from orchestrator.adapters.common import _n
@@ -55,7 +56,7 @@ class ClaudeDriver(ChatDriver):
 
     async def start(self) -> None:
         await self.spawn(self._argv(), {})
-        await self._control("initialize")
+        init = await self._control("initialize")
         self.emit(
             {
                 "type": "config",
@@ -63,6 +64,9 @@ class ClaudeDriver(ChatDriver):
                 "effort": self.options.effort,
                 "permission": self.options.permission,
                 "images": True,
+                # What this mode accepts: skills, custom and plugin commands, and built-ins
+                # such as /compact; interactive-only ones aren't listed.
+                "commands": slash_commands(init.get("commands")),
             }
         )
 

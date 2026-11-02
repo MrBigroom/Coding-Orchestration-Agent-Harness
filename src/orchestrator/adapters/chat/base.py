@@ -12,7 +12,7 @@ events, which `services.chat_service` persists and streams to the GUI:
   {"type": "status", "status": "busy" | "idle"}
   {"type": "usage", ...the shape documented in adapters.common}
   {"type": "config", "model", "effort", "permission", "models", "efforts", "permissions",
-   "images": bool}
+   "images": bool, "commands": [{"name", "description"}]}
   {"type": "notice" | "error", "message": str}
 """
 
@@ -37,6 +37,7 @@ from orchestrator.services.process_service import MAX_LINE_BYTES, _terminate, gi
 log = get_logger(__name__)
 Emit = Callable[[dict[str, Any]], None]
 RESPONSE_TIMEOUT = 30
+MAX_COMMAND_DESCRIPTION = 160
 
 
 class DriverError(RuntimeError):
@@ -268,6 +269,23 @@ class ChatDriver(ABC):
     def resolved(self, approval_id: str, choice: str | None) -> None:
         self.approvals.pop(approval_id, None)
         self.emit({"type": "approval_resolved", "id": approval_id, "choice": choice})
+
+
+def slash_commands(items: Any) -> list[dict[str, str]]:
+    """The composer's slash menu from a harness's own list: names without the slash, and
+    descriptions cut short, since the list is kept in the transcript."""
+    commands: dict[str, dict[str, str]] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip().lstrip("/")
+        if not name or name.startswith("_") or name in commands:
+            continue
+        description = " ".join(str(item.get("description") or "").split())
+        if len(description) > MAX_COMMAND_DESCRIPTION:
+            description = description[: MAX_COMMAND_DESCRIPTION - 1].rstrip() + "…"
+        commands[name] = {"name": name, "description": description}
+    return list(commands.values())
 
 
 def text_of(content: Any) -> str:

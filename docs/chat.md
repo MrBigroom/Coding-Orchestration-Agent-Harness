@@ -20,6 +20,8 @@ send a message. You can also pick an agent; see [Chatting with an agent](#chatti
   messages stay as typed.
 - **Images:** attach with the image button, or paste or drop them into the message box. See
   [Images](#images).
+- **Slash commands:** type `/` to pick from the commands the harness offers. See
+  [Slash commands](#slash-commands).
 - **Model, effort and permission** can change during a session, except where noted below.
   Switching models starts a cold prompt cache, because caches are per model.
 - **Sending during a turn:** Pi takes the message as steering after the current tool call.
@@ -69,6 +71,25 @@ The image button shows only when the current model takes images:
 On a new session the harness hasn't started yet, so the button always shows there. The
 first message waits until the harness reports; if its model doesn't take images, the
 message isn't sent and the session shows why.
+
+## Slash commands
+
+A message is sent to the harness exactly as typed, so a `/command` works whenever the harness
+runs it from a prompt. Typing `/` at the start of a message opens a menu of the commands the
+harness reports: arrow keys move, **Enter** or **Tab** picks, **Escape** closes. Picking one
+fills in its name; add any arguments, then send.
+
+- **Pi:** skills (`/skill:name`), prompt templates and extension commands. Its built-in
+  `/mcp` and `/llama` aren't listed, because they open dialogs Chat can't show. Sessions use
+  a managed Pi config, so commands in `~/.pi/agent` don't load, and project extensions are
+  off (see [Permission modes](#permission-modes)).
+- **Claude Code:** what its headless mode accepts: skills, custom and plugin commands, and
+  built-ins such as `/compact`. Interactive-only commands like `/config` aren't offered.
+- **ACP harnesses:** whatever the harness announces. OpenCode lists its skills when the
+  session starts; Qwen Code and DeepSeek Harness announce none then, so their menu stays empty,
+  though commands typed in full still reach them.
+
+Model, effort and permission are controls under the message box rather than commands.
 
 ## Claude models
 

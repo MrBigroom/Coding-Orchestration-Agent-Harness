@@ -25,6 +25,13 @@ export interface ChatConfig {
   permissions?: PermissionMode[];
   permission_locked?: boolean;
   images?: boolean;
+  commands?: SlashCommand[];
+}
+
+/** A command the harness runs when a message starts with `/name`. */
+export interface SlashCommand {
+  name: string;
+  description: string;
 }
 
 interface ChatState {

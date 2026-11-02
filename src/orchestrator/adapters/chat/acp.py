@@ -10,6 +10,7 @@ from orchestrator.adapters.chat.base import (
     ChatDriver,
     DriverError,
     Image,
+    slash_commands,
     text_of,
 )
 from orchestrator.adapters.common import _n
@@ -378,6 +379,9 @@ class AcpDriver(ChatDriver):
         elif kind == "current_mode_update":
             self._mode = update.get("currentModeId") or self._mode
             self.emit({"type": "config", "permission": self._mode})
+        elif kind == "available_commands_update":
+            commands = slash_commands(update.get("availableCommands"))
+            self.emit({"type": "config", "commands": commands})
 
     def _on_tool(self, kind: str, update: dict[str, Any]) -> None:
         tool_id = update.get("toolCallId") or ""
