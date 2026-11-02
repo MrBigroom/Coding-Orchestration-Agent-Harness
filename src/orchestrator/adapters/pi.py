@@ -9,6 +9,7 @@ from orchestrator.adapters.common import (
     ManagedConfigMixin,
     pi_stop_reason,
     provider_settings,
+    takes_images,
     wants_explicit_cache,
 )
 
@@ -63,6 +64,8 @@ class PiAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
         model: dict = {"id": ctx.model or "default", "name": ctx.model or "default"}
         if wants_explicit_cache(ctx.model, self.capabilities):
             model["compat"] = {"cacheControlFormat": "anthropic"}
+        if takes_images(ctx.model, self.capabilities):
+            model["input"] = ["text", "image"]
         config = {
             "providers": {
                 "orchestrator": {

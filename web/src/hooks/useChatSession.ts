@@ -9,7 +9,7 @@ export interface ApprovalOption {
 }
 
 export type ChatItem =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; images?: string[] }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output?: string; error?: boolean; done: boolean }
@@ -24,6 +24,7 @@ export interface ChatConfig {
   efforts?: string[];
   permissions?: PermissionMode[];
   permission_locked?: boolean;
+  images?: boolean;
 }
 
 interface ChatState {
@@ -46,7 +47,7 @@ function appendDelta(items: ChatItem[], kind: "assistant" | "thinking", delta: s
 function apply(state: ChatState, e: ChatEvent): ChatState {
   const items = state.items;
   switch (e.type) {
-    case "user": return { ...state, items: [...items, { kind: "user", text: e.text }] };
+    case "user": return { ...state, items: [...items, { kind: "user", text: e.text, images: e.images }] };
     case "text": return { ...state, items: appendDelta(items, "assistant", e.delta) };
     case "thinking": return { ...state, items: appendDelta(items, "thinking", e.delta) };
     case "tool_start":

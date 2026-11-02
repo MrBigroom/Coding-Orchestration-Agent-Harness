@@ -6,8 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from orchestrator.adapters.chat.base import RESPONSE_TIMEOUT, ChatDriver, DriverError, text_of
-from orchestrator.adapters.common import _n, wants_explicit_cache
+from orchestrator.adapters.chat.base import (
+    RESPONSE_TIMEOUT,
+    ChatDriver,
+    DriverError,
+    Image,
+    text_of,
+)
+from orchestrator.adapters.common import _n, takes_images, wants_explicit_cache
 
 GATE = Path(__file__).with_name("pi_gate.ts")
 PROVIDER = "orchestrator"
@@ -22,7 +28,8 @@ class PiDriver(ChatDriver):
     requests. `--no-approve` keeps project-local Pi extensions, which could override the
     gate, from loading. Models come from a managed provider, as in batch runs; for chat its
     `models.json` lists every model the session may switch to and marks them as reasoning
-    models, so that the effort control reaches them.
+    models, so that the effort control reaches them, and those that take images as such.
+    Pi's own report of the current model decides whether the GUI offers images.
     """
 
     kind = "pi"
@@ -45,7 +52,10 @@ class PiDriver(ChatDriver):
             compat: dict[str, Any] = {"supportsDeveloperRole": False, "thinkingFormat": "qwen"}
             if wants_explicit_cache(name, self.adapter.capabilities):
                 compat["cacheControlFormat"] = "anthropic"
-            entries.append({"id": name, "name": name, "reasoning": True, "compat": compat})
+            entry = {"id": name, "name": name, "reasoning": True, "compat": compat}
+            if takes_images(name, self.adapter.capabilities):
+                entry["input"] = ["text", "image"]
+            entries.append(entry)
         config["providers"][PROVIDER]["models"] = entries
         path.write_text(json.dumps(config, indent=2))
 
@@ -87,17 +97,23 @@ class PiDriver(ChatDriver):
         state = await self._request("get_state")
         levels = await self._request("get_available_thinking_levels")
         model = state.get("model") or {}
+        self.images = "image" in (model.get("input") or [])
         self.emit(
             {
                 "type": "config",
                 "model": model.get("id") or self.options.model,
                 "effort": state.get("thinkingLevel"),
                 "efforts": levels.get("levels") or [],
+                "images": self.images,
             }
         )
 
-    async def prompt(self, text: str) -> None:
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
         fields: dict[str, Any] = {"message": text}
+        if images:
+            fields["images"] = [
+                {"type": "image", "data": i.data, "mimeType": i.mime} for i in images
+            ]
         if self._busy:
             fields["streamingBehavior"] = "steer"
         else:

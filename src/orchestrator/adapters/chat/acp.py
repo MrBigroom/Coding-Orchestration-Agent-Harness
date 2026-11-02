@@ -5,7 +5,13 @@ import itertools
 import json
 from typing import Any
 
-from orchestrator.adapters.chat.base import RESPONSE_TIMEOUT, ChatDriver, DriverError, text_of
+from orchestrator.adapters.chat.base import (
+    RESPONSE_TIMEOUT,
+    ChatDriver,
+    DriverError,
+    Image,
+    text_of,
+)
 from orchestrator.adapters.common import _n
 
 PROTOCOL_VERSION = 1
@@ -88,12 +94,14 @@ class AcpDriver(ChatDriver):
         if self._permission_set_at_start and self.options.permission:
             env["DSH_PERMISSION_MODE"] = self.options.permission
         await self.spawn(self._argv(env), env)
-        await self._request(
+        init = await self._request(
             "initialize",
             timeout=START_TIMEOUT,
             protocolVersion=PROTOCOL_VERSION,
             clientCapabilities={"fs": {"readTextFile": False, "writeTextFile": False}},
         )
+        prompts = ((init or {}).get("agentCapabilities") or {}).get("promptCapabilities") or {}
+        self.images = bool(prompts.get("image"))
         session = await self._request(
             "session/new", timeout=START_TIMEOUT, cwd=str(self.options.cwd), mcpServers=[]
         )
@@ -178,6 +186,7 @@ class AcpDriver(ChatDriver):
             "models": self._models,
             "effort": effort.get("currentValue"),
             "efforts": self._levels(),
+            "images": self.images,
         }
         if self._permission_set_at_start:
             config |= {"permission": self.options.permission, "permission_locked": True}
@@ -201,18 +210,21 @@ class AcpDriver(ChatDriver):
         finally:
             self._waiting.pop(request_id, None)
 
-    async def prompt(self, text: str) -> None:
+    async def prompt(self, text: str, images: list[Image] | None = None) -> None:
         self.emit({"type": "status", "status": "busy"})
-        self._turn = asyncio.create_task(self._run_turn(text))
+        blocks = [{"type": "image", "data": i.data, "mimeType": i.mime} for i in images or []]
+        if text or not blocks:
+            blocks.append({"type": "text", "text": text})
+        self._turn = asyncio.create_task(self._run_turn(blocks))
 
-    async def _run_turn(self, text: str) -> None:
+    async def _run_turn(self, blocks: list[dict[str, Any]]) -> None:
         try:
             # A turn lasts as long as the agent works, so it has no timeout of its own.
             result = await self._request(
                 "session/prompt",
                 timeout=86_400,
                 sessionId=self._session_id,
-                prompt=[{"type": "text", "text": text}],
+                prompt=blocks,
             )
             self._on_turn_end(result or {})
         except DriverError as e:

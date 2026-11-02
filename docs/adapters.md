@@ -73,8 +73,11 @@ tolerated in saved ZCode JSON. See [`harness-routing.md`](harness-routing.md).
 - **Managed config:** a temporary `PI_CODING_AGENT_DIR/models.json` defines the
   `orchestrator` provider (`apiKey: "$QWEN_API_KEY"`). For `qwen3.8-max`/`qwen3.8-flash`
   it adds `compat.cacheControlFormat: "anthropic"`, so Pi marks the system prompt, last
-  tool and newest message for Qwen Cloud's explicit cache. `PI_OFFLINE=1`,
-  `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0` are also set.
+  tool and newest message for Qwen Cloud's explicit cache. Pi treats a model as text-only
+  unless told otherwise, so models whose names start with an entry in the
+  `image_models` capability (default `qwen3.8-` and `deepseek-v4`; `glm-5.3` refuses
+  images) get `input: ["text", "image"]`. `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1` and
+  `PI_TELEMETRY=0` are also set.
 - **Failure detection:** Pi exits 0 even when its last response hit `max_tokens` or
   errored. A run that ends that way without a handoff file is reported as failed.
 - **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`; binary override `PI_COMMAND`.

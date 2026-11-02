@@ -1,7 +1,9 @@
-import { ArrowUp, Bot, ChevronRight, CircleAlert, FolderOpen, GitBranch, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert } from "lucide-react";
+import { ArrowUp, Bot, ChevronRight, CircleAlert, FolderOpen, GitBranch, ImagePlus, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, del, patch, post } from "../api/client";
+import remarkGfm from "remark-gfm";
+import { api, del, getToken, patch, post } from "../api/client";
 import type { ChatCatalog, ChatChanges, ChatHarness, ChatSession, PermissionMode, Project } from "../api/types";
 import { Badge, ConfirmButton, Empty, ErrorNote, Field, Pre } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
@@ -15,15 +17,57 @@ function compact(n: number | undefined): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 }
 
-/** Prose with fenced code blocks; everything else keeps its line breaks. */
+const MARKDOWN: Components = {
+  pre: ({ children }) => <Pre>{children}</Pre>,
+  a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+};
+
+/** Replies as GitHub-flavoured Markdown. Raw HTML in them stays text. */
 function Prose({ text }: { text: string }) {
-  const parts = text.split(/```[^\n]*\n?/);
-  return (
-    <div className="space-y-2 text-sm leading-relaxed">
-      {parts.map((part, i) =>
-        i % 2 ? <Pre key={i}>{part.replace(/\n$/, "")}</Pre> : part.trim() ? <p key={i} className="whitespace-pre-wrap break-words">{part.trim()}</p> : null)}
-    </div>
-  );
+  return <div className="markdown"><Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN}>{text}</Markdown></div>;
+}
+
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+// The server's limits (chat_service); a prompt over them is refused.
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 5_000_000;
+const MAX_IMAGES_TOTAL = 10_000_000;
+
+interface PromptImage { data: string; mime: string }
+interface Attachment extends PromptImage { url: string; size: number }
+
+function readImage(file: File): Promise<Attachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ data: String(reader.result).split(",", 2)[1] ?? "", mime: file.type, url: URL.createObjectURL(file), size: file.size });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/** An image sent in this session. The API needs the token header, so it loads through fetch. */
+function ChatImage({ chatId, name }: { chatId: number; name: string }) {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    let objectUrl: string | undefined;
+    let cancelled = false;
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("X-Orchestrator-Token", token);
+    void fetch(`/api/chat/sessions/${chatId}/images/${name}`, { headers })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (!blob || cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [chatId, name]);
+  if (!url) return <div className="h-24 w-24 animate-pulse rounded-lg bg-panel-2" />;
+  return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="Attached image" className="max-h-48 max-w-full rounded-lg border border-line object-contain" /></a>;
 }
 
 function Disclosure({ summary, children, open = false }: { summary: ReactNode; children: ReactNode; open?: boolean }) {
@@ -80,14 +124,19 @@ function ApprovalCard({ item, onAnswer, disabled }: { item: Extract<ChatItem, { 
   );
 }
 
-function Transcript({ items, working, onAnswer, disabled }: { items: ChatItem[]; working: boolean; onAnswer: (id: string, choice: string) => void; disabled: boolean }) {
+function Transcript({ chatId, items, working, onAnswer, disabled }: { chatId: number; items: ChatItem[]; working: boolean; onAnswer: (id: string, choice: string) => void; disabled: boolean }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [items, working]);
   return (
     <div className="mx-auto max-w-3xl space-y-3 px-6 py-6">
       {items.map((item, i) => {
         switch (item.kind) {
-          case "user": return <div key={i} className="ml-auto w-fit max-w-[85%] rounded-2xl bg-accent-soft px-4 py-2.5"><Prose text={item.text} /></div>;
+          case "user": return (
+            <div key={i} className="ml-auto w-fit max-w-[85%] space-y-2 rounded-2xl bg-accent-soft px-4 py-2.5">
+              {item.images?.length ? <div className="flex flex-wrap justify-end gap-2">{item.images.map((name) => <ChatImage key={name} chatId={chatId} name={name} />)}</div> : null}
+              {item.text && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.text}</p>}
+            </div>
+          );
           case "assistant": return <Prose key={i} text={item.text} />;
           case "thinking": return <Disclosure key={i} summary="Thinking"><p className="whitespace-pre-wrap text-xs text-muted">{item.text}</p></Disclosure>;
           case "tool": return <ToolCard key={i} item={item} />;
@@ -155,26 +204,78 @@ function PermissionSelect({ value, modes, onChange, disabled }: { value: string;
   );
 }
 
-function Composer({ onSend, onStop, working, disabled, placeholder, controls }: {
-  onSend: (text: string) => void; onStop?: () => void; working: boolean; disabled?: boolean; placeholder: string; controls: ReactNode;
+function Composer({ onSend, onStop, working, disabled, images, placeholder, controls }: {
+  onSend: (text: string, images: PromptImage[]) => void; onStop?: () => void; working: boolean; disabled?: boolean;
+  images: boolean | undefined; placeholder: string; controls: ReactNode;
 }) {
   const [text, setText] = useState("");
+  const [attached, setAttached] = useState<Attachment[]>([]);
+  const [problem, setProblem] = useState("");
+  const picker = useRef<HTMLInputElement>(null);
+  const canAttach = images !== false;
+
+  const add = async (files: File[]) => {
+    const wanted = files.filter((f) => IMAGE_TYPES.includes(f.type));
+    if (!wanted.length) return;
+    setProblem(wanted.length < files.length ? "Only PNG, JPEG, GIF and WebP images can be attached." : "");
+    const room = MAX_IMAGES - attached.length;
+    if (wanted.length > room) setProblem(`At most ${MAX_IMAGES} images per message.`);
+    const fitting = wanted.slice(0, Math.max(0, room)).filter((f) => f.size <= MAX_IMAGE_BYTES);
+    if (fitting.length < Math.min(wanted.length, room)) setProblem(`Each image must be under ${MAX_IMAGE_BYTES / 1_000_000} MB.`);
+    const total = attached.reduce((sum, a) => sum + a.size, 0) + fitting.reduce((sum, f) => sum + f.size, 0);
+    if (total > MAX_IMAGES_TOTAL) { setProblem(`Images in one message must total under ${MAX_IMAGES_TOTAL / 1_000_000} MB.`); return; }
+    const read = await Promise.all(fitting.map(readImage));
+    setAttached((current) => [...current, ...read]);
+  };
+  const remove = (index: number) => setAttached((current) => {
+    URL.revokeObjectURL(current[index].url);
+    return current.filter((_, i) => i !== index);
+  });
   const submit = () => {
-    if (!text.trim() || disabled) return;
-    onSend(text);
+    if ((!text.trim() && !attached.length) || disabled) return;
+    onSend(text, attached.map(({ data, mime }) => ({ data, mime })));
+    attached.forEach((a) => URL.revokeObjectURL(a.url));
+    setAttached([]);
+    setProblem("");
     setText("");
   };
+  const files = (list: FileList | null) => [...(list ?? [])];
+
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-5">
-      <div className="rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent">
+      <div className="rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent"
+        onDragOver={(e) => { if (canAttach && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+        onDrop={(e) => { if (!canAttach || disabled) return; e.preventDefault(); void add(files(e.dataTransfer.files)); }}>
+        {attached.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3 pt-3">
+            {attached.map((a, i) => (
+              <div key={a.url} className="group relative">
+                <img src={a.url} alt={`Attachment ${i + 1}`} className="h-16 w-16 rounded-lg border border-line object-cover" />
+                <button className="absolute -right-1.5 -top-1.5 rounded-full border border-line-strong bg-panel p-0.5 text-muted hover:text-ink" title="Remove image" aria-label={`Remove attachment ${i + 1}`} onClick={() => remove(i)}><X size={12} aria-hidden="true" /></button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea aria-label="Message" rows={3} className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 text-sm outline-none placeholder:text-muted disabled:opacity-60"
           placeholder={placeholder} value={text} disabled={disabled} onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => {
+            const pasted = files(e.clipboardData.files).filter((f) => IMAGE_TYPES.includes(f.type));
+            if (!pasted.length) return;
+            e.preventDefault();
+            if (canAttach) void add(pasted);
+            else setProblem("This model doesn't take images.");
+          }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }} />
+        {problem && <p className="px-4 pb-1 text-xs text-warn">{problem}</p>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-3 pt-1">
+          {canAttach && <>
+            <input ref={picker} type="file" accept={IMAGE_TYPES.join(",")} multiple hidden onChange={(e) => { void add(files(e.target.files)); e.target.value = ""; }} />
+            <button className="btn h-8 w-8 justify-center p-0!" title="Attach images (or paste or drop them)" aria-label="Attach images" disabled={disabled || attached.length >= MAX_IMAGES} onClick={() => picker.current?.click()}><ImagePlus size={15} aria-hidden="true" /></button>
+          </>}
           {controls}
           <div className="ml-auto flex items-center gap-2">
             {working && onStop && <button className="btn btn-danger" title="Stop this turn" onClick={onStop}><Square size={13} aria-hidden="true" />Stop</button>}
-            <button className="btn btn-accent h-8 w-8 justify-center p-0!" title="Send" aria-label="Send" disabled={disabled || !text.trim()} onClick={submit}><ArrowUp size={16} aria-hidden="true" /></button>
+            <button className="btn btn-accent h-8 w-8 justify-center p-0!" title="Send" aria-label="Send" disabled={disabled || (!text.trim() && !attached.length)} onClick={submit}><ArrowUp size={16} aria-hidden="true" /></button>
           </div>
         </div>
       </div>
@@ -182,7 +283,9 @@ function Composer({ onSend, onStop, working, disabled, placeholder, controls }: 
   );
 }
 
-function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; projects: Project[]; onCreated: (chat: ChatSession, firstPrompt: string) => void }) {
+interface FirstPrompt { text: string; images: PromptImage[] }
+
+function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; projects: Project[]; onCreated: (chat: ChatSession, firstPrompt: FirstPrompt) => void }) {
   const ready = catalog.harnesses.filter((h) => h.available);
   const preferred = ready.find((h) => h.name === "pi") ?? ready.find((h) => h.kind !== "mock") ?? ready[0];
   const [projectId, setProjectId] = useState<number | null>(projects[0]?.id ?? null);
@@ -219,9 +322,9 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
     if (claude && otherModels.includes(id)) pick(claude, id);
     else setModel(id);
   };
-  const start = (text: string) => act.run(async () => {
+  const start = (prompt: FirstPrompt) => act.run(async () => {
     const chat = await post<ChatSession>("/chat/sessions", { project_id: projectId, agent_id: agentId, adapter: name, model: model || null, effort: effort || null, permission: permission || null, workspace });
-    onCreated(chat, text);
+    onCreated(chat, prompt);
   });
 
   return (
@@ -263,7 +366,7 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
         {projectId === null && <p className="mt-2 text-xs text-muted">The agent starts in a new empty folder, which is deleted with the session. The folder isn't a sandbox: the permission mode decides what it can reach elsewhere.</p>}
         {projectId !== null && workspace === "checkout" && <p className="mt-2 flex items-center gap-1.5 text-xs text-warn"><TriangleAlert size={14} aria-hidden="true" />The agent will change your project's files directly, with no branch to review or discard.</p>}
       </div>
-      <Composer working={false} disabled={act.busy || !harness?.available} onSend={(t) => void start(t)} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
+      <Composer working={false} disabled={act.busy || !harness?.available} images={undefined} onSend={(text, images) => void start({ text, images })} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
         controls={harness && <>
           <ModelSelect value={model} models={[...harness.models.map((m) => ({ id: m, name: m })), ...otherModels.map((m) => ({ id: m, name: `${m} (Claude Code)` }))]} onChange={pickModel} />
           <EffortSlider value={effort} efforts={harness.efforts} onChange={setEffort} />
@@ -299,7 +402,7 @@ function ChangesPanel({ chat, ended, onDone }: { chat: ChatSession; ended: boole
   );
 }
 
-function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: ChatSession; harness?: ChatHarness; initialPrompt: string | null; onChanged: () => void }) {
+function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: ChatSession; harness?: ChatHarness; initialPrompt: FirstPrompt | null; onChanged: () => void }) {
   const session = useChatSession(chat.id);
   const { config, status, usage, items, send, live, connected } = session;
   const [showChanges, setShowChanges] = useState(false);
@@ -308,12 +411,14 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
   const sent = useRef(false);
   const ended = ENDED.has(status);
 
+  // Images wait until the harness has said whether its model takes them.
   useEffect(() => {
-    if (initialPrompt && live && connected && !sent.current) {
+    const ready = !initialPrompt?.images.length || config.images !== undefined;
+    if (initialPrompt && live && connected && ready && !sent.current) {
       sent.current = true;
-      send({ type: "prompt", text: initialPrompt });
+      send({ type: "prompt", text: initialPrompt.text, images: initialPrompt.images });
     }
-  }, [initialPrompt, live, connected, send]);
+  }, [initialPrompt, live, connected, config.images, send]);
 
   const prevStatus = useRef(status);
   useEffect(() => {
@@ -356,7 +461,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-6"><ErrorNote error={act.error} /></div>
         {!items.length && !ended && <Empty>{status === "starting" ? "Starting the harness…" : "Ready."}</Empty>}
-        <Transcript items={items} working={working} onAnswer={(id, choice) => send({ type: "approval", id, choice })} disabled={locked} />
+        <Transcript chatId={chat.id} items={items} working={working} onAnswer={(id, choice) => send({ type: "approval", id, choice })} disabled={locked} />
       </div>
       {ended
         ? <div className="border-t border-line px-6 py-3 text-center text-xs text-muted">This session has ended ({status.replace(/_/g, " ")}). Its transcript is read-only.</div>
@@ -365,7 +470,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
             A standalone run is answering its own approvals, so it can't take instructions.
             <button className="btn" disabled={locked} onClick={() => send({ type: "interrupt" })}>Stop run</button>
           </div>
-        : <Composer working={working} disabled={locked} onSend={(text) => send({ type: "prompt", text })} onStop={() => send({ type: "interrupt" })}
+        : <Composer working={working} disabled={locked} images={config.images} onSend={(text, images) => send({ type: "prompt", text, images })} onStop={() => send({ type: "interrupt" })}
             placeholder={working ? "Send more instructions…" : "Message the agent. Shift+Enter for a new line."}
             controls={<>
               <ModelSelect value={config.model ?? chat.model ?? ""} models={models} disabled={locked || status === "starting"} onChange={(value) => send({ type: "set_model", value })} />
@@ -398,7 +503,7 @@ export default function Chat() {
   const catalog = useApi<ChatCatalog>("/chat/harnesses");
   const projects = useApi<Project[]>("/projects");
   const sessions = useApi<ChatSession[]>("/chat/sessions", 5000);
-  const [firstPrompt, setFirstPrompt] = useState<{ id: number; text: string } | null>(null);
+  const [firstPrompt, setFirstPrompt] = useState<{ id: number; prompt: FirstPrompt } | null>(null);
   const [created, setCreated] = useState<ChatSession | null>(null);
   const current = sessions.data?.find((c) => c.id === chatId) ?? (created?.id === chatId ? created : undefined);
 
@@ -410,10 +515,10 @@ export default function Chat() {
     if (!catalog.data || !projects.data) return <ErrorNote error={catalog.error ?? projects.error} />;
     if (!catalog.data.enabled && !current) return <EnableCard onEnabled={() => void catalog.reload()} />;
     if (current) return <ActiveSession key={current.id} chat={current} harness={catalog.data.harnesses.find((h) => h.name === current.adapter)}
-      initialPrompt={firstPrompt?.id === current.id ? firstPrompt.text : null} onChanged={() => void sessions.reload()} />;
-    return <NewSession catalog={catalog.data} projects={projects.data} onCreated={(chat, text) => {
+      initialPrompt={firstPrompt?.id === current.id ? firstPrompt.prompt : null} onChanged={() => void sessions.reload()} />;
+    return <NewSession catalog={catalog.data} projects={projects.data} onCreated={(chat, prompt) => {
       setCreated(chat);
-      setFirstPrompt({ id: chat.id, text });
+      setFirstPrompt({ id: chat.id, prompt });
       void sessions.reload();
       navigate(`/chat/${chat.id}`);
     }} />;

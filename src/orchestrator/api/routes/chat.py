@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from orchestrator.api.dependencies import AUTH, SessionDep
@@ -47,6 +48,14 @@ async def close_session(chat_id: int, session: Session = SessionDep) -> dict[str
     await chat_service.close(chat_id)
     session.expire_all()
     return dump(chat_service.get(session, chat_id))
+
+
+@router.get("/chat/sessions/{chat_id}/images/{name}")
+def image(chat_id: int, name: str) -> FileResponse:
+    path = chat_service.image_path(chat_id, name)
+    if path is None:
+        raise HTTPException(404, "image not found")
+    return FileResponse(path)
 
 
 @router.get("/chat/sessions/{chat_id}/changes")
