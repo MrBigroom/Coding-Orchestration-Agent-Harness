@@ -516,3 +516,70 @@ def test_attachment_limits_cover_images_and_files_together(monkeypatch):
 )
 def test_attached_file_names_are_made_safe(name, safe):
     assert chat_service._safe_name(name) == safe
+
+
+def test_memory_suggestions_are_read_from_a_json_block_or_a_bare_array():
+    parse = chat_service.parse_memory_suggestions
+    reply = (
+        "Sure.\n```json\n"
+        '[{"category": "global", "scope": "preferences", "content": "Prefers uv."},'
+        ' {"category": "nonsense", "scope": "x", "content": "dropped"}]\n```'
+    )
+    assert [s.content for s in parse(reply)] == ["Prefers uv."]
+    bare = '[{"category": "role", "scope": "worker", "content": "Run ruff first."}]'
+    assert parse(bare)[0].scope == "worker"
+    assert parse("[]") == []
+    assert parse("I couldn't think of anything.") is None
+    many = json.dumps(
+        [{"category": "global", "scope": "patterns", "content": f"{n}"} for n in range(9)]
+    )
+    assert len(parse(many)) == chat_service.MAX_MEMORY_SUGGESTIONS
+
+
+def test_suggest_memories_asks_the_agent_and_stores_unapproved_entries(enabled, project):
+    asked = []
+
+    async def reply(self, text, images=None):
+        asked.append(text)
+        self.emit({"type": "status", "status": "busy"})
+        answer = [
+            {"category": "project", "scope": "gotchas", "content": "The API needs a token."},
+            {"category": "global", "scope": "preferences", "content": "Keep replies short."},
+        ]
+        self.emit({"type": "text", "delta": f"```json\n{json.dumps(answer)}\n```"})
+        self.emit({"type": "status", "status": "idle"})
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(MockDriver, "prompt", reply)
+        chat = start(enabled, project)
+        with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+            wait_ready(ws)
+            ws.send_json({"type": "suggest_memories"})
+            assert until(ws, "user")["text"] == "Suggest memories from this session"
+            assert "2 memory suggestions" in until(ws, "notice")["message"]
+            # The same suggestions again are not duplicated.
+            ws.send_json({"type": "suggest_memories"})
+            assert until(ws, "notice")["message"] == "No new memory suggestions."
+        enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+
+    assert '"project" (this session' in asked[0] and "JSON array" in asked[0]
+    entries = enabled.get("/api/memory", params={"status": "pending"}).json()
+    ours = [e for e in entries if e["source"] == f"chat:{chat['id']}"]
+    assert {(e["category"], e["scope"]) for e in ours} == {
+        ("project", "gotchas"),
+        ("global", "preferences"),
+    }
+    assert all(not e["approved"] for e in ours)
+    project_entry = next(e for e in ours if e["category"] == "project")
+    assert project_entry["project_slug"] == project["slug"]
+
+
+def test_suggest_memories_waits_for_the_turn_to_end(enabled):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": "write something"})
+        until(ws, "approval")  # the mock is mid-turn, waiting on an approval
+        ws.send_json({"type": "suggest_memories"})
+        assert "finish this turn" in until(ws, "error")["message"]
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
