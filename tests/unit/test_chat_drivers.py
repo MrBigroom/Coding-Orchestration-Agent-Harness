@@ -17,6 +17,7 @@ from orchestrator.adapters.chat.base import (
     DriverError,
     DriverOptions,
     Image,
+    slash_commands,
     text_of,
 )
 from orchestrator.adapters.chat.claude_stream import ClaudeDriver
@@ -46,6 +47,10 @@ for line in sys.stdin:
     def ok(data=None): out({"id": m.get("id"), "type": "response", "command": t, "success": True, "data": data})
     if t == "get_state": ok({"model": {"id": "m1", "provider": "x"}, "thinkingLevel": "low"})
     elif t == "get_available_thinking_levels": ok({"levels": ["off", "low"]})
+    elif t == "get_commands": ok({"commands": [
+        {"name": "mcp", "description": "Manage MCP servers", "source": "extension", "sourceInfo": {"source": "builtin"}},
+        {"name": "skill:tidy", "description": "Tidy imports", "source": "skill", "sourceInfo": {"source": "local"}},
+        {"name": "fix-tests", "source": "prompt", "sourceInfo": {"source": "local"}}]})
     elif t == "set_thinking_level": ok()
     elif t == "set_model":
         out({"id": m.get("id"), "type": "response", "command": t, "success": False, "error": "no such model"})
@@ -80,6 +85,7 @@ for line in sys.stdin:
             "modes": {"currentModeId": "auto", "availableModes": [{"id": "default", "name": "Default"}, {"id": "auto", "name": "Auto"}]},
             "models": {"currentModelId": "route:1", "availableModels": [{"modelId": "route:1", "name": "[Plan] qwen-a"}, {"modelId": "route:2", "name": "[Plan] qwen-b"}]},
             "configOptions": [{"id": "reasoning_effort", "category": "thought_level", "currentValue": "high", "options": [{"group": "g", "options": [{"value": "off", "name": "Off"}, {"value": "high", "name": "High"}]}]}]})
+        update({"sessionUpdate": "available_commands_update", "availableCommands": [{"name": "compress", "description": "Compress the context", "input": None}]})
     elif method in ("session/set_mode", "session/set_model", "session/set_config_option"):
         print(json.dumps({"calls": [method, p]}), file=sys.stderr, flush=True)
         ok({})
@@ -105,7 +111,9 @@ print(json.dumps(sys.argv), file=sys.stderr, flush=True)
 for line in sys.stdin:
     m = json.loads(line)
     if m["type"] == "control_request":
-        out({"type": "control_response", "response": {"subtype": "success", "request_id": m["request_id"], "response": {}}})
+        commands = [{"name": "compact", "description": "Summarize the conversation", "argumentHint": ""}]
+        reply = {"commands": commands} if m["request"]["subtype"] == "initialize" else {}
+        out({"type": "control_response", "response": {"subtype": "success", "request_id": m["request_id"], "response": reply}})
     elif m["type"] == "user":
         out({"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "hi"}}})
         out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}})
@@ -453,3 +461,61 @@ async def test_claude_sends_image_blocks_before_the_text(tmp_path):
         {"type": "text", "text": "what is this?"},
     ]
     driver._tmp.cleanup()
+
+
+def test_slash_commands_drop_slashes_duplicates_and_hidden_names():
+    long = "word " * 60
+    commands = slash_commands(
+        [
+            {"name": "/review", "description": "Review\n  the diff"},
+            {"name": "review", "description": "again"},
+            {"name": "__internal"},
+            {"name": ""},
+            "not a command",
+            {"name": "long", "description": long},
+        ]
+    )
+    assert [c["name"] for c in commands] == ["review", "long"]
+    assert commands[0]["description"] == "Review the diff"
+    assert len(commands[1]["description"]) == 160 and commands[1]["description"].endswith("…")
+    assert slash_commands(None) == []
+
+
+async def test_pi_lists_its_commands_without_builtin_dialogs(tmp_path):
+    rec = Recorder()
+    driver = PiDriver(adapter("pi", stub(tmp_path, PI_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        listed = [e["commands"] for e in rec.of("config") if "commands" in e]
+        assert listed == [
+            [
+                {"name": "skill:tidy", "description": "Tidy imports"},
+                {"name": "fix-tests", "description": ""},
+            ]
+        ]
+    finally:
+        await driver.close()
+
+
+async def test_acp_lists_the_commands_the_harness_announces(tmp_path):
+    rec = Recorder()
+    driver = AcpDriver(adapter("qwen_code", stub(tmp_path, ACP_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        config = await rec.wait(lambda e: e["type"] == "config" and "commands" in e)
+        assert config["commands"] == [{"name": "compress", "description": "Compress the context"}]
+    finally:
+        await driver.close()
+
+
+async def test_claude_lists_the_commands_from_initialize(tmp_path):
+    rec = Recorder()
+    driver = ClaudeDriver(
+        adapter("claude_cli", stub(tmp_path, CLAUDE_STUB)), options(tmp_path), rec
+    )
+    await driver.start()
+    try:
+        commands = [e["commands"] for e in rec.of("config") if "commands" in e]
+        assert commands == [[{"name": "compact", "description": "Summarize the conversation"}]]
+    finally:
+        await driver.close()

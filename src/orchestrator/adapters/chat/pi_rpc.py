@@ -11,6 +11,7 @@ from orchestrator.adapters.chat.base import (
     ChatDriver,
     DriverError,
     Image,
+    slash_commands,
     text_of,
 )
 from orchestrator.adapters.common import _n, takes_images, wants_explicit_cache
@@ -78,6 +79,7 @@ class PiDriver(ChatDriver):
             argv += ["--thinking", self.options.effort]
         await self.spawn(argv, env)
         await self._publish_config()
+        await self._publish_commands()
 
     async def _request(self, type_: str, **fields: Any) -> Any:
         assert self.process
@@ -107,6 +109,21 @@ class PiDriver(ChatDriver):
                 "images": self.images,
             }
         )
+
+    async def _publish_commands(self) -> None:
+        """Skills, prompt templates and extension commands, which Pi runs from a prompt.
+        Its built-in extension commands (`/mcp`, `/llama`) manage Pi through dialogs that
+        Chat can't show, so they're left out."""
+        try:
+            listed = await self._request("get_commands")
+        except DriverError:
+            return  # a Pi without get_commands still runs commands typed in full
+        commands = [
+            c
+            for c in listed.get("commands") or []
+            if (c.get("sourceInfo") or {}).get("source") != "builtin"
+        ]
+        self.emit({"type": "config", "commands": slash_commands(commands)})
 
     async def prompt(self, text: str, images: list[Image] | None = None) -> None:
         fields: dict[str, Any] = {"message": text}

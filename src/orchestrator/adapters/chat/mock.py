@@ -9,6 +9,10 @@ OPTIONS = [
     {"id": "allow", "label": "Allow", "tone": "allow"},
     {"id": "deny", "label": "Deny", "tone": "deny"},
 ]
+COMMANDS = [
+    {"name": "review", "description": "Review the working tree"},
+    {"name": "summarize", "description": "Summarize the session so far"},
+]
 
 
 class MockDriver(ChatDriver):
@@ -32,6 +36,7 @@ class MockDriver(ChatDriver):
                 "effort": self.options.effort,
                 "permission": self.options.permission,
                 "images": True,
+                "commands": COMMANDS,
             }
         )
 

@@ -1,5 +1,5 @@
 import { ArrowUp, Bot, ChevronRight, CircleAlert, FolderOpen, GitBranch, ImagePlus, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
@@ -7,7 +7,7 @@ import { api, del, getToken, patch, post } from "../api/client";
 import type { ChatCatalog, ChatChanges, ChatHarness, ChatSession, PermissionMode, Project } from "../api/types";
 import { Badge, ConfirmButton, Empty, ErrorNote, Field, Pre } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
-import { useChatSession, type ChatItem } from "../hooks/useChatSession";
+import { useChatSession, type ChatItem, type SlashCommand } from "../hooks/useChatSession";
 
 const ACTIVE = new Set(["busy", "awaiting_approval"]);
 const ENDED = new Set(["closed", "failed", "interrupted"]);
@@ -204,15 +204,63 @@ function PermissionSelect({ value, modes, onChange, disabled }: { value: string;
   );
 }
 
-function Composer({ onSend, onStop, working, disabled, images, placeholder, controls }: {
+/** Commands matching what's typed after a leading `/`, names starting with it first. */
+function matchCommands(commands: SlashCommand[], text: string): SlashCommand[] {
+  const typed = /^\/(\S*)$/.exec(text);
+  if (!typed) return [];
+  const query = typed[1].toLowerCase();
+  const starts = commands.filter((c) => c.name.toLowerCase().startsWith(query));
+  const contains = commands.filter((c) => !c.name.toLowerCase().startsWith(query) && c.name.toLowerCase().includes(query));
+  return [...starts, ...contains];
+}
+
+function CommandMenu({ commands, active, onPick, onHover }: {
+  commands: SlashCommand[]; active: number; onPick: (c: SlashCommand) => void; onHover: (i: number) => void;
+}) {
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => { list.current?.children[active]?.scrollIntoView({ block: "nearest" }); }, [active]);
+  return (
+    <ul ref={list} id="slash-commands" role="listbox" aria-label="Commands"
+      className="absolute inset-x-0 bottom-full mb-2 max-h-72 overflow-y-auto rounded-xl border border-line-strong bg-panel p-1 shadow-(--shadow-card)">
+      {commands.map((c, i) => (
+        <li key={c.name} id={`slash-${i}`} role="option" aria-selected={i === active}
+          className={`cursor-pointer rounded-lg px-3 py-2 ${i === active ? "bg-accent-soft" : ""}`}
+          onMouseDown={(e) => { e.preventDefault(); onPick(c); }} onMouseEnter={() => onHover(i)}>
+          <div className="mono text-sm">/{c.name}</div>
+          {c.description && <div className="truncate text-xs text-muted">{c.description}</div>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Composer({ onSend, onStop, working, disabled, images, commands = [], placeholder, controls }: {
   onSend: (text: string, images: PromptImage[]) => void; onStop?: () => void; working: boolean; disabled?: boolean;
-  images: boolean | undefined; placeholder: string; controls: ReactNode;
+  images: boolean | undefined; commands?: SlashCommand[]; placeholder: string; controls: ReactNode;
 }) {
   const [text, setText] = useState("");
   const [attached, setAttached] = useState<Attachment[]>([]);
   const [problem, setProblem] = useState("");
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   const canAttach = images !== false;
+  const matches = useMemo(() => matchCommands(commands, text), [commands, text]);
+  const menuOpen = !disabled && !dismissed && matches.length > 0;
+
+  const edit = (value: string) => { setText(value); setActive(0); setDismissed(false); };
+  const pick = (command: SlashCommand) => { edit(`/${command.name} `); box.current?.focus(); };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (menuOpen) {
+      const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+      if (step) { e.preventDefault(); setActive((i) => (i + step + matches.length) % matches.length); return; }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pick(matches[active]); return; }
+      if (e.key === "Escape") { e.preventDefault(); setDismissed(true); return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  };
 
   const add = async (files: File[]) => {
     const wanted = files.filter((f) => IMAGE_TYPES.includes(f.type));
@@ -243,7 +291,7 @@ function Composer({ onSend, onStop, working, disabled, images, placeholder, cont
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-5">
-      <div className="rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent"
+      <div className="relative rounded-2xl border border-line-strong bg-panel shadow-(--shadow-card) focus-within:border-accent"
         onDragOver={(e) => { if (canAttach && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
         onDrop={(e) => { if (!canAttach || disabled) return; e.preventDefault(); void add(files(e.dataTransfer.files)); }}>
         {attached.length > 0 && (
@@ -256,8 +304,11 @@ function Composer({ onSend, onStop, working, disabled, images, placeholder, cont
             ))}
           </div>
         )}
-        <textarea aria-label="Message" rows={3} className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 text-base outline-none placeholder:text-muted disabled:opacity-60"
-          placeholder={placeholder} value={text} disabled={disabled} onChange={(e) => setText(e.target.value)}
+        {menuOpen && <CommandMenu commands={matches} active={active} onPick={pick} onHover={setActive} />}
+        <textarea ref={box} aria-label="Message" rows={3} className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pt-3 text-base outline-none placeholder:text-muted disabled:opacity-60"
+          role="combobox" aria-expanded={menuOpen} aria-controls={menuOpen ? "slash-commands" : undefined} aria-autocomplete="list"
+          aria-activedescendant={menuOpen ? `slash-${active}` : undefined}
+          placeholder={placeholder} value={text} disabled={disabled} onChange={(e) => edit(e.target.value)} onBlur={() => setDismissed(true)}
           onPaste={(e) => {
             const pasted = files(e.clipboardData.files).filter((f) => IMAGE_TYPES.includes(f.type));
             if (!pasted.length) return;
@@ -265,7 +316,7 @@ function Composer({ onSend, onStop, working, disabled, images, placeholder, cont
             if (canAttach) void add(pasted);
             else setProblem("This model doesn't take images.");
           }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }} />
+          onFocus={() => setDismissed(false)} onKeyDown={onKeyDown} />
         {problem && <p className="px-4 pb-1 text-xs text-warn">{problem}</p>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-3 pt-1">
           {canAttach && <>
@@ -470,7 +521,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
             A standalone run is answering its own approvals, so it can't take instructions.
             <button className="btn" disabled={locked} onClick={() => send({ type: "interrupt" })}>Stop run</button>
           </div>
-        : <Composer working={working} disabled={locked} images={config.images} onSend={(text, images) => send({ type: "prompt", text, images })} onStop={() => send({ type: "interrupt" })}
+        : <Composer working={working} disabled={locked} images={config.images} commands={config.commands} onSend={(text, images) => send({ type: "prompt", text, images })} onStop={() => send({ type: "interrupt" })}
             placeholder={working ? "Send more instructions…" : "Message the agent. Shift+Enter for a new line."}
             controls={<>
               <ModelSelect value={config.model ?? chat.model ?? ""} models={models} disabled={locked || status === "starting"} onChange={(value) => send({ type: "set_model", value })} />
