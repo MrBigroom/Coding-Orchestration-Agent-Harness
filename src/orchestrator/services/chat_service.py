@@ -23,6 +23,7 @@ from orchestrator.core.config import get_settings
 from orchestrator.core.db import session_scope
 from orchestrator.core.logging import get_logger
 from orchestrator.core.models import (
+    Agent,
     ChatSession,
     ChatStatus,
     HarnessAdapter,
@@ -31,7 +32,12 @@ from orchestrator.core.models import (
     utcnow,
 )
 from orchestrator.core.schemas import ChatSessionCreate
-from orchestrator.services import adapter_service, git_service, settings_service
+from orchestrator.services import (
+    adapter_service,
+    agent_service,
+    git_service,
+    settings_service,
+)
 from orchestrator.utils.git import run_git, status_porcelain
 from orchestrator.utils.redaction import redact
 from orchestrator.utils.slug import slugify
@@ -79,9 +85,10 @@ def history(chat_id: int) -> list[dict[str, Any]]:
 
 
 class LiveSession:
-    def __init__(self, chat_id: int, standalone: bool = False) -> None:
+    def __init__(self, chat_id: int, standalone: bool = False, preamble: str = "") -> None:
         self.id = chat_id
         self.standalone = standalone  # nobody is attached; standalone_service answers for it
+        self.preamble = preamble  # goes ahead of the first message, and stays off the transcript
         self.driver: ChatDriver | None = None
         self.status: str = ChatStatus.starting
         self.subscribers: set[asyncio.Queue] = set()
@@ -227,6 +234,8 @@ class LiveSession:
 
     async def _send(self, text: str) -> None:
         assert self.driver
+        if self.preamble:
+            text, self.preamble = f"{self.preamble}\n\nRequest:\n{text}", ""
         try:
             await self.driver.prompt(text)
         except DriverError as e:
@@ -288,17 +297,19 @@ def _require_enabled(session: Session) -> None:
         raise ChatDisabled("interactive sessions are off (allow_interactive_sessions=false)")
 
 
-def _models_for(session: Session, adapter_name: str) -> list[str]:
-    """Enabled profiles whose harness route includes this adapter, workers first."""
+def _models_for(session: Session, row: HarnessAdapter) -> list[str]:
+    """Enabled profiles whose harness route includes this adapter, workers first, then any
+    models the harness always offers."""
     routes = adapter_service.harness_routes(session)
     profiles = session.exec(select(ModelProfile).where(ModelProfile.enabled)).all()
     ranked = sorted(profiles, key=lambda p: p.role != "worker")
     names = [
         p.model_name
         for p in ranked
-        if adapter_name in adapter_service.route_for(routes, p.name, p.model_name)
+        if row.name in adapter_service.route_for(routes, p.name, p.model_name)
     ]
-    return list(dict.fromkeys(names))
+    profile = HARNESSES.get(row.kind)
+    return list(dict.fromkeys([*names, *(profile.models if profile else [])]))
 
 
 def harness_problem(session: Session, adapter_name: str) -> str | None:
@@ -327,7 +338,7 @@ def harnesses(session: Session) -> dict[str, Any]:
         if row.kind == "mock":
             models = ["mock-worker"]
         elif profile and profile.uses_profile_models:
-            models = _models_for(session, row.name)
+            models = _models_for(session, row)
         out.append(
             {
                 "name": row.name,
@@ -382,6 +393,13 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
         project = session.get(Project, body.project_id)
         if not project:
             raise KeyError(f"project {body.project_id} not found")
+    agent = None
+    if body.agent_id is not None:
+        agent = session.get(Agent, body.agent_id)
+        if not agent:
+            raise KeyError(f"agent {body.agent_id} not found")
+        if not agent.enabled:
+            raise ChatError(f"agent {agent.name!r} is disabled")
     row = adapter_service.get_row(session, body.adapter)
     profile = HARNESSES.get(row.kind)
     permission = body.permission or (profile.default_permission if profile else None)
@@ -395,6 +413,7 @@ async def create(session: Session, body: ChatSessionCreate) -> ChatSession:
         effort=body.effort,
         permission=permission,
         workspace=body.workspace if project else "folder",
+        agent=agent,
     )
 
 
@@ -411,6 +430,7 @@ async def open_session(
     folder: Path | None = None,
     standalone: bool = False,
     output_dir: Path | None = None,
+    agent: Agent | None = None,
 ) -> ChatSession:
     """Create a session row and workspace, and start the harness."""
     row = adapter_service.get_row(session, adapter)
@@ -423,7 +443,7 @@ async def open_session(
     if not profile.uses_profile_models:
         model = None
     elif not model:
-        known = ["mock-worker"] if row.kind == "mock" else _models_for(session, row.name)
+        known = ["mock-worker"] if row.kind == "mock" else _models_for(session, row)
         model = known[0] if known else None
     chat = ChatSession(
         title=title,
@@ -434,6 +454,7 @@ async def open_session(
         permission=permission,
         workspace=workspace,
         standalone=standalone,
+        agent_name=agent.name if agent else None,
         cwd=project.path if project else str(folder or ""),
     )
     session.add(chat)
@@ -450,7 +471,9 @@ async def open_session(
     session.commit()
     session.refresh(chat)
 
-    live = LiveSession(chat.id, standalone)
+    live = LiveSession(
+        chat.id, standalone, agent_service.instructions_block(agent) if agent else ""
+    )
     manager.live[chat.id] = live
     options = DriverOptions(
         cwd=Path(chat.cwd),
@@ -458,7 +481,7 @@ async def open_session(
         model=model,
         effort=effort,
         permission=permission,
-        models=_models_for(session, row.name) if profile.uses_profile_models else [],
+        models=_models_for(session, row) if profile.uses_profile_models else [],
         output_dir=output_dir,
     )
     live.spawn(live.start(profile.driver(harness, options, live.emit)))

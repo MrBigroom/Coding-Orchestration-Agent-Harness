@@ -373,6 +373,7 @@ class TimestampedOut(ORMModel):
 
 class ChatSessionCreate(BaseModel):
     project_id: int | None = None  # empty: the session gets its own empty folder
+    agent_id: int | None = None  # its instructions go ahead of the first message
     adapter: str
     model: str | None = None
     effort: str | None = None

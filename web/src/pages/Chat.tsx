@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronRight, CircleAlert, FolderOpen, GitBranch, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert } from "lucide-react";
+import { ArrowUp, Bot, ChevronRight, CircleAlert, FolderOpen, GitBranch, MessageSquarePlus, ShieldAlert, Square, Terminal, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, del, patch, post } from "../api/client";
@@ -192,16 +192,35 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
   const [effort, setEffort] = useState(harness?.default_effort ?? "");
   const [permission, setPermission] = useState(harness?.default_permission ?? "");
   const [workspace, setWorkspace] = useState<"worktree" | "checkout">("worktree");
+  const [agentId, setAgentId] = useState<number | null>(null);
+  const agent = catalog.agents.find((a) => a.id === agentId);
   const act = useAction();
 
-  const pick = (h: ChatHarness) => {
+  const pick = (h: ChatHarness, wanted?: string | null) => {
     setName(h.name);
-    setModel(h.models[0] ?? "");
+    setModel(wanted ?? h.models[0] ?? "");
     setEffort(h.default_effort ?? "");
     setPermission(h.default_permission ?? "");
   };
+  // Agents start from their own route; you can still change any of it below.
+  const pickAgent = (id: number | null) => {
+    setAgentId(id);
+    const a = catalog.agents.find((x) => x.id === id);
+    const h = catalog.harnesses.find((x) => x.name === a?.adapter);
+    if (!a || !h) return;
+    pick(h, h.models.length ? a.model : "");
+    if (projects.some((p) => p.id === a.project_id) || a.project_id === null) setProjectId(a.project_id);
+  };
+  // Claude models live on Claude Code, so choosing one from another harness moves there.
+  const claudeHarness = catalog.harnesses.find((h) => h.kind === "claude_cli");
+  const claude = claudeHarness?.available ? claudeHarness : undefined;
+  const otherModels = claude && claude.name !== name ? claude.models : [];
+  const pickModel = (id: string) => {
+    if (claude && otherModels.includes(id)) pick(claude, id);
+    else setModel(id);
+  };
   const start = (text: string) => act.run(async () => {
-    const chat = await post<ChatSession>("/chat/sessions", { project_id: projectId, adapter: name, model: model || null, effort: effort || null, permission: permission || null, workspace });
+    const chat = await post<ChatSession>("/chat/sessions", { project_id: projectId, agent_id: agentId, adapter: name, model: model || null, effort: effort || null, permission: permission || null, workspace });
     onCreated(chat, text);
   });
 
@@ -211,7 +230,13 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
         <h1 className="mb-1 text-2xl font-bold tracking-tight">New session</h1>
         <p className="mb-5 text-sm text-ink-2">Talk to a coding harness directly. Sessions stay outside the task pipeline, so nothing here is reviewed for you.</p>
         <ErrorNote error={act.error} />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Agent">
+            <select className="input" value={agentId ?? ""} onChange={(e) => pickAgent(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">No agent</option>
+              {catalog.agents.map((a) => <option key={a.id} value={a.id} disabled={!a.adapter} title={a.problem ?? undefined}>{a.name}{a.adapter ? "" : " (unavailable)"}</option>)}
+            </select>
+          </Field>
           <Field label="Project">
             <select className="input" value={projectId ?? ""} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">No project</option>
@@ -232,13 +257,15 @@ function NewSession({ catalog, projects, onCreated }: { catalog: ChatCatalog; pr
                 </select>}
           </Field>
         </div>
+        {agent && <p className="mt-2 text-xs text-muted">Its instructions go ahead of your first message. {agent.description}</p>}
         {harness?.note && <p className="mt-2 text-xs text-muted">{harness.note}</p>}
+        {claudeHarness && !claude && <p className="mt-2 text-xs text-muted">Claude models aren't available. {claudeHarness.reason}</p>}
         {projectId === null && <p className="mt-2 text-xs text-muted">The agent starts in a new empty folder, which is deleted with the session. The folder isn't a sandbox: the permission mode decides what it can reach elsewhere.</p>}
         {projectId !== null && workspace === "checkout" && <p className="mt-2 flex items-center gap-1.5 text-xs text-warn"><TriangleAlert size={14} aria-hidden="true" />The agent will change your project's files directly, with no branch to review or discard.</p>}
       </div>
       <Composer working={false} disabled={act.busy || !harness?.available} onSend={(t) => void start(t)} placeholder="What should the agent do? Enter to start, Shift+Enter for a new line."
         controls={harness && <>
-          <ModelSelect value={model} models={harness.models.map((m) => ({ id: m, name: m }))} onChange={setModel} />
+          <ModelSelect value={model} models={[...harness.models.map((m) => ({ id: m, name: m })), ...otherModels.map((m) => ({ id: m, name: `${m} (Claude Code)` }))]} onChange={pickModel} />
           <EffortSlider value={effort} efforts={harness.efforts} onChange={setEffort} />
           <PermissionSelect value={permission} modes={harness.permissions} onChange={setPermission} />
         </>} />
@@ -307,6 +334,7 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-6 py-3">
         <h1 className="min-w-0 max-w-md truncate text-sm font-semibold">{chat.title || "New session"}</h1>
         <Badge value={status} tone={status === "awaiting_approval" ? "warn" : status === "idle" ? "ok" : undefined} />
+        {chat.agent_name && <span className="flex items-center gap-1 text-xs text-muted"><Bot size={13} aria-hidden="true" />{chat.agent_name}</span>}
         <span className="text-xs text-muted">{chat.adapter}</span>
         {chat.branch_name
           ? <span className="mono flex items-center gap-1 text-xs text-muted"><GitBranch size={13} aria-hidden="true" />{chat.branch_name}</span>
@@ -402,7 +430,7 @@ export default function Chat() {
               <div className="truncate text-sm">{c.title || "New session"}</div>
               <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.status === "awaiting_approval" ? "bg-warn" : ACTIVE.has(c.status) ? "bg-accent" : c.status === "failed" ? "bg-bad" : ENDED.has(c.status) ? "bg-line-strong" : "bg-ok"}`} />
-                {c.adapter}
+                <span className="truncate">{c.agent_name ? `${c.agent_name} · ${c.adapter}` : c.adapter}</span>
               </div>
             </button>
           ))}

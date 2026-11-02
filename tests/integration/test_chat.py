@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from orchestrator.adapters.chat.mock import MockDriver
 from orchestrator.core import config as config_mod
 from orchestrator.core.security import same_origin_ok
 from orchestrator.services import chat_service
@@ -209,6 +210,69 @@ def test_session_without_a_project(enabled):
     enabled.post(f"/api/chat/sessions/{chat['id']}/close")
     assert enabled.delete(f"/api/chat/sessions/{chat['id']}").status_code == 204
     assert not folder.exists()
+
+
+def test_session_as_an_agent(enabled, project):
+    body = {"name": "helper", "instructions": "Be brief.", "harness_adapter": "mock"}
+    agent = enabled.post("/api/agents", json=body).json()
+    choice = next(
+        a for a in enabled.get("/api/chat/harnesses").json()["agents"] if a["name"] == "helper"
+    )
+    assert choice["adapter"] == "mock"
+
+    sent = []
+    original = MockDriver.prompt
+
+    async def record(self, text):
+        sent.append(text)
+        await original(self, text)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(MockDriver, "prompt", record)
+        chat = start(enabled, project, agent_id=agent["id"])
+        assert chat["agent_name"] == "helper"
+        with enabled.websocket_connect(f"/ws/chat/{chat['id']}", headers=HOST) as ws:
+            wait_ready(ws)
+            for text in ("first", "second"):
+                ws.send_json({"type": "prompt", "text": text})
+                approval = until(ws, "approval")
+                ws.send_json({"type": "approval", "id": approval["id"], "choice": "deny"})
+                until(ws, "status", status="idle")
+
+    # Sent once, and never shown as something you typed.
+    assert sent == ["Agent instructions (helper):\nBe brief.\n\nRequest:\nfirst", "second"]
+    row = enabled.get(f"/api/chat/sessions/{chat['id']}").json()
+    assert row["title"] == "first"
+    typed = [e["text"] for e in chat_service.history(chat["id"]) if e["type"] == "user"]
+    assert typed == ["first", "second"]
+
+    # The name outlives the agent.
+    assert enabled.delete(f"/api/agents/{agent['id']}").status_code < 300
+    assert enabled.get(f"/api/chat/sessions/{chat['id']}").json()["agent_name"] == "helper"
+
+
+def test_disabled_or_unknown_agent_is_rejected(enabled, project):
+    body = {"name": "off", "harness_adapter": "mock", "enabled": False}
+    agent = enabled.post("/api/agents", json=body).json()
+    enabled.patch(f"/api/agents/{agent['id']}", json={"enabled": False})
+    names = [a["name"] for a in enabled.get("/api/chat/harnesses").json()["agents"]]
+    assert "off" not in names
+    payload = {"project_id": project["id"], "adapter": "mock"}
+    r = enabled.post("/api/chat/sessions", json={**payload, "agent_id": agent["id"]})
+    assert r.status_code == 400
+    r = enabled.post("/api/chat/sessions", json={**payload, "agent_id": 999})
+    assert r.status_code == 404
+
+
+def test_claude_offers_every_model_even_without_a_profile(enabled):
+    claude = next(
+        h
+        for h in enabled.get("/api/chat/harnesses").json()["harnesses"]
+        if h["kind"] == "claude_cli"
+    )
+    assert {"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"} <= set(
+        claude["models"]
+    )
 
 
 def test_unknown_project_is_rejected(enabled):

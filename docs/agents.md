@@ -3,7 +3,8 @@
 An **agent** is a saved, reusable definition: a name, standing instructions, a model
 profile, and optionally a project and a harness. Running it, by hand or from a pipeline
 schedule, creates a task that goes through the same machinery as a task you create yourself.
-A [standalone schedule](#standalone-runs) runs the agent on its own instead.
+A [standalone schedule](#standalone-runs) runs the agent on its own instead, and you can also
+[chat with an agent](chat.md#chatting-with-an-agent) directly.
 
 ## What a run does
 

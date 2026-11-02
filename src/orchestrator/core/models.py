@@ -338,6 +338,8 @@ class ChatSession(SQLModel, table=True):
     # "folder" (no project). Standalone runs also use "snapshot" (detached worktree).
     workspace: str = "worktree"
     standalone: bool = False
+    # A name rather than a link, so the transcript keeps it if the agent is deleted.
+    agent_name: str | None = None
     cwd: str
     branch_name: str | None = None
     status: str = Field(

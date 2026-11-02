@@ -183,3 +183,10 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   edit its own transcript by accident and deleting the session removes both. We chose a new
   empty folder over letting you pick any path, because a chosen folder would need its own
   checks and would turn Delete into a question of whose files those are.
+
+- **2026-11-02 — Chat sessions can run as an agent (revision `0007_chat_agents`).** Instructions
+  go ahead of the first message rather than through each harness's system prompt option,
+  because that works the same on every harness and matches batch runs. `chat_sessions` stores
+  `agent_name`, not a link, so deleting an agent stays simple and old transcripts keep the name.
+  Claude Code now always offers the current Claude models, because Chat's list otherwise only
+  held models that a profile happened to name.

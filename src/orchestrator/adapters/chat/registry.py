@@ -32,6 +32,8 @@ class HarnessProfile:
     note: str | None = None
     # Starting permission mode for standalone runs, by access level.
     unattended: dict[str, str] = field(default_factory=dict)
+    # Models offered whether or not a profile names them.
+    models: list[str] = field(default_factory=list)
 
 
 YOLO = "Runs every tool without asking."
@@ -97,7 +99,9 @@ HARNESSES: dict[str, HarnessProfile] = {
         "manual",
         ["low", "medium", "high", "xhigh", "max"],
         "medium",
+        note="Claude models run through Claude Code on your subscription.",
         unattended={"read": "manual", "write": "manual"},
+        models=["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     ),
     "mock": HarnessProfile(
         MockDriver,

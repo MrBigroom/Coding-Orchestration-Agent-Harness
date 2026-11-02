@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from orchestrator.api.dependencies import AUTH, SessionDep
 from orchestrator.core.schemas import ChatSessionCreate
-from orchestrator.services import chat_service
+from orchestrator.services import chat_service, standalone_service
 
 router = APIRouter(dependencies=AUTH)
 
@@ -21,7 +21,7 @@ def dump(chat: Any) -> dict[str, Any]:
 
 @router.get("/chat/harnesses")
 def harnesses(session: Session = SessionDep) -> dict[str, Any]:
-    return chat_service.harnesses(session)
+    return {**chat_service.harnesses(session), "agents": standalone_service.chat_choices(session)}
 
 
 @router.get("/chat/sessions")

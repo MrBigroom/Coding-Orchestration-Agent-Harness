@@ -250,6 +250,7 @@ export interface ChatSession {
   title: string;
   project_id: number | null;
   standalone: boolean;
+  agent_name: string | null;
   adapter: string;
   model: string | null;
   effort: string | null;
@@ -291,9 +292,20 @@ export interface ChatHarness {
   note: string | null;
 }
 
+export interface ChatAgent {
+  id: number;
+  name: string;
+  description: string;
+  project_id: number | null;
+  adapter: string | null;
+  model: string | null;
+  problem: string | null;
+}
+
 export interface ChatCatalog {
   enabled: boolean;
   harnesses: ChatHarness[];
+  agents: ChatAgent[];
 }
 
 export interface ChatChanges {

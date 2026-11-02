@@ -82,8 +82,8 @@ def output_folder(agent: Agent) -> Path:
 
 def build_prompt(agent: Agent, request: str, access: str, output: Path) -> str:
     parts = []
-    if agent.instructions.strip():
-        parts.append(f"Agent instructions ({agent.name}):\n{agent.instructions.strip()}")
+    if block := agent_service.instructions_block(agent):
+        parts.append(block)
     parts.append(f"Request:\n{request.strip()}")
     parts.append(
         "This is a scheduled run and nobody is watching it, so you can't ask questions or "
@@ -137,6 +137,29 @@ def _route(session: Session, agent: Agent) -> tuple[str, str]:
     role = Role.agent if draft.kind == TaskKind.agent else Role.worker
     profile = provider_service.choose_profile(session, draft, role).profile
     return _harness(session, agent, profile), profile.model_name
+
+
+def chat_choices(session: Session) -> list[dict[str, Any]]:
+    """Agents the Chat page can start a session as, with the route each one would take."""
+    choices = []
+    for agent in agent_service.list_agents(session):
+        if not agent.enabled:
+            continue
+        choice = {
+            "id": agent.id,
+            "name": agent.name,
+            "description": agent.description,
+            "project_id": agent.project_id,
+            "adapter": None,
+            "model": None,
+            "problem": None,
+        }
+        try:
+            choice["adapter"], choice["model"] = _route(session, agent)
+        except (StandaloneError, ProviderError) as e:
+            choice["problem"] = str(e)
+        choices.append(choice)
+    return choices
 
 
 def _skip_reason(

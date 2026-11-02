@@ -13,7 +13,7 @@ in Settings. [security.md](security.md#interactive-sessions-chat) explains why.
 ## Using it
 
 Pick a project (or **No project**), harness, workspace, model, effort and permission mode, then
-send a message.
+send a message. You can also pick an agent; see [Chatting with an agent](#chatting-with-an-agent).
 **Enter** sends and **Shift+Enter** adds a line.
 
 - **Model, effort and permission** can change during a session, except where noted below.
@@ -36,6 +36,25 @@ send a message.
   that variable in a `.env` file.
 - **No project:** the agent starts in a new empty folder, `<home>/chats/<id>/workspace`, shown
   in the session header. It isn't a git repository, so there's no branch, **Changes** or merge.
+
+## Chatting with an agent
+
+Choosing a saved agent under **Agent** fills in its project, harness and model, which you can
+still change. Its instructions go ahead of your first message, so the agent keeps them for the
+whole session, but they stay out of the transcript. The agent's name shows on the session.
+
+Unlike a [standalone run](agents.md#standalone-runs), you're there to answer approvals, so a
+chat with an agent uses the permission mode you pick. Editing an agent doesn't change sessions
+already under way. Disabled agents aren't listed, and an agent with no usable harness shows as
+unavailable.
+
+## Claude models
+
+The model list offers Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, whether or not a profile
+names them. They run through Claude Code, so picking one while another harness is selected
+moves the session to Claude Code. A running session can't change harness. Claude models need
+the `claude_cli` adapter turned on in Adapters. Fable 5.1 also needs usage credits on your Claude
+plan; without them, the session shows Claude Code's error and you can switch model.
 
 ## Harnesses
 
