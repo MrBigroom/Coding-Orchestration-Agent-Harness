@@ -116,7 +116,7 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `{timestamp, phase, task_id, run_id, role, event, details, commit_sha}`. Events include
 `task_status`, `run_created`, `worktree_created`, `recovery_commit`, `run_failed`,
 `run_timeout`, `supervisor_verification`, `architect_review`, `nits_deferred`,
-`merge_candidate`, `merged`, `merge_refused`, `schedule_fired`, `escalated`,
+`merge_candidate`, `merged`, `merge_refused`, `schedule_fired`, `standalone_run`, `escalated`,
 `human_accept`. The GUI Build Log page and `GET /api/build-log` read it.
 
 ## Branch strategy

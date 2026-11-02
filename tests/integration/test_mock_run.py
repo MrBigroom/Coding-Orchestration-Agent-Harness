@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from orchestrator.adapters.mock_harness import MockHarnessAdapter
 from orchestrator.core.models import Review, Verification
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import (
@@ -93,6 +94,20 @@ def test_failure_and_timeout_return_task_to_planned(session, project):
     assert outcome["status"] == "failed" and task.status == "planned"
     task2, outcome2 = _run(session, project, ["mock-timeout"], phase=3)
     assert outcome2["status"] == "timeout" and task2.status == "planned"
+
+
+def test_adapter_error_with_exit_zero_fails_the_run(session, project, monkeypatch):
+    original = MockHarnessAdapter.run
+
+    async def cut_off(self, ctx, runner):
+        result = await original(self, ctx, runner)
+        result.error = "Pi stopped early (stopReason: length) without a handoff"
+        return result
+
+    monkeypatch.setattr(MockHarnessAdapter, "run", cut_off)
+    task, outcome = _run(session, project, ["mock"], phase=2)
+    assert outcome["status"] == "failed" and task.status == "planned"
+    assert "stopReason: length" in outcome["error"]
 
 
 def test_changes_requested_requeues_then_blocks_after_round_limit(session, project):

@@ -12,7 +12,8 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
     """Qwen Code. The binary is `qwen` (not `qwen-code`); headless mode is
     `qwen -p "<prompt>"` and `-o json` prints a result object with token usage.
 
-    Experimental: checked against Qwen Code 0.26.1 on 2026-10-26 with a local mock API.
+    Experimental: checked against Qwen Code 0.26.1 on 2026-10-26 with a local mock API,
+    and against 0.25.1 on Qwen Cloud's Token Plan on 2026-11-01.
     - `--approval-mode auto-edit` alone hides the shell tool in `-p` mode, so the worker
       could not run tests or commit. `--allowed-tools run_shell_command` restores it and
       auto-approves shell commands inside the isolated worktree.
@@ -23,6 +24,10 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
     - The endpoint comes from `capabilities.provider` (default: QWEN_API_KEY +
       QWEN_OPENAI_BASE_URL, i.e. the Token Plan), mapped to Qwen Code's OPENAI_* variables.
       Set `capabilities.provider` to null to use your own ~/.qwen auth instead.
+    - Managed runs use an isolated temporary HOME: `modelProviders` in ~/.qwen/settings.json
+      would otherwise override that endpoint and key, and its MCP servers would be loaded.
+    - Stdout goes to a file, because everything past 64 KiB is lost on a pipe. `-o json`
+      prints one line at exit, and that line holds the usage and the final message.
     """
 
     kind = "qwen_code"
@@ -54,6 +59,7 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
     default_capabilities = {"disable_auto_memory": True}
     description = "Alibaba Qwen harness; preferred for `qwen`-tagged tasks."
     verify_hint = "qwen --version && qwen --help"
+    stdout_to_file = True
 
     def prepare(self, ctx: RunContext, tmp: Path) -> dict[str, str]:
         env: dict[str, str] = {}
@@ -70,6 +76,7 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
         if prov and key:
             env["OPENAI_API_KEY"] = key
             env["OPENAI_BASE_URL"] = prov["base_url"]
+            env["HOME"] = str(tmp)
             if ctx.model:
                 env["OPENAI_MODEL"] = ctx.model
         return env

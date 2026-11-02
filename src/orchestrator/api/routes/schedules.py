@@ -1,8 +1,9 @@
-"""Cron schedules."""
+"""Cron and one-time schedules."""
 
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
@@ -22,7 +23,9 @@ def dump(obj: Any) -> dict[str, Any]:
 
 
 class CronCheck(BaseModel):
-    cron_expression: str
+    cron_expression: str = ""
+    run_at: datetime | None = None
+    timezone: str = "UTC"
     agent_id: int | None = None
     model_profile: str | None = None
 
@@ -47,9 +50,11 @@ def update_schedule(
 
 
 @router.post("/schedules/{schedule_id}/run")
-def run_schedule(schedule_id: int, session: Session = SessionDep) -> dict[str, Any]:
-    task = scheduler_service.fire(session, scheduler_service.get(session, schedule_id))
-    return dump(task)
+async def run_schedule(schedule_id: int, session: Session = SessionDep) -> dict[str, Any]:
+    sched = scheduler_service.get(session, schedule_id)
+    if sched.run_mode == "standalone":
+        return dump(await scheduler_service.fire_standalone(session, sched))
+    return dump(scheduler_service.fire(session, sched))
 
 
 @router.delete("/schedules/{schedule_id}", status_code=204)
@@ -61,7 +66,11 @@ def delete_schedule(schedule_id: int, session: Session = SessionDep) -> None:
 @router.post("/schedules/validate")
 def validate(body: CronCheck, session: Session = SessionDep) -> dict[str, Any]:
     try:
-        times = scheduler_service.validate_cron(body.cron_expression)
+        if body.run_at:
+            when = scheduler_service.run_time(body.run_at, body.timezone)
+            scheduler_service.check_run_time(when)
+            return {"valid": True, "next_runs": [when.isoformat()], "warning": None}
+        times = scheduler_service.validate_cron(body.cron_expression, timezone=body.timezone)
         warning = scheduler_service.token_plan_warning(
             session, body.cron_expression, body.agent_id, body.model_profile
         )

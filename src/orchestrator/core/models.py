@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Column, String, Text
+from sqlalchemy import JSON, Column, Index, String, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -86,6 +86,26 @@ class Role(StrEnum):
     worker = "worker"
     reviewer = "reviewer"
     agent = "agent"
+
+
+class StandaloneStatus(StrEnum):
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    timeout = "timeout"
+    stopped = "stopped"
+    skipped = "skipped"
+    interrupted = "interrupted"
+
+
+class ChatStatus(StrEnum):
+    starting = "starting"
+    idle = "idle"
+    busy = "busy"
+    awaiting_approval = "awaiting_approval"
+    closed = "closed"
+    failed = "failed"
+    interrupted = "interrupted"
 
 
 class MemoryCategory(StrEnum):
@@ -235,10 +255,17 @@ class Schedule(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
+    # Empty for a one-time schedule, which sets run_at instead.
     cron_expression: str
+    run_at: datetime | None = None
+    timezone: str = "UTC"  # IANA name; the cron's hours are read in this zone
     task_template_json: dict[str, Any] = _json({})
     # When set, each fire runs this saved agent with the template's description as the request.
     agent_id: int | None = Field(default=None, index=True)
+    # "pipeline" creates a task; "standalone" runs the agent on its own (agent schedules only).
+    run_mode: str = "pipeline"
+    access: str = "read"  # standalone only: "read" or "write"
+    time_limit_minutes: int = 30  # standalone only
     enabled: bool = True
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
@@ -293,6 +320,37 @@ class HarnessAdapter(SQLModel, table=True):
     notes: str | None = Field(default=None, sa_column=Column(Text))
 
 
+class ChatSession(SQLModel, table=True):
+    """An interactive harness session. The transcript lives in
+    <home>/chats/<id>/events.jsonl; this row holds what lists and controls need."""
+
+    __tablename__ = "chat_sessions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = ""
+    # Empty for a session with no project, or a standalone run of an agent with none.
+    project_id: int | None = Field(default=None, foreign_key="projects.id", index=True)
+    adapter: str
+    model: str | None = None
+    effort: str | None = None
+    permission: str | None = None
+    # "worktree" (isolated branch, the default), "checkout" (the project's own files) or
+    # "folder" (no project). Standalone runs also use "snapshot" (detached worktree).
+    workspace: str = "worktree"
+    standalone: bool = False
+    # A name rather than a link, so the transcript keeps it if the agent is deleted.
+    agent_name: str | None = None
+    cwd: str
+    branch_name: str | None = None
+    status: str = Field(
+        default=ChatStatus.starting, sa_column=Column(String(32), nullable=False, index=True)
+    )
+    usage: dict[str, Any] = _json({})
+    error: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class MemoryEntry(SQLModel, table=True):
     __tablename__ = "memory_entries"
 
@@ -331,3 +389,64 @@ class Setting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value_json: Any = Field(default=None, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SyncEntity(SQLModel, table=True):
+    """Maps a local row to its portable cloud identity and synchronization version."""
+
+    __tablename__ = "sync_entities"
+    __table_args__ = (
+        Index("ix_sync_entities_entity_type_local_id", "entity_type", "local_id", unique=True),
+    )
+
+    uuid: str = Field(primary_key=True)
+    entity_type: str = Field(index=True)
+    local_id: str
+    payload_hash: str
+    synced_hash: str | None = None
+    version: int = 1
+    synced_version: int = 0
+    dirty: bool = True
+    origin_device: str = ""
+    modified_at: datetime = Field(default_factory=utcnow)
+    synced_at: datetime | None = None
+    conflict_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+
+class SyncState(SQLModel, table=True):
+    """Device-local synchronization cursors and configuration; never cloud-synchronized."""
+
+    __tablename__ = "sync_state"
+
+    key: str = Field(primary_key=True)
+    value_json: Any = Field(default=None, sa_column=Column(JSON))
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StandaloneRun(SQLModel, table=True):
+    """One run of an agent outside the task pipeline. Its transcript is the linked chat
+    session and its report is a Markdown file in the agent's output folder."""
+
+    __tablename__ = "standalone_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    agent_id: int = Field(index=True)
+    schedule_id: int | None = Field(default=None, index=True)
+    chat_id: int | None = None
+    title: str = ""
+    access: str = "read"
+    adapter: str | None = None
+    model: str | None = None
+    status: str = Field(
+        default=StandaloneStatus.running, sa_column=Column(String(32), nullable=False, index=True)
+    )
+    report_path: str | None = None
+    summary: str = Field(default="", sa_column=Column(Text, nullable=False))
+    files: list[str] = _json([])
+    blocked: list[str] = _json([])
+    usage: dict[str, Any] = _json({})
+    error: str | None = Field(default=None, sa_column=Column(Text))
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: datetime | None = None

@@ -66,6 +66,18 @@ class Settings(BaseSettings):
     anthropic_refusal_fallback: bool = True
     # Let GUI/API trigger project commands (test/lint/build) directly. Off by default.
     allow_gui_commands: bool = False
+    # Let the GUI start interactive harness sessions, which run agents with shell access.
+    allow_interactive_sessions: bool = False
+    allow_unattended_sessions: bool = False
+
+    # Optional Supabase synchronization. Credentials stay device-local in the environment.
+    supabase_url: str | None = None
+    supabase_publishable_key: str | None = None
+    supabase_email: str | None = None
+    supabase_password: str | None = None
+    supabase_sync_batch_size: int = Field(default=100, gt=0, le=1000)
+    supabase_sync_enabled: bool = False
+    supabase_sync_interval_seconds: int = Field(default=60, ge=15, le=86400)
 
     @model_validator(mode="after")
     def _derive_paths(self) -> Settings:
@@ -81,6 +93,14 @@ class Settings(BaseSettings):
     @property
     def build_log_path(self) -> Path:
         return self.home / "build-log.jsonl"
+
+    @property
+    def chats_root(self) -> Path:
+        return self.home / "chats"
+
+    @property
+    def agent_outputs_root(self) -> Path:
+        return self.home / "agent-outputs"
 
     @property
     def is_local_bind(self) -> bool:

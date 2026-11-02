@@ -149,8 +149,13 @@ export interface Schedule {
   id: number;
   name: string;
   cron_expression: string;
+  run_at: string | null;
+  timezone: string;
   task_template_json: Record<string, unknown>;
   agent_id: number | null;
+  run_mode: "pipeline" | "standalone";
+  access: "read" | "write";
+  time_limit_minutes: number;
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -214,4 +219,101 @@ export interface AgentRouting {
 export interface AgentDetail extends Agent {
   routing: AgentRouting;
   recent_tasks: Task[];
+}
+
+export interface StandaloneRun {
+  id: number;
+  title: string;
+  chat_id: number | null;
+  schedule_id: number | null;
+  access: "read" | "write";
+  adapter: string | null;
+  model: string | null;
+  status: string;
+  report_path: string | null;
+  summary: string;
+  files: string[];
+  blocked: string[];
+  usage: { input_tokens?: number; output_tokens?: number };
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface AgentOutputs {
+  folder: string;
+  runs: StandaloneRun[];
+}
+
+export interface ChatSession {
+  id: number;
+  title: string;
+  project_id: number | null;
+  standalone: boolean;
+  agent_name: string | null;
+  adapter: string;
+  model: string | null;
+  effort: string | null;
+  permission: string | null;
+  workspace: string;
+  cwd: string;
+  branch_name: string | null;
+  status: string;
+  usage: Partial<ChatUsage>;
+  error: string | null;
+  updated_at: string;
+}
+
+export interface ChatUsage {
+  input_tokens: number;
+  cache_read_input_tokens: number;
+  uncached_input_tokens: number;
+  output_tokens: number;
+  requests: number;
+}
+
+export interface PermissionMode {
+  id: string;
+  label: string;
+  description?: string | null;
+  dangerous?: boolean;
+}
+
+export interface ChatHarness {
+  name: string;
+  kind: string;
+  available: boolean;
+  reason: string | null;
+  models: string[];
+  efforts: string[];
+  default_effort: string | null;
+  permissions: PermissionMode[];
+  default_permission: string | null;
+  note: string | null;
+}
+
+export interface ChatAgent {
+  id: number;
+  name: string;
+  description: string;
+  project_id: number | null;
+  adapter: string | null;
+  model: string | null;
+  problem: string | null;
+}
+
+export interface ChatCatalog {
+  enabled: boolean;
+  harnesses: ChatHarness[];
+  agents: ChatAgent[];
+}
+
+export interface ChatChanges {
+  isolated: boolean;
+  branch: string | null;
+  base_branch: string;
+  merge_enabled: boolean;
+  merge_command?: string;
+  uncommitted: string;
+  diffstat: string;
 }

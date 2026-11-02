@@ -75,13 +75,22 @@ orchestrator agent run deps "Update the patch-level dependencies"
 **Agents** are saved instructions + model (+ project/harness). Each run becomes a task
 that goes through the harness routed for the agent's model. With a project it gets the
 full worktree → tests → Architect review gate. **Scheduled tasks** can run an agent on a
-cron. See [`docs/agents.md`](docs/agents.md).
+cron or at a set time, through that pipeline or as a standalone session that saves its own
+report. See [`docs/agents.md`](docs/agents.md).
 
 The GUI covers the same workflows. Its pages are Dashboard, Tasks, Task Detail (live
 logs, diff, handoff, review, verification, accept/reject/escalate, retry with a
 different harness/model), Agents, Scheduled Tasks, Projects, Models & Providers,
 Adapters, Memory, Prompt Cache, Build Log, and Settings. It has light and dark themes
 (switch in the sidebar or on Settings), with fonts bundled locally.
+
+## Chat with a harness directly
+
+The **Chat** page is an interactive session with a coding harness: an input box, model
+picker, effort slider, permission modes, approval prompts, and a Stop button. It works with
+Pi, Qwen Code, OpenCode, DeepSeek Harness and Claude Code. It's off until you turn it on,
+because sessions run agents with shell access and skip the review gate. See
+[docs/chat.md](docs/chat.md).
 
 ## Adding real providers
 
@@ -125,18 +134,18 @@ Each adapter is a **command + argv template stored in the DB** and editable in t
 | Pi | `pi` | `--mode json --no-session --provider orchestrator --model {model} "…"` (prompt on stdin) | experimental, mock-API-checked |
 | OpenCode | `opencode` | `run --format json ?--model={model} {prompt}` | experimental, mock-API-checked |
 | DeepSeek Harness | `dsh` | `--profile headless --json -` (prompt on stdin) | experimental, mock-API-checked |
-| ZCode | `zcode-cli` | `run --cwd {cwd} --prompt-file {prompt_file}` | experimental, **binary/flags unverified** |
+| ZCode | `zcode` | `--cwd {cwd} --mode yolo --json --prompt {prompt}` | experimental, mock-API-checked; bundled CLI fallback |
 | Qwen Code | `qwen` | `--auth-type openai --approval-mode auto-edit --allowed-tools run_shell_command … -o json -p {prompt}` | experimental, mock-API-checked |
 | Aider | `aider` | `--yes-always ?--model={model} --message-file {prompt_file}` | experimental |
-| Claude Code (Worker) | `claude` | `-p {prompt} --output-format json --permission-mode acceptEdits ?--model={model}` | experimental, disabled by default (subscription auth) |
+| Claude Code (Worker) | `claude` | `-p {prompt} --output-format json --permission-mode acceptEdits ?--model={model} --allowedTools Bash` | experimental, disabled by default (subscription auth) |
 | Mock | python | built-in | tested |
 
 `orchestrator adapters detect` shows which binaries are on `PATH`. Manual verification
 steps for each adapter: [`docs/adapters.md`](docs/adapters.md).
 
 Worker runs are routed to the harness that suits the worker model, and the most
-token-efficient one comes first (deepseek → DeepSeek Harness, Qwen/GLM → Pi, then Qwen
-Code/OpenCode). Each run's real token usage is recorded, and routing switches once
+token-efficient one comes first (Pi for Qwen, DeepSeek, GLM and Kimi, then each model's
+own harness or OpenCode). Each run's real token usage is recorded, and routing switches once
 measured data shows a cheaper harness per accepted task. See
 [`docs/harness-routing.md`](docs/harness-routing.md). To measure harness overhead
 yourself, run `scripts/harness-bench/bench.sh`.
@@ -184,10 +193,10 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
-- **Real harness adapters are not tested against real models.** Pi, DeepSeek Harness,
-  Qwen Code and OpenCode were run against a local mock API (`scripts/harness-bench`).
-  Aider and Claude Code templates come from public docs. ZCode is still a placeholder from
-  the spec. Verify each one with the steps in `docs/adapters.md` before relying on it.
+- **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
+  Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
+  against a local mock API. Aider and Claude Code templates come from public docs. Verify
+  each one with the steps in `docs/adapters.md` before relying on it.
 - **Real providers are untested here** (no keys in CI). Request shapes are unit-tested
   without network calls.
 - The LLM Supervisor is **recommendation-only**. All gate decisions come from the

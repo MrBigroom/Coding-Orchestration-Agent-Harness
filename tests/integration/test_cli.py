@@ -40,6 +40,11 @@ def test_task_lifecycle_commands(home):
     assert r.exit_code == 0
     assert runner.invoke(app, ["schedule", "disable", "s1"]).exit_code == 0
     assert runner.invoke(app, ["schedule", "add", "bad", "nope"]).exit_code == 1
+    r = runner.invoke(
+        app, ["schedule", "add", "once", "--at", "2099-01-02 09:00", "--timezone", "Asia/Tokyo"]
+    )
+    assert r.exit_code == 0 and "2099-01-02 00:00" in r.stdout
+    assert runner.invoke(app, ["schedule", "add", "none"]).exit_code == 1
 
 
 @requires_git

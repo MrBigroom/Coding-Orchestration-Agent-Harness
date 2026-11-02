@@ -50,8 +50,13 @@ def test_default_templates_render_without_shell(tmp_path):
         model="qwen3.8-flash",
     )
     for spec in default_specs():
-        argv = build_adapter(spec).build_command(ctx)
-        assert argv[0] == spec.command and all(isinstance(a, str) for a in argv)
+        adapter = build_adapter(spec)
+        argv = adapter.build_command(ctx)
+        assert all(isinstance(a, str) for a in argv)
+        if spec.kind == "zcode" and adapter._uses_bundled_cli():
+            assert argv[:2] == [adapter._node(), str(adapter.bundled_cli)]
+        else:
+            assert argv[0] == spec.command
     qwen = next(s for s in default_specs() if s.kind == "qwen_code")
     assert build_adapter(qwen).build_command(ctx)[:1] == ["qwen"]
     assert "do the thing" in build_adapter(qwen).build_command(ctx)

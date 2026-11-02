@@ -69,7 +69,7 @@ External coding harnesses I care about:
 
 - OpenCode: preferred general/model-agnostic coding harness.
 - DeepSeek Harness: official DeepSeek agent harness, CLI command likely `dsh`.
-- ZCode: Z.ai harness for GLM models, may have an unofficial CLI such as `zcode-cli`.
+- ZCode: Z.ai harness for GLM models, may have an unofficial CLI such as `zcode`.
 - Qwen Code: Alibaba/Qwen harness optimized for Qwen models.
 - Aider: optional alternative coding harness.
 - Claude Code CLI: optional. Do not assume my Claude subscription can be used as an API. Use official Anthropic API keys or legitimate CLI auth only where supported.
@@ -890,8 +890,7 @@ Routing intent:
 - Architect/planning/final high-risk review: Opus profile.
 - Supervisor/dispatch/review: Sonnet profile or Qwen3.8-Max profile.
 - Coding worker:
-  - if tag includes deepseek and DeepSeek Harness adapter available, prefer DeepSeek Harness
-  - if tag includes glm and ZCode adapter available, prefer ZCode
+  - if tag includes deepseek or glm, pick that worker profile and use its model route
   - if tag includes qwen and Qwen Code adapter available, prefer Qwen Code
   - otherwise prefer OpenCode if available
   - fallback to Aider if available
@@ -953,8 +952,8 @@ DeepSeek Harness:
   args: run --cwd {cwd} --prompt-file {prompt_file}
 
 ZCode:
-  command: zcode-cli
-  args: run --cwd {cwd} --prompt-file {prompt_file}
+  command: zcode
+  args: --cwd {cwd} --mode yolo --json --prompt {prompt}
 
 Qwen Code:
   command: qwen-code

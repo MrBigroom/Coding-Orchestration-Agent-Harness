@@ -1,22 +1,30 @@
-"""WebSocket live logs: /ws/runs/{run_id}/logs
+"""WebSocket channels: live run logs and interactive chat sessions.
 
-Streams existing stdout/stderr lines first, then follows file growth (so runs started by a
-separate CLI process stream too), emitting status changes and a final `end` event.
+/ws/runs/{run_id}/logs streams existing stdout/stderr lines first, then follows file growth
+(so runs started by a separate CLI process stream too), emitting status changes and a final
+`end` event.
 Auth: when a token is configured, pass it as `?token=...` (browsers cannot set headers on
 WebSocket upgrades).
+
+/ws/chat/{chat_id} replays a session's transcript as one `history` message, then carries
+live events out and prompts, approvals and control changes in.
+
+SameOriginMiddleware refuses other origins on both channels.
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from orchestrator.adapters.chat.base import DriverError
 from orchestrator.core.db import session_scope
-from orchestrator.core.models import Run
+from orchestrator.core.models import ChatSession, Run
 from orchestrator.core.security import token_ok
 from orchestrator.core.state import TERMINAL_RUN_STATES
-from orchestrator.services import artifact_service
+from orchestrator.services import artifact_service, chat_service
 
 router = APIRouter()
 POLL = 0.5
@@ -67,3 +75,55 @@ async def run_logs(ws: WebSocket, run_id: int) -> None:
             await asyncio.sleep(POLL)
     except WebSocketDisconnect:
         return
+
+
+async def _chat_outbound(ws: WebSocket, queue: asyncio.Queue) -> None:
+    with suppress(WebSocketDisconnect, RuntimeError):  # the browser went away
+        while (event := await queue.get()) is not None:
+            await ws.send_json(event)
+        await ws.send_json({"type": "end"})
+
+
+async def _chat_inbound(ws: WebSocket, live: chat_service.LiveSession) -> None:
+    with suppress(WebSocketDisconnect, RuntimeError):  # the browser went away
+        while True:
+            message = await ws.receive_json()
+            try:
+                with session_scope() as s:
+                    await chat_service.handle(s, live, message)
+            except (DriverError, chat_service.ChatError) as e:
+                await ws.send_json({"type": "error", "message": str(e)})
+
+
+@router.websocket("/ws/chat/{chat_id}")
+async def chat_socket(ws: WebSocket, chat_id: int) -> None:
+    if not token_ok(ws.query_params.get("token")):
+        await ws.close(code=4401)
+        return
+    with session_scope() as s:
+        chat = s.get(ChatSession, chat_id)
+        if not chat:
+            await ws.close(code=4404)
+            return
+        status = chat.status
+    await ws.accept()
+    live = chat_service.manager.get(chat_id)
+    queue = live.subscribe() if live else None  # before the replay, so nothing is missed
+    await ws.send_json(
+        {"type": "history", "events": chat_service.history(chat_id), "status": status}
+    )
+    if not live or not queue:
+        await ws.send_json({"type": "end"})
+        await ws.close()
+        return
+    tasks = [
+        asyncio.create_task(_chat_outbound(ws, queue)),
+        asyncio.create_task(_chat_inbound(ws, live)),
+    ]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # No await here: this also runs while the connection itself is being cancelled.
+        live.unsubscribe(queue)
+        for task in tasks:
+            task.cancel()

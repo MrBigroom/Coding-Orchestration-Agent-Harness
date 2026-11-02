@@ -263,17 +263,29 @@ class AdapterUpdate(BaseModel):
 
 class ScheduleCreate(BaseModel):
     name: str
-    cron_expression: str
+    # Set exactly one of these. A run_at without an offset is read in `timezone`.
+    cron_expression: str = ""
+    run_at: datetime | None = None
+    timezone: str = "UTC"
     task_template_json: dict[str, Any] = Field(default_factory=dict)
     agent_id: int | None = None
+    run_mode: Literal["pipeline", "standalone"] = "pipeline"
+    access: Literal["read", "write"] = "read"
+    time_limit_minutes: int = Field(default=30, ge=1, le=1440)
     enabled: bool = True
 
 
 class ScheduleUpdate(BaseModel):
+    name: str | None = None
     cron_expression: str | None = None
+    run_at: datetime | None = None
+    timezone: str | None = None
     task_template_json: dict[str, Any] | None = None
     # 0 detaches the schedule from its agent.
     agent_id: int | None = None
+    run_mode: Literal["pipeline", "standalone"] | None = None
+    access: Literal["read", "write"] | None = None
+    time_limit_minutes: int | None = Field(default=None, ge=1, le=1440)
     enabled: bool | None = None
 
 
@@ -357,3 +369,13 @@ class ErrorBody(BaseModel):
 
 class TimestampedOut(ORMModel):
     created_at: datetime | None = None
+
+
+class ChatSessionCreate(BaseModel):
+    project_id: int | None = None  # empty: the session gets its own empty folder
+    agent_id: int | None = None  # its instructions go ahead of the first message
+    adapter: str
+    model: str | None = None
+    effort: str | None = None
+    permission: str | None = None
+    workspace: Literal["worktree", "checkout"] = "worktree"

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { del, patch, post } from "../api/client";
-import type { Adapter, Agent, AgentDetail, ModelProfile, Project, Task } from "../api/types";
-import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Toggle, lines } from "../components/ui";
+import { api, del, patch, post } from "../api/client";
+import type { Adapter, Agent, AgentDetail, AgentOutputs, ModelProfile, Project, StandaloneRun, Task } from "../api/types";
+import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Toggle, fmtTime, lines } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 
 const BLANK = { name: "", description: "", instructions: "", model_profile: "", harness_adapter: "", project_id: "", tags: "" };
@@ -78,6 +78,50 @@ function AgentForm({ editing, profiles, adapters, projects, onSaved, onCancel }:
   );
 }
 
+function OutputRow({ run, onChanged }: { run: StandaloneRun; onChanged: () => void }) {
+  const [report, setReport] = useState<string | null>(null);
+  const act = useAction();
+  const toggle = () => act.run(async () => {
+    setReport(report === null ? (await api<{ text: string }>(`/standalone-runs/${run.id}/report`)).text : null);
+  });
+  const tone = run.status === "completed" ? "ok" : run.status === "running" ? undefined : "warn";
+  return (
+    <li className="border-t border-line py-2 text-sm first:border-t-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge value={run.status} tone={tone} />
+        <span className="text-xs text-muted">{fmtTime(run.started_at)}</span>
+        <Badge value={run.access === "write" ? "can make changes" : "read and report"} />
+        {run.usage.input_tokens ? <span className="text-xs text-muted">{run.usage.input_tokens.toLocaleString()} in · {(run.usage.output_tokens ?? 0).toLocaleString()} out</span> : null}
+        <div className="ml-auto flex gap-2">
+          {run.report_path && <button className="btn" disabled={act.busy} onClick={toggle}>{report === null ? "Report" : "Hide"}</button>}
+          {run.chat_id && <Link className="btn" to={`/chat/${run.chat_id}`}>Session</Link>}
+          {run.status === "running" && <button className="btn" disabled={act.busy} onClick={() => act.run(async () => { await post(`/standalone-runs/${run.id}/stop`); onChanged(); })}>Stop</button>}
+        </div>
+      </div>
+      <ErrorNote error={act.error} />
+      {run.summary && <p className="mt-1 line-clamp-2 text-muted">{run.summary}</p>}
+      {run.error && <p className="mt-1 text-xs text-bad">{run.error}</p>}
+      {run.blocked.length > 0 && <p className="mt-1 text-xs text-warn">{run.blocked.length} blocked action{run.blocked.length === 1 ? "" : "s"}</p>}
+      {run.files.length > 0 && <p className="mono mt-1 text-xs text-muted">{run.files.join(" · ")}</p>}
+      {report !== null && <pre className="mono mt-2 max-h-96 overflow-auto rounded-md border border-line p-3 text-xs whitespace-pre-wrap">{report}</pre>}
+    </li>
+  );
+}
+
+function Outputs({ id }: { id: number }) {
+  const { data, error, reload } = useApi<AgentOutputs>(`/agents/${id}/outputs`, 5000);
+  return (
+    <>
+      <h4 className="mt-5 mb-1 text-sm font-semibold">Outputs</h4>
+      <ErrorNote error={error} />
+      {data && <p className="mono mb-2 text-xs break-all text-muted">{data.folder}</p>}
+      {data?.runs.length
+        ? <ul>{data.runs.map((r) => <OutputRow key={r.id} run={r} onChanged={() => void reload()} />)}</ul>
+        : <Empty>No standalone runs yet.</Empty>}
+    </>
+  );
+}
+
 function AgentPanel({ id, onChanged }: { id: number; onChanged: () => void }) {
   const { data, error, reload } = useApi<AgentDetail>(`/agents/${id}`, 10000);
   const [req, setReq] = useState({ request: "", dod: "", queue: true });
@@ -128,6 +172,7 @@ function AgentPanel({ id, onChanged }: { id: number; onChanged: () => void }) {
           ))}
         </ul>
       ) : <Empty>No runs yet.</Empty>}
+      <Outputs id={id} />
     </Card>
   );
 }

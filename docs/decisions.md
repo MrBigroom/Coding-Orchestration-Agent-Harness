@@ -50,7 +50,8 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-10-19 — Tailwind v4 with `tailwind.config.js` via `@config`** to keep the spec's
   file layout while using the current major version. Frontend: React 19, Vite 8,
   TypeScript 7.
-- **2026-10-19 — APScheduler 3.x** (stable line; 4.x isn't stable). Cron is evaluated in UTC.
+- **2026-10-19 — APScheduler 3.x** (stable line; 4.x isn't stable). Cron was evaluated in UTC
+  until per-schedule time zones arrived on 2026-11-01.
 - **2026-10-19 — Fallback UI is a single static HTML file** with no build step and no
   dependencies, served when `web/dist` is missing.
 - **2026-10-19 — Architect runs through `claude -p` on the user's Claude Pro subscription**
@@ -136,3 +137,56 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   We rejected an AppImage (~150 MB, rebuild per change) and Tauri (extra Rust build, still
   needs Python). pywebview is an optional extra (`.[desktop]`), so the core install stays
   headless.
+
+- **2026-11-01 — Pi first for DeepSeek and GLM, including tagged tasks.** A dry run put Pi
+  about 2.5× cheaper than DeepSeek Harness and 2.3× cheaper than ZCode by weighted tokens,
+  with the same hidden-test pass rate. The `deepseek` and `glm` tags now pick the worker
+  profile only, so they follow the Pi-first route. The `qwen` tag still selects Qwen Code,
+  because that comparison was too close to call.
+
+- **2026-11-01 — Chat drives harness protocols, in a native page.** Interactive sessions use
+  each harness's session protocol: Pi RPC, ACP for Qwen Code, OpenCode and DeepSeek Harness,
+  and stream-json for Claude Code. We rejected embedding `dsh web`, which covers one harness
+  and adds a second UI, and driving a TUI through a PTY, which would mean scraping a screen.
+  Drivers sit beside `adapters.base` rather than changing it, because a chat turn isn't a
+  run. Controls come from what each harness reports at runtime, since the real options
+  differ per harness and per model. Sessions don't survive a server restart in this version.
+
+
+- **2026-11-01 — The same-origin check covers the whole server.** It started on Chat only,
+  but with no token set, a DNS-rebinding page could also reach routes like the adapter
+  `command` setting. It now runs as middleware on every HTTP request and WebSocket, so a new
+  route can't miss it. We kept the token-less local default rather than requiring a token,
+  because the check needs no setup.
+
+- **2026-11-01 — Schedules gain one-time runs and time zones (revision `0005_schedule_times`).**
+  `schedules` adds `run_at` and `timezone`, and existing rows stay on UTC. A one-time schedule
+  keeps an empty `cron_expression`, because making the column nullable would add a table
+  rebuild for no benefit. Storing a time zone rather than converting to a UTC cron keeps "09:00"
+  at 09:00 across daylight saving. One-time runs that were missed still run, since they exist
+  for a specific job, while repeating schedules skip them. Numeric cron weekdays are now spelled
+  out before they reach APScheduler, which counts from Monday and was running them a day late.
+
+- **2026-11-02 — Standalone agent runs reuse Chat sessions (revision `0006_standalone_runs`).**
+  Schedules gain `run_mode`, `access` and `time_limit_minutes`, and a new `standalone_runs`
+  table records each run. We built on the Chat drivers rather than the batch adapters because
+  they give a live transcript and a real approval point on each harness, where the run can
+  apply a policy. Approval events now carry a structured `action` so the decision never depends
+  on matching display text, and unknown requests are denied in read access. Read access uses a
+  detached worktree, because a branch per run would pile up and branches are never deleted.
+  `chat_sessions.project_id` became nullable so agents with no project can run in their output
+  folder. `allow_interactive_sessions` also moved to the local-only settings, because it had
+  been syncing between devices by mistake.
+
+- **2026-11-02 — Chat sessions can run without a project.** A session with no project gets
+  `<home>/chats/<id>/workspace`, beside its transcript but apart from it, so the agent can't
+  edit its own transcript by accident and deleting the session removes both. We chose a new
+  empty folder over letting you pick any path, because a chosen folder would need its own
+  checks and would turn Delete into a question of whose files those are.
+
+- **2026-11-02 — Chat sessions can run as an agent (revision `0007_chat_agents`).** Instructions
+  go ahead of the first message rather than through each harness's system prompt option,
+  because that works the same on every harness and matches batch runs. `chat_sessions` stores
+  `agent_name`, not a link, so deleting an agent stays simple and old transcripts keep the name.
+  Claude Code now always offers the current Claude models, because Chat's list otherwise only
+  held models that a profile happened to name.

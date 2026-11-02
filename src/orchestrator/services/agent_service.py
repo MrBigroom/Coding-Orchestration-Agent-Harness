@@ -105,6 +105,11 @@ def delete(session: Session, agent: Agent) -> None:
     session.commit()
 
 
+def instructions_block(agent: Agent) -> str:
+    text = agent.instructions.strip()
+    return f"Agent instructions ({agent.name}):\n{text}" if text else ""
+
+
 def task_data(
     agent: Agent,
     run: AgentRun,
@@ -116,8 +121,8 @@ def task_data(
     prompt's static (cached) prefix across runs of the same agent."""
     first_line = run.request.strip().splitlines()[0][:80]
     parts = []
-    if agent.instructions.strip():
-        parts.append(f"Agent instructions ({agent.name}):\n{agent.instructions.strip()}")
+    if block := instructions_block(agent):
+        parts.append(block)
     parts.append(f"Request:\n{run.request.strip()}")
     return TaskCreate(
         title=run.title or f"[{agent.name}] {first_line}",

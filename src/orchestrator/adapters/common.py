@@ -79,7 +79,12 @@ def _json_doc(text: str) -> Any:
     try:
         return json.loads(text.strip())
     except json.JSONDecodeError:
-        return None
+        # Persisted logs pass through secret redaction. Keys containing "token" can
+        # therefore gain an unquoted [REDACTED] value (notably ZCode totalTokenCount).
+        try:
+            return json.loads(text.strip().replace("[REDACTED]", "null"))
+        except json.JSONDecodeError:
+            return None
 
 
 def _usage(inp: int, cached: int, out: int, requests: int | None, total_input: bool) -> dict:
@@ -117,6 +122,20 @@ def _qwen(text: str) -> dict | None:
                 total_input=True,
             )
     return None
+
+
+def _zcode(text: str) -> dict | None:
+    doc = _json_doc(text)
+    if not isinstance(doc, dict) or not isinstance(doc.get("usage"), dict):
+        return None
+    u = doc["usage"]
+    return _usage(
+        _n(u.get("inputTokens")),
+        _n(u.get("cacheReadTokens")),
+        _n(u.get("outputTokens")),
+        _n(u.get("modelRequestCount")) or None,
+        total_input=True,
+    )
 
 
 def _claude(text: str) -> dict | None:
@@ -202,6 +221,7 @@ def _aider(text: str) -> dict | None:
 
 USAGE_PARSERS = {
     "qwen_code": _qwen,
+    "zcode": _zcode,
     "claude_cli": _claude,
     "pi": _pi,
     "deepseek_harness": _dsh,
@@ -229,6 +249,10 @@ def final_text(kind: str, stdout: str) -> str | None:
         for e in reversed(events or list(_json_lines(stdout))):
             if isinstance(e, dict) and e.get("type") == "result":
                 return e.get("result") if isinstance(e.get("result"), str) else None
+    if kind == "zcode":
+        doc = _json_doc(stdout)
+        if isinstance(doc, dict) and isinstance(doc.get("response"), str):
+            return doc["response"]
     if kind == "pi":
         for e in reversed(list(_json_lines(stdout))):
             msg = e.get("message") or {}
@@ -248,6 +272,15 @@ def final_text(kind: str, stdout: str) -> str | None:
             if e.get("type") == "text"
         ]
         return "".join(t for t in texts if isinstance(t, str)) or None
+    return None
+
+
+def pi_stop_reason(stdout: str) -> str | None:
+    """Why Pi's last assistant message ended, e.g. `stop`, `length` or `error`."""
+    for e in reversed(list(_json_lines(stdout))):
+        msg = e.get("message") or {}
+        if e.get("type") == "message_end" and msg.get("role") == "assistant":
+            return msg.get("stopReason")
     return None
 
 
@@ -276,7 +309,10 @@ class JsonOutputMixin:
 class ManagedConfigMixin:
     """For adapters that need a per-run config file: `prepare(ctx, tmp)` writes it into a
     temporary directory (deleted after the run, never under the artifacts dir) and returns
-    extra environment variables for the child. Secrets are referenced by env-var name only."""
+    extra environment variables for the child. Secrets are referenced by env-var name only.
+    `stdout_to_file` sends the child's stdout to a file in that directory instead of a pipe."""
+
+    stdout_to_file = False
 
     def prepare(self, ctx: RunContext, tmp: Path) -> dict[str, str]:
         return {}
@@ -290,6 +326,7 @@ class ManagedConfigMixin:
 
     async def run(self, ctx: RunContext, runner) -> AdapterResult:
         with tempfile.TemporaryDirectory(prefix=f"orch-{self.kind}-") as tmp:  # type: ignore[attr-defined]
+            capture = {"stdout_file": Path(tmp) / "stdout.raw"} if self.stdout_to_file else {}
             return await runner(
                 argv=self.build_command(ctx),  # type: ignore[attr-defined]
                 cwd=ctx.cwd,
@@ -299,4 +336,5 @@ class ManagedConfigMixin:
                 timeout_seconds=ctx.timeout_seconds,
                 stdin_data=self.stdin_bytes(ctx),  # type: ignore[attr-defined]
                 extra_env=self.prepare(ctx, Path(tmp)),
+                **capture,
             )

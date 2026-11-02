@@ -30,7 +30,7 @@ counts as a missing artifact at review.
 > argv, stdin, per-run config, cache markers and usage parsing all worked.
 > **Verify manually before relying on an adapter.**
 
-**Managed config (Pi, DeepSeek Harness, Qwen Code):**
+**Managed config (Pi, DeepSeek Harness, Qwen Code, ZCode):**
 - **Endpoint:** each run is pointed at the endpoint in `capabilities.provider`. The
   default is `{"base_url_env": "QWEN_OPENAI_BASE_URL", "base_url_default": <Token Plan>,
   "api_key_env": "QWEN_API_KEY"}`.
@@ -40,10 +40,13 @@ counts as a missing artifact at review.
 - **Using your own config:** set `capabilities.provider` to `null` to keep the harness's
   own `~/.<harness>` config. For Pi, also drop `--provider orchestrator` from the template.
 
+**Long lines:** JSON modes print whole messages on one line (Pi reaches about 500 KB), so
+the log pumps accept lines up to 32 MiB.
+
 **Token usage:** usage the harness prints is parsed into `runs.usage`. It covers Pi,
-DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
-`--output-format json`, and Aider via its `Tokens:` lines. See
-[`harness-routing.md`](harness-routing.md).
+DeepSeek Harness, Qwen Code, ZCode and OpenCode via their JSON modes, Claude Code via
+`--output-format json`, and Aider via its `Tokens:` lines. Redacted numeric fields are
+tolerated in saved ZCode JSON. See [`harness-routing.md`](harness-routing.md).
 
 ---
 
@@ -59,7 +62,8 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 ## Pi (`pi`)
 
 - **Purpose:** minimal coding agent: 4 tools and a ~1.4k-token request prefix, the
-  smallest among full agents. It is the first choice for Qwen and GLM worker models.
+  smallest among full agents. It is the first choice for Qwen, DeepSeek and GLM worker
+  models.
 - **Install:** `npm i -g @earendil-works/pi-coding-agent` (the old `@mariozechner/…`
   package is deprecated).
 - **Template:** `pi --mode json --no-session --provider orchestrator --model {model}
@@ -71,6 +75,8 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
   it adds `compat.cacheControlFormat: "anthropic"`, so Pi marks the system prompt, last
   tool and newest message for Qwen Cloud's explicit cache. `PI_OFFLINE=1`,
   `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0` are also set.
+- **Failure detection:** Pi exits 0 even when its last response hit `max_tokens` or
+  errored. A run that ends that way without a handoff file is reported as failed.
 - **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`; binary override `PI_COMMAND`.
 - **Detect:** `which pi` · **Manual test:** `pi --version && pi --help`.
 - **Experimental:** yes (mock-API-checked, Pi 1.4.0).
@@ -93,9 +99,9 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 
 ## DeepSeek Harness (`deepseek_harness`)
 
-- **Purpose:** official DeepSeek agent harness. It is the first choice for `deepseek*`
-  worker models; in published tests it used about 7× fewer tokens per task than Claude
-  Code or OpenCode on DeepSeek V4.
+- **Purpose:** official DeepSeek agent harness, and the second choice after Pi for
+  `deepseek*` worker models. In published tests it used about 7× fewer tokens per task than
+  Claude Code or OpenCode on DeepSeek V4.
 - **Template:** `dsh --profile headless --json -`. `-` reads the task from stdin, and
   `--json` prints run events with per-step usage.
 - **Managed config:** a temporary `DSH_HOME` with a home-level `cordis.patch.yml` adds an
@@ -114,13 +120,24 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 
 ## ZCode (`zcode`)
 
-- **Purpose:** Z.ai harness for GLM models; preferred for `glm`-tagged tasks when installed.
-- **Template:** `zcode-cli run --cwd {cwd} --prompt-file {prompt_file}`. **Binary name and
-  flags are UNVERIFIED.** ZCode is primarily a desktop app. Reports mention an Agent CLI in
-  its source, but no stable headless CLI was confirmed.
-- **Env:** `GLM_API_KEY`, `GLM_OPENAI_BASE_URL`; binary override `ZCODE_COMMAND`.
-- **Detect:** `which zcode-cli` (or your `ZCODE_COMMAND`) · **Manual test:** `<binary> --help`.
-- **Experimental:** yes.
+- **Purpose:** Z.ai harness for GLM models, and the second choice after Pi on their route.
+- **Template:** `zcode --cwd {cwd} --mode yolo --json --prompt {prompt}`. These flags were
+  checked against the actual parser in ZCode 3.10.2's bundled CLI 0.16.5. Its help also
+  advertises `--settings` and `--max-turns`, but that parser rejects them, so the adapter
+  does not use them.
+- **Managed config:** an isolated temporary `HOME` contains `.zcode/cli/config.json` with an
+  OpenAI-compatible provider and the selected model. The provider id comes from the key env
+  var (`QWEN_API_KEY` → `qwen`), allowing ZCode to resolve the secret itself; no key is
+  written to the file. `ZCODE_STORAGE_DIR` is isolated too. With `capabilities.provider:
+  null`, ZCode uses its normal configuration instead.
+- **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`, `GLM_API_KEY`, `GLM_OPENAI_BASE_URL`;
+  binary override `ZCODE_COMMAND`.
+- **Detect:** `which zcode`, then the bundled `/opt/ZCode/resources/glm/zcode.cjs` via
+  `/usr/bin/node` (or another detected Node). This also supports installations where `zcode`
+  exists only as a shell function. **Manual test:** `zcode --version` or
+  `/usr/bin/node /opt/ZCode/resources/glm/zcode.cjs --version`.
+- **Experimental:** yes (full adapter run mock-API-checked with CLI 0.16.5, including usage
+  and final-response parsing, then four real runs on the Token Plan on 2026-11-01).
 
 ## Qwen Code (`qwen_code`)
 
@@ -133,17 +150,22 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
     so the worker couldn't run tests or commit. `--allowed-tools run_shell_command`
     restores it and **auto-approves shell commands** inside the isolated worktree.
   - **Excluded tools:** dropping `skill`/`notebook_edit` saves about 1.7k tokens per call.
-  - **JSON output:** `-o json` prints a result object with usage.
+  - **JSON output:** `-o json` prints one line at exit, holding the usage and the final
+    message. Everything past 64 KiB is lost on a pipe, so stdout goes to a temporary file
+    and is redacted into `stdout.log` after the process exits. That means no live log.
 - **Managed config:** a temporary system-settings file
   (`QWEN_CODE_SYSTEM_SETTINGS_PATH`) turns off managed auto-memory. Otherwise every run
   makes a second, roughly 6k-token "memory extraction" call. `QWEN_API_KEY` and the base
   URL are mapped to Qwen Code's `OPENAI_*` variables. Overall the run goes from about
-  13.1k + 5.8k tokens over two calls to about 9.1k in one call.
+  13.1k + 5.8k tokens over two calls to about 9.1k in one call. An isolated temporary
+  `HOME` stops `modelProviders` in `~/.qwen/settings.json` overriding that endpoint and
+  key, and keeps your Qwen MCP servers out of worker runs.
 - **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
   `OPENAI_MODEL`; binary override `QWEN_CODE_COMMAND`.
 - **Detect:** `which qwen` · **Manual test:** `qwen --version && qwen --help`.
-- **Experimental:** yes (mock-API-checked, Qwen Code 0.26.1). Over the OpenAI-compatible
-  API it sends no explicit cache markers, so it relies on the implicit cache.
+- **Experimental:** yes (mock-API-checked, Qwen Code 0.26.1; real Token Plan runs, 0.25.1).
+  Over the OpenAI-compatible API it sends no explicit cache markers, so it relies on the
+  implicit cache.
 
 ## Aider (`aider`)
 
@@ -159,7 +181,9 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 
 - **Purpose:** optional headless Claude Code runs, e.g. for escalations. **Disabled by default.**
 - **Template:** `claude -p {prompt} --output-format json --permission-mode acceptEdits
-  ?--model={model}`. The JSON result carries token usage, including cache reads.
+  ?--model={model} --allowedTools Bash`. The JSON result carries token usage, including
+  cache reads. `--allowedTools Bash` **auto-approves shell commands** inside the isolated
+  worktree; with `acceptEdits` alone, `-p` mode can't run tests or commit.
 - **Env:** `CLAUDE_CODE_OAUTH_TOKEN` (optional, from `claude setup-token`), `CLAUDE_CONFIG_DIR`;
   binary override `CLAUDE_CLI_COMMAND`. `ANTHROPIC_API_KEY` is deliberately **not** passed.
 - **Auth:** your own Claude subscription through the unmodified `claude` binary
@@ -172,7 +196,8 @@ DeepSeek Harness, Qwen Code and OpenCode via their JSON modes, Claude Code via
 
 1. An explicit `assigned_harness_adapter` on the task always wins.
 2. `mock`/`mock-*` tags → mock.
-3. `deepseek` → DeepSeek Harness, `glm` → ZCode, `qwen` → Qwen Code, when installed and enabled.
+3. `qwen` → Qwen Code, when installed and enabled. `deepseek` and `glm` tags only pick the
+   worker profile, so their harness comes from the model's route.
 4. The worker model's preferred harnesses, the first installed one winning, or the one
    with the lowest measured tokens per accepted task once there's enough data
    ([`harness-routing.md`](harness-routing.md)).

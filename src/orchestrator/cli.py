@@ -8,6 +8,7 @@ import shutil
 import sys
 import webbrowser
 from collections.abc import Callable
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,10 @@ task_app = typer.Typer(help="Create, run, and gate tasks.", no_args_is_help=True
 adapters_app = typer.Typer(help="External harness adapters.", no_args_is_help=True)
 providers_app = typer.Typer(help="Model providers.", no_args_is_help=True)
 models_app = typer.Typer(help="Model profiles.", no_args_is_help=True)
-schedule_app = typer.Typer(help="Cron schedules.", no_args_is_help=True)
+schedule_app = typer.Typer(help="Cron and one-time schedules.", no_args_is_help=True)
 memory_app = typer.Typer(help="Shared memory.", no_args_is_help=True)
 agent_app = typer.Typer(help="Saved agents.", no_args_is_help=True)
+sync_app = typer.Typer(help="Supabase cloud synchronization.", no_args_is_help=True)
 desktop_app = typer.Typer(
     help="Desktop app: run it (no subcommand), install/uninstall the launcher, stop the server."
 )
@@ -40,6 +42,7 @@ for sub, name in (
     (schedule_app, "schedule"),
     (memory_app, "memory"),
     (agent_app, "agent"),
+    (sync_app, "sync"),
     (desktop_app, "desktop"),
 ):
     app.add_typer(sub, name=name)
@@ -89,6 +92,8 @@ def _ensure_ready() -> None:
         from orchestrator.services import bootstrap
 
         bootstrap.init()
+    else:
+        db.upgrade()
 
 
 def _print_json(data: Any) -> None:
@@ -852,11 +857,20 @@ def models_list() -> None:
 @handled
 def schedule_add(
     name: str,
-    cron: str,
+    cron: str = typer.Argument("", help="5-field cron. Leave out when using --at."),
+    at: datetime | None = typer.Option(
+        None,
+        formats=["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"],
+        help="Run once at this date and time.",
+    ),
+    timezone: str = typer.Option("UTC", help="IANA time zone for the cron or --at."),
     template: str = typer.Option("{}", help="Task template JSON (TaskCreate)."),
     agent: str | None = typer.Option(
         None, help="Run this saved agent; the template's description is the request."
     ),
+    run_mode: str = typer.Option("pipeline", help="pipeline, or standalone (needs --agent)."),
+    access: str = typer.Option("read", help="Standalone only: read or write."),
+    time_limit: int = typer.Option(30, help="Standalone only: minutes before a run is stopped."),
     disabled: bool = typer.Option(False),
 ) -> None:
     from orchestrator.core.schemas import ScheduleCreate
@@ -870,8 +884,13 @@ def schedule_add(
             ScheduleCreate(
                 name=name,
                 cron_expression=cron,
+                run_at=at,
+                timezone=timezone,
                 task_template_json=json.loads(template),
                 agent_id=agent_id,
+                run_mode=run_mode,
+                access=access,
+                time_limit_minutes=time_limit,
                 enabled=not disabled,
             ),
         )
@@ -894,12 +913,12 @@ def schedule_list() -> None:
 
     _ensure_ready()
     with _session() as s:
-        table = Table("id", "name", "cron", "enabled", "last run", "next run")
+        table = Table("id", "name", "when", "enabled", "last run", "next run")
         for sc in s.exec(select(Schedule)):
             table.add_row(
                 str(sc.id),
                 sc.name,
-                sc.cron_expression,
+                sc.cron_expression or "once",
                 "yes" if sc.enabled else "no",
                 str(sc.last_run_at or "-"),
                 str(sc.next_run_at or "-"),
@@ -934,7 +953,7 @@ def schedule_disable(schedule: str) -> None:
 @schedule_app.command("run")
 @handled
 def schedule_run(schedule: str) -> None:
-    """Fire a schedule now (creates and queues its task)."""
+    """Fire a pipeline schedule now (creates and queues its task)."""
     from orchestrator.services import scheduler_service
 
     _ensure_ready()
@@ -1083,6 +1102,33 @@ def memory_import(
         else:
             n = memory_service.import_all(s, json.loads(file.read_text()))
     console.print(f"imported {n} entr{'y' if n == 1 else 'ies'}")
+
+
+@sync_app.command("status")
+@handled
+def sync_status() -> None:
+    """Show locally tracked, pending, synchronized, and conflicted records."""
+    from orchestrator.services import sync_service
+
+    _ensure_ready()
+    with _session() as s:
+        sync_service.scan_local(s)
+        _print_json(sync_service.status(s))
+
+
+@sync_app.command("now")
+@handled
+def sync_now() -> None:
+    """Pull remote changes, then push pending local changes to Supabase."""
+    from orchestrator.services.sync_transport import SupabaseSyncClient
+
+    async def run() -> dict[str, Any]:
+        async with SupabaseSyncClient() as client:
+            with _session() as s:
+                return await client.sync_once(s)
+
+    _ensure_ready()
+    _print_json(asyncio.run(run()))
 
 
 def main() -> None:

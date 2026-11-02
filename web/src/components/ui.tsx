@@ -117,9 +117,9 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
+export function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
+    <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}
       className="inline-flex items-center gap-2 text-sm">
       <span className={`relative h-5 w-9 rounded-full transition-colors ${checked ? "bg-accent" : "bg-line-strong"}`}>
         <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${checked ? "left-4.5" : "left-0.5"}`} />

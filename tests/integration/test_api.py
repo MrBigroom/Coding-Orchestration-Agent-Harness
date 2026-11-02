@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from tests.conftest import requires_git
 
@@ -8,14 +9,14 @@ from tests.conftest import requires_git
 def client(initialized):
     from orchestrator.api.main import create_app
 
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
         yield c
 
 
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert r.json()["db_revision"] == "0002_agents"
+    assert r.json()["db_revision"] == "0007_chat_agents"
 
 
 def test_startup_upgrades_existing_database(initialized):
@@ -26,8 +27,8 @@ def test_startup_upgrades_existing_database(initialized):
     db.downgrade(revision="0001_baseline")
     assert db.current_revision() == "0001_baseline"
 
-    with TestClient(create_app()) as c:
-        assert c.get("/api/health").json()["db_revision"] == "0002_agents"
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
+        assert c.get("/api/health").json()["db_revision"] == "0007_chat_agents"
         assert c.get("/api/dashboard").status_code == 200
 
 
@@ -152,7 +153,7 @@ def test_token_auth(initialized, monkeypatch):
 
     monkeypatch.setenv("ORCHESTRATOR_TOKEN", "local-test-token")
     reset_settings_cache()
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
         assert c.get("/api/health").status_code == 200  # liveness stays open
         assert c.get("/api/tasks").status_code == 401
         assert c.get("/api/tasks", headers={"X-Orchestrator-Token": "wrong"}).status_code == 401
@@ -171,7 +172,9 @@ def test_websocket_streams_run_logs(client, initialized):
 
     with session_scope() as s:
         result = asyncio.run(demo_service.run_demo(s))
-    with client.websocket_connect(f"/ws/runs/{result['run_id']}/logs") as ws:
+    with client.websocket_connect(
+        f"/ws/runs/{result['run_id']}/logs", headers={"host": "127.0.0.1:8321"}
+    ) as ws:
         events = []
         while True:
             msg = ws.receive_json()
@@ -185,6 +188,7 @@ def test_websocket_streams_run_logs(client, initialized):
 def test_fallback_ui_served(client, monkeypatch):
     r = client.get("/")
     assert r.status_code == 200 and "<html" in r.text.lower()
+    assert r.headers["cache-control"] == "no-cache"  # or a new build stays hidden
     assert client.get("/tasks/1").status_code == 200  # SPA route
     assert client.get("/api/nope").status_code == 404
 
@@ -212,3 +216,90 @@ def test_agents_api(client):
     assert client.delete(f"/api/agents/{aid}").status_code == 204
     v = client.post("/api/schedules/validate", json={"cron_expression": "*/5 * * * *"}).json()
     assert v["valid"] and v["warning"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "https://evil.example"},
+        {"origin": "null"},
+        {"origin": "http://[bad"},
+        {"host": "evil.example"},
+        {"host": "evil.example", "origin": "http://evil.example"},
+    ],
+)
+@pytest.mark.parametrize("path", ["/api/health", "/api/settings", "/api/adapters", "/"])
+def test_other_websites_are_refused_everywhere(client, path, headers):
+    r = client.get(path, headers=headers)
+    assert r.status_code == 403
+    assert r.json() == {"error": "cross-origin request refused", "detail": None}
+
+
+def test_refused_requests_change_nothing(client):
+    before = client.get("/api/adapters").json()
+    r = client.patch(
+        "/api/adapters/pi",
+        json={"command": "/tmp/evil"},
+        headers={"origin": "https://evil.example"},
+    )
+    assert r.status_code == 403
+    assert client.get("/api/adapters").json() == before
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"origin": "http://127.0.0.1:8321"},
+        {"host": "localhost:8321", "origin": "http://localhost:8321"},
+        {"host": "[::1]:8321", "origin": "http://[::1]:8321"},
+        {"host": "127.0.0.1:5173", "origin": "http://127.0.0.1:5173"},  # the Vite dev proxy
+    ],
+)
+def test_local_clients_are_allowed(client, headers):
+    assert client.get("/api/settings", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"host": "127.0.0.1:8321", "origin": "https://evil.example"},
+        {"host": "evil.example", "origin": "http://evil.example"},
+    ],
+)
+def test_run_log_socket_refuses_other_origins(client, headers):
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect("/ws/runs/1/logs", headers=headers):
+            pass
+    assert e.value.code == 4403
+
+
+def test_a_token_replaces_the_local_host_check(initialized, monkeypatch):
+    from orchestrator.api.main import create_app
+    from orchestrator.core.config import reset_settings_cache
+
+    monkeypatch.setenv("ORCHESTRATOR_TOKEN", "local-test-token")
+    reset_settings_cache()
+    with TestClient(create_app(), base_url="http://192.168.1.5:8321") as c:
+        token = {"X-Orchestrator-Token": "local-test-token"}
+        assert c.get("/api/settings", headers=token).status_code == 200
+        assert c.get("/api/settings").status_code == 401
+        refused = {**token, "origin": "https://evil.example"}
+        assert c.get("/api/settings", headers=refused).status_code == 403
+
+
+def test_one_time_schedule_api(client):
+    body = {
+        "run_at": "2099-01-02T09:00",
+        "timezone": "Asia/Kuala_Lumpur",
+        "task_template_json": {"title": "t"},
+    }
+    v = client.post("/api/schedules/validate", json=body).json()
+    assert v["valid"] and v["next_runs"] == ["2099-01-02T01:00:00+00:00"]
+    r = client.post("/api/schedules", json={"name": "once", **body})
+    assert r.status_code == 201
+    assert r.json()["run_at"].startswith("2099-01-02T01:00")
+    assert r.json()["cron_expression"] == ""
+    past = {**body, "run_at": "2020-01-02T09:00"}
+    assert client.post("/api/schedules/validate", json=past).json()["valid"] is False
+    assert client.post("/api/schedules", json={"name": "past", **past}).status_code == 400

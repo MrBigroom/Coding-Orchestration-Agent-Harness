@@ -1,3 +1,5 @@
+import pytest
+
 from orchestrator.core.schemas import TaskCreate
 from orchestrator.services import adapter_service, provider_service, task_service
 
@@ -67,17 +69,30 @@ def test_harness_fallbacks_when_no_cli_installed(session, monkeypatch):
     assert choice.adapter is None and "block" in choice.reason
 
 
-def test_harness_prefers_tagged_cli_when_available(session, monkeypatch):
+def test_qwen_tag_prefers_qwen_code_when_available(session, monkeypatch):
     monkeypatch.setattr(
-        adapter_service, "available", lambda s, name: name in {"deepseek_harness", "opencode"}
+        adapter_service, "available", lambda s, name: name in {"pi", "qwen_code", "opencode"}
     )
-    assert (
-        adapter_service.choose_harness(session, _task(session, tags=["deepseek"])).adapter
-        == "deepseek_harness"
-    )
-    assert (
-        adapter_service.choose_harness(session, _task(session, tags=["qwen"])).adapter == "opencode"
-    )
+    task = _task(session, tags=["qwen"])
+    assert adapter_service.choose_harness(session, task).adapter == "qwen_code"
+
+
+def test_qwen_tag_falls_back_to_route_without_qwen_code(session, monkeypatch):
+    monkeypatch.setattr(adapter_service, "available", lambda s, name: name == "opencode")
+    task = _task(session, tags=["qwen"])
+    assert adapter_service.choose_harness(session, task).adapter == "opencode"
+
+
+@pytest.mark.parametrize(
+    ("tag", "second_choice"), [("deepseek", "deepseek_harness"), ("glm", "zcode")]
+)
+def test_model_tags_follow_the_route(session, monkeypatch, tag, second_choice):
+    installed = {"pi", second_choice, "opencode"}
+    monkeypatch.setattr(adapter_service, "available", lambda s, name: name in installed)
+    task = _task(session, tags=[tag])
+    assert adapter_service.choose_harness(session, task).adapter == "pi"
+    installed.discard("pi")
+    assert adapter_service.choose_harness(session, task).adapter == second_choice
 
 
 def test_harness_follows_worker_model(session, monkeypatch):
@@ -87,9 +102,21 @@ def test_harness_follows_worker_model(session, monkeypatch):
     default = adapter_service.choose_harness(session, _task(session))
     assert default.adapter == "pi" and "qwen3.8-flash" in default.reason
     ds = _task(session, assigned_provider_profile="worker-deepseek-flash")
-    assert adapter_service.choose_harness(session, ds).adapter == "deepseek_harness"
+    assert adapter_service.choose_harness(session, ds).adapter == "pi"
     glm = _task(session, assigned_provider_profile="worker-glm")
     assert adapter_service.choose_harness(session, glm).adapter == "pi"
+
+
+def test_kimi_models_prefer_pi(session, monkeypatch):
+    monkeypatch.setattr(adapter_service, "available", lambda s, name: name in {"pi", "opencode"})
+    task = _task(session)
+    choice = adapter_service.choose_harness(session, task, model="kimi-k3.1-pro")
+    assert choice.adapter == "pi" and "kimi-k3.1-pro" in choice.reason
+    assert adapter_service.route_for(adapter_service.DEFAULT_HARNESS_ROUTES, None, "kimi-k3") == [
+        "pi",
+        "opencode",
+        "aider",
+    ]
 
 
 def test_harness_routing_setting_overrides_defaults(session, monkeypatch):
@@ -142,8 +169,15 @@ def test_unedited_legacy_adapter_templates_are_upgraded(session):
     row.capabilities_json = {"experimental": True}
     custom = adapter_service.get_row(session, "qwen_code")
     custom.args_template_json = ["--yolo", "-p", "{prompt}"]
+    claude = adapter_service.get_row(session, "claude_cli")
+    claude.args_template_json = claude.args_template_json[:-2]
+    session.add(claude)
+    zcode = adapter_service.get_row(session, "zcode")
+    zcode.command = "zcode-cli"
+    zcode.args_template_json = ["run", "--cwd", "{cwd}", "--prompt-file", "{prompt_file}"]
     session.add(row)
     session.add(custom)
+    session.add(zcode)
     session.commit()
     adapter_service.seed_defaults(session)
     assert adapter_service.get_row(session, "deepseek_harness").args_template_json[:2] == [
@@ -156,6 +190,21 @@ def test_unedited_legacy_adapter_templates_are_upgraded(session):
     assert adapter_service.get_row(session, "qwen_code").args_template_json == [
         "--yolo",
         "-p",
+        "{prompt}",
+    ]
+    assert adapter_service.get_row(session, "claude_cli").args_template_json[-2:] == [
+        "--allowedTools",
+        "Bash",
+    ]
+    upgraded = adapter_service.get_row(session, "zcode")
+    assert upgraded.command == "zcode"
+    assert upgraded.args_template_json == [
+        "--cwd",
+        "{cwd}",
+        "--mode",
+        "yolo",
+        "--json",
+        "--prompt",
         "{prompt}",
     ]
 

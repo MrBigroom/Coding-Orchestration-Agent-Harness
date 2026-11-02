@@ -18,6 +18,10 @@ EDITABLE: dict[str, type] = {
     "scheduler_enabled": bool,
     "worker_enabled": bool,
     "allow_gui_commands": bool,
+    "allow_interactive_sessions": bool,
+    "allow_unattended_sessions": bool,
+    "supabase_sync_enabled": bool,
+    "supabase_sync_interval_seconds": int,
     "max_review_rounds": int,
     "theme": str,
     # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code
@@ -37,6 +41,10 @@ def defaults() -> dict[str, Any]:
         "scheduler_enabled": s.enable_scheduler,
         "worker_enabled": s.enable_worker,
         "allow_gui_commands": s.allow_gui_commands,
+        "allow_interactive_sessions": s.allow_interactive_sessions,
+        "allow_unattended_sessions": s.allow_unattended_sessions,
+        "supabase_sync_enabled": s.supabase_sync_enabled,
+        "supabase_sync_interval_seconds": s.supabase_sync_interval_seconds,
         "max_review_rounds": 3,
         "theme": "dark",
         "harness_routing": {},
@@ -53,6 +61,15 @@ def get_all(session: Session) -> dict[str, Any]:
     values["token_auth_enabled"] = bool(s.token)
     values["bind_host"] = s.bind_host
     values["bind_port"] = s.bind_port
+    values["supabase_configured"] = all(
+        (
+            s.supabase_url,
+            s.supabase_publishable_key,
+            s.supabase_email,
+            s.supabase_password,
+        )
+    )
+    values["supabase_url"] = s.supabase_url
     return values
 
 
@@ -69,6 +86,8 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be a boolean")
         if typ is int and (not isinstance(val, int) or isinstance(val, bool) or val < 1):
             raise ValueError(f"{key} must be a positive integer")
+        if key == "supabase_sync_interval_seconds" and not 15 <= val <= 86400:
+            raise ValueError(f"{key} must be between 15 and 86400 seconds")
         if typ is str and not isinstance(val, str):
             raise ValueError(f"{key} must be a string")
         if typ is dict and not (

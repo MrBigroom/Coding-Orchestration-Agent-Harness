@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hmac
 import os
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
-from fastapi import Header, HTTPException, Query, status
+from fastapi import Header, HTTPException, Query, WebSocket, status
+from fastapi.datastructures import Headers
+from fastapi.responses import JSONResponse
 
-from orchestrator.core.config import get_settings
+from orchestrator.core.config import LOCAL_HOSTS, get_settings
 
 TOKEN_HEADER = "X-Orchestrator-Token"  # noqa: S105 - header name, not a secret
 
@@ -55,6 +59,44 @@ def require_token(
 
 def require_token_ws(token: str | None = Query(default=None)) -> bool:
     return token_ok(token)
+
+
+def _hostname(authority: str) -> str:
+    return (urlsplit(f"//{authority}").hostname or "").lower()
+
+
+def same_origin_ok(headers: Mapping[str, str]) -> bool:
+    """Block other websites from reaching this server.
+
+    A page on any site can send requests and open WebSockets to 127.0.0.1, and DNS rebinding
+    can point a hostile domain at this server. So the Host must be local (unless a token is
+    configured, which such a page can't know), and a browser's Origin must match that Host.
+    Clients outside a browser send no Origin."""
+    host = headers.get("host", "")
+    origin = headers.get("origin")
+    s = get_settings()
+    try:
+        if not s.token and _hostname(host) not in {*LOCAL_HOSTS, s.bind_host}:
+            return False
+        return origin is None or urlsplit(origin).netloc.lower() == host.lower()
+    except ValueError:  # malformed Host or Origin
+        return False
+
+
+class SameOriginMiddleware:
+    """Apply same_origin_ok to every HTTP request and WebSocket, before any route runs."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket") or same_origin_ok(Headers(scope=scope)):
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await WebSocket(scope, receive, send).close(code=4403)
+        else:
+            refused = {"error": "cross-origin request refused", "detail": None}
+            await JSONResponse(status_code=403, content=refused)(scope, receive, send)
 
 
 def child_env(

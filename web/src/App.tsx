@@ -3,6 +3,7 @@ import Layout from "./components/Layout";
 import Adapters from "./pages/Adapters";
 import Agents from "./pages/Agents";
 import BuildLog from "./pages/BuildLog";
+import Chat from "./pages/Chat";
 import Dashboard from "./pages/Dashboard";
 import Memory from "./pages/Memory";
 import Models from "./pages/Models";
@@ -18,6 +19,8 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/chat/:id" element={<Chat />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/tasks/:id" element={<TaskDetail />} />
         <Route path="/projects" element={<Projects />} />

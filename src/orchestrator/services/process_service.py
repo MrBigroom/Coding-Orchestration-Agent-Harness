@@ -3,7 +3,8 @@
 - argv lists only (asyncio.create_subprocess_exec), never a shell;
 - minimal environment (core.security.child_env) plus declared variable names;
 - stdout/stderr are redacted and written line by line to <artifacts>/stdout.log|stderr.log
-  and published on the in-process event bus;
+  and published on the in-process event bus; with `stdout_file` the child writes stdout to
+  that file instead of a pipe, and it is logged the same way after the child exits;
 - cancellation: anyone (API, CLI in another process) writes <artifacts>/CANCEL; the
   runner polls for it and terminates the process group.
 """
@@ -15,6 +16,7 @@ import os
 import signal
 import time
 from pathlib import Path
+from typing import TextIO
 
 from orchestrator.adapters.base import AdapterResult
 from orchestrator.core.config import get_settings
@@ -24,6 +26,9 @@ from orchestrator.utils.redaction import redact
 
 CANCEL_MARKER = "CANCEL"
 POLL_SECONDS = 0.25
+# Longest output line the log pumps accept. JSON modes print whole messages on one line
+# (Pi reaches ~500 KB), and asyncio's 64 KiB default would kill the pump and stall the child.
+MAX_LINE_BYTES = 32 * 1024 * 1024
 
 
 def git_identity_env() -> dict[str, str]:
@@ -38,16 +43,26 @@ def git_identity_env() -> dict[str, str]:
     }
 
 
+def _log_line(fh: TextIO, raw: bytes, run_id: int, name: str) -> None:
+    line = redact(raw.decode(errors="replace").rstrip("\n"))
+    fh.write(line + "\n")
+    fh.flush()
+    bus.publish(run_id, {"type": "log", "stream": name, "line": line})
+
+
 async def _pump(stream: asyncio.StreamReader, path: Path, run_id: int, name: str) -> None:
     with path.open("a", encoding="utf-8") as fh:
         while True:
             raw = await stream.readline()
             if not raw:
                 break
-            line = redact(raw.decode(errors="replace").rstrip("\n"))
-            fh.write(line + "\n")
-            fh.flush()
-            bus.publish(run_id, {"type": "log", "stream": name, "line": line})
+            _log_line(fh, raw, run_id, name)
+
+
+def _replay(source: Path, path: Path, run_id: int, name: str) -> None:
+    with source.open("rb") as raw, path.open("a", encoding="utf-8") as fh:
+        for line in raw:
+            _log_line(fh, line, run_id, name)
 
 
 def _terminate(proc: asyncio.subprocess.Process, sig: int) -> None:
@@ -70,6 +85,7 @@ async def run_process(
     stdin_data: bytes | None = None,
     log_prefix: str = "",
     extra_env: dict[str, str] | None = None,
+    stdout_file: Path | None = None,
 ) -> AdapterResult:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     out_path = artifacts_dir / f"{log_prefix}stdout.log"
@@ -77,15 +93,17 @@ async def run_process(
     cancel_path = artifacts_dir / CANCEL_MARKER
     env = child_env(env_names, {**git_identity_env(), **(extra_env or {})})
     started = time.monotonic()
+    stdout_sink = stdout_file.open("wb") if stdout_file else None
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(cwd),
             env=env,
             stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
+            stdout=stdout_sink or asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,  # own process group so we can kill children too
+            limit=MAX_LINE_BYTES,
         )
     except (FileNotFoundError, PermissionError) as e:
         err_path.write_text(f"failed to start {argv[0]!r}: {e}\n")
@@ -95,13 +113,15 @@ async def run_process(
             stdout_path=out_path,
             stderr_path=err_path,
         )
+    finally:
+        if stdout_sink:
+            stdout_sink.close()
 
     (artifacts_dir / f"{log_prefix}pid").write_text(str(proc.pid))
-    assert proc.stdout and proc.stderr
-    pumps = [
-        asyncio.create_task(_pump(proc.stdout, out_path, run_id, "stdout")),
-        asyncio.create_task(_pump(proc.stderr, err_path, run_id, "stderr")),
-    ]
+    assert proc.stderr
+    pumps = [asyncio.create_task(_pump(proc.stderr, err_path, run_id, "stderr"))]
+    if proc.stdout:
+        pumps.append(asyncio.create_task(_pump(proc.stdout, out_path, run_id, "stdout")))
     if stdin_data is not None and proc.stdin:
         proc.stdin.write(stdin_data)
         await proc.stdin.drain()
@@ -133,6 +153,8 @@ async def run_process(
     _, pending = await asyncio.wait(pumps, timeout=5)
     for t in pending:
         t.cancel()
+    if stdout_file:
+        _replay(stdout_file, out_path, run_id, "stdout")
     duration_ms = int((time.monotonic() - started) * 1000)
     error = None
     if timed_out:
