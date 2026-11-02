@@ -230,6 +230,26 @@ async def test_pi_refused_command_raises(tmp_path):
         await driver.close()
 
 
+def test_pi_session_links_your_mcp_servers_and_sign_ins(tmp_path, monkeypatch):
+    own = tmp_path / "pi-agent"
+    own.mkdir()
+    (own / "mcp.json").write_text('{"mcpServers": {"docs": {"url": "http://x/mcp"}}}')
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(own))
+    driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
+    driver._link_mcp()
+    linked = driver.tmp / "mcp.json"
+    assert linked.is_symlink() and linked.resolve() == own / "mcp.json"
+    assert not (driver.tmp / "mcp-auth.json").exists()  # not signed in to anything yet
+    # A refreshed token is written through the link, back to your own file.
+    (own / "mcp-auth.json").write_text("{}")
+    driver._tmp.cleanup()
+    driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
+    driver._link_mcp()
+    (driver.tmp / "mcp-auth.json").write_text('{"docs": {}}')
+    assert (own / "mcp-auth.json").read_text() == '{"docs": {}}'
+    driver._tmp.cleanup()
+
+
 def test_pi_models_file_lists_every_switchable_model(tmp_path):
     rec = Recorder()
     a = adapter("pi", "pi")

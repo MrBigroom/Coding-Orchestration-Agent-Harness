@@ -91,6 +91,27 @@ fills in its name; add any arguments, then send.
 
 Model, effort and permission are controls under the message box rather than commands.
 
+## MCP servers
+
+Each harness uses the MCP servers in its own config, unless the orchestrator gives it a
+temporary one to set its endpoint and key:
+
+- **Pi:** your user-level servers in `~/.pi/agent/mcp.json`, with their sign-ins from
+  `mcp-auth.json`, so Qwen, DeepSeek and GLM models can use them. Both files are linked into
+  the session's temporary config folder, so a token Pi refreshes is saved back to yours.
+  Add servers with `pi mcp add` and sign in with `pi mcp login <name>` in a terminal.
+  Project-level `.pi/mcp.json` files aren't read.
+- **Claude Code and OpenCode:** your own config, including Claude Code's claude.ai
+  connectors.
+- **Qwen Code and DeepSeek Harness:** none, because their managed setup runs them with a
+  temporary home folder.
+
+By default Pi doesn't give MCP tools to the model directly: the model writes a short
+`codemode` script that calls them. In Ask first, the gate asks before the script runs and
+again before each MCP tool it calls, so both appear as approvals. Plan blocks both.
+Pipeline tasks don't get your Pi servers, because Pi has no gate there; standalone runs do,
+and Read and report denies them like any other unrecognised tool.
+
 ## Claude models
 
 The model list offers Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, whether or not a profile
