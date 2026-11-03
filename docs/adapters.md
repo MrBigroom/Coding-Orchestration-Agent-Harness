@@ -163,6 +163,8 @@ tolerated in saved ZCode JSON. See [`harness-routing.md`](harness-routing.md).
   13.1k + 5.8k tokens over two calls to about 9.1k in one call. An isolated temporary
   `HOME` stops `modelProviders` in `~/.qwen/settings.json` overriding that endpoint and
   key, and keeps your Qwen MCP servers out of worker runs.
+  The same file turns off `general.gitCoAuthor`, so commits and PRs made in Tasks and
+  Chat get no `Qwen-Coder` co-author trailer and no `refs/notes/ai-attribution` note.
 - **Env:** `QWEN_API_KEY`, `QWEN_OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
   `OPENAI_MODEL`; binary override `QWEN_CODE_COMMAND`.
 - **Detect:** `which qwen` · **Manual test:** `qwen --version && qwen --help`.
