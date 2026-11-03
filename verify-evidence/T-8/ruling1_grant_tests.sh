@@ -46,7 +46,7 @@ grep -n "^def test_contract_authorization\|^def test_reviewer_prompt_sections\|^
 echo
 
 echo "== targeted -v run (one line per proof) =="
-./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py -v \
+./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py -vv \
   -k "contract_authorization or reviewer_prompt_sections or unauthorized_contract_change" 2>&1 |
   grep -E "^(ORCH_VERIFY\||tests/unit/test_recovery_markers\.py::|[0-9]+ (passed|failed|deselected)|FAILED|ERROR)"
 echo "TARGETED_EXIT=${PIPESTATUS[0]}"

@@ -28,5 +28,5 @@ run tests/unit/test_redaction.py
 run tests/integration/test_git_worktree.py
 run tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py \
     tests/unit/test_redaction.py tests/integration/test_git_worktree.py
-run tests/unit/test_recovery_markers.py -v \
+run tests/unit/test_recovery_markers.py -vv \
     -k "contract_authorization or reviewer_prompt_sections or unauthorized_contract_change"
