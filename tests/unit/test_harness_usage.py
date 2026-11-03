@@ -208,6 +208,14 @@ def test_pi_config_references_key_by_name_and_caches_only_supported_models(tmp_p
     assert "QWEN_API_KEY" in pi.child_env_names()
 
 
+def test_pi_config_gives_the_model_its_context_window(tmp_path):
+    ctx = _ctx(tmp_path, "qwen3.8-flash")
+    ctx.context_window = 1_000_000
+    _adapter("pi").prepare(ctx, tmp_path)
+    model = json.loads((tmp_path / "models.json").read_text())["providers"]["orchestrator"]
+    assert model["models"][0]["contextWindow"] == 1_000_000
+
+
 def test_dsh_patch_routes_model_through_configured_provider(tmp_path, monkeypatch):
     monkeypatch.setenv("QWEN_OPENAI_BASE_URL", "https://example.test/v1")
     dsh = _adapter("deepseek_harness")

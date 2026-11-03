@@ -207,6 +207,12 @@ Otherwise the window comes from the model's profile (Models & Providers, the Con
 column), then from a built-in table for the models the orchestrator ships profiles for
 (`core/context_windows.py`). A model in neither shows the tokens without a limit.
 
+Pi is told that same window for each model it may use. Without it, Pi assumes 128K and
+compacts at about 112K, however much the model holds. Pi compacts before it takes a
+message, so the next message can wait minutes for an answer. The transcript shows when
+compaction starts and ends, and when it fails. A message sent meanwhile is queued on the
+running turn.
+
 ## Continuing a session
 
 Sessions live inside the server process, so they end when it stops, and show as

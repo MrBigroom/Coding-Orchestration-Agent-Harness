@@ -62,6 +62,8 @@ class DriverOptions:
     resume: str | None = None
     # A folder of the session's own where a harness can keep its conversation.
     state_dir: Path | None = None
+    # Context windows of `model` and `models`, for harnesses the orchestrator configures.
+    context_windows: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
