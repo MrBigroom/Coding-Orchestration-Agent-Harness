@@ -58,6 +58,13 @@ change in its Definition of Done.
   review.md, review.json, review.raw.txt?, verification.md, verification.json, run.json}`.
   Worktrees live at `worktrees/<project_slug>/<task_id>` and the build log at
   `build-log.jsonl`.
+- **Path-independent verification commands**: the gate runs a project's test/lint/build
+  command with cwd = the task worktree (`worktrees/<project_slug>/<task_id>`), never in the
+  main checkout. A wrapper that proves where its imports resolved emits
+  `ORCH_VERIFY|mode=<mode>|module=<name>|module_file=<abs>|worktree_root=<abs>` on stdout or
+  stderr; `scripts/orch_verify.sh` is the reference implementation and
+  `project_service.parse_orch_verify` (+ `project doctor --run-commands`) consumes it. Keys
+  are order-independent; the field names and the `ORCH_VERIFY|` prefix are the contract.
 - **Provider adapter interface**: `providers/base.py` (`detect`, `health`, `complete`,
   optional `stream`, `validate_config`).
 - **Harness adapter interface**: `adapters/base.py` (`detect`, `health`, `build_command`,

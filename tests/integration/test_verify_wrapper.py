@@ -271,6 +271,39 @@ def test_doctor_passes_for_the_wrapper_command(fake, home, session):
     assert git_service.managed_worktrees() == []
 
 
+def test_doctor_finds_a_command_that_only_exists_on_the_base_branch(home, session, tmp_path):
+    """A branch that adds its own wrapper is not in the main checkout yet. The gate runs in
+    worktrees of the base branch, so that is runnable and must not read as "missing"."""
+    main = tmp_path / "premerge"
+    (main / "src").mkdir(parents=True)
+    (main / "src" / "pkg.py").write_text("")
+    git(main, "init", "-q", "-b", "main")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "no wrapper yet")
+    git(main, "checkout", "-q", "-b", "add-wrapper")
+    (main / "scripts").mkdir()
+    (main / "scripts" / "orch_verify.sh").write_text("#!/bin/sh\nexit 0\n")
+    git(main, "add", "scripts/orch_verify.sh")
+    git(main, "commit", "-q", "-m", "the wrapper lives on this branch")
+    git(main, "checkout", "-q", "main")
+    assert not (main / "scripts" / "orch_verify.sh").exists()
+
+    def check(branch: str, command: str) -> dict:
+        project = project_service.create(
+            session,
+            ProjectCreate(name=f"P-{branch}", path=str(main), base_branch=branch,
+                          test_command=command),
+        )
+        return {c["name"]: c for c in project_service.doctor(project)}["test command"]
+
+    on_branch = check("add-wrapper", "scripts/orch_verify.sh test")
+    assert on_branch["ok"], on_branch
+    assert "not yet in the main checkout" in on_branch["detail"]
+
+    missing = check("main", "scripts/nope.sh test")
+    assert not missing["ok"] and "not found" in missing["detail"]
+
+
 def test_doctor_never_runs_commands_without_the_flag(fake, home, session):
     project = project_service.create(
         session,

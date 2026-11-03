@@ -105,6 +105,15 @@ def command_allowed(project: Project, command: str) -> bool:
     return command in project.allowed_commands or argv0 in project.allowed_commands
 
 
+def _in_base_branch(project: Project, exe: str) -> bool:
+    """Is `exe` committed on the base branch (as a plain path, not a cwd-relative one)?"""
+    try:
+        res = run_git(["ls-tree", "--name-only", project.base_branch, "--", exe], project.path)
+    except (OSError, GitError):
+        return False
+    return res.code == 0 and bool(res.stdout.strip())
+
+
 def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
@@ -135,8 +144,22 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
         try:
             argv = command_argv(cmd)
             exe = argv[0]
-            found = (path / exe).exists() if "/" in exe else shutil.which(exe) is not None
-            add(f"{label} command", found, cmd if found else f"`{exe}` not found")
+            if "/" in exe:
+                if (path / exe).exists():
+                    found, detail = True, cmd
+                elif repo and _in_base_branch(project, exe):
+                    # The gate runs commands in a worktree of the base branch, never in the
+                    # main checkout, so a wrapper that only exists there is still runnable —
+                    # exactly the state of a branch that adds its own verify wrapper.
+                    found = True
+                    detail = f"{cmd} (on {project.base_branch!r}, not yet in the main checkout)"
+                else:
+                    found = False
+                    detail = f"`{exe}` not found in the main checkout or on {project.base_branch!r}"
+            else:
+                found = shutil.which(exe) is not None
+                detail = cmd if found else f"`{exe}` not found on PATH"
+            add(f"{label} command", found, detail)
         except ProjectError as e:
             add(f"{label} command", False, str(e))
     if run_commands:

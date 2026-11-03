@@ -149,7 +149,7 @@ else
   for a in "${EXTRA_ARGS[@]}"; do
     case "$a" in
       -*) ;;
-      *) [ -e "$a" ] && replaces=1 ;;
+      *) if [ -e "$a" ]; then replaces=1; fi ;;
     esac
   done
   if [ "$replaces" = 1 ]; then
