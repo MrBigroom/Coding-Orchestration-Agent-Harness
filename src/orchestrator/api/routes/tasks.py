@@ -61,7 +61,7 @@ def _detail(session: Session, task: Task) -> dict[str, Any]:
     # field is the ONLY place it is served — there is deliberately no GET /api/tasks/{id}/recovery
     # (T-8 reviewer ruling 3: the route was dead code, nothing read it, and a new route is extra
     # /api surface beyond what any DoD item asked for). The field itself is still contract-bearing
-    # surface: docs/contract-change-request-T8-02-recovery-field.md, status PROPOSED.
+    # surface: docs/contract-change-request-T8-02-recovery-commits-field.md, status PROPOSED.
     from orchestrator.services import project_service
 
     data["recovery_commits"] = [
