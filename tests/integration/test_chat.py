@@ -143,6 +143,10 @@ def test_unknown_permission_is_rejected(enabled, project):
 
 @requires_git
 def test_session_flow_in_a_worktree(enabled, project, tmp_path):
+    profiles = enabled.get("/api/model-profiles").json()
+    mock = next(p for p in profiles if p["model_name"] == "mock-worker")
+    assert mock["builtin_context_window"] is None
+    enabled.patch(f"/api/model-profiles/{mock['id']}", json={"context_window": 8000})
     chat = start(enabled, project)
     assert chat["branch_name"].startswith("chat/")
     assert chat["cwd"] != project["path"]
@@ -155,12 +159,16 @@ def test_session_flow_in_a_worktree(enabled, project, tmp_path):
         assert until(ws, "status", status="awaiting_approval")
         ws.send_json({"type": "approval", "id": approval["id"], "choice": "allow"})
         assert until(ws, "tool_end")["error"] is False
-        until(ws, "usage")
+        usage = until(ws, "usage")
+        assert (usage["context_tokens"], usage["context_window"]) == (100, 8000)
         until(ws, "status", status="idle")
 
     row = enabled.get(f"/api/chat/sessions/{chat['id']}").json()
     assert row["title"] == "add a note"
     assert row["usage"]["input_tokens"] == 100
+    assert "turn" not in row["usage"]
+    daily = enabled.get("/api/usage/daily", params={"days": 1, "source": "chat"}).json()
+    assert [(r["model"], r["input_tokens"]) for r in daily["rows"]] == [("mock-worker", 100)]
 
     changes = enabled.get(f"/api/chat/sessions/{chat['id']}/changes").json()
     assert "mock-chat-1.md" in changes["uncommitted"]

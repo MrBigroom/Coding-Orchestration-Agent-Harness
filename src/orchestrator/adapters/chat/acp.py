@@ -382,6 +382,10 @@ class AcpDriver(ChatDriver):
         elif kind == "available_commands_update":
             commands = slash_commands(update.get("availableCommands"))
             self.emit({"type": "config", "commands": commands})
+        elif kind == "usage_update":
+            # ACP's context report: tokens in context now, and the window size.
+            if used := _n(update.get("used")):
+                self.set_context(used, _n(update.get("size")) or None)
 
     def _on_tool(self, kind: str, update: dict[str, Any]) -> None:
         tool_id = update.get("toolCallId") or ""

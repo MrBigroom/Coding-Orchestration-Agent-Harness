@@ -190,3 +190,13 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `agent_name`, not a link, so deleting an agent stays simple and old transcripts keep the name.
   Claude Code now always offers the current Claude models, because Chat's list otherwise only
   held models that a profile happened to name.
+
+- **2026-11-03 — Context windows and per-day usage (revision `0008_usage_events`).** Model
+  profiles gain an optional `context_window`, which overrides a built-in table of the models we
+  ship profiles for, so new models work before the table knows them. The Chat pane shows the
+  latest request's prompt size against it, not the session's running total, because the total
+  adds up every request and says nothing about how full the window is. A new `usage_events`
+  table logs each harness run, chat turn and direct API call with its model and time, for the
+  Usage page; runs and chats only kept totals, so the migration files each one's total under
+  the day it started. Events are recorded in their own database session, so logging never
+  commits a caller's half-done work.

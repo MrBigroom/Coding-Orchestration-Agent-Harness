@@ -198,6 +198,15 @@ def cache_stats(session: Session = SessionDep) -> dict[str, Any]:
     return {"rows": usage_service.cache_stats(session)}
 
 
+@router.get("/usage/daily", dependencies=AUTH)
+def usage_daily(
+    days: int = Query(30, ge=1, le=366),
+    source: str | None = Query(None, pattern="^(task|chat|standalone|api)$"),
+    session: Session = SessionDep,
+) -> dict[str, Any]:
+    return usage_service.daily(session, days, source)
+
+
 @router.get("/prompt-preview", dependencies=AUTH)
 def prompt_preview_get(
     role: str = "worker",

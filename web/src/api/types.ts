@@ -125,6 +125,8 @@ export interface ModelProfile {
   temperature: number | null;
   max_tokens: number;
   effort: string | null;
+  context_window: number | null;
+  builtin_context_window: number | null;
   enabled: boolean;
   notes: string | null;
 }
@@ -282,6 +284,14 @@ export interface ChatUsage {
   uncached_input_tokens: number;
   output_tokens: number;
   requests: number;
+  // Prompt size of the latest request, and the model's window when known.
+  context_tokens?: number;
+  context_window?: number | null;
+}
+
+export interface UsageDaily {
+  days: string[];
+  rows: { day: string; model: string; input_tokens: number; cached_input_tokens: number; output_tokens: number; requests: number }[];
 }
 
 export interface PermissionMode {

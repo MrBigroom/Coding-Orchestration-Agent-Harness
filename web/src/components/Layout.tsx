@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Bot, Brain, CalendarClock, Cpu, DatabaseZap, FolderGit2, LayoutDashboard, ListChecks,
+  BarChart3, Bot, Brain, CalendarClock, Cpu, DatabaseZap, FolderGit2, LayoutDashboard, ListChecks,
   MessagesSquare, ScrollText, Settings, Workflow, Wrench, type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -9,6 +9,7 @@ import { ThemeSwitch } from "./ui";
 
 const NAV: readonly (readonly [string, string, LucideIcon])[] = [
   ["/", "Dashboard", LayoutDashboard],
+  ["/usage", "Usage", BarChart3],
   ["/chat", "Chat", MessagesSquare],
   ["/tasks", "Tasks", ListChecks],
   ["/agents", "Agents", Bot],

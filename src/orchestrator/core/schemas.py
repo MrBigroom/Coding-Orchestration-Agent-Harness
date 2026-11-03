@@ -225,6 +225,7 @@ class ModelProfileCreate(BaseModel):
     max_tokens: int = 16_000
     timeout_seconds: int = 600
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    context_window: int | None = Field(default=None, gt=0)
     enabled: bool = True
     notes: str | None = None
 
@@ -237,6 +238,7 @@ class ModelProfileUpdate(BaseModel):
     max_tokens: int | None = None
     timeout_seconds: int | None = None
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    context_window: int | None = Field(default=None, gt=0)
     enabled: bool | None = None
     notes: str | None = None
 

@@ -13,12 +13,14 @@ import Schedules from "./pages/Schedules";
 import Settings from "./pages/Settings";
 import TaskDetail from "./pages/TaskDetail";
 import Tasks from "./pages/Tasks";
+import Usage from "./pages/Usage";
 
 export default function App() {
   return (
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/usage" element={<Usage />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/chat/:id" element={<Chat />} />
         <Route path="/tasks" element={<Tasks />} />

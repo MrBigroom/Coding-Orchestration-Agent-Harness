@@ -325,6 +325,7 @@ async def _execute(
         )
         if usage:
             run.usage = usage  # persisted by the next _set_run commit
+            usage_service.record("task", harness_name, ctx.model, usage)
     artifact_service.write_json(
         run.id,
         "run.json",

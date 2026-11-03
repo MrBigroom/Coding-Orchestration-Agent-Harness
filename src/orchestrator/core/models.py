@@ -300,6 +300,8 @@ class ModelProfile(SQLModel, table=True):
     timeout_seconds: int = 600
     # Anthropic output_config.effort (low|medium|high|xhigh|max); ignored by other providers.
     effort: str | None = None
+    # Max prompt tokens; None uses the built-in figure in core.context_windows.
+    context_window: int | None = None
     enabled: bool = True
     notes: str | None = Field(default=None, sa_column=Column(Text))
 
@@ -349,6 +351,24 @@ class ChatSession(SQLModel, table=True):
     error: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class UsageEvent(SQLModel, table=True):
+    """Tokens one model call, harness run or chat turn spent, for the Usage page's per-day
+    charts. `via` is the harness for task, chat and standalone usage, and the provider for
+    direct API calls."""
+
+    __tablename__ = "usage_events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    source: str = Field(sa_column=Column(String(16), nullable=False))  # task|chat|standalone|api
+    via: str | None = None
+    model: str | None = None
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    requests: int = 0
 
 
 class MemoryEntry(SQLModel, table=True):

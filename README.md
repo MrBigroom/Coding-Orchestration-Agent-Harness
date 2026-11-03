@@ -78,11 +78,12 @@ full worktree → tests → Architect review gate. **Scheduled tasks** can run a
 cron or at a set time, through that pipeline or as a standalone session that saves its own
 report. See [`docs/agents.md`](docs/agents.md).
 
-The GUI covers the same workflows. Its pages are Dashboard, Tasks, Task Detail (live
-logs, diff, handoff, review, verification, accept/reject/escalate, retry with a
-different harness/model), Agents, Scheduled Tasks, Projects, Models & Providers,
-Adapters, Memory, Prompt Cache, Build Log, and Settings. It has light and dark themes
-(switch in the sidebar or on Settings), with fonts bundled locally.
+The GUI covers the same workflows. Its pages are Dashboard, Usage (tokens per model per
+day, as a heatmap and stacked bars), Chat, Tasks, Task Detail (live logs, diff, handoff,
+review, verification, accept/reject/escalate, retry with a different harness/model),
+Agents, Scheduled Tasks, Projects, Models & Providers, Adapters, Memory, Prompt Cache,
+Build Log, and Settings. It has light and dark themes (switch in the sidebar or on
+Settings), with fonts bundled locally.
 
 ## Chat with a harness directly
 

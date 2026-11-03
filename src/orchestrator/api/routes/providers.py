@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from orchestrator.api.dependencies import AUTH, SessionDep
+from orchestrator.core import context_windows
 from orchestrator.core.models import HarnessAdapter, ModelProfile, Provider
 from orchestrator.core.schemas import (
     AdapterUpdate,
@@ -69,7 +70,7 @@ async def test_provider(provider_id: int, session: Session = SessionDep) -> dict
 
 @router.get("/model-profiles")
 def list_profiles(session: Session = SessionDep) -> list[dict[str, Any]]:
-    return [dump(m) for m in session.exec(select(ModelProfile))]
+    return [_profile(m) for m in session.exec(select(ModelProfile))]
 
 
 @router.post("/model-profiles", status_code=201)
@@ -80,7 +81,7 @@ def create_profile(body: ModelProfileCreate, session: Session = SessionDep) -> d
     session.add(m)
     session.commit()
     session.refresh(m)
-    return dump(m)
+    return _profile(m)
 
 
 @router.patch("/model-profiles/{profile_id}")
@@ -94,7 +95,12 @@ def update_profile(
         setattr(m, k, v)
     session.add(m)
     session.commit()
-    return dump(m)
+    return _profile(m)
+
+
+def _profile(m: ModelProfile) -> dict[str, Any]:
+    """`builtin_context_window` is what applies when the profile leaves `context_window` empty."""
+    return {**dump(m), "builtin_context_window": context_windows.builtin(m.model_name)}
 
 
 @router.get("/adapters")

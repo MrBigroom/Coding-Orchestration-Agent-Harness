@@ -194,6 +194,15 @@ refused starting level leaves the default in place and shows a notice. Claude Co
 live effort control, so a change restarts it between turns with `--resume`, which keeps the
 conversation.
 
+## Context window
+
+The session header shows how full the model's context is: the tokens the latest request
+sent, out of the model's window. Claude Code and Pi report each request's size. ACP
+harnesses show it only when they send ACP's `usage_update`, which also gives the window.
+Otherwise the window comes from the model's profile (Models & Providers, the Context
+column), then from a built-in table for the models the orchestrator ships profiles for
+(`core/context_windows.py`). A model in neither shows the tokens without a limit.
+
 ## Limits
 
 - Sessions live inside the server process. When the server stops, they end and show as

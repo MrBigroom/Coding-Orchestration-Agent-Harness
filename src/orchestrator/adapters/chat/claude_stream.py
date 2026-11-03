@@ -171,7 +171,15 @@ class ClaudeDriver(ChatDriver):
         if kind == "stream_event":
             self._on_stream(record.get("event") or {})
         elif kind == "assistant":
-            for block in (record.get("message") or {}).get("content") or []:
+            message = record.get("message") or {}
+            if isinstance(usage := message.get("usage"), dict):
+                # Per request, unlike the turn totals on `result`.
+                self.set_context(
+                    _n(usage.get("input_tokens"))
+                    + _n(usage.get("cache_creation_input_tokens"))
+                    + _n(usage.get("cache_read_input_tokens"))
+                )
+            for block in message.get("content") or []:
                 if block.get("type") == "tool_use":
                     self.emit(
                         {
