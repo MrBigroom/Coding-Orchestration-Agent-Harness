@@ -55,8 +55,8 @@ Run states: `pending → preparing → running → testing → completed`, with 
    uncommitted), and `patch.diff` + `diffstat.txt` are collected against the base branch.
 6. **Failure paths.** A non-zero exit → run `failed`. Exceeding the adapter timeout →
    `timeout`. A `CANCEL` marker → `cancelled`. In all three cases the task returns to
-   `planned` for a deliberate retry, and the run's terminal event is `run_failed` /
-   `run_timeout` / `run_cancelled`-adjacent log line; a run that finishes normally emits
+   `planned` for a deliberate retry, and the failure paths emit `run_failed` / `run_timeout`
+   (a cancel is recorded on the `task_status` line); a run that finishes normally emits
    `run_completed`. Every new round clears the previous round's lifecycle markers (see
    “What a new round resets”).
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
@@ -67,6 +67,78 @@ Run states: `pending → preparing → running → testing → completed`, with 
 9. **BLOCKED handoff** → task `blocked` (waiting for a decision, not "still working").
    The run completes and nothing is retried automatically.
 10. Otherwise **testing**: the task moves to `review` and the Supervisor gate runs.
+
+## Recovery commits
+
+A turn that is killed (timeout, cancel, crash) leaves its edits sitting uncommitted in the
+worktree. The harness never discards them: it commits them. A subject line alone is not
+enough, because a half-finished edit then looks exactly like authored work to the next run,
+to the reviewer and in the diff — so a recovery commit is **machine-identifiable**:
+
+- **Subject** `chore(orchestrator-recovery): <label>` — unchanged format, because tests, docs
+  and GUI displays match on it (`git_service.RECOVERY_SUBJECT_PREFIX`).
+- **Trailer** `Orchestrator-Recovery: <run_short_id>` (`RECOVERY_TRAILER_KEY`) naming the
+  aborted run whose work is swept — not the run that finds it. Detection is by trailer
+  (`git_service.recovery_run_of` / `CommitInfo.recovery`), never by subject matching: a
+  hand-authored commit that copies the subject is *not* a recovery commit.
+- **Body** states plainly that the content was never self-checked, and lists
+  `Tracked modifications (n): …` separately from `Newly added untracked paths (n): …`.
+- **Build-log event** `recovery_commit`, line shape unchanged; the structured payload rides
+  inside `details` as `… | findings_json={"recovery": true, "run_short_id": …,
+  "sha": …, "tracked_modified": […], "untracked_added": […]}`
+  (`utils/structured_log.py`, `git_service.recovery_event_details`). Old lines without the
+  marker parse to `None`.
+- **Next run's prompt**: if the branch carries recovery commits, `run_service` lists them
+  (short sha, subject, tracked vs newly-added paths) and requires the Worker to re-verify with
+  the project's lint/test commands, repair or report every defect they introduced, and emit a
+  BLOCKED handoff with a contract-change request instead of continuing if one touched a
+  contract file the phase does not authorize. Logged as `recovery_notice_included`.
+- **Reviewer payload**: `review_service.recovery_section` + `harness_findings_section`, and
+  the GUI marks the diff with a warning block (`TaskDetail.tsx` `RecoveryNote`) built from
+  `GET /api/tasks/{id}/recovery`. `runs/<id>/review_payload.md` keeps what the reviewer was
+  actually shown.
+- Sensitive paths (`.env`, keys) are **never** staged into a recovery commit; they stay on
+  disk untracked and are reported in `skipped_sensitive`.
+
+A recovery commit is not itself a rejection reason and not itself an approval: it is
+information that the content has no self-check behind it. What *does* fail the gate is what
+re-verification finds in it (a lint error, a failing test) or a harness-detected contract-file
+hit — see “Unauthorized contract edits”.
+
+## What a new round resets
+
+`handoff_status`, `review_status`, `verification_status` and `merge_status` describe the
+**round that just ended**. Leaving them set while a new run is live makes the task row report
+`in_progress` next to `RUN_TIMEOUT` at the same time, which mislabels the GUI header and
+invites a reader to treat a live run as a failed one. So `task_service.clear_round_fields`
+(`ROUND_FIELDS`) runs at the one place a round actually starts — the top of
+`run_service._execute`, right after the run enters `preparing` — and logs
+`retry_fields_reset` with the fields it cleared.
+
+Deliberately **not** cleared on a requeue (`transition → queued`): a task queued after
+`CHANGES_REQUESTED` must keep showing that verdict, because it is the feedback the Worker acts
+on. The reset belongs at the start of a round, not at the end of one. `status` itself is not
+cleared — it is the state machine's business (`core/state.py`, frozen).
+
+## Unauthorized contract edits
+
+Editing a contract document (`docs/plan.md`, `docs/product-spec.md`, `docs/architecture.md`,
+`docs/workflow.md`, `docs/frozen-contracts.md`) is a decision only a human may authorize, and
+the half-finished wreckage a recovery commit sweeps in can contain exactly that. The harness
+computes it — a Worker or reviewer asserting authorization cannot make the claim true:
+
+1. the changed-file set is the branch diff **plus** the worktree's own dirt (`tracked_modified`
+   and `untracked_added`, so an uncommitted edit cannot hide),
+2. intersected with `project_service.contract_files()`,
+3. minus the files the task's stored `definition_of_done` / `acceptance_criteria` name
+   literally (`authorized_contract_files`; the task *description* is not authorization).
+
+An unauthorized hit emits `contract_change_detected` with a `findings_json` payload, fails the
+`contract files unchanged` verification check (so green tests do not save it), and is handed to
+the reviewer as a harness-detected finding. **Decision: it routes straight to `blocked` with
+`review_status=NEEDS_HUMAN` instead of burning a review round** (`supervisor_service.contract_change_hold`)
+— a requeue would ask the Worker to fix something it is forbidden to fix. It does not reach the
+reviewer for the same reason. Recovery-commit paths are named as such in the finding.
 
 ## Supervisor gate (`supervisor_service.after_run`)
 
@@ -205,9 +277,44 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `build_log_entries` table. Each line looks like:
 `{timestamp, phase, task_id, run_id, role, event, details, commit_sha}`. Events include
 `task_status`, `run_created`, `worktree_created`, `recovery_commit`, `run_failed`,
-`run_timeout`, `supervisor_verification`, `architect_review`, `nits_deferred`,
-`merge_candidate`, `merged`, `merge_refused`, `schedule_fired`, `standalone_run`, `escalated`,
-`human_accept`. The GUI Build Log page and `GET /api/build-log` read it.
+`run_timeout`, **`run_completed`**, `supervisor_verification`, `architect_review`,
+`nits_deferred`, `merge_candidate`, `merged`, `merge_refused`, `schedule_fired`,
+`standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
+`retry_fields_reset`, `contract_change_detected`, `run_error`. The GUI Build Log page and
+`GET /api/build-log` read it.
+
+### Terminal run events
+
+A run's terminal status is `completed | failed | timeout | cancelled`. Three of them had a
+named event (`run_failed`, `run_timeout`, and `run_error` for an unexpected exception); a run
+that finished normally had none — `run_cancelled` does not exist as an event name either, a
+cancel shows up as a `task_status` line reading `run cancelled`. A green run was therefore
+observable only as a `task_status` transition, so any consumer had to *derive* the single most
+important trigger indirectly. `run_completed` is that missing event. It is emitted from
+`run_service._set_run` — the single writer of `run.status`, which the `run_failed` /
+`run_timeout` events are also driven by (their `_set_run` call is immediately followed by
+`log_event(f"run_{status}")` in `_execute`) — so every terminal run status is logged from the
+same transition point, and it is impossible to set `completed` without emitting it. It is
+**additive** — no existing event name and no line-shape key changed — and adding it to the
+vocabulary was authorized by this task's Definition of Done, so `docs/frozen-contracts.md`
+itself is untouched (it does not enumerate build-log event names; the frozen list is the
+*line shape*).
+
+Today no in-repo consumer infers run success from a task-status transition (the Build Log page
+renders events as they arrive; the Dashboard counts `task.status`, which is a task verdict, not
+a run outcome), so there was nothing to migrate. The notification fan-out **T-9** must express
+its trigger set against these events rather than deriving success: `run_completed` (a run
+finished normally — the success trigger), `run_failed`, `run_timeout`, `run_error`, `escalated`,
+`merge_refused`, and a `verdict_recorded`/`task_status` line whose reason is `blocked`.
+Notifications key off events, not off status inference.
+
+`details` is redacted (`log_service.log_event`), and the credential patterns in
+`utils/redaction.py` are anchored with a leading word boundary so operational text stays
+usable: a branch, task, phase or path name (`task-8-…`, `risk-…`, `mask-…`) and a
+`findings_json` payload containing one must survive byte-identically, while real keys
+(`sk-ant-…`, `sk-proj-…`, `gh[pousr]_`, …) still redact wherever they appear. The
+`merge_candidate` instruction in particular must remain copy-pasteable —
+`git -C <repo> checkout main && git -C <repo> merge --no-ff <branch>`.
 
 ## Branch strategy
 
