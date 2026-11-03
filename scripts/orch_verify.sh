@@ -89,6 +89,11 @@ done
 SRC="${ORCH_VERIFY_SRC:-$ROOT/src}"
 [ -d "$SRC" ] || SRC="$ROOT"
 
+# cd BEFORE the resolution probe: `python -` and `python -m <tool>` both put the current
+# directory first on sys.path, so the probe must run in exactly the directory the tool will
+# run in, otherwise the asserted resolution is not the executed one.
+cd "$ROOT"
+
 # The fix, plus the hygiene the child must not inherit.
 unset VIRTUAL_ENV
 export PYTHONDONTWRITEBYTECODE=1
@@ -135,8 +140,6 @@ esac
 printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
   "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT"
 
-cd "$ROOT"
-
 # Collection target: always the worktree, never whatever the invoking directory holds.
 # Extra args that name an existing path replace that target (paths are relative to the
 # worktree root); pure flags (-k, -x, …) are added to it.
@@ -165,13 +168,19 @@ lint_argv() {
 
 case "$MODE" in
   resolve) exit 0 ;;
-  test) exec "$PY" -m pytest "${TEST_ARGS[@]}" ;;
+  test)
+    printf 'orch-verify: pytest target %s\n' "${TEST_ARGS[*]}"
+    exec "$PY" -m pytest "${TEST_ARGS[@]}"
+    ;;
   lint)
     lint_argv
+    printf 'orch-verify: lint target  %s\n' "${LINT_ARGS[*]}"
     exec "$PY" -m "${LINT_ARGS[@]}"
     ;;
   all)
     lint_argv
+    printf 'orch-verify: pytest target %s\n' "${TEST_ARGS[*]}"
+    printf 'orch-verify: lint target  %s\n' "${LINT_ARGS[*]}"
     rc=0
     "$PY" -m pytest "${TEST_ARGS[@]}" || rc=$?
     "$PY" -m "${LINT_ARGS[@]}" || rc=$((rc == 0 ? 1 : rc))
