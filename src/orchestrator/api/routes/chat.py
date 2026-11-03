@@ -50,6 +50,14 @@ async def close_session(chat_id: int, session: Session = SessionDep) -> dict[str
     return dump(chat_service.get(session, chat_id))
 
 
+@router.post("/chat/sessions/{chat_id}/continue")
+async def continue_session(chat_id: int, session: Session = SessionDep) -> dict[str, Any]:
+    try:
+        return dump(await chat_service.continue_session(session, chat_id))
+    except chat_service.ChatDisabled as e:
+        raise HTTPException(403, str(e)) from e
+
+
 @router.get("/chat/sessions/{chat_id}/images/{name}")
 def image(chat_id: int, name: str) -> FileResponse:
     path = chat_service.image_path(chat_id, name)

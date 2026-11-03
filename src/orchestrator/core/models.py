@@ -342,6 +342,9 @@ class ChatSession(SQLModel, table=True):
     standalone: bool = False
     # A name rather than a link, so the transcript keeps it if the agent is deleted.
     agent_name: str | None = None
+    # The harness's own conversation id, for Continue to restore it; empty when the harness
+    # can't, and Continue replays the transcript instead.
+    harness_session: str | None = None
     cwd: str
     branch_name: str | None = None
     status: str = Field(

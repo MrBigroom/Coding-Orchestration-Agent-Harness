@@ -73,6 +73,8 @@ class AcpDriver(ChatDriver):
         self._turn: asyncio.Task | None = None
         self._open_tools: set[str] = set()
         self._tool_calls: dict[str, dict[str, Any]] = {}
+        self._loading = False  # session/load replays the history, which the transcript has
+        self._resumable = False
 
     @property
     def _permission_set_at_start(self) -> bool:
@@ -101,13 +103,32 @@ class AcpDriver(ChatDriver):
             protocolVersion=PROTOCOL_VERSION,
             clientCapabilities={"fs": {"readTextFile": False, "writeTextFile": False}},
         )
-        prompts = ((init or {}).get("agentCapabilities") or {}).get("promptCapabilities") or {}
+        capabilities = (init or {}).get("agentCapabilities") or {}
+        prompts = capabilities.get("promptCapabilities") or {}
         self.images = bool(prompts.get("image"))
-        session = await self._request(
-            "session/new", timeout=START_TIMEOUT, cwd=str(self.options.cwd), mcpServers=[]
-        )
-        self._session_id = session["sessionId"]
-        self._read_session(session)
+        can_load = bool(capabilities.get("loadSession"))
+        if self.options.resume:
+            if not can_load:
+                raise DriverError("this harness can't reload a conversation")
+            self._loading = True
+            try:
+                session = await self._request(
+                    "session/load",
+                    timeout=START_TIMEOUT,
+                    sessionId=self.options.resume,
+                    cwd=str(self.options.cwd),
+                    mcpServers=[],
+                )
+            finally:
+                self._loading = False
+            self._session_id = self.options.resume
+        else:
+            session = await self._request(
+                "session/new", timeout=START_TIMEOUT, cwd=str(self.options.cwd), mcpServers=[]
+            )
+            self._session_id = session["sessionId"]
+        self._resumable = can_load
+        self._read_session(session or {})
         await self._apply_initial_choices()
         self._publish_config()
 
@@ -188,6 +209,8 @@ class AcpDriver(ChatDriver):
             "effort": effort.get("currentValue"),
             "efforts": self._levels(),
             "images": self.images,
+            # Only a harness that can reload it gets one; Continue replays the rest.
+            "harness_session": self._session_id if self._resumable else None,
         }
         if self._permission_set_at_start:
             config |= {"permission": self.options.permission, "permission_locked": True}
@@ -370,6 +393,8 @@ class AcpDriver(ChatDriver):
 
     def _on_update(self, update: dict[str, Any]) -> None:
         kind = update.get("sessionUpdate")
+        if self._loading and kind not in ("current_mode_update", "available_commands_update"):
+            return
         if kind == "agent_message_chunk":
             self.emit({"type": "text", "delta": text_of(update.get("content"))})
         elif kind == "agent_thought_chunk":

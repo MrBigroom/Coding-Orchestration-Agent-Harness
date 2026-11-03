@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
+from pathlib import Path
 from typing import Any
 
 from orchestrator.adapters.chat.base import ChatDriver, DriverError, Image
@@ -27,8 +30,22 @@ class MockDriver(ChatDriver):
         self._turn: asyncio.Task | None = None
         self._answer: asyncio.Future | None = None
         self._turns = 0
+        self._session_id = ""
+
+    @property
+    def _saved(self) -> Path | None:
+        """Its "conversation": the turn count, kept so Continue can restore it."""
+        return self.options.state_dir / "mock-session.json" if self.options.state_dir else None
 
     async def start(self) -> None:
+        if self.options.resume:
+            saved = (
+                json.loads(self._saved.read_text()) if self._saved and self._saved.is_file() else {}
+            )
+            if saved.get("id") != self.options.resume:
+                raise DriverError("the mock harness has no saved conversation to continue")
+            self._turns = saved["turns"]
+        self._session_id = self.options.resume or (f"mock-{uuid.uuid4()}" if self._saved else "")
         self.emit(
             {
                 "type": "config",
@@ -37,6 +54,7 @@ class MockDriver(ChatDriver):
                 "permission": self.options.permission,
                 "images": True,
                 "commands": COMMANDS,
+                "harness_session": self._session_id or None,
             }
         )
 
@@ -67,6 +85,9 @@ class MockDriver(ChatDriver):
                 self.emit({"type": "text", "delta": f"{word} "})
                 await asyncio.sleep(0.01)
             self.add_usage(100, 40, 20, total_input=True, context=100)
+            if self._saved:
+                self._saved.parent.mkdir(parents=True, exist_ok=True)
+                self._saved.write_text(json.dumps({"id": self._session_id, "turns": self._turns}))
         finally:
             self.emit({"type": "status", "status": "idle"})
 

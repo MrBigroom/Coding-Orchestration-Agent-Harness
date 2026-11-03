@@ -17,7 +17,8 @@ import json
 import re
 import shutil
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -49,6 +50,7 @@ from orchestrator.services import (
 from orchestrator.utils.git import is_repo, run_git, status_porcelain
 from orchestrator.utils.redaction import redact
 from orchestrator.utils.slug import slugify
+from orchestrator.utils.truncate import truncate_tail
 
 log = get_logger(__name__)
 MAX_LIVE_SESSIONS = 4
@@ -59,6 +61,16 @@ IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "ima
 IMAGE_NAME = re.compile(r"\d+\.(png|jpg|gif|webp)")
 MAX_IMAGES = 4
 MAX_IMAGE_BYTES = 5_000_000
+REPLAY_TOKENS = 24_000  # the newest part of a transcript replayed to a fresh harness
+REPLAY_INTRO = (
+    "This session continues an earlier conversation in this same workspace. The harness "
+    "restarted and couldn't restore it, so here is the transcript so far (tool output "
+    "left out). Pick up where it left off."
+)
+REPLAY_NOTICE = (
+    "Continued. This harness can't restore its conversation, so your next message brings "
+    "the transcript so far."
+)
 MAX_FILES = 5
 MAX_FILE_BYTES = 5_000_000
 # Images and files together. Base64 grows this by a third, which keeps a prompt under
@@ -205,6 +217,44 @@ def parse_memory_suggestions(reply: str) -> list[MemorySuggestion] | None:
     return None
 
 
+def _state_dir(chat_id: int) -> Path:
+    """Where a harness keeps the conversation that Continue restores."""
+    return _transcript(chat_id).parent / "harness"
+
+
+def _last_seq(chat_id: int) -> int:
+    path = _transcript(chat_id)
+    if not path.is_file():
+        return 0
+    lines = path.read_text().splitlines()
+    return json.loads(lines[-1]).get("seq", 0) if lines else 0
+
+
+def replay(chat_id: int) -> str:
+    """The transcript as text, for a harness that can't restore its own conversation. Tool
+    output and thinking are left out; the agent can look at the files again."""
+    parts: list[str] = []
+    reply = ""
+    for event in history(chat_id):
+        kind = event["type"]
+        if kind == "text":
+            reply += event.get("delta", "")
+            continue
+        if reply.strip():
+            parts.append(f"Assistant: {reply.strip()}")
+        reply = ""
+        if kind == "user":
+            extra = [f"{len(event['images'])} image(s)"] if event.get("images") else []
+            extra += event.get("files") or []
+            note = f" [attached: {', '.join(extra)}]" if extra else ""
+            parts.append(f"User: {event.get('text', '')}{note}")
+        elif kind == "tool_start":
+            parts.append(f"(used {event.get('name') or 'a tool'})")
+    if reply.strip():
+        parts.append(f"Assistant: {reply.strip()}")
+    return truncate_tail("\n\n".join(parts), REPLAY_TOKENS)
+
+
 def history(chat_id: int) -> list[dict[str, Any]]:
     live = manager.get(chat_id)
     if live:
@@ -224,9 +274,12 @@ class LiveSession:
         self.status: str = ChatStatus.starting
         self.subscribers: set[asyncio.Queue] = set()
         self.pending: deque[tuple[str, list[Image]]] = deque()
-        self.seq = 0
+        self.seq = _last_seq(chat_id)  # a continued session appends to its transcript
         self.closing = False
         self.exited = False
+        # While a harness tries to restore its conversation, its errors and exit are the
+        # fallback's business rather than the session's.
+        self._restoring = False
         self._buffer: dict[str, Any] | None = None
         self._memory_from: int | None = None  # seq where a memory-suggestion turn began
         self._tasks: set[asyncio.Task] = set()
@@ -235,6 +288,8 @@ class LiveSession:
 
     # -- events ----------------------------------------------------------------
     def emit(self, event: dict[str, Any]) -> None:
+        if self._restoring and event["type"] in ("exit", "error", "status"):
+            return
         if event["type"] == "exit":
             self._on_exit(event)
             return
@@ -276,7 +331,8 @@ class LiveSession:
         elif kind in ("approval", "approval_resolved"):
             self._sync_approval_status()
         elif kind == "config":
-            fields = {k: event[k] for k in ("model", "effort", "permission") if event.get(k)}
+            keys = ("model", "effort", "permission", "harness_session")
+            fields = {k: event[k] for k in keys if event.get(k)}
             if fields:
                 self._save(**fields)
             if event.get("model") and self.driver and self.driver.usage.get("requests"):
@@ -353,7 +409,33 @@ class LiveSession:
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self.subscribers.discard(queue)
 
-    async def start(self, driver: ChatDriver) -> None:
+    async def start(
+        self, driver: ChatDriver, fallback: Callable[[], ChatDriver] | None = None
+    ) -> None:
+        """`fallback` makes the driver a restore attempt: if it can't start, the fallback's
+        driver starts instead."""
+        if fallback:
+            self.driver, self._restoring = driver, True
+            try:
+                await driver.start()
+            except Exception as e:  # noqa: BLE001 - every failure falls back
+                log.info("chat %s couldn't restore its conversation: %s", self.id, e)
+                await driver.close()
+                message = (
+                    f"The harness couldn't restore its conversation ({e}). It starts fresh, "
+                    "and your next message brings the transcript so far."
+                )
+            else:
+                message = "Continued. The harness restored its conversation."
+                fallback = None
+            finally:
+                self._restoring = False
+            self.emit({"type": "notice", "message": message})
+            if fallback is None:
+                self.emit({"type": "status", "status": ChatStatus.idle})
+                return
+            self.exited = False
+            driver = fallback()
         self.driver = driver
         try:
             await driver.start()
@@ -731,8 +813,82 @@ async def open_session(
         permission=permission,
         models=_models_for(session, row) if profile.uses_profile_models else [],
         output_dir=output_dir,
+        state_dir=None if standalone else _state_dir(chat.id),
     )
     live.spawn(live.start(profile.driver(harness, options, live.emit)))
+    return chat
+
+
+CONTINUABLE = {ChatStatus.closed, ChatStatus.interrupted}
+
+
+async def continue_session(session: Session, chat_id: int) -> ChatSession:
+    """Start an ended session's harness again in the same workspace. The harness restores
+    its own conversation when it can; otherwise the next message carries the transcript."""
+    _require_enabled(session)
+    chat = get(session, chat_id)
+    if manager.get(chat_id):
+        raise ChatError("this session is already running")
+    if chat.standalone:
+        raise ChatError("a standalone run can't be continued; run the agent again")
+    if chat.status not in CONTINUABLE:
+        raise ChatError(f"a {chat.status} session can't be continued")
+    if len(manager.live) - manager.unattended_count() >= MAX_LIVE_SESSIONS:
+        raise ChatError(f"at most {MAX_LIVE_SESSIONS} sessions can run at once; end one first")
+    project = session.get(Project, chat.project_id) if chat.project_id else None
+    if chat.project_id and not project:
+        raise ChatError("its project was removed, so there's no workspace to continue in")
+    if project and chat.workspace == "worktree" and not Path(chat.cwd).is_dir():
+        _workspace(chat, project, None)  # cleaned up; the branch is kept, so bring it back
+    if not Path(chat.cwd).is_dir():
+        raise ChatError(f"its working folder no longer exists: {chat.cwd}")
+    row = adapter_service.get_row(session, chat.adapter)
+    harness = adapter_service.get_adapter(session, chat.adapter)
+    if reason := _reason_unavailable(row, harness.detect()):
+        raise ChatError(reason)
+    profile = HARNESSES[row.kind]
+    agent = None
+    if chat.agent_name:
+        agent = session.exec(select(Agent).where(Agent.name == chat.agent_name)).first()
+    chat.status = ChatStatus.starting
+    chat.error = None
+    chat.updated_at = utcnow()
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    live = LiveSession(chat_id)
+    manager.live[chat_id] = live
+    live.emit({"type": "status", "status": ChatStatus.starting})
+    options = DriverOptions(
+        cwd=Path(chat.cwd),
+        branch=chat.branch_name or "",
+        model=chat.model if profile.uses_profile_models else None,
+        effort=chat.effort,
+        permission=chat.permission,
+        models=_models_for(session, row) if profile.uses_profile_models else [],
+        state_dir=_state_dir(chat_id),
+        resume=chat.harness_session,
+    )
+    earlier = replay(chat_id)
+    instructions = agent_service.instructions_block(agent) if agent else ""
+
+    def fresh() -> ChatDriver:
+        live.preamble = "\n\n".join(
+            p
+            for p in (
+                instructions,
+                f"{REPLAY_INTRO}\n<transcript>\n{earlier}\n</transcript>" if earlier else "",
+            )
+            if p
+        )
+        return profile.driver(harness, replace(options, resume=None), live.emit)
+
+    if chat.harness_session:
+        live.spawn(live.start(profile.driver(harness, options, live.emit), fallback=fresh))
+    else:
+        live.emit({"type": "notice", "message": REPLAY_NOTICE})
+        live.spawn(live.start(fresh()))
     return chat
 
 

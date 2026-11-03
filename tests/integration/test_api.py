@@ -16,7 +16,7 @@ def client(initialized):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert r.json()["db_revision"] == "0008_usage_events"
+    assert r.json()["db_revision"] == "0009_chat_continue"
 
 
 def test_startup_upgrades_existing_database(initialized):
@@ -28,7 +28,7 @@ def test_startup_upgrades_existing_database(initialized):
     assert db.current_revision() == "0001_baseline"
 
     with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
-        assert c.get("/api/health").json()["db_revision"] == "0008_usage_events"
+        assert c.get("/api/health").json()["db_revision"] == "0009_chat_continue"
         assert c.get("/api/dashboard").status_code == 200
 
 

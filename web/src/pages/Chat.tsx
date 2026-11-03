@@ -1,4 +1,4 @@
-import { ArrowUp, BookmarkPlus, Bot, ChevronRight, CircleAlert, FileText, Lightbulb, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Bot, ChevronRight, CircleAlert, FileText, Lightbulb, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, Play, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown, { type Components } from "react-markdown";
@@ -625,23 +625,34 @@ function ChangesPanel({ chat, ended, onDone }: { chat: ChatSession; ended: boole
 }
 
 function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: ChatSession; harness?: ChatHarness; initialPrompt: FirstPrompt | null; onChanged: () => void }) {
-  const session = useChatSession(chat.id);
+  const [epoch, setEpoch] = useState(0);
+  const session = useChatSession(chat.id, epoch);
   const { config, status, usage, items, send, live, connected } = session;
+  // The first message of a new session, or one typed into an ended session to continue it.
+  const [pending, setPending] = useState<FirstPrompt | null>(initialPrompt);
   const [showChanges, setShowChanges] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const act = useAction();
   const navigate = useNavigate();
   const sent = useRef(false);
   const ended = ENDED.has(status);
+  const continuable = ended && status !== "failed" && !chat.standalone;
 
   // Images wait until the harness has said whether its model takes them.
   useEffect(() => {
-    const ready = !initialPrompt?.images.length || config.images !== undefined;
-    if (initialPrompt && live && connected && ready && !sent.current) {
+    const ready = !pending?.images.length || config.images !== undefined;
+    if (pending && live && connected && ready && !sent.current) {
       sent.current = true;
-      send({ type: "prompt", text: initialPrompt.text, images: initialPrompt.images, files: initialPrompt.files });
+      send({ type: "prompt", text: pending.text, images: pending.images, files: pending.files });
     }
-  }, [initialPrompt, live, connected, config.images, send]);
+  }, [pending, live, connected, config.images, send]);
+
+  const resume = (prompt?: FirstPrompt) => void act.run(async () => {
+    await post(`/chat/sessions/${chat.id}/continue`);
+    if (prompt) { sent.current = false; setPending(prompt); }
+    setEpoch((n) => n + 1);
+    onChanged();
+  });
 
   const prevStatus = useRef(status);
   useEffect(() => {
@@ -694,7 +705,16 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
         {!items.length && !ended && <Empty>{status === "starting" ? "Starting the harness…" : "Ready."}</Empty>}
         <Transcript chatId={chat.id} items={items} working={working} onAnswer={(id, choice) => send({ type: "approval", id, choice })} onSave={setSaving} disabled={locked} />
       </div>
-      {ended
+      {continuable
+        ? <div className="border-t border-line">
+            <div className="flex flex-wrap items-center justify-center gap-3 px-6 pt-3 text-xs text-muted">
+              This session has ended ({status.replace(/_/g, " ")}). Continue it to keep working in the same workspace, or just send a message.
+              <button className="btn" disabled={act.busy} onClick={() => resume()}><Play size={14} aria-hidden="true" />Continue</button>
+            </div>
+            <Composer working={false} disabled={act.busy} images={undefined} onSend={(text, images, files) => resume({ text, images, files })}
+              placeholder="Message the agent to continue this session. Shift+Enter for a new line." controls={null} />
+          </div>
+        : ended
         ? <div className="border-t border-line px-6 py-3 text-center text-xs text-muted">This session has ended ({status.replace(/_/g, " ")}). Its transcript is read-only.</div>
         : chat.standalone
         ? <div className="flex items-center justify-center gap-3 border-t border-line px-6 py-3 text-xs text-muted">

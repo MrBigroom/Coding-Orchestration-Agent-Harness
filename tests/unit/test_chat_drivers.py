@@ -79,7 +79,10 @@ for line in sys.stdin:
     method, i, p = m.get("method"), m.get("id"), m.get("params") or {}
     def ok(r): out({"jsonrpc": "2.0", "id": i, "result": r})
     def update(u): out({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": SID, "update": u}})
-    if method == "initialize": ok({"protocolVersion": 1, "agentCapabilities": {"promptCapabilities": {"image": True}}})
+    if method == "initialize": ok({"protocolVersion": 1, "agentCapabilities": {"loadSession": True, "promptCapabilities": {"image": True}}})
+    elif method == "session/load":
+        update({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "old reply"}})
+        ok({"modes": {"currentModeId": "auto", "availableModes": [{"id": "auto", "name": "Auto"}]}})
     elif method == "session/new":
         ok({"sessionId": SID,
             "modes": {"currentModeId": "auto", "availableModes": [{"id": "default", "name": "Default"}, {"id": "auto", "name": "Auto"}]},
@@ -403,6 +406,41 @@ async def test_acp_usage_update_reports_context_and_window(tmp_path):
     usage = rec.of("usage")[-1]
     assert (usage["context_tokens"], usage["context_window"]) == (52_000, 262_144)
     await driver.close()
+
+
+async def test_claude_resumes_its_conversation(tmp_path):
+    rec = Recorder()
+    a = adapter("claude_cli", stub(tmp_path, CLAUDE_STUB))
+    driver = ClaudeDriver(a, options(tmp_path, resume="sess-old"), rec)
+    await driver.start()
+    try:
+        argv = json.loads(driver.process.stderr_tail[0])
+        assert argv[argv.index("--resume") + 1] == "sess-old"
+    finally:
+        await driver.close()
+
+
+async def test_pi_refuses_to_resume_an_empty_conversation(tmp_path):
+    rec = Recorder()
+    a = adapter("pi", stub(tmp_path, PI_STUB))
+    driver = PiDriver(a, options(tmp_path, state_dir=tmp_path / "s", resume="gone"), rec)
+    try:
+        with pytest.raises(DriverError, match="no saved conversation"):
+            await driver.start()
+    finally:
+        await driver.close()
+
+
+async def test_acp_reloads_a_conversation_without_replaying_it(tmp_path):
+    rec = Recorder()
+    a = adapter("qwen_code", stub(tmp_path, ACP_STUB))
+    driver = AcpDriver(a, options(tmp_path, resume="s1"), rec)
+    await driver.start()
+    try:
+        assert not rec.of("text")  # the transcript already has the history
+        assert rec.of("config")[-1]["harness_session"] == "s1"
+    finally:
+        await driver.close()
 
 
 async def test_exit_is_reported_with_stderr(tmp_path):
