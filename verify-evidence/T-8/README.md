@@ -43,9 +43,9 @@ would be the very defect T-8 fixes. What round 2 did:
 
 ## Logs
 
-Captured at HEAD `05011a4`. The only later commits are this evidence directory's own contents
-(`verify-evidence/` and `.orchestrator/handoff.*` are not read by the suite), so the code under
-test is identical to the final HEAD.
+Captured at HEAD `e7953b5`. The only commit after that one changes files under `verify-evidence/`
+and `.orchestrator/` — neither is read by the suite — so the code under test is identical to the
+final HEAD of this handoff.
 
 | File | What it is |
 | --- | --- |
