@@ -127,6 +127,9 @@ class DynamicState:
     recovery: str | None = None
     # Findings the harness computed deterministically (contract-file hits, recovery counts).
     harness_findings: str | None = None
+    # How the handoff arrived (clean exit / salvaged from a killed run / synthesized) and what git
+    # says about the files it claims — provenance a Worker cannot edit (T-10 DoD 7).
+    delivery_evidence: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -142,6 +145,11 @@ def _dynamic(state: DynamicState) -> str:
         parts.append(
             "### Harness-detected findings (computed by the orchestrator, not asserted by a "
             "model)\n" + truncate_middle(state.harness_findings, s.max_log_tokens)
+        )
+    if state.delivery_evidence:
+        parts.append(
+            "### Handoff provenance and delivery evidence (computed from git by the harness, not "
+            "asserted by the Worker)\n" + truncate_middle(state.delivery_evidence, s.max_log_tokens)
         )
     if state.handoff:
         parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))

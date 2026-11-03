@@ -137,6 +137,25 @@ def harness_findings_section(
     return "\n".join(lines)
 
 
+def delivery_evidence_section(session: Session, task: Task, run: Run) -> str:
+    """The reviewer-payload section for handoff provenance and claims-vs-commits (T-10 DoD 7).
+
+    Rendered from the archived `run.json`, i.e. the same numbers the run artifacts carry, so a
+    reviewer who wants to check them has the commit SHAs and the porcelain output in front of them
+    instead of the Worker's summary of them.
+    """
+    text = artifact_service.render_delivery_evidence_md(
+        artifact_service.handoff_delivery_evidence(run.id),
+        artifact_service.handoff_arrival(run.id),
+    )
+    if text:
+        return text
+    return (
+        "no delivery evidence was archived for this run (a run created before T-10, or an agent "
+        "task with no worktree): read the handoff's claims as unverified."
+    )
+
+
 async def architect_review(
     session: Session,
     task: Task,
@@ -156,6 +175,7 @@ async def architect_review(
         diff=artifact_service.read_text(run.id, "patch.diff"),
         recovery=recovery_section(session, task, run),
         harness_findings=harness_findings_section(session, task, run, project),
+        delivery_evidence=delivery_evidence_section(session, task, run),
         extra={"Missing artifacts detected by orchestrator": "\n".join(missing) or "none"},
     )
     prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)

@@ -45,6 +45,10 @@ VERIFY_TIMEOUT = 900
 # finding here is never a model assertion.
 CONTRACT_CHECK = "contract files unchanged"
 RECOVERY_CHECK = "recovery commits (harness-created)"
+# T-10: provenance of the submission itself, read back from the archived `run.json`, plus the
+# claims-vs-commits flag computed from git at ingestion time.
+SALVAGE_CHECK = "handoff arrived out of band (salvaged)"
+CLAIMS_CHECK = "handoff claims backed by Worker commits"
 
 
 async def _run_command(
@@ -91,6 +95,62 @@ async def verify(
         checks.append(
             VerificationCheck(
                 name="handoff present", status="pass", evidence=f"status {handoff.status}"
+            )
+        )
+
+    # 1b. Provenance of the submission itself (T-10). Read back from the archived `run.json`, not
+    # re-derived, so the gate, the reviewer payload and a human quoting the artifacts agree. An
+    # salvaged handoff is NOT worker self-certification: the run was killed, and the gate below is
+    # what decides. Informational — it never approves and never rejects by itself.
+    arrival = artifact_service.handoff_arrival(run.id)
+    if arrival == artifact_service.HANDOFF_ARRIVAL_SALVAGED:
+        evidence0 = artifact_service.handoff_delivery_evidence(run.id) or {}
+        checks.append(
+            VerificationCheck(
+                name=SALVAGE_CHECK,
+                status="pass",
+                evidence=(
+                    f"run.status={run.status} is unchanged; the submission was read off the "
+                    "worktree, not returned by the adapter on a clean exit"
+                ),
+                notes=(
+                    f"{evidence0.get('exit_state') or 'exit state unknown'}. The Worker process "
+                    "was killed before it could submit, so this handoff is not a self-certified "
+                    "completed run: the deterministic checks below and the Architect review decide "
+                    "the round, and a green gate routes it to a human instead of auto-accepting it "
+                    "(docs/build-loop.md, 'Salvaging a handoff from a killed run')."
+                ),
+            )
+        )
+
+    # 1c. Claims vs. commits (T-10 DoD 7). A handoff is a statement; `git log base..HEAD`, the
+    # diffstat and `git status --porcelain -uall` at ingestion time are evidence. A claim that was
+    # never committed — or that exists only inside a harness recovery commit — is a promise, and it
+    # fails here even though "claimed files exist on disk" can pass, because a file that exists as
+    # uncommitted scratch in the worktree is not on the branch.
+    evidence = artifact_service.handoff_delivery_evidence(run.id)
+    if evidence and not handoff_synthesized and evidence.get("claimed_count"):
+        unbacked = {
+            p: s
+            for p, s in (evidence.get("claim_status") or {}).items()
+            if s != artifact_service.CLAIM_WORKER_COMMIT
+        }
+        checks.append(
+            VerificationCheck(
+                name=CLAIMS_CHECK,
+                status="pass" if not unbacked else "fail",
+                evidence=(
+                    f"{evidence.get('claimed_count', 0)} claim(s), "
+                    f"{len(unbacked)} not backed by a Worker commit "
+                    f"(commits on branch: {evidence.get('commit_count', 0)}, "
+                    f"recovery: {evidence.get('recovery_commit_count', 0)})"
+                ),
+                notes=(
+                    "not delivered as committed work: "
+                    + ", ".join(f"{p}={s}" for p, s in sorted(unbacked.items()))
+                    if unbacked
+                    else ""
+                ),
             )
         )
 
@@ -445,6 +505,38 @@ async def after_run(
     if verification.final_result != "pass":
         _requeue_or_block(session, task, "supervisor verification failed (believe the check)")
         outcome["decision"] = task.status
+        return outcome
+
+    # Salvaged submission, everything else green. Decision (T-10 DoD 4): `handoff_status=SALVAGED`
+    # and the round routes to NEEDS_HUMAN instead of `accepted`. Rationale: the Worker process was
+    # killed, so it never saw this gate result and cannot apply reviewer feedback on the same
+    # branch, and an early handoff is partly a statement of intent (T-10 DoD 7 measures that). The
+    # submission is not lost and the operator is not told the round failed — the round waits for a
+    # decision, with handoff/review/verification artifacts attached, and `orchestrator task
+    # accept` / the GUI accept button takes it from there (blocked -> review -> accepted, the same
+    # path an operator already uses for a contract-change hold). It is never auto-merged.
+    if artifact_service.handoff_arrival(run.id) == artifact_service.HANDOFF_ARRIVAL_SALVAGED:
+        question = (
+            f"salvaged submission from run {run.short_id} ({run.status}): the Worker wrote a valid "
+            "handoff.json before the process was killed. Verification passed and the Architect "
+            f"review is on file ({review.verdict if review else 'n/a'}), but a killed run cannot "
+            "react to feedback and an early handoff can promise more than it delivers — decide "
+            "whether this round counts (accept) or goes back to the Worker (retry)."
+        )
+        task.review_status = ReviewVerdict.NEEDS_HUMAN
+        session.add(task)
+        session.commit()
+        log_service.log_event(
+            session,
+            "verdict_recorded",
+            f"NEEDS_HUMAN {question}",
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        task_service.transition(session, task, TaskStatus.blocked, question, role="supervisor")
+        outcome["decision"] = task.status
+        outcome["salvaged"] = True
         return outcome
 
     outcome |= accept(session, task, run, project, review, verification)

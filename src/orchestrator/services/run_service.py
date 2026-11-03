@@ -47,8 +47,20 @@ from orchestrator.services import (
     usage_service,
 )
 from orchestrator.services.prompt_builder import DynamicState
-from orchestrator.utils.git import head_sha
+from orchestrator.utils import structured_log
+from orchestrator.utils.git import head_sha, status_porcelain
 from orchestrator.utils.redaction import redact
+
+# T-10: a run that was killed (timeout, non-zero exit, cancel) may already hold a complete,
+# valid submission in the worktree. Discarding it burned whole rounds (measured on run 11, where
+# a 36 KB READY_FOR_REVIEW handoff was thrown away 53 seconds after it was written, and on run 13,
+# where a cancelled run's handoff described work that did not exist). The non-clean-exit paths now
+# try to ingest the handoff and continue to the normal gate. Documented in docs/build-loop.md,
+# "Salvaging a handoff from a killed run".
+SALVAGE_MODE_NON_CLEAN_EXIT = "non_clean_exit"
+SALVAGE_MODE_PRE_ROUND_ARCHIVE = "pre_round_archive"
+SALVAGE_MODE_ALREADY_ARCHIVED = "already_archived"
+EVIDENCE_KIND_PRE_ROUND = "pre-round-handoff"
 
 
 @dataclass
@@ -184,6 +196,437 @@ def _synthesize_handoff(
     )
 
 
+# ------------------------------------------------------ T-10: handoff salvage + provenance
+
+
+def read_handoff_file(path: Path) -> tuple[Handoff | None, str | None]:
+    """Read a worktree `handoff.json`. Returns `(handoff, error)`.
+
+    `(None, None)` means "no file" — there is nothing to salvage. `(None, reason)` means a file
+    exists but cannot be used: that is a logged fact, never an exception, because a truncated
+    write from a killed process is the normal shape of this case.
+    """
+    if not path.is_file():
+        return None, None
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return None, f"{path} could not be read: {e}"
+    if not raw.strip():
+        return None, f"{path} is empty (0 usable bytes)"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return None, f"{path} is not valid JSON ({e}); {len(raw)} bytes on disk"
+    try:
+        return Handoff.model_validate(data), None
+    except ValueError as e:
+        return None, f"{path} is valid JSON but does not validate as Handoff: {_one_line(str(e))}"
+
+
+def _one_line(text: str) -> str:
+    return " ".join((text or "").split())[:600]
+
+
+def _normalize_rel(path: str) -> str:
+    return path.strip().removeprefix("./").removeprefix("/")
+
+
+def delivery_evidence(
+    wt: Path,
+    base_branch: str,
+    handoff: Handoff | None,
+    *,
+    arrival: str,
+    exit_state: str,
+    uncommitted_before_sweep: list[str] | None = None,
+) -> dict[str, Any]:
+    """What git says about a handoff's claims, computed at ingestion time (T-10 DoD 7).
+
+    A handoff is a *statement*. `git log base..HEAD`, the diffstat and `git status --porcelain
+    -uall` are evidence. The measured case this exists for (run 13, 2026-11-04): a cancelled run
+    whose 1164-byte handoff claimed four code/doc fixes while it had made zero commits and the
+    worktree had no tracked modifications — and the old "claimed files exist on disk" check passed,
+    because the files did exist as uncommitted scratch.
+
+    Each claim is classified as exactly one of `artifact_service.CLAIM_STATUSES`, first match
+    wins: `worker_commit` (delivered by a Worker-authored commit on this branch),
+    `recovery_commit_only` (only inside a harness recovery commit — wreckage no Worker
+    self-checked), `uncommitted_only` (a promise, still on the worktree, not on the branch),
+    `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
+    one-line answer a reviewer can act on.
+    """
+    commits = git_service.commits_against_base(wt, base_branch)
+    worker_paths: set[str] = set()
+    recovery_paths: set[str] = set()
+    for c in commits:
+        paths = {_normalize_rel(f["path"]) for f in c.files}
+        (recovery_paths if c.recovery else worker_paths).update(paths)
+    split = git_service.status_split(wt)
+    uncommitted = {_normalize_rel(p) for p in (*split.tracked_modified, *split.untracked_added)}
+    claims = [_normalize_rel(f) for f in (handoff.files_changed if handoff else [])]
+    status: dict[str, str] = {}
+    for claim in claims:
+        if claim in worker_paths:
+            status[claim] = artifact_service.CLAIM_WORKER_COMMIT
+        elif claim in recovery_paths:
+            status[claim] = artifact_service.CLAIM_RECOVERY_COMMIT
+        elif claim in uncommitted:
+            status[claim] = artifact_service.CLAIM_UNCOMMITTED
+        else:
+            status[claim] = artifact_service.CLAIM_ABSENT
+    counts: dict[str, int] = {}
+    for s in status.values():
+        counts[s] = counts.get(s, 0) + 1
+    _, diffstat = git_service.diff_against_base(wt, base_branch)
+    return {
+        "arrival": arrival,
+        "exit_state": exit_state,
+        "base_branch": base_branch,
+        "commits": [c.as_dict() for c in commits],
+        "commit_count": len(commits),
+        "worker_commit_count": sum(1 for c in commits if not c.recovery),
+        "recovery_commit_count": sum(1 for c in commits if c.recovery),
+        "diffstat": diffstat,
+        "porcelain_at_ingestion": [
+            line for line in status_porcelain(wt).splitlines() if line.strip()
+        ],
+        "uncommitted_before_harness_sweep": sorted(uncommitted_before_sweep or []),
+        "claimed_files": sorted(claims),
+        "claimed_count": len(claims),
+        "claim_status": status,
+        "claim_counts": counts,
+        "claims_all_backed_by_worker_commits": bool(claims)
+        and all(s == artifact_service.CLAIM_WORKER_COMMIT for s in status.values()),
+    }
+
+
+def _run_json_payload(
+    run: Run, task: Task, harness_name: str | None, result: AdapterResult
+) -> dict[str, Any]:
+    return {
+        "run": run.short_id,
+        "task": task.short_id,
+        "adapter": harness_name,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "cancelled": result.cancelled,
+        "process_ms": result.duration_ms,
+    }
+
+
+def _write_run_json(
+    run: Run,
+    task: Task,
+    harness_name: str | None,
+    result: AdapterResult,
+    arrival: str | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> None:
+    """Write `run.json`, optionally attaching handoff provenance (additive keys, same file name).
+
+    The archived copy is the single source of truth: the Supervisor reads it back rather than
+    re-deriving, so the gate, the reviewer payload and a human opening the artifact cannot end up
+    quoting three different numbers for one run.
+    """
+    payload = _run_json_payload(run, task, harness_name, result)
+    if arrival:
+        payload["handoff_arrival"] = arrival
+    if evidence is not None:
+        payload["handoff_delivery_evidence"] = evidence
+    artifact_service.write_json(run.id, "run.json", payload)
+
+
+def archive_handoff_artifacts(run: Run, handoff: Handoff) -> None:
+    artifact_service.write_json(run.id, "handoff.json", handoff.model_dump(mode="json"))
+    artifact_service.write_text(run.id, "handoff.md", artifact_service.render_handoff_md(handoff))
+
+
+def exit_state_text(run: Run, result: AdapterResult) -> str:
+    """The run's exit state in one line, for the salvage event and the reviewer payload."""
+    why = (
+        "timed out (adapter timeout killed the process)"
+        if result.timed_out
+        else "cancelled (cancel marker)"
+        if result.cancelled
+        else "non-zero exit"
+        if result.exit_code != 0
+        else "harness reported an error while exiting 0"
+    )
+    return (
+        f"run {run.short_id} status={run.status} exit_code={result.exit_code} "
+        f"timed_out={result.timed_out} cancelled={result.cancelled} "
+        f"error={_one_line(result.error or '') or 'none'} -> {why}"
+    )
+
+
+def _salvage_log_payload(
+    task: Task,
+    run: Run,
+    result: AdapterResult,
+    handoff: Handoff | None,
+    mode: str,
+    evidence: dict[str, Any] | None,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "task_id": task.id,
+        "run_id": run.id,
+        "run_status": run.status,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "cancelled": result.cancelled,
+        "error": _one_line(result.error or ""),
+        "handoff_status": handoff.status if handoff else None,
+        "claimed_files": len(handoff.files_changed) if handoff else 0,
+        "salvaged": handoff is not None,
+    }
+    if evidence is not None:
+        payload["claims_all_backed_by_worker_commits"] = evidence[
+            "claims_all_backed_by_worker_commits"
+        ]
+        payload["claim_counts"] = evidence["claim_counts"]
+        payload["commit_count"] = evidence["commit_count"]
+        payload["recovery_commit_count"] = evidence["recovery_commit_count"]
+    payload.update({k: v for k, v in extra.items() if v is not None})
+    return payload
+
+
+def try_salvage_handoff(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project,
+    wt: Path,
+    handoff_path: Path,
+    harness_name: str | None,
+    result: AdapterResult,
+    uncommitted_before_sweep: list[str],
+) -> Handoff | None:
+    """Ingest a handoff the killed Worker already wrote (T-10 DoD 1 + 2).
+
+    Returns the salvaged Handoff when the worktree holds one that validates, else None — and None
+    means "behave exactly as before this task existed": `RUN_TIMEOUT`/`RUN_FAILED` on the task and
+    the task back to `planned`. A present-but-unusable file logs `handoff_salvage_failed` instead of
+    crashing the run, because a half-written file is the expected shape of a killed process.
+    """
+    handoff, error = read_handoff_file(handoff_path)
+    if handoff is None and error is None:
+        return None
+    if handoff is None:
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{run.short_id} ({run.status}) left {handoff_path} in the worktree but it could "
+                f"not be ingested; falling back to the {run.status} path: {error}",
+                _salvage_log_payload(task, run, result, None, SALVAGE_MODE_NON_CLEAN_EXIT, None)
+                | {"reason": error},
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        return None
+    evidence = delivery_evidence(
+        wt,
+        project.base_branch,
+        handoff,
+        arrival=artifact_service.HANDOFF_ARRIVAL_SALVAGED,
+        exit_state=exit_state_text(run, result),
+        uncommitted_before_sweep=uncommitted_before_sweep,
+    )
+    archive_handoff_artifacts(run, handoff)
+    _write_run_json(
+        run,
+        task,
+        harness_name,
+        result,
+        arrival=artifact_service.HANDOFF_ARRIVAL_SALVAGED,
+        evidence=evidence,
+    )
+    if handoff.memory_suggestions:
+        # Pending, never auto-approved: a suggestion from a killed run is no more self-certifying
+        # than the handoff it came with, and the Supervisor still reviews it.
+        memory_service.suggest_from_handoff(
+            session,
+            handoff.memory_suggestions,
+            source=f"salvaged-handoff:{run.short_id}",
+            project_slug=project.slug,
+            role="worker",
+        )
+    log_service.log_event(
+        session,
+        "handoff_salvaged",
+        structured_log.attach(
+            f"{run.short_id} was killed ({run.status}) after the Worker had already written a "
+            f"valid handoff.json to the worktree, out of band: the adapter never returned it on a "
+            f"clean exit, so the old code path discarded it. Salvaged into {run.artifacts_path} as "
+            f"handoff.json + handoff.md; run.status stays {run.status} and the Supervisor gate "
+            f"(not the Worker's own claim) decides the round. Claims backed only by uncommitted "
+            f"worktree state: "
+            f"{'yes' if not evidence['claims_all_backed_by_worker_commits'] else 'none'}.",
+            _salvage_log_payload(
+                task, run, result, handoff, SALVAGE_MODE_NON_CLEAN_EXIT, evidence
+            ),
+        ),
+        role="supervisor",
+        task_id=task.id,
+        run_id=run.id,
+        commit_sha=run.commit_sha,
+    )
+    return handoff
+
+
+def _previous_round_run(session: Session, task: Task, run: Run) -> Run | None:
+    """The run whose submission a worktree handoff at round start most likely is."""
+    for r in task_service.runs_for(session, task):
+        if r.id != run.id:
+            return r
+    return None
+
+
+def archive_before_round_start(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project,
+    handoff_path: Path,
+) -> bool:
+    """Never destroy a pre-existing handoff.json when a round starts (T-10 DoD 3).
+
+    The round-start `unlink(missing_ok=True)` was the second half of the bug: a retry after a
+    timeout actively deleted the previous round's submission, so the operator had to copy the file
+    out in the gap. Returns True when the caller may unlink — i.e. the submission is provably
+    archived (already in `runs/<prev>/handoff.json`, or copied to ORCHESTRATOR_HOME/evidence/).
+    On any archive failure it returns False and the file is left alone: keeping a stale handoff in
+    the scratch dir is recoverable, losing one is not.
+    """
+    if not handoff_path.is_file():
+        return True
+    try:
+        raw = handoff_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{handoff_path} exists but could not be read before the round-start unlink; "
+                "leaving it in place (the unlink was skipped so nothing is destroyed)",
+                {"task_id": task.id, "run_id": run.id, "reason": str(e)},
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        return False
+    handoff, error = read_handoff_file(handoff_path)
+    prev = _previous_round_run(session, task, run)
+    if handoff is not None and prev is not None and prev.id is not None:
+        archived = artifact_service.read_json(prev.id, "handoff.json")
+        if archived == handoff.model_dump(mode="json"):
+            # Already archived byte-for-byte in that run's artifacts: nothing to copy, and the
+            # unlink is safe. Not an event — no submission was at risk.
+            return True
+    key = (
+        f"{project.slug}-{task.short_id}-"
+        f"{prev.short_id if prev else 'no-previous-run'}-"
+        f"{utcnow().strftime('%Y%m%dT%H%M%S%f')}"
+    )
+    try:
+        dest = artifact_service.evidence_dir(EVIDENCE_KIND_PRE_ROUND, key)
+        (dest / "handoff.json").write_text(raw, encoding="utf-8")
+        if handoff is not None:
+            (dest / "handoff.md").write_text(
+                artifact_service.render_handoff_md(handoff), encoding="utf-8"
+            )
+    except OSError as e:
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"could not archive {handoff_path} to the evidence root before the round-start "
+                "unlink; leaving it in place (the unlink was skipped so nothing is destroyed)",
+                {"task_id": task.id, "run_id": run.id, "reason": str(e)},
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        return False
+    log_service.log_event(
+        session,
+        "handoff_salvaged",
+        structured_log.attach(
+            f"a handoff.json from the previous round was still in the worktree at the start of "
+            f"{run.short_id}; archived to {dest} before the round-start unlink "
+            f"(source run: {prev.short_id + ' (' + prev.status + ')' if prev else 'unknown'}; "
+            f"{'valid handoff' if handoff else 'unusable: ' + (error or 'unknown')}), "
+            "so a retry can no longer destroy a submission",
+            {
+                "mode": SALVAGE_MODE_PRE_ROUND_ARCHIVE,
+                "task_id": task.id,
+                "run_id": run.id,
+                "source_run": prev.short_id if prev else None,
+                "source_run_status": prev.status if prev else None,
+                "archived_to": str(dest),
+                "valid": handoff is not None,
+                "parse_error": error,
+                "bytes": len(raw),
+            },
+        ),
+        role="supervisor",
+        task_id=task.id,
+        run_id=run.id,
+    )
+    return True
+
+
+async def _gate_salvaged(
+    session: Session, task: Task, run: Run, project: Project, handoff: Handoff
+) -> dict[str, Any]:
+    """Continue to the normal verification + review path carrying a salvaged submission.
+
+    The run's status is already terminal (`timeout`/`failed`/`cancelled`) and the frozen run
+    vocabulary has no transition out of a terminal state, so the gate runs WITHOUT moving the run —
+    deliberately not `testing`/`completed`: the process really was killed, and pretending otherwise
+    would widen the frozen vocabulary and hide the fact that the Worker never saw the gate result.
+    `task.handoff_status` becomes `SALVAGED` (distinct from the Worker's own status, from
+    `SYNTHESIZED` and from `RUN_*`); see docs/build-loop.md, "Salvaging a handoff from a
+    killed run".
+    """
+    assert run.id is not None
+    task.handoff_status = artifact_service.HANDOFF_STATUS_SALVAGED
+    session.add(task)
+    session.commit()
+    if handoff.status == "BLOCKED":
+        task_service.block(
+            session,
+            task,
+            f"worker emitted BLOCKED handoff (salvaged from a {run.status} run, so the Worker "
+            "never saw this exit): " + "; ".join(handoff.blockers),
+            role="supervisor",
+        )
+        return {
+            "run_id": run.id,
+            "status": run.status,
+            "error": run.error,
+            "salvaged": True,
+            "decision": "blocked",
+            "blockers": handoff.blockers,
+        }
+    task_service.transition(
+        session,
+        task,
+        TaskStatus.review,
+        f"salvaged handoff from a {run.status} run; the Supervisor gate decides on evidence",
+        role="supervisor",
+    )
+    outcome = await supervisor_service.after_run(session, task, run, project, handoff, False)
+    return {"run_id": run.id, "status": run.status, "error": run.error, "salvaged": True, **outcome}
+
+
 async def execute(
     session: Session,
     task: Task,
@@ -316,7 +759,11 @@ async def _execute(
         )
     handoff_path = wt.path / git_service.ORCH_DIR / "handoff.json"
     handoff_path.parent.mkdir(exist_ok=True)
-    handoff_path.unlink(missing_ok=True)
+    # Do NOT just unlink: a submission left over from the previous round is work, and deleting it
+    # was the second half of the bug (a retry after a timeout actively destroyed the round it was
+    # meant to recover). Archive first, unlink only when the copy provably exists (T-10 DoD 3).
+    if archive_before_round_start(session, task, run, project, handoff_path):
+        handoff_path.unlink(missing_ok=True)
 
     # A branch that carries harness wreckage must not pass it on silently: the Worker is told
     # which commits are recovery commits and is required to re-verify before handing off.
@@ -391,21 +838,15 @@ async def _execute(
         if usage:
             run.usage = usage  # persisted by the next _set_run commit
             usage_service.record("task", harness_name, ctx.model, usage)
-    artifact_service.write_json(
-        run.id,
-        "run.json",
-        {
-            "run": run.short_id,
-            "task": task.short_id,
-            "adapter": harness_name,
-            "exit_code": result.exit_code,
-            "timed_out": result.timed_out,
-            "cancelled": result.cancelled,
-            "process_ms": result.duration_ms,
-        },
-    )
+    _write_run_json(run, task, harness_name, result)
 
-    # Collect whatever landed, even on failure (evidence for the next retry).
+    # Collect whatever landed, even on failure (evidence for the next retry). The dirt is
+    # snapshotted BEFORE the sweep: after it `git status` is clean by construction, so a Worker that
+    # promised work it never committed would leave no trace of the promise (T-10 DoD 7).
+    split_before_sweep = git_service.status_split(wt.path)
+    dirt_before_sweep = sorted(
+        {*split_before_sweep.tracked_modified, *split_before_sweep.untracked_added}
+    )
     rec = git_service.recovery_commit_info(
         wt.path, f"uncommitted worker output from {run.short_id}", run_short_id=run.short_id
     )
@@ -435,10 +876,23 @@ async def _execute(
             duration_ms=duration,
             commit_sha=sha,
         )
-        task_service.transition(
-            session, task, TaskStatus.planned, "run cancelled", role="supervisor"
+        salvaged = try_salvage_handoff(
+            session,
+            task,
+            run,
+            project,
+            wt.path,
+            handoff_path,
+            harness_name,
+            result,
+            dirt_before_sweep,
         )
-        return {"run_id": run.id, "status": run.status}
+        if salvaged is None:
+            task_service.transition(
+                session, task, TaskStatus.planned, "run cancelled", role="supervisor"
+            )
+            return {"run_id": run.id, "status": run.status}
+        return await _gate_salvaged(session, task, run, project, salvaged)
     if result.timed_out or result.exit_code != 0 or result.error:
         status = RunStatus.timeout if result.timed_out else RunStatus.failed
         _set_run(
@@ -451,14 +905,27 @@ async def _execute(
             duration_ms=duration,
             commit_sha=sha,
         )
-        task.handoff_status = "RUN_" + status.upper()
-        task_service.transition(
-            session, task, TaskStatus.planned, f"run {status}", role="supervisor"
-        )
         log_service.log_event(
             session, f"run_{status}", run.error or "", role="worker", task_id=task.id, run_id=run.id
         )
-        return {"run_id": run.id, "status": run.status, "error": run.error}
+        salvaged = try_salvage_handoff(
+            session,
+            task,
+            run,
+            project,
+            wt.path,
+            handoff_path,
+            harness_name,
+            result,
+            dirt_before_sweep,
+        )
+        if salvaged is None:
+            task.handoff_status = "RUN_" + status.upper()
+            task_service.transition(
+                session, task, TaskStatus.planned, f"run {status}", role="supervisor"
+            )
+            return {"run_id": run.id, "status": run.status, "error": run.error}
+        return await _gate_salvaged(session, task, run, project, salvaged)
 
     handoff = adapter.parse_result(ctx, result)
     synthesized = handoff is None
@@ -470,8 +937,29 @@ async def _execute(
             task.branch_name,
             result,
         )
-    artifact_service.write_json(run.id, "handoff.json", handoff.model_dump(mode="json"))
-    artifact_service.write_text(run.id, "handoff.md", artifact_service.render_handoff_md(handoff))
+    arrival = (
+        artifact_service.HANDOFF_ARRIVAL_SYNTHESIZED
+        if synthesized
+        else artifact_service.HANDOFF_ARRIVAL_CLEAN_EXIT
+    )
+    archive_handoff_artifacts(run, handoff)
+    # The clean-exit path shares the provenance machinery with the salvage path (T-10 DoD 7): the
+    # evidence is computed once, archived, and read back by the gate and the reviewer payload.
+    _write_run_json(
+        run,
+        task,
+        harness_name,
+        result,
+        arrival=arrival,
+        evidence=delivery_evidence(
+            wt.path,
+            project.base_branch,
+            handoff,
+            arrival=arrival,
+            exit_state=exit_state_text(run, result),
+            uncommitted_before_sweep=dirt_before_sweep,
+        ),
+    )
     if not synthesized and handoff.memory_suggestions:
         memory_service.suggest_from_handoff(
             session,

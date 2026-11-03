@@ -106,8 +106,14 @@ def test_adapter_error_with_exit_zero_fails_the_run(session, project, monkeypatc
 
     monkeypatch.setattr(MockHarnessAdapter, "run", cut_off)
     task, outcome = _run(session, project, ["mock"], phase=2)
-    assert outcome["status"] == "failed" and task.status == "planned"
-    assert "stopReason: length" in outcome["error"]
+    # The run still FAILS — the frozen terminal vocabulary is not widened and the error is kept.
+    # What T-10 changes is the round: the mock really did write a handoff before the adapter
+    # reported the error, so it is salvaged and the Supervisor gate decides instead of the
+    # submission being thrown away. A green gate routes a salvaged submission to a human, so the
+    # task ends `blocked` (waiting for a decision), not `planned` with nothing to review.
+    assert outcome["status"] == "failed" and "stopReason: length" in outcome["error"]
+    assert outcome.get("salvaged") is True and task.status == "blocked"
+    assert task.handoff_status == "SALVAGED"
 
 
 def test_changes_requested_requeues_then_blocks_after_round_limit(session, project):

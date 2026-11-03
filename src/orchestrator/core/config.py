@@ -103,6 +103,16 @@ class Settings(BaseSettings):
         return self.home / "agent-outputs"
 
     @property
+    def evidence_root(self) -> Path:
+        """Out-of-band submissions the harness must never discard (T-10 DoD 3).
+
+        A `runs/<run_id>/` artifact layout is a frozen contract, so a handoff found in a worktree
+        at the START of a round — before any run of this round exists to hold it — is archived
+        here instead of into a new file name under `runs/`.
+        """
+        return self.home / "evidence"
+
+    @property
     def is_local_bind(self) -> bool:
         return self.bind_host in LOCAL_HOSTS
 
