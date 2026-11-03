@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import { relative, resolve, isAbsolute } from "node:path";
 
 const READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+// Session-only state that touches no files, such as the example to-do extension.
+const STATE_TOOLS = new Set(["todo"]);
 const EDIT_TOOLS = new Set(["edit", "write"]);
 const SAFE_BASH =
 	/^\s*(cat|head|tail|wc|ls|tree|pwd|rg|grep|fd|find|file|stat|du|git\s+(status|log|diff|show|branch))(\s|$)/;
@@ -38,7 +40,7 @@ export default function (pi: any) {
 	pi.on("tool_call", async (event: any, ctx: any) => {
 		const tool: string = event.toolName;
 		const current = mode();
-		if (current === "yolo" || READ_TOOLS.has(tool)) return undefined;
+		if (current === "yolo" || READ_TOOLS.has(tool) || STATE_TOOLS.has(tool)) return undefined;
 		if (current === "report" && EDIT_TOOLS.has(tool) && inOutputFolder(event.input, ctx.cwd)) return undefined;
 		if (current === "plan" || current === "report") {
 			const command = String(event.input.command ?? "");

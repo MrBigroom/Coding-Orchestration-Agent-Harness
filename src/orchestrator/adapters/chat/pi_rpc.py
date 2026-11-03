@@ -20,8 +20,9 @@ from orchestrator.adapters.common import _n, takes_images, wants_explicit_cache
 
 GATE = Path(__file__).with_name("pi_gate.ts")
 PROVIDER = "orchestrator"
-# Your Pi MCP servers and their sign-ins, which a managed config folder would otherwise hide.
-MCP_FILES = ("mcp.json", "mcp-auth.json")
+# Your Pi MCP servers, their sign-ins and your extensions, which a managed config folder
+# would otherwise hide.
+OWN_FILES = ("mcp.json", "mcp-auth.json", "extensions")
 FAILED_STOP_REASONS = {"length", "error"}
 EDIT_TITLES = {"Allow edit?", "Allow write?"}
 
@@ -38,7 +39,9 @@ class PiDriver(ChatDriver):
 
     Your MCP servers (`~/.pi/agent/mcp.json`) and their sign-ins are linked into that
     folder, so a token Pi refreshes is saved back to your file. Each MCP use then passes
-    the gate like any other tool call. Batch runs have no gate, so they don't get them.
+    the gate like any other tool call. Your extensions (`~/.pi/agent/extensions`) are linked
+    the same way; their tools pass the gate too. Batch runs have no gate, so they get none
+    of these.
     """
 
     kind = "pi"
@@ -69,10 +72,10 @@ class PiDriver(ChatDriver):
         config["providers"][PROVIDER]["models"] = entries
         path.write_text(json.dumps(config, indent=2))
 
-    def _link_mcp(self) -> None:
+    def _link_own(self) -> None:
         own = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent")
-        for name in MCP_FILES:
-            if (own / name).is_file():
+        for name in OWN_FILES:
+            if (own / name).exists():
                 (self.tmp / name).symlink_to(own / name)
 
     async def start(self) -> None:
@@ -80,7 +83,7 @@ class PiDriver(ChatDriver):
         self._managed = "PI_CODING_AGENT_DIR" in env
         if self._managed:
             self._write_models()
-            self._link_mcp()
+            self._link_own()
         self._mode_file.write_text(self.options.permission or "ask")
         env["ORCHESTRATOR_PI_MODE_FILE"] = str(self._mode_file)
         if self.options.output_dir:

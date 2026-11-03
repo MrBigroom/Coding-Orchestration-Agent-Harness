@@ -234,13 +234,25 @@ async def test_pi_refused_command_raises(tmp_path):
         await driver.close()
 
 
+def test_pi_session_links_your_extensions(tmp_path, monkeypatch):
+    own = tmp_path / "pi-agent"
+    (own / "extensions").mkdir(parents=True)
+    (own / "extensions" / "todo.ts").write_text("export default function () {}")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(own))
+    driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
+    driver._link_own()
+    linked = driver.tmp / "extensions"
+    assert linked.is_symlink() and (linked / "todo.ts").is_file()
+    driver._tmp.cleanup()
+
+
 def test_pi_session_links_your_mcp_servers_and_sign_ins(tmp_path, monkeypatch):
     own = tmp_path / "pi-agent"
     own.mkdir()
     (own / "mcp.json").write_text('{"mcpServers": {"docs": {"url": "http://x/mcp"}}}')
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(own))
     driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
-    driver._link_mcp()
+    driver._link_own()
     linked = driver.tmp / "mcp.json"
     assert linked.is_symlink() and linked.resolve() == own / "mcp.json"
     assert not (driver.tmp / "mcp-auth.json").exists()  # not signed in to anything yet
@@ -248,7 +260,7 @@ def test_pi_session_links_your_mcp_servers_and_sign_ins(tmp_path, monkeypatch):
     (own / "mcp-auth.json").write_text("{}")
     driver._tmp.cleanup()
     driver = PiDriver(adapter("pi", "pi"), options(tmp_path), Recorder())
-    driver._link_mcp()
+    driver._link_own()
     (driver.tmp / "mcp-auth.json").write_text('{"docs": {}}')
     assert (own / "mcp-auth.json").read_text() == '{"docs": {}}'
     driver._tmp.cleanup()
