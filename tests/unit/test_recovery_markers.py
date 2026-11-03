@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from orchestrator.core.models import Task
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import git_service, log_service, project_service, task_service
 from orchestrator.utils import structured_log
@@ -174,7 +175,7 @@ def test_unauthorized_contract_change_is_computed_not_asserted(session, initiali
     assert findings["changed"] == ["docs/frozen-contracts.md"]
     assert findings["authorized"] == []
 
-    # The same task, with a DoD item that names the file, authorizes it.
+    # The same task, with a DoD item that GRANTS the edit, authorizes it. A mention would not.
     authorized = task_service.create(
         session,
         TaskCreate(
@@ -182,11 +183,103 @@ def test_unauthorized_contract_change_is_computed_not_asserted(session, initiali
             project_id=project.id,
             phase_number=2,
             phase_slug="x2",
-            definition_of_done=["docs/frozen-contracts.md gains the new event name"],
+            definition_of_done=[
+                "authorized to amend docs/frozen-contracts.md to add the new event name"
+            ],
         ),
     )
     again = project_service.contract_findings(authorized, project, wt.path)
     assert again["unauthorized"] == [] and again["authorized"] == ["docs/frozen-contracts.md"]
+
+
+def test_contract_authorization_is_a_grant_not_a_mention(session, initialized, tmp_path):
+    """Reviewer ruling 1: the detector must not be blind in the common case.
+
+    A prohibition naming the file, a bare mention of it, and a path that appears only in a commit
+    message or a diffstat all authorize NOTHING. Only an explicit grant in the task's stored
+    DoD / acceptance criteria / frozen-contracts entries does.
+    """
+    repo = make_repo(
+        tmp_path / "proj",
+        {"README.md": "# test\n", "docs/frozen-contracts.md": "# frozen\n"},
+    )
+    project = project_service.create(session, ProjectCreate(name="proj", path=str(repo)))
+    wt = git_service.ensure_worktree(repo, project.slug, 1, "phase-1-auth", "main")
+    (wt.path / "docs" / "frozen-contracts.md").write_text("# frozen\n\n- widened\n")
+    changed = ["docs/frozen-contracts.md"]
+
+    def _task(**fields) -> Task:
+        return task_service.create(
+            session,
+            TaskCreate(
+                title="authorization shapes",
+                project_id=project.id,
+                phase_number=1,
+                phase_slug="auth",
+                **fields,
+            ),
+        )
+
+    def authorized(**fields) -> set[str]:
+        return project_service.authorized_contract_files(_task(**fields))
+
+    def unauthorized(**fields) -> list[str]:
+        return project_service.unauthorized_contract_changes(_task(**fields), changed)
+
+    # (a) a PROHIBITION naming the file still yields the unauthorized finding
+    prohibition = dict(
+        definition_of_done=["Do NOT modify docs/frozen-contracts.md"],
+        acceptance_criteria=["docs/frozen-contracts.md must not be edited by this phase"],
+    )
+    assert authorized(**prohibition) == set()
+    assert unauthorized(**prohibition) == ["docs/frozen-contracts.md"]
+
+    # a negated grant is still a prohibition
+    assert authorized(definition_of_done=["not authorized to change docs/frozen-contracts.md"]) == set()
+    assert authorized(definition_of_done=["never edit docs/frozen-contracts.md"]) == set()
+    assert authorized(definition_of_done=["out of scope: docs/frozen-contracts.md"]) == set()
+
+    # (b) an EXPLICIT GRANT suppresses the finding
+    grant = dict(
+        definition_of_done=[
+            "authorized to amend docs/frozen-contracts.md to add the ORCH_VERIFY field names"
+        ]
+    )
+    assert authorized(**grant) == {"docs/frozen-contracts.md"}
+    assert unauthorized(**grant) == []
+    assert authorized(acceptance_criteria=["docs/frozen-contracts.md may be extended with the new event"]) == {
+        "docs/frozen-contracts.md"
+    }
+    assert authorized(frozen_contracts=["this phase is permitted to update docs/plan.md"]) == {
+        "docs/plan.md"
+    }
+
+    # (c) a path mentioned only in a COMMIT MESSAGE, a DIFFSTAT or the DESCRIPTION grants nothing
+    assert authorized() == set()
+    assert unauthorized() == ["docs/frozen-contracts.md"]
+    description_only = _task(
+        description="amend docs/frozen-contracts.md freely, it is authorized"
+    )
+    assert project_service.authorized_contract_files(description_only) == set()
+
+    # the only authorization sources are the three stored fields; a commit message cannot create one
+    msg_task = _task(definition_of_done=["README.md updated"])
+    run_git(["-c", "user.name=w", "-c", "user.email=w@w", "commit", "-m",
+             "docs/frozen-contracts.md: authorized widening", "-a"], wt.path)
+    logged = run_git(["log", "--format=%B"], wt.path).stdout
+    assert "docs/frozen-contracts.md" in logged  # the message names the file…
+    assert project_service.contract_findings(msg_task, project, wt.path)["unauthorized"] == [
+        "docs/frozen-contracts.md"  # …and that grants it nothing
+    ]
+
+    # a mere mention, with no grant verb, is not authorization — this is T-8's own DoD 8 wording
+    assert authorized(
+        definition_of_done=[
+            "the changed-file set is intersected with the contract file list the harness already "
+            "knows (docs/plan.md, docs/product-spec.md, docs/architecture.md, docs/workflow.md, "
+            "docs/frozen-contracts.md) and an unauthorized hit becomes a build-log finding"
+        ]
+    ) == set()
 
 
 def test_doctor_reports_untracked_dirt_without_failing_cleanliness(session, initialized, tmp_path):

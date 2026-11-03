@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -22,8 +23,9 @@ class ProjectError(ValueError):
 
 
 # The contract documents the harness knows about. A phase may change one of these only when its
-# own Definition of Done / acceptance criteria name that file (docs/build-loop.md,
-# "Contract-change request flow"); anything else is harness-detected, not model-asserted.
+# own Definition of Done / acceptance criteria / frozen-contracts entry EXPLICITLY GRANT that
+# file (docs/build-loop.md, "Unauthorized contract edits"); anything else is harness-detected,
+# not model-asserted.
 CONTRACT_FILES: tuple[str, ...] = (
     "docs/plan.md",
     "docs/product-spec.md",
@@ -48,17 +50,85 @@ def contract_changes(task: Task, changed: list[str]) -> list[str]:
     return sorted(p for p in CONTRACT_FILES if p in hits)
 
 
-def authorized_contract_files(task: Task) -> set[str]:
-    """Contract files this task's stored DoD / acceptance criteria explicitly authorize.
-
-    Authorization is a literal mention of the file (full path or basename) in a Definition of
-    Done item or an acceptance criterion — the same rule the Architect reviews against, applied
-    deterministically instead of left to a reader. The task description is NOT authorization:
-    it routinely quotes contract file names while describing a problem.
+# A grant names what the phase is allowed to do to the file. Mere mention is not enough: T-8's own
+# DoD 8 lists all five contract files while describing the detector, and a mention-based rule would
+# have "authorized" exactly the edits it was written to catch (reviewer ruling, T-8 round 5).
+_GRANT_RE = re.compile(
+    r"""(?xi)
+    (?:
+        authoriz(?:e|es|ed|ing|ation)|permit(?:s|ted)?|allow(?:s|ed)?|grant(?:s|ed)?|sanction(?:s|ed)?
+      | (?:may|can|should)\s+(?:be\s+)?
+    )
+    \b(?:[^.;\n]{0,40}?)\b
+    (?:amend(?:s|ing)?|edit(?:s|ing)?|chang(?:e|es|ing)|updat(?:e|s|ing)|modif(?:y|ies|ying)
+      | add(?:s|ing)?|extend(?:s|ing)?|widen(?:s|ing)?|rewrit(?:e|es|ing)|replac(?:e|es|ing)
+      | write)
     """
-    texts = [*(task.definition_of_done or []), *(task.acceptance_criteria or [])]
-    blob = "\n".join(texts).lower()
-    return {p for p in CONTRACT_FILES if p.lower() in blob or p.rsplit("/", 1)[-1].lower() in blob}
+)
+# A prohibition naming the file must NEVER read as authorization, even in a sentence that also
+# contains a grant verb ("not authorized to change docs/plan.md"). Fails closed.
+_PROHIBIT_RE = re.compile(
+    r"""(?xi)
+    \b(?:do|does|did)\s+not\b | \bdon'?t\b | \bmust\s+not\b | \bmay\s+not\b | \bshall\s+not\b
+  | \bcan'?not\b | \bunauthoriz(?:e|ed|es|ation)\b | \bdisallow(?:s|ed)?\b | \bprohibit(?:s|ed)?\b
+  | \bforbid(?:s|den)?\b | \bnever\b | \bbanned\b | \bout\s+of\s+scope\b | \bnot\s+permitted\b
+  | \bnot\s+allowed\b | \bforbids?\b
+  | \bnot\s+(?:be\s+)?(?:authoriz|permit|allow|grant|sanction)\w*
+  | \b(?:isn'?t|wasn'?t)\s+(?:authoriz|permit|allow|grant)\w*
+    """
+)
+# Sentence-ish splits for the per-mention test. `\.\s` is safe for paths: the dot in
+# "frozen-contracts.md" is followed by a letter, not whitespace.
+_CLAUSE_SPLIT = re.compile(r"[\n;]+|\.\s")
+
+
+def _grant_clauses(texts: list[str]) -> list[str]:
+    """Clauses that both grant something and are not prohibitions."""
+    out: list[str] = []
+    for text in texts:
+        for clause in _CLAUSE_SPLIT.split(text or ""):
+            if not clause.strip():
+                continue
+            if _PROHIBIT_RE.search(clause) or not _GRANT_RE.search(clause):
+                continue
+            out.append(clause.lower())
+    return out
+
+
+def _mentioned(clause: str, path: str) -> bool:
+    """Does this clause name the contract file as a path, not as prose?
+
+    A bare basename only counts inside a path-like context (``docs/frozen-contracts.md`` or
+    ``frozen-contracts.md``); the full path is always checked first.
+    """
+    return path.lower() in clause or path.rsplit("/", 1)[-1].lower() in clause
+
+
+def authorized_contract_files(task: Task) -> set[str]:
+    """Contract files this task explicitly authorizes changes to.
+
+    Authorization means a *grant*, not a mention: a Definition of Done item, acceptance criterion
+    or frozen-contracts entry must (a) name the file and (b) grant a change to it — "authorized to
+    amend docs/frozen-contracts.md to add the ORCH_VERIFY field names". Three things are
+    deliberately NOT authorization, each with a test:
+
+    - a **mere mention**, e.g. "intersect the changed-file set with docs/frozen-contracts.md";
+    - a **prohibition**, e.g. "Do NOT modify docs/frozen-contracts.md";
+    - anything in the task **description**, a commit message or a diffstat — only the three stored
+      authorization fields above are read.
+
+    Failing closed is the point: a control that authorizes the edit it was written to detect is
+    worse than no control, because it reads as a check that passed.
+    """
+    texts = [
+        *(task.definition_of_done or []),
+        *(task.acceptance_criteria or []),
+        *(task.frozen_contracts or []),
+    ]
+    clauses = _grant_clauses(texts)
+    if not clauses:
+        return set()
+    return {p for p in CONTRACT_FILES if any(_mentioned(c, p) for c in clauses)}
 
 
 def unauthorized_contract_changes(task: Task, changed: list[str]) -> list[str]:

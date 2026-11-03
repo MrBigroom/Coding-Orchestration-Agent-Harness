@@ -338,19 +338,20 @@ def test_recovery_reaches_the_reviewer_and_the_gui_payload(session, client, tmp_
     assert "dump.log" in payload_md
     assert "Harness-detected findings" in payload_md
 
-    # the GUI's own audit trail: recovery badge data, straight from history
-    r = client.get(f"/api/tasks/{task.short_id}/recovery")
-    assert r.status_code == 200
-    data = r.json()
-    assert data["count"] == 1
-    commit = data["commits"][0]
-    assert commit["recovery"] is True and commit["recovery_run"] == run1.short_id
-    assert [f["path"] for f in commit["files"] if f["status"].startswith("A")] == ["dump.log"]
-    assert commit["subject"].startswith(git_service.RECOVERY_SUBJECT_PREFIX)
-    assert data["files"]["dump.log"] == [commit["short"]]
+    # the GUI's own audit trail: recovery badge data, straight from the task detail response.
+    # There is deliberately no GET /api/tasks/{id}/recovery (reviewer ruling 3 — dead code); the
+    # detail field is the only place this is served, so the GUI has to be able to read everything
+    # it renders from it.
+    assert client.get(f"/api/tasks/{task.short_id}/recovery").status_code == 404
     detail = client.get(f"/api/tasks/{task.short_id}").json()
     assert [c["sha"] for c in detail["recovery_commits"]] == [swept[0].commit_sha]
     assert detail["status"] == "accepted"
+    commit = detail["recovery_commits"][0]
+    assert commit["recovery"] is True and commit["recovery_run"] == run1.short_id
+    assert [f["path"] for f in commit["files"] if f["status"].startswith("A")] == ["dump.log"]
+    assert commit["subject"].startswith(git_service.RECOVERY_SUBJECT_PREFIX)
+    # what RecoveryNote / the header badge render, with nothing else to fetch
+    assert sum(1 for c in detail["recovery_commits"] if c["recovery"]) > 0
 
 
 def test_unauthorized_contract_edit_from_recovery_waits_for_a_human(session, tmp_path):
@@ -405,9 +406,23 @@ def test_unauthorized_contract_edit_from_recovery_waits_for_a_human(session, tmp
     assert "UNAUTHORIZED contract file change(s)" in text
     assert "docs/frozen-contracts.md" in text and "detected by the harness" in text
 
-    # an authorizing DoD item releases the hold (recomputed, same worktree)
+    # a MERE MENTION does not release the hold (reviewer ruling 1): naming the file while
+    # describing a problem is not permission to change it
     task = task_service.get(session, task.id)
-    task.definition_of_done = ["docs/frozen-contracts.md reworded"]
+    task.definition_of_done = [
+        "the changed-file set is intersected with docs/frozen-contracts.md and reported"
+    ]
+    session.add(task)
+    session.commit()
+    assert project_service.contract_findings(task, project, wt)["unauthorized"] == [
+        "docs/frozen-contracts.md"
+    ]
+
+    # an EXPLICIT GRANT releases it (recomputed, same worktree)
+    task = task_service.get(session, task.id)
+    task.definition_of_done = [
+        "authorized to amend docs/frozen-contracts.md to reword the frozen event list"
+    ]
     session.add(task)
     session.commit()
     again = project_service.contract_findings(task, project, wt)

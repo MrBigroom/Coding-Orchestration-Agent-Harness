@@ -94,9 +94,11 @@ to the reviewer and in the diff — so a recovery commit is **machine-identifiab
   BLOCKED handoff with a contract-change request instead of continuing if one touched a
   contract file the phase does not authorize. Logged as `recovery_notice_included`.
 - **Reviewer payload**: `review_service.recovery_section` + `harness_findings_section`, and
-  the GUI marks the diff with a warning block (`TaskDetail.tsx` `RecoveryNote`) built from
-  `GET /api/tasks/{id}/recovery`. `runs/<id>/review_payload.md` keeps what the reviewer was
-  actually shown.
+  the GUI marks the diff with a warning block (`TaskDetail.tsx` `RecoveryNote`) built from the
+  `recovery_commits` field of `GET /api/tasks/{id}` — that field is the only place the data is
+  served; there is no `GET /api/tasks/{id}/recovery` route (reviewer ruling: the route was dead
+  code, nothing read it, and no DoD item asked for a new endpoint).
+  `runs/<id>/review_payload.md` keeps what the reviewer was actually shown.
 - Sensitive paths (`.env`, keys) are **never** staged into a recovery commit; they stay on
   disk untracked and are reported in `skipped_sensitive`.
 
@@ -138,8 +140,20 @@ computes it — a Worker or reviewer asserting authorization cannot make the cla
 1. the changed-file set is the branch diff **plus** the worktree's own dirt (`tracked_modified`
    and `untracked_added`, so an uncommitted edit cannot hide),
 2. intersected with `project_service.contract_files()`,
-3. minus the files the task's stored `definition_of_done` / `acceptance_criteria` name
-   literally (`authorized_contract_files`; the task *description* is not authorization).
+3. minus the files the task **explicitly grants** in its stored `definition_of_done`,
+   `acceptance_criteria` or `frozen_contracts` (`authorized_contract_files`).
+
+Step 3 is a **grant test, not a mention test**. A file is authorized only when one clause both
+names it and grants a change to it — "authorized to amend `docs/frozen-contracts.md` to add the
+ORCH_VERIFY field names". Three things are *not* authorization, each covered by a test:
+
+- a **mere mention**: T-8's own DoD 8 lists all five contract files while describing the detector,
+  so a mention rule would have authorized the exact edit it exists to catch;
+- a **prohibition**: "Do NOT modify `docs/frozen-contracts.md`" names the file in order to forbid
+  touching it; where negation and a grant word collide in one clause the prohibition wins, so the
+  control fails closed;
+- the task **description**, a commit message or a diffstat — prose about a contract file is not
+  permission to change one, and a recovery commit's own subject can never launder authorization.
 
 An unauthorized hit emits `contract_change_detected` with a `findings_json` payload, fails the
 `contract files unchanged` verification check (so green tests do not save it), and is handed to
@@ -160,7 +174,9 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
    - lint and build commands when configured (same worktree, same null-means-N/A rule)
    - **contract files changed without authorization** (`contract files unchanged`) —
      computed by the harness from the branch diff *plus* the worktree's own dirt, and
-     authorized only by the task's stored `definition_of_done` / `acceptance_criteria`.
+     authorized only by an explicit grant in the task's stored `definition_of_done` /
+     `acceptance_criteria` / `frozen_contracts` (a mention, or a prohibition naming the file, is
+     not a grant).
      A failing check, so it fails verification even when the tests are green
    - **recovery commits on the branch** (`recovery commits (harness-created)`) —
      informational: it never rejects and never approves, it names the commits whose content
@@ -298,11 +314,19 @@ named event (`run_failed`, `run_timeout`, and `run_error` for an unexpected exce
 that finished normally had none — `run_cancelled` does not exist as an event name either, a
 cancel shows up as a `task_status` line reading `run cancelled`. A green run was therefore
 observable only as a `task_status` transition, so any consumer had to *derive* the single most
-important trigger indirectly. `run_completed` is that missing event. It is emitted from
-`run_service._set_run` — the single writer of `run.status`, which the `run_failed` /
-`run_timeout` events are also driven by (their `_set_run` call is immediately followed by
-`log_event(f"run_{status}")` in `_execute`) — so every terminal run status is logged from the
-same transition point, and it is impossible to set `completed` without emitting it. It is
+important trigger indirectly. `run_completed` is that missing event.
+
+**Where each terminal event is emitted (deliberate split, reviewer ruling 2).**
+`run_completed` is emitted inside `run_service._set_run`, the single writer of `run.status`, so it
+is impossible to set `completed` without logging it. `run_failed` / `run_timeout` stay where they
+were: emitted from `_execute` immediately after the `_set_run` call that sets the terminal status,
+because at that point `_execute` still holds the run-level error context (`run.error`, the exit
+code, the timeout reason) that their `details` carry, and `_set_run` does not. Moving them into
+`_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
+line. The shared chokepoint is the **status transition** (`_set_run` is the only writer, and every
+terminal status has exactly one event), not the `log_event` call site. The consumer that motivated
+the event — the **T-9** notification fan-out — is the reason it must be a named event at all.
+It is
 **additive** — no existing event name and no line-shape key changed — and adding it to the
 vocabulary was authorized by this task's Definition of Done, so `docs/frozen-contracts.md`
 itself is untouched (it does not enumerate build-log event names; the frozen list is the

@@ -122,16 +122,18 @@ def harness_findings_section(
         f"recovery commits on this branch (harness-created, never self-checked): {len(commits)}",
         f"contract files watched: {', '.join(project_service.contract_files())}",
         f"contract files changed by this run: {', '.join(findings['changed']) or 'none'}",
-        "authorized by this task's stored Definition of Done / acceptance criteria: "
-        f"{', '.join(findings['authorized']) or 'none'}",
+        "authorized by an explicit grant in this task's stored Definition of Done / acceptance "
+        f"criteria / frozen contracts: {', '.join(findings['authorized']) or 'none'}",
     ]
     if findings["unauthorized"]:
         lines.append(
             "UNAUTHORIZED contract file change(s), detected by the harness: "
             + ", ".join(findings["unauthorized"])
             + ". A phase may change a contract file only when its own DoD/acceptance criteria "
-            "name it (docs/build-loop.md); the Worker's own assertion of authorization does not "
-            "count."
+            ". A phase may change a contract file only when its own DoD/acceptance criteria "
+            "explicitly GRANT it (docs/build-loop.md, \"Unauthorized contract edits\") — naming "
+            "the file in prose, or forbidding touching it, is not a grant. The Worker's own "
+            "assertion of authorization does not count."
         )
     return "\n".join(lines)
 
