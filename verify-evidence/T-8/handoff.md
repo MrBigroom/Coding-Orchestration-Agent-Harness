@@ -3,7 +3,7 @@
 **Branch:** `task-8-recovery-commits-after-a-timeout-commit-half-fin`  
 **Status:** `CHANGES_APPLIED`  
 **Phase:** T-8  
-**Base:** `main` (merge-base `14a221c`); measured by this script at render time on HEAD `e0904bb`: `git rev-list --left-right --count main...HEAD` = `2 16` (2 behind / 16 ahead of `main@360228a`). The evidence-only commit that records this regeneration adds one to the ahead count. `git merge-tree --write-tree main HEAD` = no conflicts. Not merged, not pushed.
+**Base:** `main` (merge-base `14a221c`); measured by this script at render time on HEAD `23497c6`: `git rev-list --left-right --count main...HEAD` = `2 17` (2 behind / 17 ahead of `main@360228a`). The evidence-only commit that records this regeneration adds one to the ahead count. `git merge-tree --write-tree main HEAD` = no conflicts. Not merged, not pushed.
 
 ## Summary
 
@@ -132,6 +132,7 @@ None.
 * Recovery-commit detection is trailer-only, so the two pre-trailer recovery commits in this repo's history (ba77a43, 593a8c6) are NOT flagged. A subject-matching fallback was rejected because it cannot distinguish wreckage from a hand-authored commit that copies the wording (that case is a test). Documented as 'Boundary' in docs/build-loop.md.
 * All measurement used the repo's path-independent wrappers (scripts/orch_verify.sh test|lint, and the main checkout's .venv/node_modules for the GUI type-check), so counts describe THIS worktree; the ORCH_VERIFY marker line in each committed log is the proof.
 * Ruling 1's grant vocabulary is a heuristic over English DoD text. It fails closed: an unrecognised grant phrasing raises a finding and routes to NEEDS_HUMAN for a human, which is the safe direction. A phrasing that should authorize and does not is a nuisance; the reverse was the bug.
+* REVIEW-INPUT LIMITATION (reviewer finding 6, recorded not fixed by operator ruling): the review prompt/diff handed to the Architect was truncated after git_service.py, and the handoff block was truncated mid DoD-5, so DoD 3/5/7/8/9/10 and the trailing handoff fields were not verifiable from the reviewer's own artifacts. That is a harness limitation (no review prompt/payload size budget or archiving of the exact payload the reviewer received), owned by a separate task, and this round deliberately changed NO review/verification plumbing for it. Mitigations that do exist on this branch: runs/<id>/review_payload.md archives what the reviewer was shown (review_service.py:160-169), verify-evidence/T-8/README.md is a committed DoD -> file:line -> proof index, and every count in this handoff names the committed log it came from.
 
 ## Questions
 
@@ -140,6 +141,7 @@ None.
 3. DoD 4's 'GUI diff marks recovery commits distinctly' is a warning block above the whole-diff view plus a header badge, not per-hunk attribution, because patch.diff is one flat diff against the base branch. Accepted as-is by rulings 3+4; splitting patch.diff per commit would be an artifact-format change beyond this phase.
 4. Should pre-trailer recovery commits (ba77a43, 593a8c6) get an explicit 'legacy recovery commit' annotation in the reviewer payload, or is the documented Boundary note enough?
 5. Ruling 1's grant test now reads task.frozen_contracts as an authorization source (the ruling names it). A frozen-contracts entry that merely quotes a contract path, like this task's own, grants nothing. Confirm this is the intended reading before a phase relies on it.
+6. Review-input truncation (finding 6) is recorded as a limitation, not fixed here. Should the reviewer payload get a size budget with an explicit 'N of M files shown' header, or should the full payload be archived and referenced by hash? That is a review_service change and out of T-8's scope, so it belongs to whatever task owns review plumbing.
 
 ## Blockers
 
