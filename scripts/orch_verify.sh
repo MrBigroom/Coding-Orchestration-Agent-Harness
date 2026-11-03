@@ -122,27 +122,9 @@ PY_PROBE
 [ -n "$RESOLVED" ] ||
   fail "could not resolve module '${ORCH_VERIFY_PACKAGE}' with $PY (PYTHONPATH=$PYTHONPATH)" 3
 
-printf 'orch-verify: worktree root %s\n' "$ROOT"
-printf 'orch-verify: main repo     %s\n' "$MAIN_REPO"
-printf 'orch-verify: venv python   %s\n' "$PY"
-printf 'orch-verify: PYTHONPATH    %s\n' "$PYTHONPATH"
-printf 'orch-verify: test root     %s\n' "$ROOT"
-printf 'orch-verify: %s.__file__ = %s\n' "$ORCH_VERIFY_PACKAGE" "$RESOLVED"
-
-case "$RESOLVED" in
-  "$ROOT"/*) ;;
-  *)
-    printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
-      "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT" >&2
-    fail "$ORCH_VERIFY_PACKAGE resolved OUTSIDE the worktree: $RESOLVED (root: $ROOT) — a run from here would verify the wrong checkout" 3
-    ;;
-esac
-printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
-  "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT"
-
 # Collection target: always the worktree, never whatever the invoking directory holds.
 # Extra args that name an existing path replace that target (paths are relative to the
-# worktree root); pure flags (-k, -x, …) are added to it.
+# worktree root, which is the cwd from here on); pure flags (-k, -x, …) are added to it.
 TARGET="$ROOT/tests"
 [ -d "$TARGET" ] || TARGET="$ROOT"
 if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
@@ -161,6 +143,24 @@ else
     TEST_ARGS=("$TARGET" "${EXTRA_ARGS[@]}")
   fi
 fi
+
+printf 'orch-verify: worktree root %s\n' "$ROOT"
+printf 'orch-verify: main repo     %s\n' "$MAIN_REPO"
+printf 'orch-verify: venv python   %s\n' "$PY"
+printf 'orch-verify: PYTHONPATH    %s\n' "$PYTHONPATH"
+printf 'orch-verify: test root     %s\n' "$TARGET"
+printf 'orch-verify: %s.__file__ = %s\n' "$ORCH_VERIFY_PACKAGE" "$RESOLVED"
+
+case "$RESOLVED" in
+  "$ROOT"/*) ;;
+  *)
+    printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
+      "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT" >&2
+    fail "$ORCH_VERIFY_PACKAGE resolved OUTSIDE the worktree: $RESOLVED (root: $ROOT) — a run from here would verify the wrong checkout" 3
+    ;;
+esac
+printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
+  "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT"
 
 lint_argv() {
   read -r -a LINT_ARGS <<<"${ORCH_VERIFY_LINT:-ruff check src tests}"
