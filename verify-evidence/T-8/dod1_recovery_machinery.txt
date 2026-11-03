@@ -1,11 +1,15 @@
 ### (a) this branch's history, read by git_service.commits_against_base / recovery_commits
   RECOVERY_SUBJECT_PREFIX = 'chore(orchestrator-recovery):'
   RECOVERY_TRAILER_KEY    = 'Orchestrator-Recovery'
-  main..HEAD: 4 commit(s)
+  main..HEAD: 8 commit(s)
     ba77a43 recovery=False run=None chore(orchestrator-recovery): uncommitted worker output from R-1
     9001e82 recovery=False run=None feat(T-8): anchor the sk- credential patterns so branch/task nam
     232b6d4 recovery=False run=None feat(T-8): write the two build-loop sections the branch referenc
     e42304a recovery=False run=None feat(T-8): prove the recovery-committed undefined name is surfac
+    05011a4 recovery=False run=None feat(T-8): verify the retried task's GUI header payload and comm
+    e7953b5 recovery=False run=None feat(T-8): record the contract question the terminal event and s
+    48ffce9 recovery=False run=None feat(T-8): commit the reviewer-reachable handoff block and the e
+    06b8268 recovery=False run=None feat(T-8): refresh the committed suite log from the e7953b5 capt
   recovery_commits() -> []
 
 ### (b) a fresh recovery commit: prefix kept, trailer added, tracked/untracked split, structured event
@@ -23,17 +27,17 @@
     | 
     | Orchestrator-Recovery: R-demo
   build-log details (frozen line shape; structured payload inside `details`):
-    worker left uncommitted changes | findings_json={"label": "uncommitted worker output from R-demo", "recovery": true, "run_short_id": "R-demo", "sha": "562a7882a9cf461c789dcad6cd67f670eaf72748", "skipped_sensitive": [], "subject": "chore(orchestrator-recovery): uncommitted worker output from R-demo", "tracked_modified": ["app.py", "docs/frozen-contracts.md"], "trailer": "Orchestrator-Recovery: R-demo", "untracked_added": ["notes/scratch.txt"]}
-  parsed: {'label': 'uncommitted worker output from R-demo', 'recovery': True, 'run_short_id': 'R-demo', 'sha': '562a7882a9cf461c789dcad6cd67f670eaf72748', 'skipped_sensitive': [], 'subject': 'chore(orchestrator-recovery): uncommitted worker output from R-demo', 'tracked_modified': ['app.py', 'docs/frozen-contracts.md'], 'trailer': 'Orchestrator-Recovery: R-demo', 'untracked_added': ['notes/scratch.txt']}
-  detected by the reader: ['562a788']
+    worker left uncommitted changes | findings_json={"label": "uncommitted worker output from R-demo", "recovery": true, "run_short_id": "R-demo", "sha": "157fa29f42913a9f38c20bb38d7401a461ba7a33", "skipped_sensitive": [], "subject": "chore(orchestrator-recovery): uncommitted worker output from R-demo", "tracked_modified": ["app.py", "docs/frozen-contracts.md"], "trailer": "Orchestrator-Recovery: R-demo", "untracked_added": ["notes/scratch.txt"]}
+  parsed: {'label': 'uncommitted worker output from R-demo', 'recovery': True, 'run_short_id': 'R-demo', 'sha': '157fa29f42913a9f38c20bb38d7401a461ba7a33', 'skipped_sensitive': [], 'subject': 'chore(orchestrator-recovery): uncommitted worker output from R-demo', 'tracked_modified': ['app.py', 'docs/frozen-contracts.md'], 'trailer': 'Orchestrator-Recovery: R-demo', 'untracked_added': ['notes/scratch.txt']}
+  detected by the reader: ['157fa29']
   next-run prompt listing:
-    | - 562a788 (recovery of run R-demo): chore(orchestrator-recovery): uncommitted worker output from R-demo
+    | - 157fa29 (recovery of run R-demo): chore(orchestrator-recovery): uncommitted worker output from R-demo
     |   tracked modifications: app.py, docs/frozen-contracts.md
     |   newly added (untracked before the commit): notes/scratch.txt
   untracked-only split: {'tracked_modified': [], 'untracked_added': ['just-scratch.txt']}
   is_dirty (sweep/cleanup)   = True
   tracked_dirty (merge/doctor)= False
-  swept anyway: {'recovery': True, 'sha': 'a443165426fc29d3302492117a96f2bb683094f6', 'run_short_id': 'R-demo2', 'trailer': 'Orchestrator-Recovery: R-demo2', 'subject': 'chore(orchestrator-recovery): leftover changes from R-demo2', 'label': 'leftover changes from R-demo2', 'tracked_modified': [], 'untracked_added': ['just-scratch.txt'], 'skipped_sensitive': []}
+  swept anyway: {'recovery': True, 'sha': 'f7b1cca78ec9b39696a2f4d7c37beb85c7cc0016', 'run_short_id': 'R-demo2', 'trailer': 'Orchestrator-Recovery: R-demo2', 'subject': 'chore(orchestrator-recovery): leftover changes from R-demo2', 'label': 'leftover changes from R-demo2', 'tracked_modified': [], 'untracked_added': ['just-scratch.txt'], 'skipped_sensitive': []}
   worktree left behind on purpose? no -> removed
 
 ### (c) the two predicates in the shipped call sites (grep of the decisions they gate)

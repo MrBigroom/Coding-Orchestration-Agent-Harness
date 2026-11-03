@@ -1,4 +1,4 @@
-worktree HEAD   : e42304a (task-8-recovery-commits-after-a-timeout-commit-half-fin)
+worktree HEAD   : 06b8268 (task-8-recovery-commits-after-a-timeout-commit-half-fin)
 main-repo HEAD  : 360228a
 typecheck cwd   : /tmp/t8-web-typecheck
 web/src resolves: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/web/src   # must be under the worktree

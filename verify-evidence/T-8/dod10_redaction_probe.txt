@@ -1,14 +1,33 @@
-== names that must survive (old pattern -> new pattern) ==
-  old_damaged=True  new_damaged=False  git -C /repo merge --no-ff task-8-recovery-commits-after-a-timeout-commit-half-fin
-  old_damaged=True  new_damaged=False  task-6-verification-commands-cannot-run-in-a-worktree-n
-  old_damaged=True  new_damaged=False  findings_json={"branch": "task-8-recovery-commits-after-a-timeout-commit-half-fin"}
-  old_damaged=True  new_damaged=False  phase-3-risk-assessment-and-masked-payloads
-  old_damaged=False new_damaged=False  src/orchestrator/services/task_service.py
-== credentials that must still redact ==
-  redacted=True   [REDACTED]
-  redacted=True   [REDACTED]
-  redacted=True   [REDACTED]
-== real build-log line shape (merge_candidate, id=86 was destroyed by the old pattern) ==
-  old: merge gate disabled; run: git -C /repo checkout main && git -C /repo m ...
-  new: merge gate disabled; run: git -C /repo checkout main && git -C /repo merge --no-ff task-8-recovery-commits-after-a-timeout-commit-half-fin
-PROBE_EXIT=0
+== names that MUST survive (damaged?  OLD / BOUND / SHIPPED) ==
+   OLD=True  BOUND=False SHIPPED=False git -C /repo merge --no-ff task-8-recovery-commits-after-a
+   OLD=True  BOUND=False SHIPPED=False task-6-verification-commands-cannot-run-in-a-worktree-n
+   OLD=True  BOUND=False SHIPPED=False findings_json={"branch": "task-8-recovery-commits-after-a-
+   OLD=True  BOUND=False SHIPPED=False phase-3-risk-assessment-and-masked-payloads
+   OLD=False BOUND=False SHIPPED=False src/orchestrator/services/task_service.py
+== keys that MUST redact, by position (present after redaction?  OLD / BOUND / SHIPPED) ==
+  bare                sk-ant-api03-abcde   leaked_by OLD=False BOUND=False SHIPPED=False
+  after =             sk-ant-api03-abcde   leaked_by OLD=False BOUND=False SHIPPED=False
+  quoted              sk-ant-api03-abcde   leaked_by OLD=False BOUND=False SHIPPED=False
+  hyphen-joined       sk-ant-api03-abcde   leaked_by OLD=False BOUND=False SHIPPED=False
+  underscore-joined   sk-ant-api03-abcde   leaked_by OLD=False BOUND=True  SHIPPED=False  <-- `\b` would leak this
+  bare                sk-proj-ABCDEFGHIJ   leaked_by OLD=False BOUND=False SHIPPED=False
+  after =             sk-proj-ABCDEFGHIJ   leaked_by OLD=False BOUND=False SHIPPED=False
+  quoted              sk-proj-ABCDEFGHIJ   leaked_by OLD=False BOUND=False SHIPPED=False
+  hyphen-joined       sk-proj-ABCDEFGHIJ   leaked_by OLD=False BOUND=False SHIPPED=False
+  underscore-joined   sk-proj-ABCDEFGHIJ   leaked_by OLD=False BOUND=True  SHIPPED=False  <-- `\b` would leak this
+  bare                sk-abcdefghijklmno   leaked_by OLD=False BOUND=False SHIPPED=False
+  after =             sk-abcdefghijklmno   leaked_by OLD=False BOUND=False SHIPPED=False
+  quoted              sk-abcdefghijklmno   leaked_by OLD=False BOUND=False SHIPPED=False
+  hyphen-joined       sk-abcdefghijklmno   leaked_by OLD=False BOUND=False SHIPPED=False
+  underscore-joined   sk-abcdefghijklmno   leaked_by OLD=False BOUND=True  SHIPPED=False  <-- `\b` would leak this
+== the shipped redact() on the real build-log line (build_log_entries.id=86 shape) ==
+  OLD    : merge gate disabled; run: git -C /repo checkout main && git -C /repo merge --n …[branch name destroyed]
+  SHIPPED: merge gate disabled; run: git -C /repo checkout main && git -C /repo merge --no-ff task-8-recovery-commits-after-a-timeout-commit-half-fin
+
+== other credential families, unchanged by this task (historical \b anchors) ==
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)
+  redacted=True  bare;  underscore-joined redacted=False (pre-existing gap, pinned by a test, not widened here)

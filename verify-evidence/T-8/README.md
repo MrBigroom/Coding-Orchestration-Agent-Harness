@@ -39,17 +39,16 @@ would be the very defect T-8 fixes. What round 2 did:
 | 7 — a retry leaves no contradictory lifecycle fields | `task_service.py:131-161` (`ROUND_FIELDS` = `handoff_status`, `review_status`, `verification_status`, `merge_status`; `clear_round_fields` logs `retry_fields_reset`), called from `run_service.py:253-255` at the start of the round; documented in `docs/build-loop.md:116-130` § "What a new round resets" | `::test_timeout_wreckage…` snapshots the header **while the new round is live** and asserts `status=in_progress` with `handoff_status=None` — and, since `05011a4`, asserts the same on the `routes/tasks.py:_detail` payload the GUI header actually renders; `::test_new_round_resets_contradictory_lifecycle_fields` (unit), `::test_retry_keeps_the_verdict_to_act_on_then_resets_it_for_the_new_round` (a requeue deliberately keeps `CHANGES_REQUESTED`, so feedback is not thrown away). `dod4_gui_typecheck.txt` shows the header fields exist in the typed payload |
 | 8 — unauthorized contract edits detected by the harness | `project_service.py:29-105` (`CONTRACT_FILES`, `contract_files()`, `authorized_contract_files()`, `_touched_paths()` = branch diff **+ worktree dirt**, `contract_findings()`), `supervisor_service.py:46` (`CONTRACT_CHECK`), `:211-262` (failing check + `contract_change_detected` with a `findings_json` payload naming the recovery commits), `:353-390` (`contract_change_hold` → `review_status=NEEDS_HUMAN` + `blocked`), `review_service.py:114-136` (harness-detected entry in the reviewer payload); documented in `docs/build-loop.md:131-150` § "Unauthorized contract edits" incl. the **decision to route straight to NEEDS_HUMAN** instead of burning a review round | `::test_unauthorized_contract_edit_from_recovery_waits_for_a_human` (tests green, contract hit inside a recovery commit → verification fail, `blocked`, `NEEDS_HUMAN`, no reviewer, structured event, and an authorizing DoD item releases it), `::test_unauthorized_contract_change_is_computed_not_asserted` (unit, authorized vs unauthorized from the stored DoD) |
 | 9 — dirty predicate split by decision, tested | `utils/git.py:70-104` (`status_porcelain(tracked_only=)` with `-uall`, `status_entries()` NUL-safe XY parsing), `git_service.py:59-79` (`DirtyStatus`), `:212-236` (`status_split`, `is_dirty`, `tracked_dirty`), `merge_no_ff:475-497` keys on **tracked** dirt and names the untracked half in the message, `project_service.py:209-246` (doctor: `main checkout clean` on tracked dirt only, plus a separate always-ok check listing untracked paths), `recovery_commit_info:291-333` keeps sweeping untracked output and reports it in `untracked_added`, `remove_worktree:519-527` keeps the inclusive predicate | `dod1_recovery_machinery.txt` § (b) tail: an untracked-only worktree gives `is_dirty=True`, `tracked_dirty=False`, and is still swept with `tracked_modified: []`. Tests: `::test_dirty_predicates_separate_tracked_from_untracked`, `::test_merge_refusal_for_tracked_dirt_and_recovery_still_captures_untracked`, `::test_cleanup_still_refuses_untracked_output`, `::test_doctor_reports_untracked_dirt_without_failing_cleanliness`, `tests/integration/test_git_worktree.py::test_merge_gate_refuses_tracked_dirt_but_not_untracked` (a)–(d) |
-| 10 — credential patterns anchored so operational text survives | `utils/redaction.py:11-20` (`_PATTERNS`, with `\bsk-ant-…` at :19 and `\bsk-(?:proj-)?…` at :20, and the reason written next to them) | `dod10_redaction_probe.txt` runs the **old** unanchored patterns and the shipped `redact()` over the same strings: `task-8-…`/`task-6-…`/`phase-3-risk-…-mask-…`/a `findings_json` payload were damaged before and are byte-identical now, while `sk-ant-`, `sk-proj-`, bare `sk-`, `gh[pousr]_`, `github_pat_`, `glpat-`, `xoxb-`, `AKIA…`, `AIza…` and a JWT still redact in bare / assigned / quoted / word-glued / JSON-embedded positions. Tests: `tests/unit/test_redaction.py::test_branch_task_and_phase_names_survive_redaction`, `::test_findings_json_payload_survives_redaction`, `::test_credentials_are_still_redacted_wherever_they_appear`, `::test_build_log_details_keep_operational_commands_copy_pasteable` |
+| 10 — credential patterns anchored so operational text survives | `utils/redaction.py:11-23` — the two `sk-` patterns became `(?<![A-Za-z0-9])sk-ant-…` (:22) and `(?<![A-Za-z0-9])sk-(?:proj-)?…` (:23), with the measured damage written beside them. **A lookbehind, not `\b`:** `_` is a word character, so `\bsk-` would miss `OPENAI_TOKEN_sk-proj-…` — that would *widen* the leak and the item forbids weakening any redaction | `dod10_redaction_probe.txt` runs three pattern sets over the same strings — **OLD** (unanchored, as shipped at `14a221c`), **BOUND** (the naive `\b`) and **SHIPPED** (the lookbehind): the four task/branch/phase/`findings_json` cases are damaged by OLD and survive BOUND *and* SHIPPED; every key position (bare, `=`, quoted, hyphen-glued, JSON-embedded) redacts under all three; and the **underscore-glued** position redacts under OLD and SHIPPED but **leaks under `\b`** — the measured reason the anchor is a lookbehind. Tests: `tests/unit/test_redaction.py::test_branch_task_and_phase_names_survive_redaction`, `::test_findings_json_payload_survives_redaction`, `::test_credentials_are_still_redacted_wherever_they_appear`, `::test_build_log_details_keep_operational_commands_copy_pasteable`, `::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression` |
 
 ## Logs
 
-Captured at HEAD `e7953b5`. The only commit after that one changes files under `verify-evidence/`
-and `.orchestrator/` — neither is read by the suite — so the code under test is identical to the
-final HEAD of this handoff.
+Captured at HEAD `94db0cc` (the last commit that changes anything the suite reads; every commit
+after it touches only `verify-evidence/`, `docs/build-loop.md` prose or `.orchestrator/`).
 
 | File | What it is |
 | --- | --- |
-| `full_suite.txt` | `./scripts/orch_verify.sh test`: `ORCH_VERIFY\|mode=test\|module_file=…/worktrees/coding-orchestrator/8/src/…` (asserted to resolve **inside this worktree**, not the main checkout) then **415 passed, 6 skipped**, `TEST_EXIT=0` |
+| `full_suite.txt` | `./scripts/orch_verify.sh test` (the whole suite, not a subset): `ORCH_VERIFY\|mode=test\|module_file=…/worktrees/coding-orchestrator/8/src/…` (asserted to resolve **inside this worktree**, not the main checkout) then **416 passed, 6 skipped**, `TEST_EXIT=0` |
 | `lint.txt` | `./scripts/orch_verify.sh lint`: `ruff check src tests` → `All checks passed!`, `LINT_EXIT=0` |
 | `dod1_recovery_machinery.sh` / `.txt` | the shipped detector run over real git objects: this branch's own history (where `ba77a43` is **not** flagged, because it predates the trailer — see the boundary note in `docs/build-loop.md`), a fresh simulated sweep, and the two dirty predicates |
 | `dod10_redaction_probe.sh` / `.txt` | old-vs-new redaction over the same strings, plus the real `merge_candidate` line shape |
@@ -58,15 +57,37 @@ final HEAD of this handoff.
 
 ## What is NOT claimed here
 
-* `ba77a43` is not flagged as a recovery commit by the trailer machinery — it predates it. The
-  detector is trailer-only on purpose (`docs/build-loop.md:108-115`, "Boundary"); the honest statement is
-  in this file and in `handoff.md`, not a silent flag.
+* `ba77a43` is not flagged as a recovery commit by the trailer machinery, and cannot be: the
+  trailer lives in the commit message, and rewriting the message would be the amendment this
+  round was told not to perform. `git log --format=%B 593a8c6 ba77a43 | grep -c
+  Orchestrator-Recovery` is `0` — no recovery commit in this repo's history predates the trailer
+  and survives unflagged in some other way; `verify-evidence/T-8/dod1_recovery_machinery.txt`
+  § (a) is the measurement (`recovery=False` for `ba77a43`, `recovery_commits() -> []`). The
+  detector is trailer-only on purpose (`docs/build-loop.md:108-115`, "Boundary"), so the honest
+  statement of provenance lives in this file, in `handoff.md` and in `handoff.json`, not in a
+  silent flag.
+* `run_completed` fires whenever `run.status` becomes `completed`, including the
+  BLOCKED-handoff path (`run_service.py:487-497`): the run finished normally, the *task* is
+  blocked. That is deliberate (the event describes the run, not the verdict) and is what T-9
+  must know before building a trigger set on it.
 * No live service, provider, adapter or GUI was exercised. Everything above is offline, on temp
   git repos, with the mock harness and the mock provider.
 * `docs/frozen-contracts.md` is untouched on this branch. `run_completed` and the structured
   `details` payload are documented in `build-loop.md` only; if the reviewer wants contract
   language for them, that is a human decision (T-6's pattern:
   `docs/contract-change-request-T6-orch-verify-marker.md`, status PROPOSED).
+* The redaction anchor trades exactly one case, and it is stated rather than hidden: a
+  credential glued directly to a **letter or digit** (`xsk-proj-<key>`) is no longer caught by
+  the `sk-` patterns, because excluding letter-preceded `sk-` is precisely what makes
+  `task-8-…` survive. No anchor can both spare `task-` and catch a letter-glued `sk-`; that is
+  the trade the DoD asks for. The `_`-glued case, which a naive `\b` would also have lost, is
+  kept (`OPENAI_TOKEN_sk-proj-…` still redacts).
+* The **other** credential families (`gh[pousr]_`, `glpat-`, `xox[baprs]-`, `AKIA`, `AIza`, JWT)
+  keep their historical `\b` anchors, so `OPENAI_TOKEN_ghp_…` is still missed — a **pre-existing
+  gap, not a regression from this change**. Closing it means *widening* a redaction control,
+  which is not this task's call; it is pinned by
+  `tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`
+  and handed to the Architect as a question.
 * Divergence is noted, not resolved: `main` is at `360228a` (Merge PR #17 `fix/pi-compaction`)
   and this branch has moved ahead since; `git merge-tree` still reports no conflicts. Nothing
   under `adapters/chat/*`, `pi.py`, `pi_rpc.py`, `chat_service.py`, `test_chat_drivers.py` or

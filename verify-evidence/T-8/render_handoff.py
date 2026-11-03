@@ -20,7 +20,9 @@ L: list[str] = []
 L.append("# T-8 handoff — recovery commits after a timeout committed half-finished worker edits\n")
 L.append(
     f"**Branch:** `{h.branch}`  \n**Status:** `{h.status}`  \n**Phase:** {h.phase}  \n"
-    "**Base:** `main` (merge-base `14a221c`); branch is **6 ahead / 2 behind** `main@360228a` "
+    "**Base:** `main` (merge-base `14a221c`); branch is **2 behind / 8+ ahead** of `main@360228a` "
+    "(`git rev-list --left-right --count main...HEAD` = `2 8`, measured at the final commit); "
+    "`git merge-tree --write-tree main HEAD` = no conflicts. Not merged, not pushed.\n"
     "(`git merge-tree --write-tree main HEAD` = no conflicts). Not merged, not pushed.\n"
 )
 L.append("## Summary\n\n" + h.summary + "\n")

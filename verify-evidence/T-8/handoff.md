@@ -3,7 +3,8 @@
 **Branch:** `task-8-recovery-commits-after-a-timeout-commit-half-fin`  
 **Status:** `READY_FOR_REVIEW`  
 **Phase:** T-8  
-**Base:** `main` (merge-base `14a221c`); branch is **6 ahead / 2 behind** `main@360228a` (`git merge-tree --write-tree main HEAD` = no conflicts). Not merged, not pushed.
+**Base:** `main` (merge-base `14a221c`); branch is **2 behind / 8+ ahead** of `main@360228a` (`git rev-list --left-right --count main...HEAD` = `2 8`, measured at the final commit); `git merge-tree --write-tree main HEAD` = no conflicts. Not merged, not pushed.
+(`git merge-tree --write-tree main HEAD` = no conflicts). Not merged, not pushed.
 
 ## Summary
 
@@ -133,7 +134,7 @@ None.
 2. CCR-T8-01 (docs/contract-change-request-T8-build-log-events.md, PROPOSED): freeze run_completed and/or the ' | findings_json=' marker in docs/frozen-contracts.md? Option 3 (freeze only run_completed) is the one this branch would pick, because the marker rides inside a frozen string and is the easier part to break by accident.
 3. DoD 4's 'GUI diff marks recovery commits distinctly' is implemented as a warning block above the whole-diff view plus a header badge and the REST list; per-hunk attribution is absent because patch.diff is one flat diff against the base branch. Acceptable, or should patch.diff be split per commit (a larger artifact-format change)?
 4. Should pre-trailer recovery commits (ba77a43, 593a8c6, both already in history) get an explicit 'legacy recovery commit' annotation in the reviewer payload, or is the documented Boundary note enough?
-5. This branch is 6 ahead / 2 behind main (`git rev-list --left-right --count main...HEAD` = `2 6` against merge-base 14a221c) (main moved to 360228a, 'Merge PR #17 fix/pi-compaction', during round 1). git merge-tree --write-tree main HEAD reports no conflicts. Nothing was merged or rebased, per the out-of-scope instruction. Note for the Architect: `git diff main..HEAD` shows deletions in tests/unit/test_chat_drivers.py that do not exist on this branch - that is main moving forward; diff against the merge-base 14a221c instead.
+5. This branch is 2 behind / 8+ ahead of main (merge-base 14a221c; `git rev-list --left-right --count main...HEAD` = `2 8` before the final evidence-only commits) (main moved to 360228a, 'Merge PR #17 fix/pi-compaction', during round 1). git merge-tree --write-tree main HEAD reports no conflicts. Nothing was merged or rebased, per the out-of-scope instruction. Note for the Architect: `git diff main..HEAD` shows deletions in tests/unit/test_chat_drivers.py that do not exist on this branch - that is main moving forward; diff against the merge-base 14a221c instead.
 
 ## Blockers
 
