@@ -69,15 +69,15 @@ it, which is why it is named here rather than silently folded into the evidence.
 
 ## Logs
 
-Captured at HEAD `21f79c4` by round 5 — the tree under review, including the R-10/R-11 recovery
-sweeps and this round's grant-test and route-removal changes. One run each, in this order:
+Captured at HEAD `f6f53e7` by round 5, on a clean tree. `f6f53e7` changed only `verify-evidence/`
+and one comment line in `src/orchestrator/api/routes/tasks.py`, so `21f79c4` is the last commit that
+moved code or tests and these numbers describe the code under review. One run each, in this order:
 `./scripts/orch_verify.sh test` (full suite), `./scripts/orch_verify.sh lint`, then
 `bash verify-evidence/T-8/targeted_tests.sh` and `bash
-verify-evidence/T-8/dod1_recovery_machinery.sh`, so no committed text quotes a number that is not
-in a committed log. Rounding note for honesty: the evidence-only commit that records this capture
-(`README.md`, `handoff.md`, `render_handoff.py`) moves HEAD by one and changes no source or test
-file, so the counts describe both trees; `git diff --name-only 21f79c4..HEAD` is the proof that
-only `verify-evidence/` moved.
+verify-evidence/T-8/dod1_recovery_machinery.sh` (`main..HEAD` = 15 commits at capture time), so no
+committed text quotes a number that is not in a committed log. Honesty note: the evidence-only
+commit that records this capture moves HEAD by one and touches no source or test file, so the
+counts describe both trees; `git show --stat` on it is the proof.
 
 | File | What it is |
 | --- | --- |
