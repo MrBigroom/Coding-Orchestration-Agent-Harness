@@ -46,6 +46,50 @@ print("3 passed, 0 failed")
 """
 BROKEN_APP = "def handle():\n    return not_yet_defined(1)\n"
 
+# A stdlib-only linter with the shape of ruff's F821, so DoD 5's "a lint error such as an
+# undefined name" is surfaced by a LINT command and not only by the test run. Offline, no
+# dependencies: the run-5 wreckage (`GitError` used at project_service.py:112 but imported only
+# at l.226) is exactly this defect class, and it survived because nothing re-verified the branch.
+LINT_NAMES = '''"""Report names that are used but never defined (undefined-name lint, stdlib only)."""
+import ast
+import builtins
+import pathlib
+import sys
+
+SELF = pathlib.Path(__file__).name
+bad = []
+for f in sorted(pathlib.Path(".").glob("*.py")):
+    if f.name == SELF:
+        continue
+    tree = ast.parse(f.read_text(), str(f))
+    defined = set(dir(builtins))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = node.args
+                defined.update(x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs))
+                if a.vararg:
+                    defined.add(a.vararg.arg)
+                if a.kwarg:
+                    defined.add(a.kwarg.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            defined.add(node.id)
+        elif isinstance(node, ast.Import):
+            defined.update((n.asname or n.name).split(".")[0] for n in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            defined.update(n.asname or n.name for n in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in defined:
+                bad.append(f"{f}:{node.lineno}: F821 undefined name {node.id!r}")
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+'''
+
 
 @pytest.fixture
 def client(initialized):
@@ -60,12 +104,19 @@ def _project(session, tmp_path, name="proj"):
         tmp_path / name,
         {
             "run_tests.py": RUN_TESTS,
+            "lint_names.py": LINT_NAMES,
             "README.md": "x\n",
             "docs/frozen-contracts.md": "# frozen contracts\n",
         },
     )
     return project_service.create(
-        session, ProjectCreate(name=name, path=str(repo), test_command="python3 run_tests.py")
+        session,
+        ProjectCreate(
+            name=name,
+            path=str(repo),
+            test_command="python3 run_tests.py",
+            lint_command="python3 lint_names.py",
+        ),
     )
 
 
@@ -209,6 +260,19 @@ def test_timeout_wreckage_is_committed_as_recovery_and_told_to_the_next_run(
     assert "verdict" not in outcome  # it never reached the reviewer
     assert task.status == TaskStatus.queued
     assert "not_yet_defined" in artifact_service.read_text(run2.id, "test.log")
+
+    # DoD 5: the defect class from run 5 is a LINT error (F821 undefined name), so the lint
+    # command must surface it too — not only the runtime import the tests happen to do.
+    lint_checks = {
+        c["name"]: c
+        for c in json.loads(artifact_service.read_text(run2.id, "verification.json"))["checks"]
+    }
+    assert lint_checks["lint"]["status"] == "fail", lint_checks["lint"]
+    assert lint_checks["tests"]["status"] == "fail", lint_checks["tests"]
+    lint_log = artifact_service.read_text(run2.id, "lint.log")
+    assert "F821 undefined name 'not_yet_defined'" in lint_log, lint_log
+    assert "app.py" in lint_log  # names the file the sweep committed, not just "something failed"
+
     narrative = artifact_service.read_text(run2.id, "verification.md")
     assert "changed but not claimed" in narrative  # the swept files are visible here
     assert "recovery commit" in narrative.lower()
