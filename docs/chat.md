@@ -203,10 +203,31 @@ Otherwise the window comes from the model's profile (Models & Providers, the Con
 column), then from a built-in table for the models the orchestrator ships profiles for
 (`core/context_windows.py`). A model in neither shows the tokens without a limit.
 
+## Continuing a session
+
+Sessions live inside the server process, so they end when it stops, and show as
+**interrupted** or **closed**. Either kind can be continued: press **Continue**, or just send
+a message, and the harness starts again in the same folder or worktree (a worktree that was
+cleaned up comes back from its branch). Failed sessions and standalone runs can't be
+continued.
+
+- **Claude Code** reopens its conversation with `--resume`.
+- **Pi** keeps its conversation in the session's folder (`chats/<id>/harness`) and reloads
+  it. Deleting the session deletes it too.
+- **ACP harnesses** reload it with `session/load` when they advertise `loadSession`.
+
+Otherwise, or when the restore fails (say Claude Code's saved conversation is gone), the
+harness starts fresh and your next message carries the transcript so far: what you and the
+agent wrote, with tool output left out and only the newest ~24k tokens kept. That first
+message costs the whole transcript in input tokens, with a cold cache. A notice in the
+transcript says which way it went. Sessions from before Continue existed always replay.
+
+`POST /api/chat/sessions/{id}/continue` does the same through the API.
+
 ## Limits
 
-- Sessions live inside the server process. When the server stops, they end and show as
-  **interrupted**, and their transcripts stay readable. They can't be resumed yet.
+- Sessions live inside the server process. When it stops they end; see above to continue
+  one.
 - At most four sessions run at once.
 - Qwen Code's managed setup offers only the model the session started with, so the picker
   has one entry there. OpenCode lists its own models and doesn't use your profiles.

@@ -35,7 +35,7 @@ class ClaudeDriver(ChatDriver):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self._ids = itertools.count(1)
-        self._session_id: str | None = None
+        self._session_id: str | None = self.options.resume  # --resume fails start if it's gone
         self._busy = False
         self._interrupted = False
         self._model = self.options.model
@@ -203,7 +203,7 @@ class ClaudeDriver(ChatDriver):
         elif kind == "system" and record.get("subtype") == "init":
             self._session_id = record.get("session_id")
             self._model = record.get("model") or self._model
-            self.emit({"type": "config", "model": self._model})
+            self.emit({"type": "config", "model": self._model, "harness_session": self._session_id})
         elif kind == "result":
             self._on_result(record)
         elif kind == "control_request":

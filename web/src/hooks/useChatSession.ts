@@ -78,8 +78,9 @@ function apply(state: ChatState, e: ChatEvent): ChatState {
   }
 }
 
-/** One session's transcript and live channel. Reconnects while the session is alive. */
-export function useChatSession(chatId: number | null) {
+/** One session's transcript and live channel. Reconnects while the session is alive; a new
+ *  `epoch` connects again, as after continuing an ended session. */
+export function useChatSession(chatId: number | null, epoch = 0) {
   const [state, setState] = useState<ChatState>(EMPTY);
   const [connected, setConnected] = useState(false);
   const [live, setLive] = useState(false);
@@ -121,7 +122,7 @@ export function useChatSession(chatId: number | null) {
       socket.current = null;
       if (retry) clearTimeout(retry);
     };
-  }, [chatId]);
+  }, [chatId, epoch]);
 
   const send = useCallback((message: ChatEvent) => {
     socket.current?.send(JSON.stringify(message));

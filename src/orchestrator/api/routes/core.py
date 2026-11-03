@@ -77,6 +77,7 @@ def dashboard(session: Session = SessionDep) -> dict[str, Any]:
         "active_runs": [dump(r) for r in runs],
         "queued": [dump(t) for t in tasks if t.status == TaskStatus.queued],
         "live_chats": len(chat_service.manager.live),
+        "standalone_runs": chat_service.manager.unattended_count(),
         "blocked": [dump(t) for t in tasks if t.status == TaskStatus.blocked],
         "review": [dump(t) for t in tasks if t.status == TaskStatus.review],
         "failed": [dump(t) for t in failed],

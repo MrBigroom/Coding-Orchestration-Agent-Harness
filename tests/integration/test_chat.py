@@ -591,3 +591,85 @@ def test_suggest_memories_waits_for_the_turn_to_end(enabled):
         ws.send_json({"type": "suggest_memories"})
         assert "finish this turn" in until(ws, "error")["message"]
     enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+
+
+def _turn(client, chat_id, text):
+    with client.websocket_connect(f"/ws/chat/{chat_id}", headers=HOST) as ws:
+        wait_ready(ws)
+        ws.send_json({"type": "prompt", "text": text})
+        approval = until(ws, "approval")
+        ws.send_json({"type": "approval", "id": approval["id"], "choice": "allow"})
+        until(ws, "status", status="idle")
+
+
+def _continue(client, chat_id):
+    r = client.post(f"/api/chat/sessions/{chat_id}/continue")
+    assert r.status_code == 200, r.text
+    with client.websocket_connect(f"/ws/chat/{chat_id}", headers=HOST) as ws:
+        wait_ready(ws)
+    return [e for e in client_history(chat_id) if e["type"] == "notice"][-1]["message"]
+
+
+def client_history(chat_id):
+    from orchestrator.services import chat_service
+
+    return chat_service.history(chat_id)
+
+
+def test_ended_session_continues_with_its_conversation(enabled):
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    folder = Path(chat["cwd"])
+    _turn(enabled, chat["id"], "first note")
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    row = enabled.get(f"/api/chat/sessions/{chat['id']}").json()
+    assert row["status"] == "closed" and row["harness_session"].startswith("mock-")
+
+    # The harness restores its own conversation: the turn count carries on.
+    assert "restored" in _continue(enabled, chat["id"])
+    _turn(enabled, chat["id"], "second note")
+    assert (folder / "mock-chat-2.md").read_text() == "second note\n"
+    seqs = [e["seq"] for e in client_history(chat["id"])]
+    assert seqs == sorted(set(seqs))  # appended, never renumbered
+
+    # When it can't, the next message carries the transcript instead.
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    for saved in (folder.parent / "harness").iterdir():
+        saved.unlink()
+    assert "couldn't restore" in _continue(enabled, chat["id"])
+    _turn(enabled, chat["id"], "third note")
+    sent = (folder / "mock-chat-1.md").read_text()  # a fresh harness numbers from 1 again
+    assert "<transcript>" in sent and "User: first note" in sent
+    assert sent.rstrip().endswith("third note")
+    assert enabled.post(f"/api/chat/sessions/{chat['id']}/continue").status_code == 400  # live
+
+
+def test_session_without_a_saved_conversation_replays_it(enabled):
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.models import ChatSession
+
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    _turn(enabled, chat["id"], "first note")
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    with session_scope() as s:  # as for sessions from before Continue existed
+        row = s.get(ChatSession, chat["id"])
+        row.harness_session = None
+        s.add(row)
+        s.commit()
+    assert "can't restore" in _continue(enabled, chat["id"])
+
+
+def test_failed_and_standalone_sessions_cannot_continue(enabled):
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.models import ChatSession
+
+    chat = enabled.post("/api/chat/sessions", json={"adapter": "mock"}).json()
+    enabled.post(f"/api/chat/sessions/{chat['id']}/close")
+    for field, value in (("status", "failed"), ("standalone", True)):
+        with session_scope() as s:
+            row = s.get(ChatSession, chat["id"])
+            row.status = "closed"
+            setattr(row, field, value)
+            s.add(row)
+            s.commit()
+        r = enabled.post(f"/api/chat/sessions/{chat['id']}/continue")
+        assert r.status_code == 400, r.text

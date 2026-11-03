@@ -200,3 +200,15 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   Usage page; runs and chats only kept totals, so the migration files each one's total under
   the day it started. Events are recorded in their own database session, so logging never
   commits a caller's half-done work.
+
+- **2026-11-03 — Ended chat sessions can be continued (revision `0009_chat_continue`).**
+  `chat_sessions` stores the harness's own conversation id, and Continue restores it with
+  each harness's own mechanism (Claude Code `--resume`, Pi's session files, ACP
+  `session/load`). Where that's missing or fails, the next message carries the transcript
+  instead, so Continue works on every harness; we chose replay over offering a new session
+  because keeping the workspace and the thread matters more than the one-off token cost.
+  Continue is a button (or a message), not automatic on restart, so nothing starts and spends
+  tokens unless asked, and the four-session limit stays in your hands. Pi used to run with
+  `--no-session`; it now saves into the chat's own folder, which Delete already removes.
+  Because chats can come back, closing the desktop app no longer asks about open chats,
+  only about active runs (standalone runs included) and queued tasks.

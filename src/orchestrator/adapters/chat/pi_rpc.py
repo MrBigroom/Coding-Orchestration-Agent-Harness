@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ class PiDriver(ChatDriver):
         self._mode_file = self.tmp / "permission-mode"
         self._busy = False
         self._managed = False
+        self._session_id = ""
 
     def _write_models(self) -> None:
         path = self.tmp / "models.json"
@@ -83,7 +85,13 @@ class PiDriver(ChatDriver):
         env["ORCHESTRATOR_PI_MODE_FILE"] = str(self._mode_file)
         if self.options.output_dir:
             env["ORCHESTRATOR_OUTPUT_DIR"] = str(self.options.output_dir)
-        argv = [self.adapter.spec.command, "--mode", "rpc", "--no-session", "--no-approve"]
+        argv = [self.adapter.spec.command, "--mode", "rpc", "--no-approve"]
+        if self.options.state_dir:
+            # Kept in the session's folder, so Continue can reload it and Delete removes it.
+            self._session_id = self.options.resume or str(uuid.uuid4())
+            argv += ["--session-dir", str(self.options.state_dir), "--session-id", self._session_id]
+        else:
+            argv += ["--no-session"]
         argv += ["--extension", str(GATE)]
         if self._managed:
             argv += ["--provider", PROVIDER]
@@ -92,8 +100,15 @@ class PiDriver(ChatDriver):
         if self.options.effort:
             argv += ["--thinking", self.options.effort]
         await self.spawn(argv, env)
+        if self.options.resume:
+            # A missing session only gets a warning and starts empty, so check it loaded.
+            state = await self._request("get_state")
+            if not state.get("messageCount"):
+                raise DriverError("Pi has no saved conversation to continue")
         await self._publish_config()
         await self._publish_commands()
+        if self._session_id:
+            self.emit({"type": "config", "harness_session": self._session_id})
 
     async def _request(self, type_: str, **fields: Any) -> Any:
         assert self.process

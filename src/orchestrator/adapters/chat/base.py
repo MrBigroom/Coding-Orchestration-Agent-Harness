@@ -14,7 +14,7 @@ events, which `services.chat_service` persists and streams to the GUI:
    "turn": {...the same, for the latest turn alone}, "context_tokens": int,
    "context_window": int}   (the last two once known; chat_service fills in the window)
   {"type": "config", "model", "effort", "permission", "models", "efforts", "permissions",
-   "images": bool, "commands": [{"name", "description"}]}
+   "images": bool, "commands": [{"name", "description"}], "harness_session": str}
   {"type": "notice" | "error", "message": str}
 """
 
@@ -57,6 +57,11 @@ class DriverOptions:
     models: list[str] = field(default_factory=list)
     # Standalone runs only: the one folder a read-access run may write to.
     output_dir: Path | None = None
+    # Continue: the harness's own conversation id to restore (published as `harness_session`
+    # in `config`). start() raises DriverError when it can't, and the caller falls back.
+    resume: str | None = None
+    # A folder of the session's own where a harness can keep its conversation.
+    state_dir: Path | None = None
 
 
 @dataclass
