@@ -118,14 +118,32 @@ the reference pattern (use it as the template for other projects):
   takes precedence over the editable `.pth`;
 - it prints the resolved module path and the test root into the artifact log, and exits 3 if
   the resolved import path is not under the worktree root. The run also emits one
-  machine-readable line: `ORCH_VERIFY|mode=…|module=…|module_file=…|worktree_root=…`.
+  machine-readable line: `ORCH_VERIFY|mode=…|module=…|module_file=…|worktree_root=…` (stdout
+  or stderr; `|`-delimited so paths with spaces survive; keys are order-independent). That
+  line is a **repo-internal convention**, not a frozen contract — freezing it needs a
+  contract change, requested in `contract-change-request-T6-orch-verify-marker.md`.
+- it `cd`s to the worktree root **before** resolving the import, because `python -` and
+  `python -m <tool>` both put the current directory first on `sys.path`: asserting a
+  resolution taken from the invoking directory would not describe the run that follows.
+
+Keep the output **count-parseable**: `parse_test_counts` reads the runner's summary line, and
+a second `-q` (`pytest -q` on top of this repo's `addopts = "-q"` → `-qq`) suppresses it, so
+the gate's green-claim comparison silently sees `passed: 0`. Pass `-k`, `-x` or a path to the
+wrapper instead of more quiet flags.
 
 `orchestrator project doctor <name> --run-commands` (opt-in; off by default, and not exposed
 on the API or in the GUI) executes each configured command in a throwaway worktree of the
 base branch and reports both the exit code and whether `module_file` landed inside that
 worktree — so the trap shows up at project registration instead of mid-gate. A command that
 exits 0 **without** an `ORCH_VERIFY` marker is reported as a failure: an unproven resolution
-is not a proven local one.
+is not a proven local one. The throwaway worktree is removed on every exit path (green, red,
+timeout, command that cannot be started); if the command leaves the worktree dirty, removal is
+skipped, reported as a failed check, and `orchestrator cleanup` finishes the job.
+
+Because that probe snapshots the **base branch**, a wrapper introduced by a task branch is not
+in the snapshot yet and its check exits 127 until the branch merges — an expected red the first
+time, not a broken wrapper. `scripts/orch_verify.sh test` from inside the branch worktree is the
+pre-merge way to prove the same thing.
 
 Registering a project with a null `test_command` avoids the 127 loop, but it also switches
 off the green-claim contradiction check (`supervisor_service.py`, the

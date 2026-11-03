@@ -59,10 +59,13 @@ Other mock scenarios use tags: `--tag mock-reject` (changes requested → requeu
 ## Everyday use
 
 ```bash
-orchestrator project add myapp ~/code/myapp --test-command "pytest -q" --lint-command "ruff check ."
+# commands run with cwd = the task worktree, which has no .venv: use a path-independent
+# wrapper (scripts/orch_verify.sh in this repo is the pattern), not a bare venv-relative one
+orchestrator project add myapp ~/code/myapp \
+    --test-command "scripts/orch_verify.sh test" --lint-command "scripts/orch_verify.sh lint"
 orchestrator project doctor myapp                 # static checks only
 orchestrator project doctor myapp --run-commands  # opt-in: run them in a throwaway worktree and
-                                                  # check they resolve inside it (see build-loop.md)
+                                                  # check they exit 0 AND resolve inside it
 orchestrator task create "Add health endpoint" --project myapp --phase 1 --slug health \
     --dod "GET /health returns 200" --dod "test added and green" --tag qwen
 orchestrator task dry-run T-1         # which harness / model / command would run
@@ -189,7 +192,7 @@ and prompts, and `.env` and key files are never staged. See
 ## Development
 
 ```bash
-make test      # scripts/orch_verify.sh test — pytest, 120+ offline tests (opt-in external ones skipped)
+make test      # scripts/orch_verify.sh test — the offline pytest suite (external CLI ones skip)
 make lint      # scripts/orch_verify.sh lint — ruff check
 make dev       # backend --reload on :8321 + Vite on :5173
 ```

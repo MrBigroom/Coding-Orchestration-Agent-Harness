@@ -103,3 +103,11 @@ root, and exit non-zero if that path is not inside the worktree. Full explanatio
 # executes project code), and never reachable from the API or the GUI.
 orchestrator project doctor myapp --run-commands
 ```
+
+Two things the probe can tell you that are not wrapper bugs: a command added by a task branch
+is missing from the base-branch snapshot until that branch merges (exit 127 on the first run),
+and a command that prints no `ORCH_VERIFY` marker is reported as *not path-independent* even
+when it exits 0 — that is the false-pass case, and the probe fails closed. Keep the configured
+command's output count-parseable too: the gate reads the runner's summary line, and stacking a
+second `-q` on a project whose `addopts` already has one suppresses it, so the comparison sees
+`passed: 0` and can contradict nothing.
