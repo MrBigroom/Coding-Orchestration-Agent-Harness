@@ -1,3 +1,13 @@
+"""Anchoring the credential patterns, and what is NOT anchored.
+
+T-8 DoD 10 added the lookbehind to the two `sk-` patterns so task/branch/phase names survive
+redaction. The other credential patterns keep their historical `` anchors untouched — changing
+them would widen a redaction control on a phase that was not asked to, and one of them
+(`OPENAI_TOKEN_ghp_…`) is therefore missed today. That gap was found while writing these cases,
+is measured by `test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`,
+and is handed to the Architect as a separate decision instead of being silently fixed or
+silently ignored.
+"""
 import time
 from pathlib import Path
 
@@ -58,7 +68,9 @@ def test_findings_json_payload_survives_redaction():
 
 def test_credentials_are_still_redacted_wherever_they_appear():
     """The anchor must not weaken secret-hunting: every pattern still fires at a real prefix
-    start — bare, after `=`, after a quote, after a hyphen, and inside a JSON payload."""
+    start — bare, after `=`, after a quote, after `_`, after a hyphen, and inside a JSON
+    payload. The `_` case is why the anchor is a lookbehind and not `\b`: `_` is a word
+    character, so `\bsk-` would miss `TOKEN_sk-proj-…`, a shape keys really do appear in."""
     secrets = [
         "sk-ant-api03-abcdefghijklmnopqrstuvwx",
         "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
@@ -72,13 +84,18 @@ def test_credentials_are_still_redacted_wherever_they_appear():
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuvwxyz123456",
     ]
     for secret in secrets:
-        for shape in (
+        shapes = [
             secret,
             f"OPENAI_KEY={secret}",
             f'"token": "{secret}"',
-            f"prefix-{secret}",  # glued to a word: `\b` still matches, so it still redacts
+            f"prefix-{secret}",  # hyphen-joined
             structured_log.attach("event", {"branch": "task-8-x", "value": secret}),
-        ):
+        ]
+        if secret.startswith("sk-"):
+            # underscore-joined: `\b` would MISS this ( `_` is a word character), which is exactly
+            # why the sk- anchor is a lookbehind and not a literal word boundary
+            shapes.append(f"OPENAI_TOKEN_{secret}")
+        for shape in shapes:
             out = redact(shape)
             assert secret not in out, shape
             assert REDACTED in out, shape
@@ -86,6 +103,9 @@ def test_credentials_are_still_redacted_wherever_they_appear():
     line = "merge --no-ff task-8-recovery sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
     out = redact(line)
     assert "task-8-recovery" in out and "sk-proj-" not in out
+    # and the case that makes the anchor choice non-trivial, end to end
+    glued = "OPENAI_TOKEN_sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    assert "sk-proj-" not in redact(glued), redact(glued)
 
 
 def test_build_log_details_keep_operational_commands_copy_pasteable(session, initialized):
@@ -101,6 +121,27 @@ def test_build_log_details_keep_operational_commands_copy_pasteable(session, ini
     assert branch in entry.details, entry.details
     assert REDACTED not in entry.details
     assert entry.details == f"merge gate disabled; run: {cmd}"
+
+
+def test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression():
+    """Pins the CURRENT (pre-existing) behaviour of the non-sk- patterns so a later phase cannot
+    lose it by accident, and states in the test what is missed: `_` is a word character, so the
+    historical `\\b` anchors do not fire after `TOKEN_`. This is NOT caused by DoD 10 — the `sk-`
+    lookbehind was chosen precisely so the sk- family DOES fire there."""
+    missed = {
+        "OPENAI_TOKEN_ghp_abcdefghijklmnopqrstuvwxyz1234": "gh[pousr]_",
+        "GITLAB_TOKEN_glpat-abcdefghijklmnopqrstuvw": "glpat-",
+        "SLACK_TOKEN_xoxb-123456789012-abcdefghijklmnopqrst": "xox[baprs]-",
+        "AWS_TOKEN_AKIAIOSFODNN7EXAMPLE": "AKIA",
+    }
+    for text, pattern in missed.items():
+        assert redact(text) == text, (pattern, text)  # recorded gap
+        # the same credential in a position the historical anchor does cover still redacts
+        assert redact(f"{text.split('_', 2)[-1]}") != text.split("_", 2)[-1], pattern
+    # and it is unchanged from the pre-T-8 code: the lookbehind was applied to the sk- family only
+    assert redact("OPENAI_TOKEN_sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345") != (
+        "OPENAI_TOKEN_sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    )
 
 
 def test_redacts_assignments_and_bearer():

@@ -316,13 +316,18 @@ finished normally — the success trigger), `run_failed`, `run_timeout`, `run_er
 `merge_refused`, and a `verdict_recorded`/`task_status` line whose reason is `blocked`.
 Notifications key off events, not off status inference.
 
-`details` is redacted (`log_service.log_event`), and the credential patterns in
-`utils/redaction.py` are anchored with a leading word boundary so operational text stays
-usable: a branch, task, phase or path name (`task-8-…`, `risk-…`, `mask-…`) and a
-`findings_json` payload containing one must survive byte-identically, while real keys
-(`sk-ant-…`, `sk-proj-…`, `gh[pousr]_`, …) still redact wherever they appear. The
-`merge_candidate` instruction in particular must remain copy-pasteable —
-`git -C <repo> checkout main && git -C <repo> merge --no-ff <branch>`.
+`details` is redacted (`log_service.log_event`), and the two `sk-` credential patterns in
+`utils/redaction.py` carry a leading anchor — the lookbehind `(?<![A-Za-z0-9])`, not `\b`:
+`_` is a word character, so `\bsk-` would miss `TOKEN_sk-proj-…`, which is a shape keys really
+do appear in. Only a real prefix start matches now, so operational text stays usable: a branch,
+task, phase or path name (`task-8-…`, `risk-…`, `mask-…`) and a `findings_json` payload
+containing one must survive byte-identically, while real keys (`sk-ant-…`, `sk-proj-…`,
+`gh[pousr]_`, …) still redact wherever they appear. The other credential patterns keep their
+historical `\b` anchors unchanged — widening them is not this phase's decision, and the gap that
+leaves open (`OPENAI_TOKEN_ghp_…` is not caught today) is pinned by a test
+(`tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`)
+so it cannot be lost by accident. The `merge_candidate` instruction in particular must remain
+copy-pasteable — `git -C <repo> checkout main && git -C <repo> merge --no-ff <branch>`.
 
 ## Branch strategy
 
