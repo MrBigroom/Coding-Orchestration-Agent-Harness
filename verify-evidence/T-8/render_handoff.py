@@ -43,6 +43,21 @@ _main = git("rev-parse", "--short", "main")
 _mt = subprocess.run(["git", "merge-tree", "--write-tree", "main", "HEAD"], capture_output=True, text=True)
 _merge_tree = "no conflicts" if _mt.returncode == 0 else f"CONFLICTS (exit {_mt.returncode})"
 
+# The HEAD the numbers were measured at is read out of the log, not assumed from the checkout:
+# evidence commits land AFTER the capture, so "measured at HEAD" must name the capture, and the
+# only thing allowed between them is files under verify-evidence/.
+_captured = re.search(r"HEAD=([0-9a-f]{7,40})", open("verify-evidence/T-8/full_suite.txt").read()).group(1)
+_capture_short = subprocess.run(
+    ["git", "rev-parse", "--short", _captured], capture_output=True, text=True
+).stdout.strip()
+_since = [
+    f
+    for f in git("diff", "--name-only", f"{_captured}..HEAD").splitlines()
+    if not f.startswith("verify-evidence/")
+]
+assert not _since, f"commits after the capture touched non-evidence files: {_since}"
+_capt = open("verify-evidence/T-8/full_suite.txt").read().splitlines()[0]
+
 L: list[str] = []
 L.append("# T-8 handoff — recovery commits after a timeout committed half-finished worker edits\n")
 L.append(
@@ -58,13 +73,7 @@ L.append(
     "`verify-evidence/T-8/README.md` row.**\n" % _main
 )
 
-# ------------------------------------------------------------------ 1. DoD self-check (first: the gate's job)
-L.append("## DoD self-check (item → met → evidence)\n")
-for i, d in enumerate(dod, 1):
-    box = "[x]" if d.met else "[ ]"
-    L.append(f"### {i}. {box} {d.item}\n\n{d.evidence}\n")
-
-# ------------------------------------------------------------------ 2. verdict digest + trailing fields
+# ------------------------------------------------------------------ 0. verdict digest (BEFORE the detail: it survives any truncation) + trailing fields
 SHORT = [
     "trailer `Orchestrator-Recovery: <run>` + structured `findings_json` inside `details`",
     "subject prefix `chore(orchestrator-recovery):` kept byte-exact; trailer added alongside",
@@ -93,6 +102,12 @@ L.append(
     f"(`{t.log_path}`).\n"
 )
 
+# ------------------------------------------------------------------ 1. DoD self-check (first: the gate's job)
+L.append("## DoD self-check (item → met → evidence)\n")
+for i, d in enumerate(dod, 1):
+    box = "[x]" if d.met else "[ ]"
+    L.append(f"### {i}. {box} {d.item}\n\n{d.evidence}\n")
+
 # ------------------------------------------------------------------ 3. measured counts, one HEAD
 L.append("## Tests — every number stamped at one HEAD\n")
 _t = open("verify-evidence/T-8/targeted_tests.txt").read()
@@ -110,9 +125,13 @@ L.append(
     f"begins with `# HEAD=<sha> … captured=<iso8601>`, written by the script beside it "
     "(`suite_and_lint.sh`, `targeted_tests.sh`, `ruling1_grant_tests.sh`, `dod1_recovery_machinery.sh`, "
     "`dod10_redaction_probe.sh`, `dod4_gui_typecheck.sh`), so \"one run at one HEAD\" is checkable "
-    f"instead of asserted. This round: three full-suite invocations — `00c14ec` 421/0/6, `4ca2e3b` "
-    f"421/0/6, `{_head}` 421/0/6 — identical, and the two commits between them added only files under "
-    "`verify-evidence/`. Round 5's reviewer finding 5 was exactly this claim made without the stamp "
+    f"instead of asserted. The capture is `{_capture_short}` (first line of the log: `{_capt}`); "
+    f"this block renders on `{_head}`, and every commit between them touches only `verify-evidence/` "
+    f"— checked by this script (`git diff --name-only {_capture_short}..HEAD` filtered to that "
+    "directory, asserted empty), so the counts describe the tree under review. Three full-suite "
+    "invocations ran this round — `00c14ec` 421/0/6, `4ca2e3b` 421/0/6, "
+    f"`{_capture_short}` 421/0/6 — identical, and the two commits between them added only evidence "
+    "scripts. Round 5's reviewer finding 5 was exactly this claim made without the stamp "
     "(targeted at `21f79c4`, suite/lint at `e0904bb`); the stamp is the fix, and it is why the +4 since "
     "round 5's 417 reconciles: `test_recovery_markers.py` 12 \u2192 16 (three split grant cases + one "
     "reviewer-payload test).\n\n"
@@ -150,9 +169,10 @@ L.append(
     "line numbers and each PASS | `tests/unit/test_recovery_markers.py:235,278,324,353`, "
     "`verify-evidence/T-8/ruling1_grant_tests.txt` |\n"
     "| 7 | supplied block truncated at DoD 5; DoD 6-10 and trailing fields not reviewable | **recorded, not "
-    "fixed** (operator ruling: harness limitation; do not touch review plumbing). Mitigated by size (38 KB → "
-    "~15 KB) and by ordering the decision content into the head budget | `docs/build-loop.md:297-314`, this "
-    "renderer's module docstring |\n"
+    "fixed** (operator ruling: harness limitation; do not touch review plumbing). Mitigated by ordering: "
+    "DoD self-check first, then verdicts, counts and findings, so the decision content lands inside the "
+    "~10.6 KB head budget of the ~16 KB the reviewer receives — see the size line at the end of this block "
+    "| `docs/build-loop.md:297-314`, `verify-evidence/T-8/render_handoff.py` docstring |\n"
     "| 8 | 'Three of them had a named event' mapped 3 events onto 2 statuses; stray line break | corrected to "
     "two of four terminal statuses; `cancelled` named as a `task_status` line; `run_error` labelled as not a "
     "terminal status; break closed | `docs/build-loop.md:333-378` |\n"
@@ -239,6 +259,21 @@ L.append(
     "`main`.\n"
 )
 
+L.append(
+    "**Block size, computed by the renderer at write time:** the handoff string the Architect "
+    "receives is this file, then a `handoff.json:` separator, then the JSON string (`review_service.py:151-153`), "
+    "middle-truncated to `max_log_tokens=4000` ≈ 16 000 chars: ~10.6 KB of head, ~5.3 KB of tail "
+    "(`utils/truncate.py:13-19`). This block and the JSON are sized below. "
+    "The order is: header, verdict digest, DoD detail, counts, findings. The head budget "
+    "therefore carries the digest (all 10 verdicts, the test counts and the "
+    "dependency/blocker tallies) and roughly DoD 1-7 of the detail; the rest falls past "
+    "the seam, with each remaining verdict already on a line of the digest. That is a "
+    "mitigation, not a fix — the fix belongs to the harness item recorded in finding 7.\n"
+)
+out = "\n".join(L)
+L[-1] = L[-1].replace("sized below", f"sized as follows: **this block = {len(out):,} bytes**, "
+                                     f"`handoff.json` = {len(open('.orchestrator/handoff.json').read()):,} "
+                                     "bytes (round 5's block was 48 621 bytes)")
 out = "\n".join(L)
 for path in (".orchestrator/handoff.md", "verify-evidence/T-8/handoff.md"):
     open(path, "w").write(out)

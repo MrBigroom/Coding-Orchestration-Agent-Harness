@@ -43,10 +43,15 @@ SUITE_PASSED = count(r"(\d+) passed", "verify-evidence/T-8/full_suite.txt")
 SUITE_SKIPPED = count(r"(\d+) skipped", "verify-evidence/T-8/full_suite.txt")
 SUITE_FAILED = 0  # full_suite.txt: SUITE_EXIT=0, no "failed" in the summary line
 CAPTURED_HEAD = re.search(r"HEAD=([0-9a-f]{40})", read("verify-evidence/T-8/full_suite.txt")).group(1)
-assert CAPTURED_HEAD == FULL_HEAD, (
-    f"the committed suite log was captured at {CAPTURED_HEAD}, not the current HEAD {FULL_HEAD} — "
-    "re-run: bash verify-evidence/T-8/suite_and_lint.sh"
-)
+# Evidence commits land AFTER the capture, so the rule is not "same HEAD" but "nothing but evidence
+# changed since the capture". Anything else in the diff means the committed counts are stale:
+# re-run  bash verify-evidence/T-8/suite_and_lint.sh
+_since = [
+    f
+    for f in git("diff", "--name-only", f"{CAPTURED_HEAD}..HEAD").splitlines()
+    if not f.startswith("verify-evidence/")
+]
+assert not _since, f"non-evidence files changed since the suite capture {CAPTURED_HEAD[:7]}: {_since}"
 assert "All checks passed!" in read("verify-evidence/T-8/lint.txt")
 assert f"HEAD={CAPTURED_HEAD}" in read("verify-evidence/T-8/lint.txt")
 assert f"HEAD={CAPTURED_HEAD}" in read("verify-evidence/T-8/targeted_tests.txt")
@@ -71,7 +76,8 @@ SUMMARY = (
     f"a status) and the stray 'It is\\n**additive**' break is closed. Findings 3, 4, 5 and 7 are "
     f"handoff-accuracy findings, fixed here: the memory suggestion no longer says 'literal mention', the "
     f"DoD 4 evidence no longer claims a REST route is asserted (it asserts a 404), and every count in "
-    f"this handoff and in verify-evidence/T-8/ is stamped at ONE HEAD ({HEAD}) by the script that "
+    f"this handoff and in verify-evidence/T-8/ is stamped at ONE capture HEAD "
+    f"({git('rev-parse', '--short', CAPTURED_HEAD)}) by the script that "
     f"produced it. Suite {SUITE_PASSED} passed / {SUITE_FAILED} failed / {SUITE_SKIPPED} skipped, lint "
     f"clean, both via ./scripts/orch_verify.sh. ba77a43 and 5a0cd1a remain unamended, unrebased and "
     f"un-split; DoD 1-9's implementation content still lives inside those recovery commits and says so "
@@ -123,19 +129,18 @@ DOD = [
         "DoD 4 — reviewer payload and GUI mark recovery distinctly; the prompt says plainly that "
         "recovery content was never self-checked.",
         "In `ba77a43`, amended round 6 (finding 2). `review_service.py:95-112` `recovery_section` "
-        "('created by the ORCHESTRATOR ... NEVER self-checked') + `:114-137` `harness_findings_section` "
+        "('created by the ORCHESTRATOR … NEVER self-checked') + `:114-137` `harness_findings_section`, "
         "rendered by `prompt_builder.py:126-144` as 'Recovery commits on this branch (created by the "
         "harness, NEVER self-checked by the Worker)' / 'Harness-detected findings'; "
-        "`supervisor_service.py:47,271-287` `RECOVERY_CHECK`; GUI `TaskDetail.tsx:29-56` `RecoveryNote` + "
-        "`:95` badge typed `types.ts:85-93,101-102`, served ONLY by `api/routes/tasks.py:38,62-69`. "
-        "ROUND 6 (finding 2): the `runs/<id>/review_payload.md` writer is DELETED "
-        "(`review_service.py:162-166` says why) — it added a file to the FROZEN artifact layout with no "
-        "DoD grant; `docs/build-loop.md:297-314` documents the gap and its single owner. Proofs: "
-        "integration `:311-363` (both sections, the swept path, NO `review_payload.md` in the run dir, "
-        "`GET /api/tasks/{id}/recovery` **404s** — ruling 3 deleted that route, so nothing claims it is "
-        "live — and every value the GUI renders is on the detail response); unit `:367` (headings render; "
-        "empty state adds none). PARTIAL, stated: whole-diff marking, not per-hunk (`patch.diff` is one "
-        "flat diff). `dod4_gui_typecheck.txt`: `tsc -b --force` exit 0. Full row: README DoD 4.",
+        "`supervisor_service.py:47,271-287` `RECOVERY_CHECK`; GUI `TaskDetail.tsx:29-56` + `:95` typed "
+        "`types.ts:85-93,101-102`, served ONLY by `api/routes/tasks.py:38,62-69`. ROUND 6 (finding 2): the "
+        "`runs/<id>/review_payload.md` writer is DELETED (`review_service.py:162-166` says why) — it added "
+        "a file to the FROZEN artifact layout with no DoD grant; `docs/build-loop.md:297-314` documents the "
+        "gap and its one owner. Proofs: integration `:311-363` (both sections, the swept path, NO "
+        "`review_payload.md` in the run dir, `GET /api/tasks/{id}/recovery` **404s** — ruling 3 deleted it, "
+        "so nothing claims it is live — and every GUI-rendered value on the detail response); unit `:367`. "
+        "PARTIAL, stated: whole-diff marking, not per-hunk. `dod4_gui_typecheck.txt`: `tsc` exit 0. "
+        "Full row: README DoD 4.",
         True,
     ),
     (
@@ -188,24 +193,23 @@ DOD = [
         "DoD 8 — unauthorized contract edits detected deterministically by the harness, with a "
         "structured build-log finding, a harness-detected reviewer-payload entry, and a decided route.",
         "In `ba77a43`; REWRITTEN by ruling 1 (`21f79c4`), split per case in round 6. "
-        "`project_service.py:29-45` `CONTRACT_FILES` = the five docs `contract_files()` already knows; "
-        "`:140` `_touched_paths` = branch diff **+ worktree dirt** (tracked AND untracked, so an "
-        "uncommitted edit cannot hide); `:107-132` `authorized_contract_files` is a **GRANT test, not a "
-        "mention test** (`:53-67` `_GRANT_RE` needs a change verb; `:68-79` `_PROHIBIT_RE` vetoes any "
-        "negation; sources = `definition_of_done` + `acceptance_criteria` + `frozen_contracts` ONLY, never "
-        "description/commit message/diffstat); `:47-51,134-138,155-175` the set ops + `contract_findings`. "
-        "`supervisor_service.py:46,211-262` fails `CONTRACT_CHECK` and emits `contract_change_detected` "
-        "with `findings_json` naming the recovery commits; `:353-393,414` `contract_change_hold` — DECISION: "
+        "`project_service.py:29-45` `CONTRACT_FILES` = the five docs `contract_files()` knows; `:140` "
+        "`_touched_paths` = branch diff **+ worktree dirt** (tracked AND untracked, so an uncommitted edit "
+        "cannot hide); `:107-132` `authorized_contract_files` is a **GRANT test, not a mention test** "
+        "(`:53-67` `_GRANT_RE` needs a change verb; `:68-79` `_PROHIBIT_RE` vetoes any negation; sources = "
+        "`definition_of_done` + `acceptance_criteria` + `frozen_contracts` ONLY, never description, commit "
+        "message or diffstat); `:47-51,134-138,155-175` set ops + `contract_findings`. "
+        "`supervisor_service.py:46,211-262` fails `CONTRACT_CHECK` and emits `contract_change_detected` with "
+        "`findings_json` naming the recovery commits; `:353-393,414` `contract_change_hold` — DECISION: "
         "straight to `blocked` + `review_status=NEEDS_HUMAN`, no review round burned, because a requeue "
-        "would ask the Worker to fix what it may not fix (`docs/build-loop.md:137-168`); "
-        "`review_service.py:114-137` hands the reviewer the same computed numbers. PER CASE (ruling 1; "
-        "`ruling1_grant_tests.txt` prints each name + PASS line): (a) prohibition still flags → "
-        "`test_recovery_markers.py:235-276`; (b) explicit grant suppresses → `:278-322`; (c) commit "
-        "message / diffstat / description grant nothing → `:324-351`; (d) bare mention → `:353-365`. "
-        "DoD's required shape: integration `:365-437` — a `docs/frozen-contracts.md` edit swept INTO a "
-        "recovery commit, tests green, still fails → `blocked`/`NEEDS_HUMAN`/`recovery_commit: true`; "
-        "`:417-425` a mere mention does not release the hold, `:429-437` a grant does. This task's own "
-        "`docs/frozen-contracts.md`: 0 commits, 0 dirty.",
+        "would ask the Worker to fix what it may not fix (`docs/build-loop.md:137-168`); `review_service.py"
+        ":114-137` gives the reviewer the same computed numbers. PER CASE (each name printed with its PASS "
+        "line in `ruling1_grant_tests.txt`): (a) prohibition still flags → `test_recovery_markers.py:235-276`; "
+        "(b) explicit grant suppresses → `:278-322`; (c) commit message / diffstat / description grant "
+        "nothing → `:324-351`; (d) bare mention → `:353-365`. DoD's required shape: integration `:365-437` — "
+        "a `docs/frozen-contracts.md` edit swept INTO a recovery commit, tests green, still fails → "
+        "`blocked`/`NEEDS_HUMAN`/`recovery_commit: true`; `:417-425` a mention does not release the hold, "
+        "`:429-437` a grant does. This task's own `docs/frozen-contracts.md`: 0 commits, 0 dirty.",
         True,
     ),
     (
@@ -234,19 +238,19 @@ DOD = [
         "`(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, with the measured damage beside them. The "
         "lookbehind, not `\\b`, because `_` is a word character: `\\bsk-` would miss `TOKEN_sk-proj-…` / "
         "`API_KEY_sk-ant-…` and so would have weakened redaction while fixing the names — the operator's "
-        "original 'word boundary' wording is corrected here, in `docs/build-loop.md:364-378`, and in every "
-        "committed note (nothing argues for `\\b` any more). Why it matters: `log_service.py:28` redacts "
-        "EVERY event's `details` — build_log_entries.id=86 handed the operator a merge command whose branch "
+        "original 'word boundary' wording is corrected here, in `docs/build-loop.md:364-378` and in every "
+        "committed note, so nothing argues for `\\b` any more. It matters because `log_service.py:28` redacts "
+        "EVERY event's `details`: build_log_entries.id=86 handed the operator a merge command whose branch "
         "name was destroyed, and this task's `findings_json` payload loses a value while still parsing. "
-        "Proofs: `tests/unit/test_redaction.py` (14 tests, measured at this HEAD) incl. "
+        "Proofs: `tests/unit/test_redaction.py` (14 tests, measured at the capture HEAD) incl. "
         "`::test_branch_task_and_phase_names_survive_redaction`, `::test_findings_json_payload_survives_redaction`, "
         "`::test_credentials_are_still_redacted_wherever_they_appear`, "
         "`::test_build_log_details_keep_operational_commands_copy_pasteable`, "
-        "`::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`; and "
+        "`::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`; plus "
         "`dod10_redaction_probe.txt`, which runs OLD (at `14a221c`) / BOUND (`\\b`) / SHIPPED over the same "
-        "strings: the `merge_candidate` command is whole only under SHIPPED, and the underscore-glued key "
-        "leaks only under BOUND. Trade stated, not hidden: a credential glued directly to a letter "
-        "(`xsk-proj-…`) is no longer caught — no anchor can both spare `task-` and catch that.",
+        "strings — the `merge_candidate` command is whole only under SHIPPED, and the underscore-glued key "
+        "leaks only under BOUND. Trade stated, not hidden: a credential glued to a letter (`xsk-proj-…`) is "
+        "no longer caught; no anchor can both spare `task-` and catch that.",
         True,
     ),
 ]
