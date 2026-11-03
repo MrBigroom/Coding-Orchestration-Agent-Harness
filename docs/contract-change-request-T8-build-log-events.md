@@ -18,7 +18,8 @@
 `"<run_short_id> finished normally (exit <code>)"` and `role="worker"`. The failure counterparts
 `run_failed` / `run_timeout` are named in `docs/build-loop.md`; before T-8 there was **no** event
 for a run that finished normally, so a consumer could only infer success from a `task_status`
-transition. T-8's DoD 7 needs the event to be dependable, and the T-9 notification fan-out is
+transition. T-8's DoD 6 (the terminal success event itself) needs the event to be dependable, and
+the T-9 notification fan-out is
 specified against it (`docs/build-loop.md`, "Terminal run events").
 
 **2. `| findings_json=` — a structured payload inside the frozen `details` string.**
@@ -39,9 +40,14 @@ Both conventions are already pinned by tests:
 ## Proposed contract text (for the Architect to place in `frozen-contracts.md` if approved)
 
 > **Build-log events**: the line shape `{timestamp, phase, task_id, run_id, role, event, details,
-> commit_sha}` is frozen. Every run ends in exactly one terminal event: `run_completed` (normal
-> completion), `run_failed`, `run_timeout`; `run_error` covers an unexpected exception in the
-> runner. Event names are additive — a phase may add one, never rename or remove one. Where a
+> commit_sha}` is frozen. A run's terminal status is one of `completed | failed | timeout |
+> cancelled`, and **three of those four** have a named terminal event: `run_completed` (normal
+> completion), `run_failed`, `run_timeout`. A `cancelled` run has **no** named event today — it is
+> observable only as a `task_status` line reading `run cancelled` — and `run_cancelled` is NOT an
+> event name yet; adding it is a T-9 requirement, deliberately not frozen here as if it existed.
+> `run_error` is not a terminal status: it labels an unexpected exception inside the harness, after
+> which the run still ends as `failed`. Event names are additive — a phase may add one, never rename
+> or remove one. Where a
 > machine consumer needs structure, `details` may carry a final segment
 > ` | findings_json=<json object>`; the segment is always last, `json.loads` of the remainder is
 > the payload, its absence means no payload, and no payload may contradict the human summary in

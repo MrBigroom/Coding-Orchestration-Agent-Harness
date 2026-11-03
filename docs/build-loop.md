@@ -348,7 +348,8 @@ because at that point `_execute` still holds the run-level error context (`run.e
 code, the timeout reason) that their `details` carry, and `_set_run` does not. Moving them into
 `_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
 line. The shared chokepoint is the **status transition** (`_set_run` is the only writer, and every
-terminal status has exactly one event), not the `log_event` call site. The consumer that motivated
+terminal status except `cancelled` has exactly one named event — `run_cancelled` does not exist
+yet and is a T-9 requirement, so the honest claim is "three of four"), not the `log_event` call site. The consumer that motivated
 the event — the **T-9** notification fan-out — is the reason it must be a named event at all. It
 is **additive** — no existing event name and no line-shape key changed — and adding it to the
 vocabulary was authorized by this task's Definition of Done, so `docs/frozen-contracts.md`
