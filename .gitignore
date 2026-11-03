@@ -32,3 +32,6 @@ runs/
 
 # Harness bench installs/logs
 scripts/harness-bench/.work/
+
+# Local Claude Code tool state (untracked dirs must not trip git_service.is_dirty)
+.claude/
