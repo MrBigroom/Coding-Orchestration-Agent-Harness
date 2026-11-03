@@ -114,8 +114,9 @@ fills in its name; add any arguments, then send.
 
 - **Pi:** skills (`/skill:name`), prompt templates and extension commands. Its built-in
   `/mcp` and `/llama` aren't listed, because they open dialogs Chat can't show. Sessions use
-  a managed Pi config, so commands in `~/.pi/agent` don't load, and project extensions are
-  off (see [Permission modes](#permission-modes)).
+  a managed Pi config, but your extensions in `~/.pi/agent/extensions` are linked in, so
+  their commands are offered. Project extensions are off (see
+  [Permission modes](#permission-modes)).
 - **Claude Code:** what its headless mode accepts: skills, custom and plugin commands, and
   built-ins such as `/compact`. Interactive-only commands like `/config` aren't offered.
 - **ACP harnesses:** whatever the harness announces. OpenCode lists its skills when the
@@ -176,6 +177,9 @@ The same label doesn't mean the same thing on every harness:
 - **Pi** has no permission system, so `adapters/chat/pi_gate.ts` adds one through Pi's
   extension UI. Plan mode allows read tools and an allowlist of read-only shell commands.
   Project-local Pi extensions don't load (`--no-approve`), since they could override it.
+  Your own extensions in `~/.pi/agent/extensions` do load, and their tools pass the gate like
+  Pi's. The gate lets a `todo` tool (Pi's example to-do extension) through in every mode,
+  since it keeps a list in the session and touches no files.
 - **Qwen Code and Claude Code** enforce their own modes. In their ask modes, both let
   read-only commands such as `ls` run without a prompt.
 - **OpenCode** allows everything by default, so sessions set `OPENCODE_PERMISSION` to ask for
