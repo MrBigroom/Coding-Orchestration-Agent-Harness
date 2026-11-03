@@ -1,6 +1,24 @@
-................                                                         [100%]
-16 passed in 10.13s
-..............                                                           [100%]
+### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+11 passed in 0.65s
+
+### $ ./scripts/orch_verify.sh test tests/integration/test_recovery_after_timeout.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+5 passed in 9.82s
+
+### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+16 passed in 10.26s
+
+### $ ./scripts/orch_verify.sh test tests/unit/test_redaction.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
 14 passed in 1.15s
-......................                                                   [100%]
-22 passed in 3.18s
+
+### $ ./scripts/orch_verify.sh test tests/integration/test_git_worktree.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+5 passed in 0.19s
+
+### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py tests/unit/test_redaction.py tests/integration/test_git_worktree.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+35 passed in 11.45s
+
