@@ -137,6 +137,57 @@ def test_suite_imports_the_checkout_it_runs_in():
     assert resolved.is_relative_to(top), f"imported {resolved}, expected under {top}"
 
 
+def test_this_repo_commits_the_wrapper_executable():
+    """DoD 1's "committed wrapper": the exec bit has to be in THIS repo's index/tree, not
+    only in a fixture that chmods its own copy — `git worktree add` restores the mode from
+    the tree, and the gate execs argv[0] without a shell, so a 100644 script is exit 126."""
+    mode = git(REPO_ROOT, "ls-files", "-s", "scripts/orch_verify.sh").split()
+    assert mode[:1] == ["100755"], f"index mode {mode}, expected 100755"
+    assert "100755" in git(REPO_ROOT, "ls-tree", "-r", "HEAD", "--", "scripts/orch_verify.sh")
+    assert os.access(WRAPPER_SRC, os.X_OK)
+
+
+def test_wrapper_asserts_the_resolution_the_tool_will_actually_use(fake, home):
+    """The resolution probe must run in the same directory the tool runs in.
+
+    `python -` and `python -m pytest` both put the CURRENT directory first on sys.path, so a
+    probe run before `cd "$ROOT"` asserts a different resolution than the one used. A stale
+    shadow copy of the package in the invoking directory proves it: whichever directory wins,
+    that is what the marker reports, and it must be the worktree `src` the tools then import.
+    """
+    wt = snapshot(fake, "cwdprobe")
+    shadow = wt / "tools"
+    shadow.mkdir(exist_ok=True)
+    (shadow / MODULE).mkdir(exist_ok=True)
+    (shadow / f"{MODULE}.py").write_text('VALUE = "shadow-of-the-invoking-directory"\n')
+
+    from_shadow_dir = run(
+        [str(wt / "scripts" / "orch_verify.sh"), "test"],
+        shadow,
+        bare_env(ORCH_VERIFY_PACKAGE=MODULE),
+    )
+    row = marker_row(from_shadow_dir.stdout + from_shadow_dir.stderr)
+    assert row["worktree_root"] == str(wt)
+    assert row["module_file"] == str(wt / "src" / MODULE / "__init__.py"), (
+        "the wrapper asserted a path from the invoking directory, not from the worktree root"
+    )
+    assert from_shadow_dir.returncode == 0, from_shadow_dir.stdout + from_shadow_dir.stderr
+
+
+def test_wrapper_resolves_extra_paths_against_the_worktree_root(fake, home):
+    """Extra path arguments are relative to the worktree root even when the command is
+    invoked from a subdirectory (the gate always uses cwd = the worktree root)."""
+    wt = snapshot(fake, "subdir")
+    result = run(
+        [str(wt / "scripts" / "orch_verify.sh"), "test", "tests/test_value.py"],
+        wt / "src",
+        bare_env(ORCH_VERIFY_PACKAGE=MODULE),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "orch-verify: pytest target tests/test_value.py" in result.stdout
+
+
 def test_without_the_wrapper_the_import_resolves_outside_the_worktree(fake, home):
     """(a) the trap, reproduced: the gate goes green on the wrong checkout."""
     wt = snapshot(fake, "trap")
@@ -271,43 +322,47 @@ def test_doctor_passes_for_the_wrapper_command(fake, home, session):
     assert git_service.managed_worktrees() == []
 
 
-def test_doctor_finds_a_command_that_only_exists_on_the_base_branch(home, session, tmp_path):
-    """A branch that adds its own wrapper is not in the main checkout yet. The gate runs in
-    worktrees of the base branch, so that is runnable and must not read as "missing"."""
-    main = tmp_path / "premerge"
+def test_doctor_static_checks_still_describe_the_main_checkout(home, session, tmp_path):
+    """Pin of the static check's semantics: doctor answers "would this run in the main
+    checkout?", and does NOT go looking for the file on the base branch. T-6 only adds the
+    opt-in --run-commands probe; changing what the static check means was not in scope."""
+    main = tmp_path / "branchonly"
     (main / "src").mkdir(parents=True)
     (main / "src" / "pkg.py").write_text("")
     git(main, "init", "-q", "-b", "main")
     git(main, "add", "-A")
-    git(main, "commit", "-q", "-m", "no wrapper yet")
-    git(main, "checkout", "-q", "-b", "add-wrapper")
-    (main / "scripts").mkdir()
-    (main / "scripts" / "orch_verify.sh").write_text("#!/bin/sh\nexit 0\n")
-    git(main, "add", "scripts/orch_verify.sh")
-    git(main, "commit", "-q", "-m", "the wrapper lives on this branch")
-    git(main, "checkout", "-q", "main")
-    assert not (main / "scripts" / "orch_verify.sh").exists()
+    git(main, "commit", "-q", "-m", "no wrapper in the checkout")
+    project = project_service.create(
+        session,
+        ProjectCreate(name="Branch Only", path=str(main), test_command="scripts/verify.sh test"),
+    )
+    check = {c["name"]: c for c in project_service.doctor(project)}["test command"]
+    assert not check["ok"] and check["detail"] == "`scripts/verify.sh` not found"
 
-    def check(branch: str, command: str) -> dict:
+
+def test_doctor_removes_the_worktree_when_a_command_fails(fake, home, session):
+    """Failure paths must not leave a worktree behind in ORCHESTRATOR_HOME: a red command,
+    and a command that cannot even be started (exit code None)."""
+    for label, command in (
+        ("red", f"{sys.executable} -c 'raise SystemExit(3)'"),
+        ("missing-executable", "/nonexistent/dir/orch_verify.sh test"),
+    ):
         project = project_service.create(
             session,
-            ProjectCreate(name=f"P-{branch}", path=str(main), base_branch=branch,
-                          test_command=command),
+            ProjectCreate(name=f"Fail {label}", path=str(fake["main"]), test_command=command),
         )
-        return {c["name"]: c for c in project_service.doctor(project)}["test command"]
-
-    on_branch = check("add-wrapper", "scripts/orch_verify.sh test")
-    assert on_branch["ok"], on_branch
-    assert "not yet in the main checkout" in on_branch["detail"]
-
-    missing = check("main", "scripts/nope.sh test")
-    assert not missing["ok"] and "not found" in missing["detail"]
+        checks = project_service.doctor(project, run_commands=True)
+        by_name = {c["name"]: c for c in checks}
+        assert by_name["test in worktree"]["ok"] is False, (label, by_name)
+        assert by_name["test resolves inside the worktree"]["ok"] is False, label
+        assert git_service.managed_worktrees() == [], f"{label} left a worktree behind"
+        assert not [c for c in checks if c["name"] == "throwaway worktree removed"], label
 
 
 def test_doctor_survives_a_missing_base_branch(home, session, tmp_path):
-    """A path-relative command that is not in the checkout is looked up in the base branch
-    tree; when that branch is gone `git ls-tree` fails (run_git raises GitError) and doctor
-    must report the miss, not raise out of the CLI."""
+    """A base branch that no longer exists must read as a failed check, never as an exception
+    out of the CLI — both for the static check and for the opt-in probe, where
+    `git_service.ensure_snapshot` raises GitError before any worktree is created."""
     main = make_repo(tmp_path / "gonebase")  # scripts/verify.sh is not in it
     project = project_service.create(
         session,
@@ -316,10 +371,13 @@ def test_doctor_survives_a_missing_base_branch(home, session, tmp_path):
             test_command="scripts/verify.sh test",
         ),
     )
-    checks = {c["name"]: c for c in project_service.doctor(project)}
+    checks = {c["name"]: c for c in project_service.doctor(project, run_commands=True)}
     assert checks[f"base branch '{project.base_branch}' exists"]["ok"] is False
     assert checks["test command"]["ok"] is False
     assert "not found" in checks["test command"]["detail"]
+    probe = checks["commands run in a worktree"]
+    assert probe["ok"] is False and "does not exist" in probe["detail"]
+    assert git_service.managed_worktrees() == []
 
 
 def test_doctor_never_runs_commands_without_the_flag(fake, home, session):

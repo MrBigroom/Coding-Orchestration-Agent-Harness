@@ -175,6 +175,25 @@ class Recorder:
         await self.wait(lambda e: e == {"type": "status", "status": "idle"})
 
 
+async def stderr_argv_line(driver, timeout: float = 10) -> str:
+    """The stub harness writes its own argv to stderr, and `spawn()` does not await the
+    stderr pump (`adapters/chat/base.py`: `_read_stderr` is a background task), so indexing
+    `stderr_tail[0]` straight after a start/restart races the pump: under load the deque can
+    still be empty and the test fails on code that did nothing wrong. Poll it instead."""
+
+    async def poll() -> str:
+        while True:
+            for line in list(driver.process.stderr_tail):
+                if line:
+                    return line
+            await asyncio.sleep(0.02)
+
+    try:
+        return await asyncio.wait_for(poll(), timeout)
+    except TimeoutError:
+        pytest.fail(f"the stub harness wrote nothing to stderr within {timeout}s")
+
+
 def options(tmp_path: Path, **kwargs) -> DriverOptions:
     return DriverOptions(cwd=tmp_path, **kwargs)
 
@@ -392,8 +411,7 @@ async def test_claude_effort_change_resumes_the_session(tmp_path):
         await rec.wait(lambda e: e["type"] == "config" and e.get("model") == "opus")
         session_id = driver._session_id
         await driver.set_effort("high")
-        await asyncio.sleep(0.2)
-        argv = json.loads(driver.process.stderr_tail[0])
+        argv = json.loads(await stderr_argv_line(driver))
         assert argv[argv.index("--effort") + 1] == "high"
         assert argv[argv.index("--resume") + 1] == session_id
     finally:
@@ -426,7 +444,7 @@ async def test_claude_resumes_its_conversation(tmp_path):
     driver = ClaudeDriver(a, options(tmp_path, resume="sess-old"), rec)
     await driver.start()
     try:
-        argv = json.loads(driver.process.stderr_tail[0])
+        argv = json.loads(await stderr_argv_line(driver))
         assert argv[argv.index("--resume") + 1] == "sess-old"
     finally:
         await driver.close()
