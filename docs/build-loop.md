@@ -105,6 +105,14 @@ information that the content has no self-check behind it. What *does* fail the g
 re-verification finds in it (a lint error, a failing test) or a harness-detected contract-file
 hit — see “Unauthorized contract edits”.
 
+**Boundary:** detection is the trailer and nothing else. Recovery commits created *before* the
+trailer existed — any `chore(orchestrator-recovery): …` commit without `Orchestrator-Recovery:`,
+including this repo's own history — are **not** flagged. There is deliberately no fallback to
+subject matching: a subject match cannot distinguish wreckage from a hand-authored commit that
+copies the wording (a case covered by a test), so the harness reports what it can prove and
+stays silent about the rest. A reviewer who sees the historical subject prefix without the
+trailer should treat it as a human question, not as verified work.
+
 ## What a new round resets
 
 `handoff_status`, `review_status`, `verification_status` and `merge_status` describe the

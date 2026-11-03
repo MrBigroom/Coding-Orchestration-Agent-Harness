@@ -157,7 +157,13 @@ def _events(session, task, event):
 
 def _header_spy(session, task, monkeypatch) -> dict:
     """Snapshot the task header at the moment the pre-run recovery sweep runs — i.e. while the
-    new round is live and `in_progress`."""
+    new round is live and `in_progress`.
+
+    Two layers are captured, because DoD 7 is about what a HUMAN reads: the ORM row, and the
+    exact payload the GUI header renders (`routes/tasks.py:_detail`, which `TaskDetail.tsx`
+    feeds into `<Badge value={task.status} />` and `<Badge value={task.handoff_status} />`)."""
+    from orchestrator.api.routes import tasks as tasks_routes
+
     seen: dict[str, object] = {}
     original = git_service.recovery_commit_info
 
@@ -169,6 +175,12 @@ def _header_spy(session, task, monkeypatch) -> dict:
             review_status=live.review_status,
             verification_status=live.verification_status,
             merge_status=live.merge_status,
+        )
+        payload = tasks_routes._detail(session, live)
+        seen.update(
+            header_status=payload["status"],
+            header_handoff_status=payload["handoff_status"],
+            header_review_status=payload["review_status"],
         )
         return original(path, label, run_short_id=run_short_id)
 
@@ -209,6 +221,10 @@ def test_timeout_wreckage_is_committed_as_recovery_and_told_to_the_next_run(
     assert seen["status"] == TaskStatus.in_progress, seen
     assert seen["handoff_status"] is None, seen
     assert seen["review_status"] is None and seen["verification_status"] is None, seen
+    # ... and the GUI header is built from that same payload, so it cannot show both
+    assert seen["header_status"] == "in_progress", seen
+    assert seen["header_handoff_status"] is None, seen
+    assert seen["header_review_status"] is None, seen
     assert len(_events(session, task, "retry_fields_reset")) == 1
 
     swept = _events(session, task, "recovery_commit")

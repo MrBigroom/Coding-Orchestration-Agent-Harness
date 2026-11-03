@@ -1,0 +1,47 @@
+### (a) this branch's history, read by git_service.commits_against_base / recovery_commits
+  RECOVERY_SUBJECT_PREFIX = 'chore(orchestrator-recovery):'
+  RECOVERY_TRAILER_KEY    = 'Orchestrator-Recovery'
+  main..HEAD: 4 commit(s)
+    ba77a43 recovery=False run=None chore(orchestrator-recovery): uncommitted worker output from R-1
+    9001e82 recovery=False run=None feat(T-8): anchor the sk- credential patterns so branch/task nam
+    232b6d4 recovery=False run=None feat(T-8): write the two build-loop sections the branch referenc
+    e42304a recovery=False run=None feat(T-8): prove the recovery-committed undefined name is surfac
+  recovery_commits() -> []
+
+### (b) a fresh recovery commit: prefix kept, trailer added, tracked/untracked split, structured event
+  subject : chore(orchestrator-recovery): uncommitted worker output from R-demo
+  trailer : 'R-demo'
+  commit body:
+    | chore(orchestrator-recovery): uncommitted worker output from R-demo
+    | 
+    | Created by coding-orchestrator so uncommitted worktree output would not be lost.
+    | This content was NEVER self-checked by the Worker: re-verify with the project's lint
+    | and test commands before trusting it, and do not read it as authored work.
+    | 
+    | Tracked modifications (2): app.py, docs/frozen-contracts.md
+    | Newly added untracked paths (1): notes/scratch.txt
+    | 
+    | Orchestrator-Recovery: R-demo
+  build-log details (frozen line shape; structured payload inside `details`):
+    worker left uncommitted changes | findings_json={"label": "uncommitted worker output from R-demo", "recovery": true, "run_short_id": "R-demo", "sha": "562a7882a9cf461c789dcad6cd67f670eaf72748", "skipped_sensitive": [], "subject": "chore(orchestrator-recovery): uncommitted worker output from R-demo", "tracked_modified": ["app.py", "docs/frozen-contracts.md"], "trailer": "Orchestrator-Recovery: R-demo", "untracked_added": ["notes/scratch.txt"]}
+  parsed: {'label': 'uncommitted worker output from R-demo', 'recovery': True, 'run_short_id': 'R-demo', 'sha': '562a7882a9cf461c789dcad6cd67f670eaf72748', 'skipped_sensitive': [], 'subject': 'chore(orchestrator-recovery): uncommitted worker output from R-demo', 'tracked_modified': ['app.py', 'docs/frozen-contracts.md'], 'trailer': 'Orchestrator-Recovery: R-demo', 'untracked_added': ['notes/scratch.txt']}
+  detected by the reader: ['562a788']
+  next-run prompt listing:
+    | - 562a788 (recovery of run R-demo): chore(orchestrator-recovery): uncommitted worker output from R-demo
+    |   tracked modifications: app.py, docs/frozen-contracts.md
+    |   newly added (untracked before the commit): notes/scratch.txt
+  untracked-only split: {'tracked_modified': [], 'untracked_added': ['just-scratch.txt']}
+  is_dirty (sweep/cleanup)   = True
+  tracked_dirty (merge/doctor)= False
+  swept anyway: {'recovery': True, 'sha': 'a443165426fc29d3302492117a96f2bb683094f6', 'run_short_id': 'R-demo2', 'trailer': 'Orchestrator-Recovery: R-demo2', 'subject': 'chore(orchestrator-recovery): leftover changes from R-demo2', 'label': 'leftover changes from R-demo2', 'tracked_modified': [], 'untracked_added': ['just-scratch.txt'], 'skipped_sensitive': []}
+  worktree left behind on purpose? no -> removed
+
+### (c) the two predicates in the shipped call sites (grep of the decisions they gate)
+  src/orchestrator/services/git_service.py:71:    def tracked_dirty(self) -> bool:  # versioned content changed
+  src/orchestrator/services/git_service.py:221:def is_dirty(path: Path) -> bool:
+  src/orchestrator/services/git_service.py:224:    recovery_commit and cleanup. Merge/refuse and cleanliness verdicts want `tracked_dirty`."""
+  src/orchestrator/services/git_service.py:228:def tracked_dirty(path: Path) -> bool:
+  src/orchestrator/services/git_service.py:485:    if tracked_dirty(repo):
+  src/orchestrator/services/git_service.py:527:    if path.exists() and is_repo(path) and is_dirty(path):
+  src/orchestrator/services/project_service.py:230:            not split.tracked_dirty,
+  src/orchestrator/services/project_service.py:234:                if split.tracked_dirty

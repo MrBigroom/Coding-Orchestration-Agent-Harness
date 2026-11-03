@@ -1,0 +1,14 @@
+== names that must survive (old pattern -> new pattern) ==
+  old_damaged=True  new_damaged=False  git -C /repo merge --no-ff task-8-recovery-commits-after-a-timeout-commit-half-fin
+  old_damaged=True  new_damaged=False  task-6-verification-commands-cannot-run-in-a-worktree-n
+  old_damaged=True  new_damaged=False  findings_json={"branch": "task-8-recovery-commits-after-a-timeout-commit-half-fin"}
+  old_damaged=True  new_damaged=False  phase-3-risk-assessment-and-masked-payloads
+  old_damaged=False new_damaged=False  src/orchestrator/services/task_service.py
+== credentials that must still redact ==
+  redacted=True   [REDACTED]
+  redacted=True   [REDACTED]
+  redacted=True   [REDACTED]
+== real build-log line shape (merge_candidate, id=86 was destroyed by the old pattern) ==
+  old: merge gate disabled; run: git -C /repo checkout main && git -C /repo m ...
+  new: merge gate disabled; run: git -C /repo checkout main && git -C /repo merge --no-ff task-8-recovery-commits-after-a-timeout-commit-half-fin
+PROBE_EXIT=0

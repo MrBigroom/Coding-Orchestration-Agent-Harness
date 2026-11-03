@@ -1,0 +1,25 @@
+worktree HEAD   : e42304a (task-8-recovery-commits-after-a-timeout-commit-half-fin)
+main-repo HEAD  : 360228a
+typecheck cwd   : /tmp/t8-web-typecheck
+web/src resolves: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/web/src   # must be under the worktree
+
+== tsc -b --force (this branch's web/src) ==
+TSC_EXIT=0
+
+== sources actually read (paths under /tmp/t8-web-typecheck/src, which symlink into the worktree) ==
+  /tmp/t8-web-typecheck/src/api/types.ts
+  /tmp/t8-web-typecheck/src/pages/TaskDetail.tsx
+  28 source files type-checked, all resolved through the worktree symlink
+  (tsc -p ... --noEmit exit: 0)
+
+== the recovery surfaces the GUI renders ==
+  29:function RecoveryNote({ commits }: { commits: RecoveryCommit[] }) {
+  55:  if (!text.trim()) return <><RecoveryNote commits={recovery} /><Empty>No diff for this run.</Empty></>;
+  56:  return <><RecoveryNote commits={recovery} /><Diff diff={text} /></>;
+  95:          {(task.recovery_commits?.length ?? 0) > 0 && <Badge value="recovery" />}
+  175:      {run && tab === "diff" && <Card title={`Diff — ${run.short_id}`}><DiffView runId={run.id} recovery={task.recovery_commits ?? []} /></Card>}
+  85:export interface RecoveryCommit {
+  102:  recovery_commits?: RecoveryCommit[];
+
+== baseline: main's own checkout type-checks the same way (so a red here would be ours) ==
+BASELINE_TSC_EXIT=0
