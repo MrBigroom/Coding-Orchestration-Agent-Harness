@@ -1,0 +1,66 @@
+== commit under test: task-6-verification-commands-cannot-run-in-a-worktree-n @ 02436f7 ==
+   the CLI imports: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/6/src/orchestrator/__init__.py
+   init exit=0
+
+===== A. THE TRAP: venv-relative command, no wrapper =====
+   ok   path exists — /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+   ok   git available
+   ok   is git repository
+   ok   base branch 'task-6-verification-commands-cannot-run-in-a-worktree-n' exists
+   FAIL main checkout clean — uncommitted changes (fine for worktrees; merge gate will refuse)
+   ok   test command — /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python -m pytest tests/unit/test_paths.py
+   ok   lint command — not configured (verification will mark N/A)
+   ok   build command — not configured (verification will mark N/A)
+   ok   throwaway worktree created — /tmp/t6-dod3-home/worktrees/t6-trap/doctor
+   ok   test in worktree — exit 0 (cwd /tmp/t6-dod3-home/worktrees/t6-trap/doctor)
+   FAIL test resolves inside the worktree — no ORCH_VERIFY marker: this command is not path-independent and may import the main checkout — wrap it like scripts/orch_verify.sh
+   doctor exit=1
+
+===== B. THE FIX: the committed wrapper (base branch = this task branch) =====
+   ok   path exists — /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+   ok   git available
+   ok   is git repository
+   ok   base branch 'task-6-verification-commands-cannot-run-in-a-worktree-n' exists
+   FAIL main checkout clean — uncommitted changes (fine for worktrees; merge gate will refuse)
+   FAIL test command — `scripts/orch_verify.sh` not found
+   FAIL lint command — `scripts/orch_verify.sh` not found
+   ok   build command — not configured (verification will mark N/A)
+   ok   throwaway worktree created — /tmp/t6-dod3-home/worktrees/t6-wrapped/doctor
+   ok   test in worktree — exit 0 (cwd /tmp/t6-dod3-home/worktrees/t6-wrapped/doctor)
+   ok   test resolves inside the worktree — orchestrator -> /tmp/t6-dod3-home/worktrees/t6-wrapped/doctor/src/orchestrator/__init__.py
+   ok   lint in worktree — exit 0 (cwd /tmp/t6-dod3-home/worktrees/t6-wrapped/doctor)
+   ok   lint resolves inside the worktree — orchestrator -> /tmp/t6-dod3-home/worktrees/t6-wrapped/doctor/src/orchestrator/__init__.py
+   doctor exit=1
+
+===== C. plain doctor executes nothing (safety default) =====
+   ok   path exists — /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+   ok   git available
+   ok   is git repository
+   ok   base branch 'task-6-verification-commands-cannot-run-in-a-worktree-n' exists
+   FAIL main checkout clean — uncommitted changes (fine for worktrees; merge gate will refuse)
+   FAIL test command — `scripts/orch_verify.sh` not found
+   FAIL lint command — `scripts/orch_verify.sh` not found
+   ok   build command — not configured (verification will mark N/A)
+   throwaway worktrees created by plain doctor: 0 (expect 0)
+
+===== D. pre-merge caveat: base_branch=main has no wrapper yet =====
+   ok   base branch 'main' exists
+   FAIL main checkout clean — uncommitted changes (fine for worktrees; merge gate will refuse)
+   FAIL test command — `scripts/orch_verify.sh` not found
+   ok   lint command — not configured (verification will mark N/A)
+   ok   build command — not configured (verification will mark N/A)
+   ok   throwaway worktree created — /tmp/t6-dod3-home/worktrees/t6-mainbase/doctor
+   FAIL test in worktree — exit None (cwd /tmp/t6-dod3-home/worktrees/t6-mainbase/doctor); tail: failed to start 'scripts/orch_verify.sh': [Errno 2] No such file or directory: 'scripts/orch_verify.sh'
+   FAIL test resolves inside the worktree — no ORCH_VERIFY marker: this command is not path-independent and may import the main checkout — wrap it like scripts/orch_verify.sh
+   doctor exit=1
+
+===== E. the wrapper refuses to run outside a git repository =====
+   exit=4 (4 = not a repo)
+
+===== F. nothing left behind =====
+   surviving throwaway worktree dirs: 0 (expect 0)
+   surviving .managed marker files:   0 (expect 0)
+   worktrees known to git in the main repo:
+     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness       91d6ee7 [main]
+     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/6 02436f7 [task-6-verification-commands-cannot-run-in-a-worktree-n]
+DONE dod3

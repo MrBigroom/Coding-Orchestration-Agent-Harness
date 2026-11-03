@@ -1,0 +1,97 @@
+== commit under test: task-6-verification-commands-cannot-run-in-a-worktree-n @ 02436f7b81d72b3d69bc00df9b68a0ce3ffab273 ==
+
+== 0. main...HEAD (behind ahead). '0 N' means merging this branch is a fast-forward ==
+   0	14
+   main tree  : 03f2e9e49b7b09f285788bca979474d1950fae41
+   HEAD tree  : 751117fcb41ce51b820ed208fa29104a4bedc469
+   merge tree : 751117fcb41ce51b820ed208fa29104a4bedc469
+   wrapper on main? NO (branch creates it)
+
+== 1. LITERAL: git worktree add --detach /tmp/t6-dod2-proof main  (tracked files only) ==
+Preparing worktree (detached HEAD 91d6ee7)
+   worktree path      : /tmp/t6-dod2-proof
+   own .venv?         NO  <- the T-6 bug: a worktree gets tracked files only
+   wrapper present?   NO  <- wrapper ships with this branch, so DoD 2 cannot be run literally against main until merge
+   base content       : 91d6ee7
+
+== 2. THE TRAP, in that fresh worktree of main: the venv interpreter imports the MAIN checkout ==
+   inherited VIRTUAL_ENV = /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv
+   unwrapped import -> /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/src/orchestrator/__init__.py
+
+== 3. AS-IF-MERGED: the same worktree detached at this branch's commit ==
+   content now  : 02436f7 (detached, == post-merge main tree)
+   wrapper present + executable? yes (exec bit kept)
+
+== 4. WRAPPED resolve: the assertion names THIS worktree ==
+orch-verify: worktree root /tmp/t6-dod2-proof
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /tmp/t6-dod2-proof/src
+orch-verify: test root     /tmp/t6-dod2-proof/tests
+orch-verify: orchestrator.__file__ = /tmp/t6-dod2-proof/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=resolve|module=orchestrator|module_file=/tmp/t6-dod2-proof/src/orchestrator/__init__.py|worktree_root=/tmp/t6-dod2-proof
+   resolve exit=0
+
+== 5. GUARD: a module that resolves outside the worktree trips exit 3 and runs nothing ==
+orch-verify: worktree root /tmp/t6-dod2-proof
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /tmp/t6-dod2-proof/src
+orch-verify: test root     /tmp/t6-dod2-proof/tests
+orch-verify: email.__file__ = /home/mrbigroom/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/email/__init__.py
+ORCH_VERIFY|mode=resolve|module=email|module_file=/home/mrbigroom/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/email/__init__.py|worktree_root=/tmp/t6-dod2-proof
+orch-verify: ERROR: email resolved OUTSIDE the worktree: /home/mrbigroom/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/email/__init__.py (root: /tmp/t6-dod2-proof) — a run from here would verify the wrong checkout
+   guard exit=3 (3 = resolved OUTSIDE the worktree)
+
+== 5b. GUARD: an unresolvable module also fails closed ==
+orch-verify: ERROR: could not resolve module 'nope_not_a_module' with /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python (PYTHONPATH=/tmp/t6-dod2-proof/src)
+   guard exit=3 (3 = could not resolve)
+
+== 6. WRAPPED single-file pytest run: this worktree's tests, this worktree's src ==
+orch-verify: worktree root /tmp/t6-dod2-proof
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /tmp/t6-dod2-proof/src
+orch-verify: test root     /tmp/t6-dod2-proof/tests
+orch-verify: orchestrator.__file__ = /tmp/t6-dod2-proof/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/tmp/t6-dod2-proof/src/orchestrator/__init__.py|worktree_root=/tmp/t6-dod2-proof
+orch-verify: pytest target tests/integration/test_verify_wrapper.py
+.................                                                        [100%]
+17 passed in 3.16s
+   test exit=0
+
+== 7. WRAPPED lint run in the fresh worktree ==
+orch-verify: worktree root /tmp/t6-dod2-proof
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /tmp/t6-dod2-proof/src
+orch-verify: test root     /tmp/t6-dod2-proof/tests
+orch-verify: orchestrator.__file__ = /tmp/t6-dod2-proof/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/tmp/t6-dod2-proof/src/orchestrator/__init__.py|worktree_root=/tmp/t6-dod2-proof
+orch-verify: lint target  ruff check src tests
+All checks passed!
+   lint exit=0
+
+== 8. WRAPPED FULL suite in the fresh worktree (DoD 5: passes via the wrapper itself) ==
+orch-verify: worktree root /tmp/t6-dod2-proof
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /tmp/t6-dod2-proof/src
+orch-verify: test root     /tmp/t6-dod2-proof/tests
+orch-verify: orchestrator.__file__ = /tmp/t6-dod2-proof/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/tmp/t6-dod2-proof/src/orchestrator/__init__.py|worktree_root=/tmp/t6-dod2-proof
+orch-verify: pytest target /tmp/t6-dod2-proof/tests
+........................................................................ [ 17%]
+..........................ssssss........................................ [ 35%]
+........................................................................ [ 53%]
+........................................................................ [ 71%]
+........................................................................ [ 89%]
+.........................................                                [100%]
+395 passed, 6 skipped in 39.33s
+   full-suite exit=0
+
+== 9. cleaned up? ==
+/run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness       91d6ee7 [main]
+/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/6 02436f7 [task-6-verification-commands-cannot-run-in-a-worktree-n]
+/tmp/t6-dod2-proof                                                               02436f7 (detached HEAD)
+DONE dod2
