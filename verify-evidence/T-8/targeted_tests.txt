@@ -1,18 +1,21 @@
+# HEAD=bd9239f0990751259fa2e924ce33c27c2b5a9882 (bd9239f) captured=2026-11-04T02:17:54+08:00
+# each block below is one labeled command run at that HEAD; counts are not merged across runs
+
 ### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
-12 passed in 0.76s
+16 passed in 0.97s
 
 ### $ ./scripts/orch_verify.sh test tests/integration/test_recovery_after_timeout.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
-5 passed in 10.07s
+5 passed in 9.77s
 
 ### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
-17 passed in 10.34s
+21 passed in 10.49s
 
 ### $ ./scripts/orch_verify.sh test tests/unit/test_redaction.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
-14 passed in 1.16s
+14 passed in 1.15s
 
 ### $ ./scripts/orch_verify.sh test tests/integration/test_git_worktree.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
@@ -20,5 +23,14 @@ ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/sha
 
 ### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py tests/unit/test_redaction.py tests/integration/test_git_worktree.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
-36 passed in 11.56s
+40 passed in 11.56s
+
+### $ ./scripts/orch_verify.sh test tests/unit/test_recovery_markers.py -vv -k contract_authorization or reviewer_prompt_sections or unauthorized_contract_change
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+tests/unit/test_recovery_markers.py::test_unauthorized_contract_change_is_computed_not_asserted PASSED [ 16%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_a_prohibition_is_not_a_grant PASSED [ 33%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_an_explicit_grant_suppresses_the_finding PASSED [ 50%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_commit_message_and_diffstat_grant_nothing PASSED [ 66%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_a_bare_mention_grants_nothing PASSED [ 83%]
+tests/unit/test_recovery_markers.py::test_reviewer_prompt_sections_are_rendered_without_new_run_artifacts PASSED [100%]
 
