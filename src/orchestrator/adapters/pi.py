@@ -66,6 +66,8 @@ class PiAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
             model["compat"] = {"cacheControlFormat": "anthropic"}
         if takes_images(ctx.model, self.capabilities):
             model["input"] = ["text", "image"]
+        if ctx.context_window:
+            model["contextWindow"] = ctx.context_window
         config = {
             "providers": {
                 "orchestrator": {

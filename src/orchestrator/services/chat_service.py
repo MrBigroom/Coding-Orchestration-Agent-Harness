@@ -629,6 +629,11 @@ def _require_enabled(session: Session) -> None:
         raise ChatDisabled("interactive sessions are off (allow_interactive_sessions=false)")
 
 
+def _context_windows(session: Session, models: list[str | None]) -> dict[str, int]:
+    found = {m: usage_service.context_window(session, m) for m in models if m}
+    return {m: w for m, w in found.items() if w}
+
+
 def _models_for(session: Session, row: HarnessAdapter) -> list[str]:
     """Enabled profiles whose harness route includes this adapter, workers first, then any
     models the harness always offers."""
@@ -817,6 +822,7 @@ async def open_session(
         output_dir=output_dir,
         state_dir=None if standalone else _state_dir(chat.id),
     )
+    options.context_windows = _context_windows(session, [options.model, *options.models])
     live.spawn(live.start(profile.driver(harness, options, live.emit)))
     return chat
 
@@ -872,6 +878,7 @@ async def continue_session(session: Session, chat_id: int) -> ChatSession:
         state_dir=_state_dir(chat_id),
         resume=chat.harness_session,
     )
+    options.context_windows = _context_windows(session, [options.model, *options.models])
     earlier = replay(chat_id)
     instructions = agent_service.instructions_block(agent) if agent else ""
 

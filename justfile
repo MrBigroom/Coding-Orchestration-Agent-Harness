@@ -1,4 +1,5 @@
 # coding-orchestrator — same targets as the Makefile. `just --list`
+# test/lint go through scripts/orch_verify.sh so they also work in a git worktree.
 venv := ".venv/bin"
 port := env_var_or_default("ORCHESTRATOR_BIND_PORT", "8321")
 
@@ -12,10 +13,13 @@ start:
     {{venv}}/orchestrator serve --port {{port}}
 
 test *ARGS:
-    {{venv}}/pytest {{ARGS}}
+    ./scripts/orch_verify.sh test {{ARGS}}
 
 lint:
-    {{venv}}/ruff check src tests
+    ./scripts/orch_verify.sh lint
+
+verify:
+    ./scripts/orch_verify.sh all
 
 format:
     {{venv}}/ruff format src tests

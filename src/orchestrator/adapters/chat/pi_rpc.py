@@ -24,6 +24,8 @@ PROVIDER = "orchestrator"
 # would otherwise hide.
 OWN_FILES = ("mcp.json", "mcp-auth.json", "extensions")
 FAILED_STOP_REASONS = {"length", "error"}
+# Pi refuses a plain prompt while a run is active; the same message, sent as a steer, queues.
+ALREADY_RUNNING = "already processing"
 EDIT_TITLES = {"Allow edit?", "Allow write?"}
 
 
@@ -52,6 +54,7 @@ class PiDriver(ChatDriver):
         self._ids = itertools.count(1)
         self._mode_file = self.tmp / "permission-mode"
         self._busy = False
+        self._compacting = False
         self._managed = False
         self._session_id = ""
 
@@ -66,6 +69,9 @@ class PiDriver(ChatDriver):
             if wants_explicit_cache(name, self.adapter.capabilities):
                 compat["cacheControlFormat"] = "anthropic"
             entry = {"id": name, "name": name, "reasoning": True, "compat": compat}
+            # Without it Pi assumes 128K and compacts at about 112K, whatever the model holds.
+            if window := self.options.context_windows.get(name):
+                entry["contextWindow"] = window
             if takes_images(name, self.adapter.capabilities):
                 entry["input"] = ["text", "image"]
             entries.append(entry)
@@ -120,10 +126,15 @@ class PiDriver(ChatDriver):
         self._waiting[request_id] = future
         try:
             await self.process.send({"id": request_id, "type": type_, **fields})
-            return await asyncio.wait_for(future, RESPONSE_TIMEOUT)
-        except TimeoutError as e:
-            tail = " | ".join(self.process.stderr_tail)
-            raise DriverError(f"Pi did not answer {type_}: {tail[-500:]}") from e
+            while True:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(future), RESPONSE_TIMEOUT)
+                except TimeoutError as e:
+                    # Pi answers a prompt only after compacting, which can take minutes.
+                    if self._compacting:
+                        continue
+                    tail = " | ".join(self.process.stderr_tail)
+                    raise DriverError(f"Pi did not answer {type_}: {tail[-500:]}") from e
         finally:
             self._waiting.pop(request_id, None)
 
@@ -170,9 +181,12 @@ class PiDriver(ChatDriver):
             self.emit({"type": "status", "status": "busy"})
         try:
             result = await self._request("prompt", **fields)
-        except DriverError:
-            self._set_idle()
-            raise
+        except DriverError as e:
+            if ALREADY_RUNNING not in str(e) or "streamingBehavior" in fields:
+                self._set_idle()
+                raise
+            # A run we lost track of is still going, so queue the message on it instead.
+            result = await self._request("prompt", **fields, streamingBehavior="steer")
         if isinstance(result, dict) and result.get("disposition") == "handled":
             self._set_idle()
 
@@ -250,6 +264,12 @@ class PiDriver(ChatDriver):
             )
         elif kind == "agent_settled":
             self._set_idle()
+        elif kind == "compaction_start":
+            self._compacting = True
+            self.emit({"type": "notice", "message": "Compacting the conversation…"})
+        elif kind == "compaction_end":
+            self._compacting = False
+            self._on_compaction_end(record)
         elif kind == "thinking_level_changed":
             self.emit({"type": "config", "effort": record.get("level")})
         elif kind == "extension_ui_request":
@@ -269,6 +289,23 @@ class PiDriver(ChatDriver):
         if message.get("stopReason") in FAILED_STOP_REASONS:
             reason = message.get("errorMessage") or f"stopped: {message['stopReason']}"
             self.emit({"type": "error", "message": f"Pi: {reason}"})
+
+    def _on_compaction_end(self, record: dict[str, Any]) -> None:
+        result = record.get("result")
+        if isinstance(result, dict):
+            before, after = _n(result.get("tokensBefore")), _n(result.get("estimatedTokensAfter"))
+            message = "Compacted the conversation"
+            if before and after:
+                message += f" from {before:,} to about {after:,} tokens"
+            self.emit({"type": "notice", "message": message + "."})
+            if after:
+                self.set_context(after)
+        elif record.get("aborted"):
+            self.emit({"type": "notice", "message": "Compaction was stopped."})
+        else:
+            reason = record.get("errorMessage") or "no reason given"
+            message = f"Pi couldn't compact the conversation: {reason}"
+            self.emit({"type": "error", "message": message})
 
     async def _on_ui_request(self, record: dict[str, Any]) -> None:
         assert self.process

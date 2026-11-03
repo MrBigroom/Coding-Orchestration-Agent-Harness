@@ -52,6 +52,8 @@ class RunContext:
     tags: list[str] = field(default_factory=list)
     model: str | None = None
     timeout_seconds: int = 1800
+    # The model's context window, for harnesses that are told it (Pi).
+    context_window: int | None = None
 
 
 @dataclass

@@ -147,6 +147,32 @@ def test_gui_commands_disabled_by_default(client, tmp_path):
     assert client.post(f"/api/projects/{p['id']}/commands/test").status_code == 403
 
 
+@requires_git
+def test_project_doctor_route_stays_static(client, tmp_path):
+    """T-6: `--run-commands` is a CLI flag only. The REST doctor route keeps its frozen shape
+    ({ok, checks:[{name, ok, detail}]}) and executes nothing, so the GUI can never trigger a
+    project command — the probe that does run one is reachable from the terminal, deliberately
+    and only there."""
+    from orchestrator.services import git_service
+    from tests.conftest import make_repo
+
+    repo = make_repo(tmp_path / "api-doctor")
+    p = client.post(
+        "/api/projects",
+        json={"name": "ad", "path": str(repo), "test_command": "scripts/orch_verify.sh test"},
+    ).json()
+    r = client.get(f"/api/projects/{p['id']}/doctor")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"ok", "checks"}
+    assert body["checks"] and all(set(c) == {"name", "ok", "detail"} for c in body["checks"])
+    # the opt-in probe is absent from the route's output ... and it created no worktree
+    assert not [c for c in body["checks"] if "worktree" in c["name"]]
+    assert git_service.managed_worktrees() == []
+    # the route takes no extra query parameter: shape unchanged
+    assert client.get(f"/api/projects/{p['id']}/doctor?run_commands=true").json() == body
+
+
 def test_token_auth(initialized, monkeypatch):
     from orchestrator.api.main import create_app
     from orchestrator.core.config import reset_settings_cache

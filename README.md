@@ -59,8 +59,13 @@ Other mock scenarios use tags: `--tag mock-reject` (changes requested → requeu
 ## Everyday use
 
 ```bash
-orchestrator project add myapp ~/code/myapp --test-command "pytest -q" --lint-command "ruff check ."
-orchestrator project doctor myapp
+# commands run with cwd = the task worktree, which has no .venv: use a path-independent
+# wrapper (scripts/orch_verify.sh in this repo is the pattern), not a bare venv-relative one
+orchestrator project add myapp ~/code/myapp \
+    --test-command "scripts/orch_verify.sh test" --lint-command "scripts/orch_verify.sh lint"
+orchestrator project doctor myapp                 # static checks only
+orchestrator project doctor myapp --run-commands  # opt-in: run them in a throwaway worktree and
+                                                  # check they exit 0 AND resolve inside it
 orchestrator task create "Add health endpoint" --project myapp --phase 1 --slug health \
     --dod "GET /health returns 200" --dod "test added and green" --tag qwen
 orchestrator task dry-run T-1         # which harness / model / command would run
@@ -187,10 +192,20 @@ and prompts, and `.env` and key files are never staged. See
 ## Development
 
 ```bash
-make test      # pytest: 120+ offline tests (external CLI checks are opt-in)
-make lint      # ruff check
+make test      # scripts/orch_verify.sh test — the offline pytest suite (external CLI ones skip)
+make lint      # scripts/orch_verify.sh lint — ruff check
 make dev       # backend --reload on :8321 + Vite on :5173
 ```
+
+`make test`/`make lint` go through `scripts/orch_verify.sh`, which works in the main
+checkout **and** in any `git worktree` of it: it takes the interpreter from the main repo's
+`.venv` and puts the *current checkout's* `src` first on `PYTHONPATH`, then prints the
+resolved module path and refuses (exit 3) if the import resolves outside the checkout it is
+running in. Plain `.venv/bin/pytest …` only works in the main checkout — a worktree has no
+`.venv` (`git worktree add` copies tracked files only), and an interpreter whose editable
+`.pth` points at the main checkout would import the main checkout, not the branch: a green
+run that verified the wrong code. `make setup` must have run in the main checkout; nothing
+is installed per worktree and no network is used.
 
 Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migrations}`,
 `web/` (React), `tests/{unit,integration}`, `docs/`.

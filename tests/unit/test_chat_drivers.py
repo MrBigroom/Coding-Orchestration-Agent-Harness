@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.adapters.base import AdapterSpec
+from orchestrator.adapters.chat import pi_rpc
 from orchestrator.adapters.chat.acp import AcpDriver
 from orchestrator.adapters.chat.base import (
     ChatDriver,
@@ -67,6 +68,42 @@ for line in sys.stdin:
         out({"type": "message_end", "message": {"role": "assistant", "usage": {"input": 10, "cacheRead": 90, "cacheWrite": 0, "output": 5}, "stopReason": "stop"}})
         out({"type": "agent_settled", "aborted": False})
     elif t == "abort": ok()
+"""
+)
+
+# Compacts before answering a prompt, slower than the (patched) response timeout. The
+# first plain prompt after that is refused as if a run were still active.
+PI_COMPACTING_STUB = (
+    PRELUDE
+    + """
+import time
+refused = False
+for line in sys.stdin:
+    m = json.loads(line)
+    t = m.get("type")
+    def ok(data=None): out({"id": m.get("id"), "type": "response", "command": t, "success": True, "data": data})
+    if t == "get_state": ok({"model": {"id": "m1", "provider": "x"}, "thinkingLevel": "low"})
+    elif t == "get_available_thinking_levels": ok({"levels": ["off", "low"]})
+    elif t == "get_commands": ok({"commands": []})
+    elif t == "prompt" and m["message"] == "compact":
+        out({"type": "compaction_start", "reason": "threshold"})
+        time.sleep(0.6)
+        out({"type": "compaction_end", "reason": "threshold", "aborted": False, "willRetry": False,
+             "result": {"summary": "s", "tokensBefore": 111269, "estimatedTokensAfter": 32000}})
+        ok({"disposition": "started"})
+        out({"type": "agent_settled", "aborted": False})
+    elif t == "prompt" and m["message"] == "fail":
+        out({"type": "compaction_start", "reason": "threshold"})
+        out({"type": "compaction_end", "reason": "threshold", "aborted": False, "willRetry": False, "errorMessage": "503"})
+        out({"id": m.get("id"), "type": "response", "command": t, "success": False, "error": "503"})
+    elif t == "prompt" and not m.get("streamingBehavior") and not refused:
+        refused = True
+        out({"id": m.get("id"), "type": "response", "command": t, "success": False,
+             "error": "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."})
+    elif t == "prompt":
+        print(json.dumps({"steer": m.get("streamingBehavior")}), file=sys.stderr, flush=True)
+        ok({"disposition": "queued"})
+        out({"type": "agent_settled", "aborted": False})
 """
 )
 
@@ -173,6 +210,25 @@ class Recorder:
 
     async def wait_idle(self) -> None:
         await self.wait(lambda e: e == {"type": "status", "status": "idle"})
+
+
+async def stderr_argv_line(driver, timeout: float = 10) -> str:
+    """The stub harness writes its own argv to stderr, and `spawn()` does not await the
+    stderr pump (`adapters/chat/base.py`: `_read_stderr` is a background task), so indexing
+    `stderr_tail[0]` straight after a start/restart races the pump: under load the deque can
+    still be empty and the test fails on code that did nothing wrong. Poll it instead."""
+
+    async def poll() -> str:
+        while True:
+            for line in list(driver.process.stderr_tail):
+                if line:
+                    return line
+            await asyncio.sleep(0.02)
+
+    try:
+        return await asyncio.wait_for(poll(), timeout)
+    except TimeoutError:
+        pytest.fail(f"the stub harness wrote nothing to stderr within {timeout}s")
 
 
 def options(tmp_path: Path, **kwargs) -> DriverOptions:
@@ -392,8 +448,7 @@ async def test_claude_effort_change_resumes_the_session(tmp_path):
         await rec.wait(lambda e: e["type"] == "config" and e.get("model") == "opus")
         session_id = driver._session_id
         await driver.set_effort("high")
-        await asyncio.sleep(0.2)
-        argv = json.loads(driver.process.stderr_tail[0])
+        argv = json.loads(await stderr_argv_line(driver))
         assert argv[argv.index("--effort") + 1] == "high"
         assert argv[argv.index("--resume") + 1] == session_id
     finally:
@@ -426,10 +481,78 @@ async def test_claude_resumes_its_conversation(tmp_path):
     driver = ClaudeDriver(a, options(tmp_path, resume="sess-old"), rec)
     await driver.start()
     try:
-        argv = json.loads(driver.process.stderr_tail[0])
+        argv = json.loads(await stderr_argv_line(driver))
         assert argv[argv.index("--resume") + 1] == "sess-old"
     finally:
         await driver.close()
+
+
+async def test_pi_waits_for_compaction_before_the_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr(pi_rpc, "RESPONSE_TIMEOUT", 0.2)
+    rec = Recorder()
+    driver = PiDriver(adapter("pi", stub(tmp_path, PI_COMPACTING_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        await driver.prompt("compact")  # answered after 0.6 s, past three timeouts
+        await rec.wait_idle()
+        notices = [e["message"] for e in rec.of("notice")]
+        assert notices == [
+            "Compacting the conversation…",
+            "Compacted the conversation from 111,269 to about 32,000 tokens.",
+        ]
+        assert rec.of("usage")[-1]["context_tokens"] == 32000
+        assert not rec.of("error")
+    finally:
+        await driver.close()
+
+
+async def test_pi_reports_a_failed_compaction(tmp_path):
+    rec = Recorder()
+    driver = PiDriver(adapter("pi", stub(tmp_path, PI_COMPACTING_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        with pytest.raises(DriverError, match="503"):
+            await driver.prompt("fail")
+        assert rec.of("error")[0]["message"] == "Pi couldn't compact the conversation: 503"
+        assert rec.of("status")[-1]["status"] == "idle"
+    finally:
+        await driver.close()
+
+
+async def test_pi_queues_a_prompt_on_a_run_it_lost_track_of(tmp_path):
+    rec = Recorder()
+    driver = PiDriver(adapter("pi", stub(tmp_path, PI_COMPACTING_STUB)), options(tmp_path), rec)
+    await driver.start()
+    try:
+        await driver.prompt("Run 10 is done")
+        await rec.wait_idle()
+        for _ in range(100):  # stderr is read in the background
+            if '{"steer": "steer"}' in driver.process.stderr_tail:
+                break
+            await asyncio.sleep(0.05)
+        assert '{"steer": "steer"}' in driver.process.stderr_tail
+        assert not rec.of("error")
+    finally:
+        await driver.close()
+
+
+def test_pi_models_file_gives_each_model_its_context_window(tmp_path):
+    a = adapter("pi", "pi")
+    a.spec.capabilities = {"provider": {"base_url_default": "http://x/v1", "api_key_env": "KEY"}}
+    opts = options(
+        tmp_path,
+        model="qwen3.8-flash",
+        models=["mystery-model"],
+        context_windows={"qwen3.8-flash": 1_000_000},
+    )
+    driver = PiDriver(a, opts, Recorder())
+    driver.prepared_env()
+    driver._write_models()
+    models = json.loads((driver.tmp / "models.json").read_text())["providers"]["orchestrator"]
+    flash, mystery = models["models"]
+    assert flash["contextWindow"] == 1_000_000
+    assert "contextWindow" not in mystery  # unknown: Pi keeps its default
+    driver._tmp.cleanup()
 
 
 async def test_pi_refuses_to_resume_an_empty_conversation(tmp_path):

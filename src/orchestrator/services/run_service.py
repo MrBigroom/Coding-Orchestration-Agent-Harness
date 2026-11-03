@@ -300,6 +300,7 @@ async def _execute(
         tags=task.tags,
         model=profile.model_name if harness_name != "mock" else None,
         timeout_seconds=adapter.spec.timeout_seconds,
+        context_window=usage_service.context_window(session, profile.model_name),
     )
     try:
         preview = redact(shlex.join(adapter.command_preview(ctx)))
