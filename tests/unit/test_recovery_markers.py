@@ -192,94 +192,198 @@ def test_unauthorized_contract_change_is_computed_not_asserted(session, initiali
     assert again["unauthorized"] == [] and again["authorized"] == ["docs/frozen-contracts.md"]
 
 
-def test_contract_authorization_is_a_grant_not_a_mention(session, initialized, tmp_path):
-    """Reviewer ruling 1: the detector must not be blind in the common case.
+def _auth_scene(session, tmp_path, name: str = "auth"):
+    """The same scene for all four ruling-1 proofs: a worktree whose
+    `docs/frozen-contracts.md` has been edited with no authorization anywhere.
 
-    A prohibition naming the file, a bare mention of it, and a path that appears only in a commit
-    message or a diffstat all authorize NOTHING. Only an explicit grant in the task's stored
-    DoD / acceptance criteria / frozen-contracts entries does.
+    Keeping the scene identical means a difference in verdict can only come from the task's
+    stored fields, which is exactly the thing under test.
     """
     repo = make_repo(
-        tmp_path / "proj",
+        tmp_path / name,
         {"README.md": "# test\n", "docs/frozen-contracts.md": "# frozen\n"},
     )
-    project = project_service.create(session, ProjectCreate(name="proj", path=str(repo)))
-    wt = git_service.ensure_worktree(repo, project.slug, 1, "phase-1-auth", "main")
+    project = project_service.create(session, ProjectCreate(name=name, path=str(repo)))
+    wt = git_service.ensure_worktree(repo, project.slug, 1, f"phase-1-{name}", "main")
     (wt.path / "docs" / "frozen-contracts.md").write_text("# frozen\n\n- widened\n")
-    changed = ["docs/frozen-contracts.md"]
+    return repo, project, wt
 
-    def _task(**fields) -> Task:
-        return task_service.create(
-            session,
-            TaskCreate(
-                title="authorization shapes",
-                project_id=project.id,
-                phase_number=1,
-                phase_slug="auth",
-                **fields,
-            ),
-        )
 
-    def authorized(**fields) -> set[str]:
-        return project_service.authorized_contract_files(_task(**fields))
+def _shaped(session, project, **fields) -> Task:
+    return task_service.create(
+        session,
+        TaskCreate(
+            title="authorization shapes",
+            project_id=project.id,
+            phase_number=1,
+            phase_slug="auth",
+            **fields,
+        ),
+    )
 
-    def unauthorized(**fields) -> list[str]:
-        return project_service.unauthorized_contract_changes(_task(**fields), changed)
 
-    # (a) a PROHIBITION naming the file still yields the unauthorized finding
-    prohibition = dict(
+def _verdict(session, project, task, changed: list[str]) -> tuple[set[str], list[str]]:
+    return (
+        project_service.authorized_contract_files(task),
+        project_service.unauthorized_contract_changes(task, changed),
+    )
+
+
+CONTRACT_CHANGED = ["docs/frozen-contracts.md"]
+
+
+def test_contract_authorization_a_prohibition_is_not_a_grant(session, initialized, tmp_path):
+    """Ruling 1 case (a): a prohibition naming the file still yields the unauthorized finding.
+
+    This was the fail-open shape: T-8's own brief says "Do NOT modify
+    docs/frozen-contracts.md", and a mention-based matcher read that as authorization for the
+    very edit it exists to catch.
+    """
+    _repo, project, _wt = _auth_scene(session, tmp_path, "auth-a")
+
+    task = _shaped(
+        session,
+        project,
         definition_of_done=["Do NOT modify docs/frozen-contracts.md"],
         acceptance_criteria=["docs/frozen-contracts.md must not be edited by this phase"],
     )
-    assert authorized(**prohibition) == set()
-    assert unauthorized(**prohibition) == ["docs/frozen-contracts.md"]
+    assert _verdict(session, project, task, CONTRACT_CHANGED) == (set(), CONTRACT_CHANGED)
 
-    # a negated grant is still a prohibition
-    assert authorized(definition_of_done=["not authorized to change docs/frozen-contracts.md"]) == set()
-    assert authorized(definition_of_done=["never edit docs/frozen-contracts.md"]) == set()
-    assert authorized(definition_of_done=["out of scope: docs/frozen-contracts.md"]) == set()
+    # a negated grant is still a prohibition, whichever negation wording it uses
+    for wording in (
+        "not authorized to change docs/frozen-contracts.md",
+        "never edit docs/frozen-contracts.md",
+        "out of scope: docs/frozen-contracts.md",
+        "docs/frozen-contracts.md is forbidden",
+        "this phase may not amend docs/frozen-contracts.md",
+    ):
+        task = _shaped(session, project, definition_of_done=[wording])
+        assert _verdict(session, project, task, CONTRACT_CHANGED) == (set(), CONTRACT_CHANGED), wording
 
-    # (b) an EXPLICIT GRANT suppresses the finding
-    grant = dict(
-        definition_of_done=[
-            "authorized to amend docs/frozen-contracts.md to add the ORCH_VERIFY field names"
-        ]
-    )
-    assert authorized(**grant) == {"docs/frozen-contracts.md"}
-    assert unauthorized(**grant) == []
-    assert authorized(acceptance_criteria=["docs/frozen-contracts.md may be extended with the new event"]) == {
-        "docs/frozen-contracts.md"
-    }
-    assert authorized(frozen_contracts=["this phase is permitted to update docs/plan.md"]) == {
-        "docs/plan.md"
-    }
-
-    # (c) a path mentioned only in a COMMIT MESSAGE, a DIFFSTAT or the DESCRIPTION grants nothing
-    assert authorized() == set()
-    assert unauthorized() == ["docs/frozen-contracts.md"]
-    description_only = _task(
-        description="amend docs/frozen-contracts.md freely, it is authorized"
-    )
-    assert project_service.authorized_contract_files(description_only) == set()
-
-    # the only authorization sources are the three stored fields; a commit message cannot create one
-    msg_task = _task(definition_of_done=["README.md updated"])
-    run_git(["-c", "user.name=w", "-c", "user.email=w@w", "commit", "-m",
-             "docs/frozen-contracts.md: authorized widening", "-a"], wt.path)
-    logged = run_git(["log", "--format=%B"], wt.path).stdout
-    assert "docs/frozen-contracts.md" in logged  # the message names the file…
-    assert project_service.contract_findings(msg_task, project, wt.path)["unauthorized"] == [
-        "docs/frozen-contracts.md"  # …and that grants it nothing
-    ]
-
-    # a mere mention, with no grant verb, is not authorization — this is T-8's own DoD 8 wording
-    assert authorized(
+    # and T-8's own stored authorization is exactly this shape: it names all five files to
+    # describe the detector, and forbids the edit — so T-8 must not authorize itself
+    task = _shaped(
+        session,
+        project,
         definition_of_done=[
             "the changed-file set is intersected with the contract file list the harness already "
             "knows (docs/plan.md, docs/product-spec.md, docs/architecture.md, docs/workflow.md, "
-            "docs/frozen-contracts.md) and an unauthorized hit becomes a build-log finding"
-        ]
-    ) == set()
+            "docs/frozen-contracts.md)"
+        ],
+        frozen_contracts=["Do NOT modify docs/frozen-contracts.md"],
+    )
+    assert _verdict(session, project, task, CONTRACT_CHANGED) == (set(), CONTRACT_CHANGED)
+
+
+def test_contract_authorization_an_explicit_grant_suppresses_the_finding(session, initialized, tmp_path):
+    """Ruling 1 case (b): an explicit grant in a stored authorization field suppresses it."""
+    _repo, project, wt = _auth_scene(session, tmp_path, "auth-b")
+
+    task = _shaped(
+        session,
+        project,
+        definition_of_done=[
+            "authorized to amend docs/frozen-contracts.md to add the ORCH_VERIFY field names"
+        ],
+    )
+    assert _verdict(session, project, task, CONTRACT_CHANGED) == ({"docs/frozen-contracts.md"}, [])
+    # the finding the gate would raise is really gone, not just relabelled
+    assert project_service.contract_findings(task, project, wt.path) == {
+        "changed": CONTRACT_CHANGED,
+        "authorized": CONTRACT_CHANGED,
+        "unauthorized": [],
+    }
+
+    # a grant in any of the three stored fields counts; the verb may be phrased several ways
+    assert _verdict(
+        session,
+        project,
+        _shaped(
+            session,
+            project,
+            acceptance_criteria=["docs/frozen-contracts.md may be extended with the new event"],
+        ),
+        CONTRACT_CHANGED,
+    ) == ({"docs/frozen-contracts.md"}, [])
+    assert _verdict(
+        session,
+        project,
+        _shaped(session, project, frozen_contracts=["this phase is permitted to update docs/plan.md"]),
+        ["docs/plan.md"],
+    ) == ({"docs/plan.md"}, [])
+
+    # a grant for file X does not leak to file Y
+    task = _shaped(
+        session,
+        project,
+        definition_of_done=["authorized to amend docs/plan.md to add the new section"],
+    )
+    assert _verdict(session, project, task, CONTRACT_CHANGED) == ({"docs/plan.md"}, CONTRACT_CHANGED)
+
+
+def test_contract_authorization_commit_message_and_diffstat_grant_nothing(session, initialized, tmp_path):
+    """Ruling 1 case (c): paths in a commit message, a diffstat or the description authorize zero."""
+    _repo, project, wt = _auth_scene(session, tmp_path, "auth-c")
+
+    # nothing stored at all -> not authorized
+    bare = _shaped(session, project, definition_of_done=["README.md updated"])
+    assert _verdict(session, project, bare, CONTRACT_CHANGED) == (set(), CONTRACT_CHANGED)
+
+    # the task DESCRIPTION talks about amending the file freely; it is not an authorization source
+    described = _shaped(
+        session, project, description="amend docs/frozen-contracts.md freely, it is authorized"
+    )
+    assert project_service.authorized_contract_files(described) == set()
+
+    # a COMMIT MESSAGE that claims a grant, plus the DIFFSTAT that names the file
+    run_git(
+        [
+            "-c", "user.name=w", "-c", "user.email=w@w", "commit", "-m",
+            "authorized to amend docs/frozen-contracts.md: widening the event list", "-a",
+        ],
+        wt.path,
+    )
+    assert "docs/frozen-contracts.md" in run_git(["log", "--format=%B"], wt.path).stdout
+    assert "frozen-contracts.md" in run_git(["diff", "--stat", "main"], wt.path).stdout
+    findings = project_service.contract_findings(bare, project, wt.path)
+    assert findings["unauthorized"] == CONTRACT_CHANGED  # committed words grant nothing
+    assert findings["authorized"] == []
+
+
+def test_contract_authorization_a_bare_mention_grants_nothing(session, initialized, tmp_path):
+    """Ruling 1, the mention half: naming the file in prose is not permission to change it."""
+    _repo, project, _wt = _auth_scene(session, tmp_path, "auth-d")
+    task = _shaped(
+        session,
+        project,
+        definition_of_done=[
+            "report which of docs/frozen-contracts.md, docs/plan.md were touched by the run"
+        ],
+    )
+    assert project_service.authorized_contract_files(task) == set()
+    assert project_service.unauthorized_contract_changes(task, CONTRACT_CHANGED) == CONTRACT_CHANGED
+
+
+def test_reviewer_prompt_sections_are_rendered_without_new_run_artifacts(session, initialized, tmp_path):
+    """The recovery + harness-findings sections reach the Architect prompt.
+
+    Round 5 archived the payload as `runs/<id>/review_payload.md`; that file is not in the frozen
+    artifact layout and no DoD item granted it, so round 6 removed the writer (reviewer finding 2)
+    and pins the sections where they are actually consumed instead.
+    """
+    from orchestrator.services import prompt_builder
+
+    state = prompt_builder.DynamicState(
+        recovery="- abc1234 (recovery of run R-9): chore(orchestrator-recovery): sweep",
+        harness_findings="recovery commits on this branch (harness-created, never self-checked): 1",
+    )
+    rendered = prompt_builder._dynamic(state)
+    assert "Recovery commits on this branch" in rendered
+    assert "NEVER self-checked" in rendered
+    assert "Harness-detected findings" in rendered
+    assert "abc1234" in rendered
+    # an empty state adds nothing: the sections are opt-in, not always-on noise
+    assert "Recovery commits" not in prompt_builder._dynamic(prompt_builder.DynamicState())
 
 
 def test_doctor_reports_untracked_dirt_without_failing_cleanliness(session, initialized, tmp_path):

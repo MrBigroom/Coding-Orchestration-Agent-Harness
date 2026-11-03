@@ -130,7 +130,6 @@ def harness_findings_section(
             "UNAUTHORIZED contract file change(s), detected by the harness: "
             + ", ".join(findings["unauthorized"])
             + ". A phase may change a contract file only when its own DoD/acceptance criteria "
-            ". A phase may change a contract file only when its own DoD/acceptance criteria "
             "explicitly GRANT it (docs/build-loop.md, \"Unauthorized contract edits\") — naming "
             "the file in prose, or forbidding touching it, is not a grant. The Worker's own "
             "assertion of authorization does not count."
@@ -160,11 +159,10 @@ async def architect_review(
         extra={"Missing artifacts detected by orchestrator": "\n".join(missing) or "none"},
     )
     prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)
-    # The payload the reviewer actually saw, stored: "the reviewer was shown X" must be
-    # checkable after the fact instead of argued about.
-    artifact_service.write_text(
-        run.id, "review_payload.md", prompt.static_text() + "\n\n" + prompt.dynamic_text()
-    )
+    # Nothing extra is written to the run directory here. `runs/<run_id>/` is a frozen artifact
+    # layout (docs/frozen-contracts.md), a DoD item did not grant a new file in it, and archiving
+    # the exact prompt the reviewer received is a separately tracked harness item (the truncated
+    # review input) — see docs/build-loop.md, "Review input size (known limitation)".
     choice = provider_service.choose_profile(session, task, Role.architect)
     raw = ""
     try:

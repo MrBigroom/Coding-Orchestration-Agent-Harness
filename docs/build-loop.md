@@ -93,12 +93,16 @@ to the reviewer and in the diff — so a recovery commit is **machine-identifiab
   the project's lint/test commands, repair or report every defect they introduced, and emit a
   BLOCKED handoff with a contract-change request instead of continuing if one touched a
   contract file the phase does not authorize. Logged as `recovery_notice_included`.
-- **Reviewer payload**: `review_service.recovery_section` + `harness_findings_section`, and
-  the GUI marks the diff with a warning block (`TaskDetail.tsx` `RecoveryNote`) built from the
+- **Reviewer payload**: `review_service.recovery_section` + `harness_findings_section`, rendered
+  into the Architect's prompt by `prompt_builder._dynamic` ("Recovery commits on this branch",
+  "Harness-detected findings"), and the GUI marks the diff with a warning block
+  (`TaskDetail.tsx` `RecoveryNote`) built from the
   `recovery_commits` field of `GET /api/tasks/{id}` — that field is the only place the data is
   served; there is no `GET /api/tasks/{id}/recovery` route (reviewer ruling: the route was dead
   code, nothing read it, and no DoD item asked for a new endpoint).
-  `runs/<id>/review_payload.md` keeps what the reviewer was actually shown.
+  The payload itself is **not** archived as a new `runs/<id>/` file: that directory layout is a
+  frozen contract and no DoD item grants a new artifact in it — see
+  "Review input size (known limitation)" below.
 - Sensitive paths (`.env`, keys) are **never** staged into a recovery commit; they stay on
   disk untracked and are reported in `skipped_sensitive`.
 
@@ -192,8 +196,9 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
 4. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
    only artifacts: the diff, handoff, test summary, verification narrative, the recovery
    commit list, the harness-computed contract findings, and a list of missing artifacts.
-   The exact payload is stored as `runs/<id>/review_payload.md`, so "the reviewer was shown
-   X" is checkable afterwards instead of arguable.
+   Sections are truncated by the `max_log_tokens` / `max_diff_tokens` settings, and nothing is
+   archived to say which bytes the model actually received — see
+   "Review input size (known limitation)" below.
    - `NEEDS_HUMAN` → `blocked`
    - `CHANGES_REQUESTED` → back to the Worker on the same branch
    - after `max_review_rounds` rounds (default 3) → `blocked`
@@ -289,6 +294,24 @@ Missing required artifacts are always added as findings, and an `APPROVED` verdi
 missing artifacts is downgraded to `CHANGES_REQUESTED`. If the reviewer claims it
 executed anything ("I ran…"), a note records that the claim is disregarded.
 
+### Review input size (known limitation)
+
+The Architect prompt is assembled from artifacts and truncated per section
+(`prompt_builder._dynamic`, `max_log_tokens` / `max_diff_tokens`). A large handoff block or a
+long diff can therefore reach the reviewer cut off — measured on T-8 round 5, where the supplied
+handoff block stopped mid DoD 5 and DoD 6-10 plus the trailing fields were never reviewable.
+Nothing today archives the exact bytes the model received, so "the reviewer was shown X" is not
+checkable after the fact.
+
+This is a **harness limitation, not a T-8 deliverable**: no DoD item asked for review-input
+budgeting or archiving, and the obvious fix — writing a new `runs/<run_id>/review_payload.md` —
+would amend the *frozen artifact directory layout* (`frozen-contracts.md`), which requires its
+own contract-change request and a human decision. An earlier revision on this branch did add
+that file; round 6 removed it for exactly this reason (reviewer finding 2). It stays owned by the
+separate review-payload-archiving item, where the sizing policy, the layout change and the CCR
+can be decided together. Workers mitigate in the meantime by keeping the handoff block small and
+pointing evidence at committed files the reviewer can open directly (`verify-evidence/<task>/`).
+
 ## Verification artifacts
 
 `runs/<run_id>/verification.md` + `verification.json`, plus `test.log`,
@@ -309,12 +332,13 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 
 ### Terminal run events
 
-A run's terminal status is `completed | failed | timeout | cancelled`. Three of them had a
-named event (`run_failed`, `run_timeout`, and `run_error` for an unexpected exception); a run
-that finished normally had none — `run_cancelled` does not exist as an event name either, a
-cancel shows up as a `task_status` line reading `run cancelled`. A green run was therefore
-observable only as a `task_status` transition, so any consumer had to *derive* the single most
-important trigger indirectly. `run_completed` is that missing event.
+A run's terminal status is `completed | failed | timeout | cancelled`. Two of the four had a
+named event (`run_failed`, `run_timeout`); `cancelled` shows up only as a `task_status` line
+reading `run cancelled`, and a run that finished normally had none — there is no
+`run_cancelled` event name either. (`run_error` exists but is not a terminal *status*: it labels
+an unexpected exception inside the harness, after which the run still ends as `failed`.) A green
+run was therefore observable only as a `task_status` transition, so any consumer had to *derive*
+the single most important trigger indirectly. `run_completed` is that missing event.
 
 **Where each terminal event is emitted (deliberate split, reviewer ruling 2).**
 `run_completed` is emitted inside `run_service._set_run`, the single writer of `run.status`, so it
@@ -325,9 +349,8 @@ code, the timeout reason) that their `details` carry, and `_set_run` does not. M
 `_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
 line. The shared chokepoint is the **status transition** (`_set_run` is the only writer, and every
 terminal status has exactly one event), not the `log_event` call site. The consumer that motivated
-the event — the **T-9** notification fan-out — is the reason it must be a named event at all.
-It is
-**additive** — no existing event name and no line-shape key changed — and adding it to the
+the event — the **T-9** notification fan-out — is the reason it must be a named event at all. It
+is **additive** — no existing event name and no line-shape key changed — and adding it to the
 vocabulary was authorized by this task's Definition of Done, so `docs/frozen-contracts.md`
 itself is untouched (it does not enumerate build-log event names; the frozen list is the
 *line shape*).
