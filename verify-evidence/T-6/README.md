@@ -23,7 +23,7 @@ Outputs use the `.txt` suffix because `*.log` is gitignored.
 ## Logs and what they show
 
 * `make_test.txt` — `./scripts/orch_verify.sh test` (what `make test` runs) in **this** worktree:
-  marker line naming this worktree's `src`, then `395 passed, 6 skipped`, exit 0.
+  marker line naming this worktree's `src`, then `395 passed, 6 skipped`, `exit=0`.
 * `make_lint.txt` — `./scripts/orch_verify.sh lint` (`make lint`): `All checks passed!`, exit 0.
 * `dod2_fresh_worktree.txt` — `git worktree add --detach <tmp> main` → no `.venv`, no wrapper
   (the wrapper ships with this branch, so the literal run against `main` is pending operator
