@@ -27,7 +27,8 @@ Outputs use the `.txt` suffix because `*.log` is gitignored.
 * `make_lint.txt` — `./scripts/orch_verify.sh lint` (`make lint`): `All checks passed!`, exit 0.
 * `dod2_fresh_worktree.txt` — `git worktree add --detach <tmp> main` → no `.venv`, no wrapper
   (the wrapper ships with this branch, so the literal run against `main` is pending operator
-  acceptance after merge; `git rev-list --left-right --count main...HEAD` is `0 14` and
+  acceptance after merge; `git rev-list --left-right --count main...HEAD` was `0 14` in that log (it
+  grows with each evidence-only commit; `0 17` at the current HEAD) and
   `git merge-tree --write-tree main HEAD` returns HEAD's own tree, i.e. merging is a
   fast-forward and the content is identical). Unwrapped, the main venv interpreter imports the
   **main checkout** (the trap). Detached at this branch's commit in the same worktree: the
