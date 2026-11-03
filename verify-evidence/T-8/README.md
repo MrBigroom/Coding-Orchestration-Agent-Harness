@@ -15,7 +15,7 @@ committed next to their output so every number here is re-runnable with
 output from R-10` commit.** That is exactly the artifact class this task exists to label: run 10
 was SIGTERMed at the 2700 s adapter timeout with no `handoff.json`, so the Worker never
 self-checked any of it, and the harness committed the wreckage under the orchestrator git
-identity. Round 2 (this round) did **not** re-implement or re-author that content and did not
+identity. Round 2 did **not** re-implement or re-author that content and did not
 rewrite, amend, rebase or split `ba77a43` — laundering wreckage into apparent intentional work
 would be the very defect T-8 fixes. What round 2 did:
 
@@ -25,6 +25,19 @@ would be the very defect T-8 fixes. What round 2 did:
   referenced but never written and the missing `run_completed` entry in the event vocabulary
   (`232b6d4`), the LINT-command half of DoD 5 and the GUI-header half of DoD 7 (`05011a4`),
   and the recovery-detection boundary note (`05011a4`).
+
+**Round 3 is submit-only, and changed no code.** Round 2 wrote a valid `.orchestrator/handoff.json`
+at 01:11 and was SIGTERMed at 01:12:04; `run_service.execute` returns at l.395 on a non-clean exit,
+before `adapter.parse_result` at l.397, so the harness could not ingest a handoff that already
+existed. That ingestion defect belongs to **T-10** — `run_service.py` is untouched here. Round 3
+re-submits round 2's handoff (preserved by the operator under
+`~/.local/share/coding-orchestrator/evidence/T-8-round2-discarded-handoff/`), corrects the DoD 10
+wording that still argued for `\b` (the item now names the shipped `(?<![A-Za-z0-9])`, adopting
+`94db0cc`), corrects the memory suggestion that carried the same stale claim, and re-measures at
+`5a0cd1a` (`7750c86`). Round 2's own uncommitted evidence refresh was swept into `5a0cd1a`, a second
+`chore(orchestrator-recovery): uncommitted worker output from R-11` commit (9 files, +136/-65, all
+under `verify-evidence/`) — also left unamended, and also never self-checked by the Worker who wrote
+it, which is why it is named here rather than silently folded into the evidence.
 
 ## DoD item → where it is, and what proves it
 
@@ -43,8 +56,10 @@ would be the very defect T-8 fixes. What round 2 did:
 
 ## Logs
 
-Captured at HEAD `94db0cc` (the last commit that changes anything the suite reads; every commit
-after it touches only `verify-evidence/`, `docs/build-loop.md` prose or `.orchestrator/`).
+Captured at HEAD `5a0cd1a` by round 3 (`7750c86`), i.e. the real tree under review, including the
+R-11 recovery sweep. Counts are unchanged from round 2's capture at `94db0cc` — `5a0cd1a` touched
+only `verify-evidence/`, so nothing the suite reads moved; the diff between the two captures is the
+timing line (`48.43s` → `48.00s`).
 
 | File | What it is |
 | --- | --- |
@@ -53,7 +68,7 @@ after it touches only `verify-evidence/`, `docs/build-loop.md` prose or `.orches
 | `dod1_recovery_machinery.sh` / `.txt` | the shipped detector run over real git objects: this branch's own history (where `ba77a43` is **not** flagged, because it predates the trailer — see the boundary note in `docs/build-loop.md`), a fresh simulated sweep, and the two dirty predicates |
 | `dod10_redaction_probe.sh` / `.txt` | old-vs-new redaction over the same strings, plus the real `merge_candidate` line shape |
 | `dod4_gui_typecheck.sh` / `.txt` | `tsc -b --force` over this branch's `web/src` (toolchain taken from the main checkout because a worktree has no `node_modules`), exit 0, with the `--listFiles` proof that the sources read are the worktree's, and the grep of the recovery surfaces the GUI renders |
-| `targeted_tests.txt` | the three T-8 test files run on their own: `16 passed` (`test_recovery_after_timeout.py` + `test_recovery_markers.py`) and `13 passed` (`test_redaction.py`) |
+| `targeted_tests.sh` / `.txt` | the T-8 test files run on their own, **labeled per command** (round 2's file carried three unlabeled counts — 16 and 14 reconcile against single-file runs, 22 reconciled against none, so it is regenerated from explicit commands): 11 `test_recovery_markers.py`, 5 `test_recovery_after_timeout.py`, 16 combined, 14 `test_redaction.py`, 5 `test_git_worktree.py`, 35 all four |
 
 ## What is NOT claimed here
 
@@ -66,6 +81,11 @@ after it touches only `verify-evidence/`, `docs/build-loop.md` prose or `.orches
   detector is trailer-only on purpose (`docs/build-loop.md:108-115`, "Boundary"), so the honest
   statement of provenance lives in this file, in `handoff.md` and in `handoff.json`, not in a
   silent flag.
+* **The same is now true of `5a0cd1a`**, round 2's sweep: it is the repo's second pre-trailer
+  `chore(orchestrator-recovery)` commit (`main..HEAD: 11 commit(s)`, both recovery commits read
+  `recovery=False run=None` in `dod1_recovery_machinery.txt` § (a) — that file is the round-3
+  capture). Neither can be annotated retroactively without the amendment that was refused, so
+  both are declared here in prose instead.
 * `run_completed` fires whenever `run.status` becomes `completed`, including the
   BLOCKED-handoff path (`run_service.py:487-497`): the run finished normally, the *task* is
   blocked. That is deliberate (the event describes the run, not the verdict) and is what T-9

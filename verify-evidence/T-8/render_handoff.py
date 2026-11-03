@@ -16,14 +16,29 @@ raw = json.load(open(".orchestrator/handoff.json"))
 h = Handoff.model_validate(raw)
 t = h.tests
 
+
+def git(*args: str) -> str:
+    """Measure divergence at render time so this block cannot go stale between commits."""
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+# `--left-right --count main...HEAD` prints LEFT=on-main-not-here (behind), RIGHT=here-not-main (ahead).
+_behind, _ahead = (git("rev-list", "--left-right", "--count", "main...HEAD").split() + ["?"])[:2]
+_head = git("rev-parse", "--short", "HEAD")
+
 L: list[str] = []
 L.append("# T-8 handoff — recovery commits after a timeout committed half-finished worker edits\n")
 L.append(
     f"**Branch:** `{h.branch}`  \n**Status:** `{h.status}`  \n**Phase:** {h.phase}  \n"
-    "**Base:** `main` (merge-base `14a221c`); branch is **2 behind / 8+ ahead** of `main@360228a` "
-    "(`git rev-list --left-right --count main...HEAD` = `2 8`, measured at the final commit); "
+    "**Base:** `main` (merge-base `14a221c`); measured by this script at render time on "
+    f"HEAD `{_head}`: `git rev-list --left-right --count main...HEAD` = `{_behind} {_ahead}` "
+    f"({_behind} behind / {_ahead} ahead of `main@{git('rev-parse','--short','main')}`). The "
+    "evidence-only commit that records this regeneration adds one to the ahead count. "
     "`git merge-tree --write-tree main HEAD` = no conflicts. Not merged, not pushed.\n"
-    "(`git merge-tree --write-tree main HEAD` = no conflicts). Not merged, not pushed.\n"
 )
 L.append("## Summary\n\n" + h.summary + "\n")
 L.append(
@@ -35,17 +50,32 @@ L.append(
     "which is the exact defect this task is about. It is left exactly as it is: not "
     "re-implemented, not rewritten, not amended, not rebased, not re-split into neat feature "
     "commits.\n\n"
-    "Round 2 (this round) did three things:\n\n"
-    "1. wrote this handoff first, then verified every item by reading the shipped file and line;\n"
-    "2. implemented the only item `ba77a43` did not contain — **DoD 10**, the redaction anchor "
-    "(`9001e82`);\n"
-    "3. closed three gaps found while verifying, in separate `feat(T-8)` commits: `232b6d4` (the "
+    "Round 2 (run 11) wrote this handoff first, then verified every item by reading the shipped "
+    "file and line; implemented the only item `ba77a43` did not contain — **DoD 10**, the redaction "
+    "anchor (`9001e82`, sharpened to a negative lookbehind in `94db0cc`); and closed three gaps "
+    "found while verifying, in separate `feat(T-8)` commits: `232b6d4` (the "
     "two `docs/build-loop.md` sections that were *referenced but never written*, and "
     "`run_completed` missing from the event vocabulary — so DoD 6/7's \"documented\" was not "
     "literally true), `e42304a` (DoD 5's **lint**-command half: run 5's real defect was an F821 "
     "and `ba77a43` proved only the runtime/test path), `05011a4` (DoD 7's GUI-header half: the "
     "assertion was on the ORM row, not on the payload the header renders) plus the committed "
-    "evidence directory, and `e7953b5` (CCR-T8-01, PROPOSED).\n"
+    "evidence directory, and `e7953b5` (CCR-T8-01, PROPOSED). Round 2 was then SIGTERMed at the "
+    "2700 s timeout one minute after writing its handoff, and its uncommitted evidence refresh was "
+    "swept by the harness into `5a0cd1a` — a second `chore(orchestrator-recovery): uncommitted "
+    "worker output from R-11` commit (9 files, +136/-65, all under `verify-evidence/`), also left "
+    "exactly as it is.\n\n"
+    "**Round 3 (this round) is SUBMIT-ONLY.** Round 2's `.orchestrator/handoff.json` was valid at "
+    "01:11 (status `READY_FOR_REVIEW`, 416/0/6, 10 DoD items, blockers `[]`) and the run was killed "
+    "at 01:12:04; `run_service.execute` returns at l.395 on a non-clean exit, before "
+    "`adapter.parse_result` at l.397, so a timed-out run cannot ingest a handoff that already "
+    "exists. That ingestion defect is owned by **T-10**, not here — `run_service.py` was not "
+    "touched in round 3. Round 3 re-submits round 2's handoff, preserved by the operator at "
+    "`~/.local/share/coding-orchestrator/evidence/T-8-round2-discarded-handoff/`, and changes only: "
+    "the provenance text; the DoD 10 item wording, which now names the negative lookbehind "
+    "`(?<![A-Za-z0-9])` instead of a word boundary (adopting `94db0cc`'s reasoning — `\\bsk-` would "
+    "miss `TOKEN_sk-proj-…`, i.e. `\\b` would have weakened redaction while fixing the names); the "
+    "one memory suggestion that still carried the stale `\\b` claim; and a re-measurement of "
+    "lint/tests/targeted at `5a0cd1a` (`7750c86`). **No production or test code changed in round 3.**"
 )
 L.append(
     "## Tests\n\n"
@@ -55,8 +85,10 @@ L.append(
     f"Log: `{t.log_path}` (committed). The wrapper prints "
     "`ORCH_VERIFY|mode=test|module_file=…/worktrees/coding-orchestrator/8/src/…` and exits 3 if "
     "the import resolves outside this worktree, so the numbers describe **this branch**, not the "
-    "main checkout. Targeted: `verify-evidence/T-8/targeted_tests.txt` (16 recovery + 13 "
-    "redaction). GUI: `tsc -b --force` over this branch's `web/src` → exit 0 "
+    "main checkout. Targeted: `verify-evidence/T-8/targeted_tests.txt`, now LABELED per command and "
+    "re-runnable via `verify-evidence/T-8/targeted_tests.sh` (11 `test_recovery_markers.py` + 5 "
+    "`test_recovery_after_timeout.py` = 16 recovery, 14 `test_redaction.py`, 5 "
+    "`test_git_worktree.py`, 35 combined). GUI: `tsc -b --force` over this branch's `web/src` → exit 0 "
     "(`verify-evidence/T-8/dod4_gui_typecheck.txt`). All tests offline: mock harness, mock "
     "provider, temp git repos; no live service, no network, no new dependency.\n"
 )
