@@ -132,7 +132,8 @@ the gate's green-claim comparison silently sees `passed: 0`. Pass `-k`, `-x` or 
 wrapper instead of more quiet flags.
 
 `orchestrator project doctor <name> --run-commands` (opt-in; off by default, and not exposed
-on the API or in the GUI) executes each configured command in a throwaway worktree of the
+on the API or in the GUI — `GET /api/projects/{id}/doctor` keeps its static shape, pinned by
+`tests/integration/test_api.py::test_project_doctor_route_stays_static`) executes each configured command in a throwaway worktree of the
 base branch and reports both the exit code and whether `module_file` landed inside that
 worktree — so the trap shows up at project registration instead of mid-gate. A command that
 exits 0 **without** an `ORCH_VERIFY` marker is reported as a failure: an unproven resolution
