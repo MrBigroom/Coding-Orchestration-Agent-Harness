@@ -1,11 +1,12 @@
 import { ArrowUp, BookmarkPlus, Bot, ChevronRight, CircleAlert, FileText, Lightbulb, FolderOpen, GitBranch, MessageSquarePlus, Paperclip, Play, ShieldAlert, Square, Terminal, TriangleAlert, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { isValidElement, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { api, del, getToken, patch, post } from "../api/client";
 import type { ChatCatalog, ChatChanges, ChatHarness, ChatSession, ChatUsage, PermissionMode, Project } from "../api/types";
+import { Code, Diff, guessLang, looksLikeDiff } from "../components/Code";
 import { Badge, ConfirmButton, Empty, ErrorNote, Field, Pre } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { useChatSession, type ChatItem, type SlashCommand } from "../hooks/useChatSession";
@@ -39,7 +40,12 @@ function ContextMeter({ usage }: { usage: Partial<ChatUsage> }) {
 }
 
 const MARKDOWN: Components = {
-  pre: ({ children }) => <Pre>{children}</Pre>,
+  // A fenced block arrives as <pre><code class="language-x">; inline code stays as it is.
+  pre: ({ children }) => {
+    const code = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : null;
+    const lang = /language-(\S+)/.exec(code?.className ?? "")?.[1] ?? null;
+    return <Code code={String(code?.children ?? "")} lang={lang} />;
+  },
   a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
 };
 
@@ -119,6 +125,27 @@ function formatInput(input: unknown): string {
   return typeof input === "string" ? input : JSON.stringify(input, null, 2);
 }
 
+const PATH_KEYS = ["file_path", "path", "filePath", "filename", "file"];
+
+/** The file a tool call names, so its output can be highlighted in that file's language. */
+function inputPath(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  const fields = input as Record<string, unknown>;
+  const key = PATH_KEYS.find((k) => typeof fields[k] === "string");
+  return key ? (fields[key] as string) : null;
+}
+
+/** A shell command shows as a command; anything else as JSON. */
+function ToolInput({ input }: { input: unknown }) {
+  const text = formatInput(input);
+  if (!text) return null;
+  const fields = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
+  if (fields && typeof fields.command === "string" && Object.keys(fields).every((k) => ["command", "description", "timeout"].includes(k))) {
+    return <Code code={fields.command} lang="shellscript" />;
+  }
+  return <Code code={text} lang={typeof input === "string" ? guessLang(text) : "json"} />;
+}
+
 function ToolCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
   const state = !item.done ? "running" : item.error ? "failed" : "completed";
   return (
@@ -127,8 +154,10 @@ function ToolCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
       <span className="mono min-w-0 truncate">{item.name}</span>
       <span className="ml-auto"><Badge value={state} /></span>
     </>}>
-      {formatInput(item.input) && <Pre>{formatInput(item.input)}</Pre>}
-      {item.output && <Pre>{item.output}</Pre>}
+      <ToolInput input={item.input} />
+      {item.output && (looksLikeDiff(item.output)
+        ? <Diff diff={item.output} />
+        : <Code code={item.output} lang={guessLang(item.output, inputPath(item.input))} />)}
     </Disclosure>
   );
 }
@@ -144,7 +173,9 @@ function ApprovalCard({ item, onAnswer, disabled }: { item: Extract<ChatItem, { 
         <ShieldAlert size={16} className="shrink-0 text-warn" aria-hidden="true" />
         {item.title}
       </div>
-      {item.detail && <Pre className="mb-3 max-h-60">{item.detail}</Pre>}
+      {item.detail && <div className="mb-3">{looksLikeDiff(item.detail)
+        ? <Diff diff={item.detail} maxHeight="max-h-60" />
+        : <Code code={item.detail} lang={guessLang(item.detail)} maxHeight="max-h-60" />}</div>}
       <div className="flex flex-wrap gap-2">
         {item.options.map((o) => (
           <button key={o.id} disabled={disabled} className={`btn ${o.tone === "deny" ? "btn-danger" : "btn-primary"}`} onClick={() => onAnswer(item.id, o.id)}>
@@ -608,6 +639,7 @@ function ChangesPanel({ chat, ended, onDone }: { chat: ChatSession; ended: boole
         {data && !data.isolated && <p className="text-muted">This session worked directly in the project checkout, so there is no branch to merge.</p>}
         {data?.uncommitted && <div><div className="label">Uncommitted</div><Pre>{data.uncommitted}</Pre></div>}
         {data?.diffstat && <div><div className="label">Committed against {data.base_branch}</div><Pre>{data.diffstat}</Pre></div>}
+        {data?.diff && <div><div className="label">Diff{data.isolated ? ` against ${data.base_branch}` : ""}</div><Diff diff={data.diff} /></div>}
         {data && !data.uncommitted && !data.diffstat && <p className="text-muted">No changes yet.</p>}
         {data?.isolated && (
           <div className="flex flex-wrap items-center gap-2">

@@ -61,6 +61,8 @@ IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "ima
 IMAGE_NAME = re.compile(r"\d+\.(png|jpg|gif|webp)")
 MAX_IMAGES = 4
 MAX_IMAGE_BYTES = 5_000_000
+MAX_DIFF_CHARS = 400_000  # the Changes panel's diff; bigger ones are cut
+MAX_NEW_FILES = 50  # untracked files shown as new in that diff
 REPLAY_TOKENS = 24_000  # the newest part of a transcript replayed to a fresh harness
 REPLAY_INTRO = (
     "This session continues an earlier conversation in this same workspace. The harness "
@@ -957,6 +959,7 @@ def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
             "merge_enabled": False,
             "uncommitted": "",
             "diffstat": "",
+            "diff": "",
         }
     project = _project(session, chat)
     path = Path(chat.cwd)
@@ -967,6 +970,7 @@ def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
         "merge_enabled": settings_service.get(session, "merge_enabled"),
         "uncommitted": "",
         "diffstat": "",
+        "diff": "",
     }
     if chat.workspace == "worktree":
         result["merge_command"] = git_service.merge_command(
@@ -974,9 +978,25 @@ def changes(session: Session, chat: ChatSession) -> dict[str, Any]:
         )
     if path.is_dir():
         result["uncommitted"] = status_porcelain(path)
+        # Against the branch point for a worktree (committed and uncommitted work), against
+        # HEAD in the project's own checkout, plus new files git doesn't track yet.
+        since = "HEAD"
         if chat.workspace == "worktree":
             spread = f"{project.base_branch}...HEAD"
             result["diffstat"] = run_git(["diff", "--stat", spread], path).stdout
+            fork = run_git(["merge-base", project.base_branch, "HEAD"], path, check=False)
+            since = fork.stdout.strip() or since
+        diff = run_git(["diff", since], path, check=False).stdout
+        new = run_git(["ls-files", "--others", "--exclude-standard", "-z"], path, check=False)
+        for name in [n for n in new.stdout.split("\0") if n][:MAX_NEW_FILES]:
+            if len(diff) > MAX_DIFF_CHARS:
+                break
+            # --no-index exits 1 when the files differ, which they always do here.
+            added = run_git(["diff", "--no-index", "--", "/dev/null", name], path, check=False)
+            diff += added.stdout
+        if len(diff) > MAX_DIFF_CHARS:
+            diff = diff[:MAX_DIFF_CHARS] + f"\n… diff truncated at {MAX_DIFF_CHARS:,} characters\n"
+        result["diff"] = redact(diff)
     return result
 
 

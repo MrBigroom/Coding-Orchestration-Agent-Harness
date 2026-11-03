@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, post } from "../api/client";
 import type { Project, Task } from "../api/types";
-import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, Pre, lines } from "../components/ui";
+import { Code } from "../components/Code";
+import { Badge, Card, ConfirmButton, Empty, ErrorNote, Field, PageHeader, lines } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 
 const STATUSES = ["", "draft", "planned", "queued", "in_progress", "review", "blocked", "accepted", "rejected", "archived"];
@@ -133,7 +134,7 @@ export default function Tasks() {
       </div>
       {preview && (
         <div className="mt-4"><Card title={`Dry-run preview (task ${preview.id})`} actions={<button className="btn" onClick={() => setPreview(null)}>Close</button>}>
-          <Pre>{JSON.stringify(preview.data, null, 2)}</Pre>
+          <Code code={JSON.stringify(preview.data, null, 2)} lang="json" />
         </Card></div>
       )}
     </>

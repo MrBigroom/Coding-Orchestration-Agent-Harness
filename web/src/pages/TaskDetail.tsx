@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, post } from "../api/client";
 import type { Adapter, ModelProfile, TaskDetail as TD } from "../api/types";
-import { Badge, Card, ConfirmButton, Empty, ErrorNote, PageHeader, Pre, fmtTime } from "../components/ui";
+import { Code, Diff } from "../components/Code";
+import { Badge, Card, ConfirmButton, Empty, ErrorNote, PageHeader, fmtTime } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { useRunLogs } from "../hooks/useRunLogs";
 
@@ -22,20 +23,14 @@ function Artifact({ runId, name, json }: { runId: number; name: string; json?: b
   if (err) return <div className="text-sm text-muted">{name}: {err}</div>;
   if (text === null) return <div className="text-sm text-muted">loading {name}…</div>;
   if (!text.trim()) return <Empty>{name} is empty.</Empty>;
-  return <Pre className={json ? "" : ""}>{text}</Pre>;
+  return <Code code={text} lang={json ? "json" : null} path={name} />;
 }
 
 function DiffView({ runId }: { runId: number }) {
   const [text, setText] = useState("");
   useEffect(() => { api<string>(`/artifacts/${runId}/patch.diff`).then((d) => setText(String(d ?? ""))).catch(() => setText("")); }, [runId]);
   if (!text.trim()) return <Empty>No diff for this run.</Empty>;
-  return (
-    <pre className="mono max-h-[40rem] overflow-auto rounded-md border border-line bg-bg p-3 text-xs leading-relaxed">
-      {text.split("\n").map((l, i) => (
-        <div key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "text-ok" : l.startsWith("-") && !l.startsWith("---") ? "text-bad" : l.startsWith("@@") ? "text-info" : l.startsWith("diff ") ? "text-accent" : ""}>{l || " "}</div>
-      ))}
-    </pre>
-  );
+  return <Diff diff={text} />;
 }
 
 function Logs({ runId }: { runId: number }) {

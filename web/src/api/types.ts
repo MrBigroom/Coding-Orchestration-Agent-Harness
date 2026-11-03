@@ -338,4 +338,5 @@ export interface ChatChanges {
   merge_command?: string;
   uncommitted: string;
   diffstat: string;
+  diff: string;
 }

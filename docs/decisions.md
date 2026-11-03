@@ -212,3 +212,13 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `--no-session`; it now saves into the chat's own folder, which Delete already removes.
   Because chats can come back, closing the desktop app no longer asks about open chats,
   only about active runs (standalone runs included) and queued tasks.
+
+- **2026-11-03 — Fonts and syntax highlighting in the GUI.** Text and code fonts are a
+  per-browser preference like the theme, and every font is bundled (fontsource, OFL), keeping
+  the no-CDN rule. Highlighting uses Shiki rather than highlight.js or Prism because it runs
+  VS Code's own grammars and themes, so code looks as it does in an editor. It uses the
+  JavaScript regex engine (no WebAssembly), and each of its languages and themes is a chunk
+  loaded on first use, so the app's first load barely grows; the build gains about 12 MB of
+  those chunks. Tokens carry both theme colors, so switching light and dark needs no
+  re-highlighting. Blocks over 150k characters or 3,000 lines stay plain. The Chat Changes
+  panel now returns the diff itself, untracked files included.
