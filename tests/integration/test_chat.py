@@ -172,6 +172,7 @@ def test_session_flow_in_a_worktree(enabled, project, tmp_path):
 
     changes = enabled.get(f"/api/chat/sessions/{chat['id']}/changes").json()
     assert "mock-chat-1.md" in changes["uncommitted"]
+    assert "+++ b/mock-chat-1.md" in changes["diff"] and "+add a note" in changes["diff"]
     assert not (tmp_path / "repo" / "mock-chat-1.md").exists()
 
     # Off until merging is allowed, and the session must have ended first.

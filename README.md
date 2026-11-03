@@ -83,7 +83,10 @@ day, as a heatmap and stacked bars), Chat, Tasks, Task Detail (live logs, diff, 
 review, verification, accept/reject/escalate, retry with a different harness/model),
 Agents, Scheduled Tasks, Projects, Models & Providers, Adapters, Memory, Prompt Cache,
 Build Log, and Settings. It has light and dark themes (switch in the sidebar or on
-Settings), with fonts bundled locally.
+Settings) and a choice of text and code fonts (Inter, IBM Plex, Fira Code, JetBrains Mono,
+Roboto Mono or your system's), all bundled locally. Code, diffs and JSON are highlighted with
+VS Code themes (pick a light and a dark one on Settings), with line numbers and a copy
+button.
 
 ## Chat with a harness directly
 

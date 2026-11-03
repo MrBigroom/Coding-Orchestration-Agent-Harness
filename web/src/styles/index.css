@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @config "../../tailwind.config.js";
 
-/* Design tokens modelled on Qwen Cloud's console: Inter / Roboto Mono (bundled via main.tsx, no CDN),
+/* Design tokens modelled on Qwen Cloud's console: Inter / Roboto Mono by default (every font is
+   bundled via main.tsx, no CDN; Settings can swap both, see src/fonts.ts),
    violet accent, soft panels, 18px cards and pill buttons. Light is the base palette;
    [data-theme="dark"] on <html> swaps the colors (set before first paint by the inline script in index.html; see src/theme.ts). */
 @theme {
@@ -23,7 +24,7 @@
   --color-pink: #d64eff;
   --color-orange: #ff9064;
   --font-sans: "Inter Variable", "Inter", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Roboto Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --font-mono: "Roboto Mono", ui-monospace, Menlo, monospace;
   --radius-card: 18px;
   --shadow-card: 0 8px 24px rgb(83 91 107 / 0.06);
   --shadow-pop: 0 16px 48px rgb(83 91 107 / 0.1);
@@ -69,7 +70,7 @@ html, body, #root { height: 100%; }
 html { color-scheme: light; }
 body {
   background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased; font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased; font-feature-settings: var(--font-sans-features, "cv11", "ss01");
 }
 ::selection { background: color-mix(in srgb, var(--color-accent) 25%, transparent); }
 pre, code, .mono { font-family: var(--font-mono); }
@@ -110,3 +111,15 @@ pre, code, .mono { font-family: var(--font-mono); }
   .markdown input[type="checkbox"] { @apply mr-1.5 align-middle; }
   .text-gradient { background: var(--gradient-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
 }
+
+/* Highlighted code (components/Code.tsx). Shiki puts each token's light and dark color in
+   --shiki-light / --shiki-dark, and the theme's colors on the block; the app theme picks. */
+.code-block { background: var(--shiki-light-bg, var(--color-bg)); color: var(--shiki-light, var(--color-ink)); }
+.code-tok { color: var(--shiki-light); font-style: var(--shiki-light-font-style, inherit); font-weight: var(--shiki-light-font-weight, inherit); }
+[data-theme="dark"] .code-block { background: var(--shiki-dark-bg, var(--color-bg)); color: var(--shiki-dark, var(--color-ink)); }
+[data-theme="dark"] .code-tok { color: var(--shiki-dark); font-style: var(--shiki-dark-font-style, inherit); font-weight: var(--shiki-dark-font-weight, inherit); }
+.code-bar { background: color-mix(in srgb, currentColor 6%, transparent); }
+.code-gutter { color: color-mix(in srgb, currentColor 45%, transparent); }
+.diff-add { background: color-mix(in srgb, #2ea043 20%, transparent); }
+.diff-del { background: color-mix(in srgb, #f85149 20%, transparent); }
+.diff-hunk { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 10%, transparent); }

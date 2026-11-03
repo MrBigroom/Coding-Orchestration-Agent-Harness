@@ -1,5 +1,8 @@
 import { getToken, patch, post, setToken } from "../api/client";
 import { Badge, Card, ErrorNote, PageHeader, ThemeSwitch, Toggle, fmtTime } from "../components/ui";
+import { Code } from "../components/Code";
+import { FONTS, useFont, type FontSlot } from "../fonts";
+import { DARK_THEMES, LIGHT_THEMES, setCodeTheme, useCodeThemes, type ThemeMode } from "../highlight";
 import { useAction, useApi } from "../hooks/useApi";
 import { useState } from "react";
 
@@ -149,6 +152,9 @@ export default function Settings() {
               <span className="text-sm">Theme <span className="block text-xs text-muted">Saved in this browser. System follows your OS setting.</span></span>
               <ThemeSwitch full />
             </div>
+            <FontPicker slot="text" label="Text font" hint="The interface and chat replies." sample="The quick brown fox jumps over the lazy dog." />
+            <FontPicker slot="code" label="Code font" hint="Code, paths, commands and model names." sample="const ok = a !== b && x >= 0 -> 0O 1lI {}" />
+            <CodeThemePicker />
           </Card>
           <Card title="Server">
             <dl className="grid grid-cols-2 gap-y-2 text-sm">
@@ -166,5 +172,45 @@ export default function Settings() {
         </div>
       )}
     </>
+  );
+}
+
+function FontPicker({ slot, label, hint, sample }: { slot: FontSlot; label: string; hint: string; sample: string }) {
+  const [font, setFont] = useFont(slot);
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor={`font-${slot}`} className="text-sm">{label} <span className="block text-xs text-muted">{hint} Saved in this browser.</span></label>
+        <select id={`font-${slot}`} className="input w-auto" value={font.id} onChange={(e) => setFont(e.target.value)}>
+          {FONTS[slot].map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        </select>
+      </div>
+      <p className="mt-2 truncate rounded-lg bg-panel-2 px-3 py-2 text-sm" style={{ fontFamily: font.stack }}>{sample}</p>
+    </div>
+  );
+}
+
+const THEME_SAMPLE = `def deflect(frames: int, window: int = 12) -> bool:
+    """True inside the deflect window."""
+    return 0 < frames <= window  # perfect or normal`;
+
+function CodeThemePicker() {
+  const themes = useCodeThemes();
+  const select = (mode: ThemeMode, list: typeof LIGHT_THEMES) => (
+    <label className="flex items-center gap-2 text-xs text-muted">
+      {mode === "light" ? "Light" : "Dark"}
+      <select className="input w-auto" value={themes[mode]} onChange={(e) => setCodeTheme(mode, e.target.value)}>
+        {list.map((t) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm">Code colors <span className="block text-xs text-muted">VS Code themes for code and diffs, one for each app theme. Saved in this browser.</span></span>
+        <div className="flex flex-wrap gap-3">{select("light", LIGHT_THEMES)}{select("dark", DARK_THEMES)}</div>
+      </div>
+      <Code code={THEME_SAMPLE} lang="python" className="mt-2" />
+    </div>
   );
 }
