@@ -41,17 +41,24 @@ Run states: `pending → preparing → running → testing → completed`, with 
    `phase-N-<slug>`.
 2. **Check git status before (re)trying.** A dirty worktree from an aborted turn gets a
    clearly labelled `chore(orchestrator-recovery): …` commit inside the worktree, and the
-   recovery is logged.
+   recovery is logged as `recovery_commit`. The commit is machine-identifiable (see “Recovery
+   commits” below); untracked worker output is swept too, so nothing the Worker wrote is
+   discarded, and sensitive paths are never staged.
 3. **Build the worker prompt** in cache order (see `prompt-caching.md`), including the
-   latest reviewer feedback on retries, and save it as `runs/<id>/prompt.md`.
+   latest reviewer feedback on retries and, when the branch carries recovery commits, the
+   list of them plus the instruction to re-verify before handing off. Saved as
+   `runs/<id>/prompt.md`.
 4. **running.** The adapter command runs inside the worktree with a minimal environment.
    stdout/stderr are redacted and streamed to `runs/<id>/stdout.log|stderr.log` and the
    WebSocket.
-5. After exit: leftover changes get a recovery commit, and `patch.diff` + `diffstat.txt`
-   are collected against the base branch.
+5. After exit: leftover changes get a recovery commit too (a killed agent leaves its edits
+   uncommitted), and `patch.diff` + `diffstat.txt` are collected against the base branch.
 6. **Failure paths.** A non-zero exit → run `failed`. Exceeding the adapter timeout →
    `timeout`. A `CANCEL` marker → `cancelled`. In all three cases the task returns to
-   `planned` for a deliberate retry.
+   `planned` for a deliberate retry, and the run's terminal event is `run_failed` /
+   `run_timeout` / `run_cancelled`-adjacent log line; a run that finishes normally emits
+   `run_completed`. Every new round clears the previous round's lifecycle markers (see
+   “What a new round resets”).
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
    validated and copied to `runs/<id>/handoff.json`, with `handoff.md` rendered next to
    it. If the worker produced none, the orchestrator writes a **synthesized** handoff
@@ -71,20 +78,33 @@ Run states: `pending → preparing → running → testing → completed`, with 
      `contradicts_worker`). **Skipped entirely when `test_command` is null** — see
      “Verification commands must be path-independent” below
    - lint and build commands when configured (same worktree, same null-means-N/A rule)
+   - **contract files changed without authorization** (`contract files unchanged`) —
+     computed by the harness from the branch diff *plus* the worktree's own dirt, and
+     authorized only by the task's stored `definition_of_done` / `acceptance_criteria`.
+     A failing check, so it fails verification even when the tests are green
+   - **recovery commits on the branch** (`recovery commits (harness-created)`) —
+     informational: it never rejects and never approves, it names the commits whose content
+     no Worker ever self-checked
    - migrations, live endpoints, and LLM coherence recorded as N/A with a reason unless
      in scope
 2. **Tests not green or no handoff** → no Architect review. The task goes back to the
    Worker on the same branch.
-3. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
-   only artifacts: the diff, handoff, test summary, verification narrative, and a list of
-   missing artifacts.
+3. **Harness-detected contract change** (after tests/handoff, before the reviewer) →
+   `blocked` with `review_status=NEEDS_HUMAN` and a `contract_change_detected` build-log
+   event. It is not folded into a generic rework round: only a human may change a contract,
+   so asking the Worker to "fix" it would ask it to break the same rule again.
+4. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
+   only artifacts: the diff, handoff, test summary, verification narrative, the recovery
+   commit list, the harness-computed contract findings, and a list of missing artifacts.
+   The exact payload is stored as `runs/<id>/review_payload.md`, so "the reviewer was shown
+   X" is checkable afterwards instead of arguable.
    - `NEEDS_HUMAN` → `blocked`
    - `CHANGES_REQUESTED` → back to the Worker on the same branch
    - after `max_review_rounds` rounds (default 3) → `blocked`
-4. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
+5. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
    Architect, so cron jobs don't spend Opus tokens.
-5. **Merge gate** (below).
+6. **Merge gate** (below).
 
 ## Verification commands must be path-independent
 

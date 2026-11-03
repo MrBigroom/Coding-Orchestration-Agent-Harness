@@ -12,13 +12,21 @@ missing artifacts is downgraded to CHANGES_REQUESTED.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from sqlmodel import Session
 
 from orchestrator.core.models import Project, Review, ReviewVerdict, Role, Run, Task
 from orchestrator.core.schemas import ReviewFinding, ReviewResult
 from orchestrator.providers.base import ProviderError
-from orchestrator.services import artifact_service, log_service, prompt_builder, provider_service
+from orchestrator.services import (
+    artifact_service,
+    git_service,
+    log_service,
+    project_service,
+    prompt_builder,
+    provider_service,
+)
 from orchestrator.services.prompt_builder import DynamicState
 from orchestrator.utils.json_output import JSONExtractionError, extract_json
 
@@ -84,6 +92,50 @@ def missing_artifacts(run_dir_files: set[str], handoff_synthesized: bool) -> lis
     return missing
 
 
+def recovery_section(session: Session, task: Task, run: Run) -> str:
+    """The reviewer-payload section for harness-created recovery commits."""
+    commits = project_service.recovery_commits_for(session, task, run)
+    if not commits:
+        return (
+            "none — every commit on this branch was authored by a Worker\n"
+            "A recovery commit is never by itself a reason to reject, and never a reason to "
+            "approve either: it marks content whose author never checked it."
+        )
+    return (
+        f"{len(commits)} commit(s) on this branch were created by the ORCHESTRATOR, not by the "
+        "Worker. Their content was NEVER self-checked by the Worker: it was committed by the "
+        "harness after a turn aborted (timeout/failure/cancel) with edits still uncommitted, and "
+        "may contain undefined names, half-finished edits, scratch files or contract-file edits. "
+        "Judge it as unreviewed third-party code and hold it to the same bar as Worker code.\n\n"
+        + git_service.format_recovery_commit_list(commits)
+    )
+
+
+def harness_findings_section(
+    session: Session, task: Task, run: Run, project: Project | None
+) -> str:
+    """Deterministic findings the harness computed; a story cannot contradict them."""
+    cwd = Path(run.worktree_path) if run.worktree_path else None
+    findings = project_service.contract_findings(task, project, cwd)
+    commits = project_service.recovery_commits_for(session, task, run)
+    lines = [
+        f"recovery commits on this branch (harness-created, never self-checked): {len(commits)}",
+        f"contract files watched: {', '.join(project_service.contract_files())}",
+        f"contract files changed by this run: {', '.join(findings['changed']) or 'none'}",
+        "authorized by this task's stored Definition of Done / acceptance criteria: "
+        f"{', '.join(findings['authorized']) or 'none'}",
+    ]
+    if findings["unauthorized"]:
+        lines.append(
+            "UNAUTHORIZED contract file change(s), detected by the harness: "
+            + ", ".join(findings["unauthorized"])
+            + ". A phase may change a contract file only when its own DoD/acceptance criteria "
+            "name it (docs/build-loop.md); the Worker's own assertion of authorization does not "
+            "count."
+        )
+    return "\n".join(lines)
+
+
 async def architect_review(
     session: Session,
     task: Task,
@@ -101,9 +153,16 @@ async def architect_review(
         test_summary=artifact_service.read_text(run.id, "test_summary.txt"),
         verification=artifact_service.read_text(run.id, "verification.md"),
         diff=artifact_service.read_text(run.id, "patch.diff"),
+        recovery=recovery_section(session, task, run),
+        harness_findings=harness_findings_section(session, task, run, project),
         extra={"Missing artifacts detected by orchestrator": "\n".join(missing) or "none"},
     )
     prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)
+    # The payload the reviewer actually saw, stored: "the reviewer was shown X" must be
+    # checkable after the fact instead of argued about.
+    artifact_service.write_text(
+        run.id, "review_payload.md", prompt.static_text() + "\n\n" + prompt.dynamic_text()
+    )
     choice = provider_service.choose_profile(session, task, Role.architect)
     raw = ""
     try:

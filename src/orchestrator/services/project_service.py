@@ -10,7 +10,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from orchestrator.core.config import get_settings
-from orchestrator.core.models import Project, utcnow
+from orchestrator.core.models import Project, Run, Task, utcnow
 from orchestrator.core.schemas import ProjectCreate, ProjectUpdate
 from orchestrator.services import memory_service
 from orchestrator.utils.git import GitError, branch_exists, git_available, is_repo, run_git
@@ -19,6 +19,107 @@ from orchestrator.utils.slug import slugify
 
 class ProjectError(ValueError):
     pass
+
+
+# The contract documents the harness knows about. A phase may change one of these only when its
+# own Definition of Done / acceptance criteria name that file (docs/build-loop.md,
+# "Contract-change request flow"); anything else is harness-detected, not model-asserted.
+CONTRACT_FILES: tuple[str, ...] = (
+    "docs/plan.md",
+    "docs/product-spec.md",
+    "docs/architecture.md",
+    "docs/workflow.md",
+    "docs/frozen-contracts.md",
+)
+
+
+def contract_files() -> list[str]:
+    """Relative paths of the contract documents the harness watches."""
+    return list(CONTRACT_FILES)
+
+
+def _normalized(path: str) -> str:
+    return path.strip().removeprefix("./").removeprefix("/")
+
+
+def contract_changes(task: Task, changed: list[str]) -> list[str]:
+    """Contract files touched by a run (in any commit it produced, recovery commits included)."""
+    hits = {_normalized(p) for p in changed}
+    return sorted(p for p in CONTRACT_FILES if p in hits)
+
+
+def authorized_contract_files(task: Task) -> set[str]:
+    """Contract files this task's stored DoD / acceptance criteria explicitly authorize.
+
+    Authorization is a literal mention of the file (full path or basename) in a Definition of
+    Done item or an acceptance criterion — the same rule the Architect reviews against, applied
+    deterministically instead of left to a reader. The task description is NOT authorization:
+    it routinely quotes contract file names while describing a problem.
+    """
+    texts = [*(task.definition_of_done or []), *(task.acceptance_criteria or [])]
+    blob = "\n".join(texts).lower()
+    return {p for p in CONTRACT_FILES if p.lower() in blob or p.rsplit("/", 1)[-1].lower() in blob}
+
+
+def unauthorized_contract_changes(task: Task, changed: list[str]) -> list[str]:
+    """Contract files changed by the run that the task does not authorize. Deterministic."""
+    allowed = authorized_contract_files(task)
+    return [p for p in contract_changes(task, changed) if p not in allowed]
+
+
+def _touched_paths(cwd: Path, base_branch: str) -> list[str]:
+    """Committed diff plus whatever is still uncommitted in the worktree.
+
+    A contract file edited and NOT committed is still an edit; a detector that only looked at
+    commits would call that branch contract-clean (T-8 DoD 8).
+    """
+    from orchestrator.services import git_service
+
+    paths = set(git_service.changed_files(cwd, base_branch))
+    split = git_service.status_split(cwd)
+    paths.update(split.tracked_modified)
+    paths.update(split.untracked_added)
+    return sorted(paths)
+
+
+def contract_findings(
+    task: Task, project: Project | None, cwd: Path | None
+) -> dict[str, list[str]]:
+    """Contract files this run touched, split into authorized vs. unauthorized by the task's
+    stored DoD. Empty lists when there is no project worktree to read.
+
+    Lives here because the Supervisor (which must fail the check) and the reviewer payload (which
+    must show it) have to agree on the same numbers, computed one way."""
+    from orchestrator.services import git_service
+
+    if not cwd or not project or not cwd.is_dir() or not git_service.is_repo(cwd):
+        return {"changed": [], "authorized": [], "unauthorized": []}
+    hits = contract_changes(task, _touched_paths(cwd, project.base_branch))
+    allowed = authorized_contract_files(task)
+    return {
+        "changed": hits,
+        "authorized": sorted(p for p in hits if p in allowed),
+        "unauthorized": sorted(p for p in hits if p not in allowed),
+    }
+
+
+def recovery_commits_for(session: Session, task: Task, run: Run | None = None) -> list:
+    """Harness-created recovery commits on this task's branch.
+
+    Read-only: the recorded worktree is used when it still exists, otherwise the branch ref is
+    read straight from the repository. A question about history must never create a worktree.
+    """
+    from orchestrator.services import git_service
+
+    project = session.get(Project, task.project_id) if task.project_id else None
+    if not project or not task.branch_name:
+        return []
+    recorded = run.worktree_path if run is not None else None
+    if recorded and Path(recorded).is_dir():
+        return git_service.recovery_commits(Path(recorded), project.base_branch)
+    return git_service.recovery_commits(
+        Path(project.path), project.base_branch, ref=task.branch_name
+    )
 
 
 def create(session: Session, data: ProjectCreate) -> Project:
@@ -118,11 +219,32 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
     add("is git repository", repo)
     if repo:
         add(f"base branch '{project.base_branch}' exists", branch_exists(path, project.base_branch))
-        dirty = bool(run_git(["status", "--porcelain"], path).stdout.strip())
+        # Cleanliness is a TRACKED-content verdict (T-8 DoD 9): an untracked local directory
+        # (tool state, scratch output) does not block the merge gate and must not fail this
+        # check — it is reported separately below so nothing is hidden.
+        from orchestrator.services import git_service
+
+        split = git_service.status_split(path)
         add(
             "main checkout clean",
-            not dirty,
-            "uncommitted changes (fine for worktrees; merge gate will refuse)" if dirty else "",
+            not split.tracked_dirty,
+            (
+                "uncommitted changes to tracked files (fine for worktrees; merge gate will "
+                "refuse): " + ", ".join(sorted(split.tracked_modified)[:20])
+                if split.tracked_dirty
+                else ""
+            ),
+        )
+        add(
+            "untracked paths in the base checkout",
+            True,
+            (
+                f"{len(split.untracked_added)} untracked path(s), ignored by the merge gate and "
+                "never committed by a merge: "
+                + ", ".join(sorted(split.untracked_added)[:20])
+                if split.untracked_added
+                else "none"
+            ),
         )
     for label, cmd in (
         ("test", project.test_command),

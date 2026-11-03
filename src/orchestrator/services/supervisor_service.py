@@ -34,10 +34,17 @@ from orchestrator.services import (
     settings_service,
     task_service,
 )
+from orchestrator.utils import structured_log
 from orchestrator.utils.git import GitError, head_sha
 from orchestrator.utils.truncate import parse_test_counts, summarize_test_output
 
 VERIFY_TIMEOUT = 900
+
+# Names of the harness-computed checks added by T-8. They are deterministic (a file list
+# intersected with the contract docs the harness knows about, a git trailer lookup), so a
+# finding here is never a model assertion.
+CONTRACT_CHECK = "contract files unchanged"
+RECOVERY_CHECK = "recovery commits (harness-created)"
 
 
 async def _run_command(
@@ -195,8 +202,95 @@ async def verify(
         )
     )
 
+    # 5. Harness-computed findings, not model assertions (T-8 DoD 8 + 9). These run from the
+    # Supervisor side on purpose: a Worker or reviewer that merely *claims* a contract change was
+    # authorized cannot make the claim true — the file list and the stored DoD decide it. Worker
+    # tasks only: an `agent`/`review` task answers questions and writes no code, and an
+    # Architect decomposition run is *supposed* to write docs/plan.md.
+    if task.kind in (TaskKind.coding, TaskKind.maintenance):
+        recovery = project_service.recovery_commits_for(session, task, run)
+        recovery_paths = {f["path"] for c in recovery for f in c.files}
+        findings = project_service.contract_findings(task, project, cwd)
+        if findings["unauthorized"]:
+            from_recovery = sorted(set(findings["unauthorized"]) & recovery_paths)
+            checks.append(
+                VerificationCheck(
+                    name=CONTRACT_CHECK,
+                    status="fail",
+                    evidence=f"{len(findings['unauthorized'])} contract file(s) changed",
+                    notes=(
+                        "changed without a Definition-of-Done item or acceptance criterion naming "
+                        "them: " + ", ".join(findings["unauthorized"]) + ". "
+                        + (
+                            f"{', '.join(from_recovery)} arrived inside a recovery commit, so it "
+                            "is content the Worker never self-checked. "
+                            if from_recovery
+                            else ""
+                        )
+                        + "Per docs/build-loop.md this phase may not proceed on its own: the "
+                        "finding goes to the human (contract-change request flow)."
+                    ),
+                )
+            )
+            log_service.log_event(
+                session,
+                "contract_change_detected",
+                structured_log.attach(
+                    "unauthorized contract file change(s) in this run",
+                    {
+                        "unauthorized": findings["unauthorized"],
+                        "authorized": findings["authorized"],
+                        "contract_files": project_service.contract_files(),
+                        "recovery_commit": bool(from_recovery),
+                        "from_recovery_commit": from_recovery,
+                        "recovery_commits": [c.short for c in recovery],
+                        "task_id": task.id,
+                        "run_id": run.id,
+                    },
+                ),
+                role="supervisor",
+                task_id=task.id,
+                run_id=run.id,
+                phase=task_service.phase_label(task),
+                commit_sha=head_sha(cwd) if cwd else None,
+            )
+        elif findings["changed"] or project:
+            checks.append(
+                VerificationCheck(
+                    name=CONTRACT_CHECK,
+                    status="pass",
+                    evidence=(
+                        f"{len(findings['changed'])} contract file(s) changed, all authorized"
+                        if findings["changed"]
+                        else "no contract file changed"
+                    ),
+                    notes=(", ".join(findings["authorized"]) if findings["authorized"] else ""),
+                )
+            )
+
+        checks.append(
+            VerificationCheck(
+                name=RECOVERY_CHECK,
+                # Informational: a recovery commit is not itself a rejection reason. It always
+                # reaches the reviewer (verification.md is part of the review payload) so nothing
+                # is quietly folded into "the Worker's own work".
+                status="pass",
+                evidence=f"{len(recovery)} recovery commit(s) on this branch",
+                notes=(
+                    git_service.format_recovery_commit_list(recovery)
+                    + "\ncontent was NEVER self-checked by the Worker"
+                    if recovery
+                    else ""
+                ),
+            )
+        )
+
+    # Computed last, so a harness-detected contract finding fails the verdict too (it is a
+    # failing check like any other, not a footnote) — while `after_run` still routes it to the
+    # human instead of a generic rework round.
     failed = [c for c in checks if c.status == "fail"]
     final = "fail" if failed or contradicts else "pass"
+
     result = VerificationResult(
         phase=phase, checks=checks, contradicts_worker=contradicts, final_result=final
     )
@@ -256,6 +350,47 @@ def _requeue_or_block(session: Session, task: Task, reason: str) -> None:
         )
 
 
+def contract_change_hold(
+    session: Session, task: Task, run: Run, project: Project | None
+) -> list[str]:
+    """Unauthorized contract-file edits route to the human, they do not buy another round.
+
+    Decided this way (docs/build-loop.md, "Contract-change request flow"): only a human may
+    change the product spec, plan or frozen contracts, so a requeue would ask the Worker to fix
+    something it is not allowed to fix. Returns the unauthorized paths (empty = no hold).
+
+    The question is recorded on the surfaces that already exist — `review_status=NEEDS_HUMAN`,
+    the `verdict_recorded`/`contract_change_detected` build-log events, the verification
+    narrative and the blocked transition reason — because Task has no human-question column and
+    adding one would be a schema/contract change this phase is not authorized to make."""
+    if task.kind not in (TaskKind.coding, TaskKind.maintenance):
+        return []
+    cwd = Path(run.worktree_path) if run.worktree_path else None
+    unauthorized = project_service.contract_findings(task, project, cwd)["unauthorized"]
+    if not unauthorized:
+        return []
+    question = (
+        "harness-detected unauthorized contract file change: "
+        + ", ".join(unauthorized)
+        + ". This run's Definition of Done does not authorize it. Decide: accept the change and "
+        "amend the contracts, reject it and redo the phase on a clean base, or authorize it in a "
+        "new task (docs/build-loop.md, contract-change request flow)."
+    )
+    task.review_status = ReviewVerdict.NEEDS_HUMAN
+    session.add(task)
+    session.commit()
+    log_service.log_event(
+        session,
+        "verdict_recorded",
+        f"NEEDS_HUMAN {question} (run {run.short_id})",
+        role="supervisor",
+        task_id=task.id,
+        run_id=run.id,
+    )
+    task_service.transition(session, task, TaskStatus.blocked, question, role="supervisor")
+    return unauthorized
+
+
 async def after_run(
     session: Session,
     task: Task,
@@ -272,6 +407,14 @@ async def after_run(
     if not tests_green or handoff is None:
         _requeue_or_block(session, task, "tests not green or handoff missing; review not triggered")
         outcome["decision"] = task.status
+        return outcome
+
+    # Checked before the reviewer runs: a contract edit is a human decision, and letting a model
+    # review it first would let an APPROVED verdict wave the finding through.
+    held = contract_change_hold(session, task, run, project)
+    if held:
+        outcome["decision"] = task.status
+        outcome["contract_change"] = held
         return outcome
 
     needs_architect = (

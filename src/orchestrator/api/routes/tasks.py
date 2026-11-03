@@ -56,6 +56,13 @@ def _detail(session: Session, task: Task) -> dict[str, Any]:
     data["memory_suggestions"] = [
         dump(m) for m in session.exec(select(MemoryEntry)) if m.source.split(":")[-1] in run_tags
     ]
+    # Recovery commits: content the harness committed after an aborted turn. The GUI header and
+    # diff view mark it distinctly so a human never reads wreckage as the Worker's own work.
+    from orchestrator.services import project_service
+
+    data["recovery_commits"] = [
+        c.as_dict() for c in project_service.recovery_commits_for(session, task)
+    ]
     if (
         task.status == TaskStatus.accepted
         and task.merge_status in ("ready", "merge_refused", "stale")
@@ -107,6 +114,24 @@ def create_task(body: TaskCreate, session: Session = SessionDep) -> dict[str, An
 @router.get("/tasks/{task_id}")
 def get_task(task: Task = Depends(load_task), session: Session = SessionDep) -> dict[str, Any]:
     return _detail(session, task)
+
+
+@router.get("/tasks/{task_id}/recovery")
+def task_recovery_commits(
+    task: Task = Depends(load_task), session: Session = SessionDep
+) -> dict[str, Any]:
+    """The harness-created recovery commits on this task's branch.
+
+    Read-only and side-effect-free: it answers from the recorded worktree if one is still there,
+    otherwise straight from the branch ref in the repository."""
+    from orchestrator.services import project_service
+
+    commits = [c.as_dict() for c in project_service.recovery_commits_for(session, task)]
+    files: dict[str, list[str]] = {}
+    for c in commits:
+        for f in c["files"]:
+            files.setdefault(f["path"], []).append(c["short"])
+    return {"count": len(commits), "commits": commits, "files": files}
 
 
 @router.patch("/tasks/{task_id}")

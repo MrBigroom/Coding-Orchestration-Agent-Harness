@@ -9,6 +9,10 @@ from tests.conftest import make_repo, requires_git
 pytestmark = requires_git
 
 
+def _commit(path, *args: str) -> None:
+    run_git(["-c", "user.name=w", "-c", "user.email=w@w", *args], path)
+
+
 def test_worktree_create_reuse_and_isolation(home, tmp_path):
     repo = make_repo(tmp_path / "repo")
     wt = git_service.ensure_worktree(repo, "repo", 7, "phase-1-x", "main")
@@ -53,18 +57,35 @@ def test_cleanup_only_managed_and_never_deletes_branches(home, tmp_path):
     assert stray.exists()
 
 
-def test_merge_gate_refuses_dirty_or_wrong_branch(home, tmp_path):
+def test_merge_gate_refuses_tracked_dirt_but_not_untracked(home, tmp_path):
+    """T-8 DoD 9: the merge gate keys on TRACKED dirtiness. Uncommitted changes to versioned
+    files refuse a merge; an untracked local file cannot be damaged by merging another branch
+    into this one, so it must not refuse — and it is still named in the refusal message."""
     repo = make_repo(tmp_path / "repo")
     wt = git_service.ensure_worktree(repo, "repo", 3, "phase-3-m", "main")
     (wt.path / "f.txt").write_text("x")
     git_service.recovery_commit(wt.path, "change")
-    (repo / "dirty.txt").write_text("uncommitted")
-    with pytest.raises(GitError, match="uncommitted"):
-        git_service.merge_no_ff(repo, "main", "phase-3-m", "msg")
-    (repo / "dirty.txt").unlink()
+
+    # untracked-only dirt: the base checkout is "clean" for merge purposes
+    (repo / "scratch-dir").mkdir()
+    (repo / "scratch-dir" / "local.txt").write_text("untracked, not versioned")
+    assert git_service.is_dirty(repo) and not git_service.tracked_dirty(repo)
     sha = git_service.merge_no_ff(repo, "main", "phase-3-m", "Merge phase-3-m")
     parents = run_git(["rev-list", "--parents", "-n", "1", sha], repo).stdout.split()
     assert len(parents) == 3  # --no-ff merge commit has two parents
+    assert (repo / "scratch-dir" / "local.txt").exists()  # the merge did not touch it
+
+    # tracked dirt still refuses, and the untracked half is reported rather than hidden
+    _commit(repo, "add", "scratch-dir/local.txt")
+    _commit(repo, "commit", "-q", "-m", "now a versioned file")
+    (repo / "scratch-dir" / "local.txt").write_text("uncommitted tracked change")
+    (repo / "untracked-neighbour.txt").write_text("ignored for the verdict")
+    assert git_service.tracked_dirty(repo)
+    with pytest.raises(GitError, match="uncommitted changes to tracked"):
+        git_service.merge_no_ff(repo, "main", "phase-3-m", "msg")
+    with pytest.raises(GitError, match="untracked-neighbour.txt"):
+        git_service.merge_no_ff(repo, "main", "phase-3-m", "msg")
+    assert branch_exists(repo, "phase-3-m")  # branch kept
 
 
 def test_recovery_commit_never_stages_secrets(home, tmp_path):
