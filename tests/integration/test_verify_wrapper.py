@@ -304,6 +304,24 @@ def test_doctor_finds_a_command_that_only_exists_on_the_base_branch(home, sessio
     assert not missing["ok"] and "not found" in missing["detail"]
 
 
+def test_doctor_survives_a_missing_base_branch(home, session, tmp_path):
+    """A path-relative command that is not in the checkout is looked up in the base branch
+    tree; when that branch is gone `git ls-tree` fails (run_git raises GitError) and doctor
+    must report the miss, not raise out of the CLI."""
+    main = make_repo(tmp_path / "gonebase")  # scripts/verify.sh is not in it
+    project = project_service.create(
+        session,
+        ProjectCreate(
+            name="Gone Base", path=str(main), base_branch="no-such-branch",
+            test_command="scripts/verify.sh test",
+        ),
+    )
+    checks = {c["name"]: c for c in project_service.doctor(project)}
+    assert checks[f"base branch '{project.base_branch}' exists"]["ok"] is False
+    assert checks["test command"]["ok"] is False
+    assert "not found" in checks["test command"]["detail"]
+
+
 def test_doctor_never_runs_commands_without_the_flag(fake, home, session):
     project = project_service.create(
         session,

@@ -13,7 +13,7 @@ from orchestrator.core.config import get_settings
 from orchestrator.core.models import Project, utcnow
 from orchestrator.core.schemas import ProjectCreate, ProjectUpdate
 from orchestrator.services import memory_service
-from orchestrator.utils.git import branch_exists, git_available, is_repo, run_git
+from orchestrator.utils.git import GitError, branch_exists, git_available, is_repo, run_git
 from orchestrator.utils.slug import slugify
 
 
@@ -223,7 +223,6 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
     """Run each configured command in a throwaway worktree of the base branch and report
     whether it exits 0 and whether the import path resolved inside that worktree."""
     from orchestrator.services import git_service, process_service
-    from orchestrator.utils.git import GitError
 
     checks: list[dict[str, Any]] = []
 
