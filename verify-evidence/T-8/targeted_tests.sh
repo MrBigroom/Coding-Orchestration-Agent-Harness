@@ -10,9 +10,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
+echo "# HEAD=$(git rev-parse HEAD) ($(git rev-parse --short HEAD)) captured=$(date -Is)"
+echo "# each block below is one labeled command run at that HEAD; counts are not merged across runs"
+echo
+
 run() {
   echo "### \$ ./scripts/orch_verify.sh test $*"
-  ./scripts/orch_verify.sh test "$@" 2>&1 | grep -E "^(ORCH_VERIFY\||[0-9]+ (passed|failed)|FAILED|ERROR)"
+  ./scripts/orch_verify.sh test "$@" 2>&1 |
+    grep -E "^(ORCH_VERIFY\||tests/|[0-9]+ (passed|failed|deselected)|FAILED|ERROR)"
   echo
 }
 
@@ -23,3 +28,5 @@ run tests/unit/test_redaction.py
 run tests/integration/test_git_worktree.py
 run tests/unit/test_recovery_markers.py tests/integration/test_recovery_after_timeout.py \
     tests/unit/test_redaction.py tests/integration/test_git_worktree.py
+run tests/unit/test_recovery_markers.py -v \
+    -k "contract_authorization or reviewer_prompt_sections or unauthorized_contract_change"
