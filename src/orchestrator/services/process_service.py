@@ -1,6 +1,7 @@
 """Subprocess execution with log capture, timeout, and cross-process cancellation.
 
-- argv lists only (asyncio.create_subprocess_exec), never a shell;
+- argv lists only (asyncio.create_subprocess_exec / subprocess.Popen with a list),
+  never a shell;
 - minimal environment (core.security.child_env) plus declared variable names;
 - stdout/stderr are redacted and written line by line to <artifacts>/stdout.log|stderr.log
   and published on the in-process event bus; with `stdout_file` the child writes stdout to
@@ -14,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import subprocess
 import time
 from pathlib import Path
 from typing import TextIO
@@ -197,6 +199,41 @@ async def run_simple(
         await proc.wait()
         return proc.returncode, "timed out", True
     return proc.returncode, redact(out.decode(errors="replace")), False
+
+
+def run_simple_sync(
+    argv: list[str], cwd: Path, timeout_seconds: int = 600, env_names: list[str] | None = None
+) -> tuple[int | None, str, bool]:
+    """Sync twin of run_simple, for callers outside an event loop (`project doctor
+    --run-commands`). Same argv-only rule (never a shell), same minimal child
+    environment, same redaction. Returns (exit_code, combined_output, timed_out);
+    exit_code is None when the process could not be started."""
+    env = child_env(env_names or [], {**git_identity_env(), "PYTHONDONTWRITEBYTECODE": "1"})
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            start_new_session=True,
+        )
+    except OSError as e:
+        return None, f"failed to start {argv[0]!r}: {e}", False
+    try:
+        out = proc.communicate(timeout=timeout_seconds)[0] or ""
+        return proc.returncode, redact(out), False
+    except subprocess.TimeoutExpired:
+        # The child is its own process group (start_new_session); kill the whole tree.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        out = proc.communicate()[0] or ""
+        return proc.returncode, redact(out + "\ntimed out"), True
 
 
 async def run_capture(

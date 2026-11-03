@@ -18,7 +18,8 @@
 #
 # Usage: scripts/orch_verify.sh <mode> [extra tool args...]
 #   resolve   resolve + assert the import path, run nothing
-#   test      python -m pytest <worktree>/tests
+#   test      python -m pytest <worktree>/tests  (extra args: -k/-x flags are added to
+#             that target, an existing path replaces it — always relative to the root)
 #   lint      python -m ruff check src tests
 #   all       test then lint (both run even if the first fails)
 #
@@ -37,8 +38,9 @@
 # Exit codes: 0 ok · 2 usage error · 3 import resolved OUTSIDE the worktree (guard
 # tripped) · 4 unusable repository/venv/interpreter · otherwise the tool's own code.
 #
-# Machine-readable marker line, parsed by `orchestrator project doctor --run-commands`:
-#   ORCH_VERIFY module=<name> module_file=<abs> worktree_root=<abs> mode=<mode>
+# Machine-readable marker line, parsed by `orchestrator project doctor --run-commands`
+# (pipe-delimited, so paths containing spaces survive):
+#   ORCH_VERIFY|mode=<mode>|module=<name>|module_file=<abs>|worktree_root=<abs>
 set -euo pipefail
 
 fail() {
@@ -125,27 +127,37 @@ printf 'orch-verify: %s.__file__ = %s\n' "$ORCH_VERIFY_PACKAGE" "$RESOLVED"
 case "$RESOLVED" in
   "$ROOT"/*) ;;
   *)
-    printf 'ORCH_VERIFY module=%s module_file=%s worktree_root=%s mode=%s\n' \
-      "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT" "$MODE" >&2
+    printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
+      "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT" >&2
     fail "$ORCH_VERIFY_PACKAGE resolved OUTSIDE the worktree: $RESOLVED (root: $ROOT) — a run from here would verify the wrong checkout" 3
     ;;
 esac
-printf 'ORCH_VERIFY module=%s module_file=%s worktree_root=%s mode=%s\n' \
-  "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT" "$MODE"
+printf 'ORCH_VERIFY|mode=%s|module=%s|module_file=%s|worktree_root=%s\n' \
+  "$MODE" "$ORCH_VERIFY_PACKAGE" "$RESOLVED" "$ROOT"
 
 cd "$ROOT"
 
 # Collection target: always the worktree, never whatever the invoking directory holds.
-if [ -d "$ROOT/tests" ]; then
-  TEST_ARGS=("$ROOT/tests")
+# Extra args that name an existing path replace that target (paths are relative to the
+# worktree root); pure flags (-k, -x, …) are added to it.
+TARGET="$ROOT/tests"
+[ -d "$TARGET" ] || TARGET="$ROOT"
+if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
+  TEST_ARGS=("$TARGET")
 else
-  TEST_ARGS=("$ROOT")
+  replaces=0
+  for a in "${EXTRA_ARGS[@]}"; do
+    case "$a" in
+      -*) ;;
+      *) [ -e "$a" ] && replaces=1 ;;
+    esac
+  done
+  if [ "$replaces" = 1 ]; then
+    TEST_ARGS=("${EXTRA_ARGS[@]}")
+  else
+    TEST_ARGS=("$TARGET" "${EXTRA_ARGS[@]}")
+  fi
 fi
-TEST_ARGS+=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
-
-run_test() {
-  "$PY" -m pytest "${TEST_ARGS[@]}"
-}
 
 lint_argv() {
   read -r -a LINT_ARGS <<<"${ORCH_VERIFY_LINT:-ruff check src tests}"
@@ -161,7 +173,7 @@ case "$MODE" in
   all)
     lint_argv
     rc=0
-    run_test || rc=$?
+    "$PY" -m pytest "${TEST_ARGS[@]}" || rc=$?
     "$PY" -m "${LINT_ARGS[@]}" || rc=$((rc == 0 ? 1 : rc))
     exit "$rc"
     ;;

@@ -1,10 +1,11 @@
 # coding-orchestrator — common tasks. See also `justfile` (same targets).
+# test/lint go through scripts/orch_verify.sh so they also work in a git worktree.
 SHELL := /bin/bash
 VENV  := .venv/bin
 PORT  ?= $(or $(ORCHESTRATOR_BIND_PORT),8321)
 FILE  ?= memory-export.json
 
-.PHONY: setup dev start test lint format doctor demo build clean memory-export memory-import desktop desktop-install desktop-uninstall
+.PHONY: setup dev start test lint verify format doctor demo build clean memory-export memory-import desktop desktop-install desktop-uninstall
 
 setup:          ## venv + deps (+ npm if present), init home, alembic upgrade head
 	./scripts/setup.sh
@@ -15,13 +16,16 @@ dev:            ## backend --reload on :8321 + Vite on :5173
 start:          ## production backend on :8321 (serves web/dist or the fallback UI)
 	$(VENV)/orchestrator serve --port $(PORT)
 
-test:           ## pytest (offline; external CLI tests are skipped)
-	$(VENV)/pytest
+test:           ## pytest via scripts/orch_verify.sh (works in the main checkout and in worktrees)
+	./scripts/orch_verify.sh test
 
-lint:           ## ruff check
-	$(VENV)/ruff check src tests
+lint:           ## ruff check via scripts/orch_verify.sh (same path-independence checks)
+	./scripts/orch_verify.sh lint
 
-format:         ## ruff format
+verify:         ## tests + lint in one path-independent run
+	./scripts/orch_verify.sh all
+
+format:         ## ruff format (main checkout only: it rewrites this working tree)
 	$(VENV)/ruff format src tests
 
 doctor:

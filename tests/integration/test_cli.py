@@ -48,6 +48,29 @@ def test_task_lifecycle_commands(home):
 
 
 @requires_git
+def test_project_doctor_run_commands_flag(home, tmp_path):
+    """--run-commands is opt-in: plain doctor never executes project code."""
+    from orchestrator.services import git_service
+    from tests.conftest import make_repo
+
+    repo = make_repo(tmp_path / "cli-repo")
+    runner.invoke(app, ["init"])
+    assert runner.invoke(app, ["project", "add", "cli-repo", str(repo)]).exit_code == 0
+
+    r = runner.invoke(app, ["project", "doctor", "cli-repo"])
+    assert r.exit_code == 0, r.output
+    assert git_service.managed_worktrees() == []  # nothing was executed, nothing created
+
+    h = runner.invoke(app, ["project", "doctor", "--help"])
+    assert "--run-commands" in h.output
+
+    # no commands configured -> the opt-in check reports that and still exits 0
+    r = runner.invoke(app, ["project", "doctor", "cli-repo", "--run-commands"])
+    assert r.exit_code == 0, r.output
+    assert "worktree" in r.output
+
+
+@requires_git
 def test_demo_and_cleanup_dry_run(home):
     r = runner.invoke(app, ["demo"])
     assert r.exit_code == 0 and "accepted" in r.output

@@ -77,3 +77,29 @@ seeded. After that, edit the adapter row directly. See `adapters.md`.
 [--build-command] [--allow CMD]...`. Commands are split with `shlex` and run **without a
 shell**, so pipes, `&&`, redirects and `$(…)` are rejected. Put complex steps in a script
 and reference that.
+
+**The commands must be path-independent.** The Supervisor runs them with cwd = the task
+worktree (`ORCHESTRATOR_HOME/worktrees/<project>/<task_id>`), and a worktree contains
+tracked files only: no `.venv`, no `node_modules`. An editable install in the main
+checkout's venv makes `import <package>` resolve to the **main checkout**, so a venv-relative
+command either exits 127 or — worse — goes green against code that is not the branch under
+review. Use the wrapper pattern in this repo, `scripts/orch_verify.sh`: resolve the worktree
+(`git rev-parse --show-toplevel`) and the main repo (`git rev-parse
+--path-format=absolute --git-common-dir`), take the interpreter from the main repo venv by
+absolute path, **ignore the inherited `VIRTUAL_ENV`**, put the *worktree* `src` on
+`PYTHONPATH` (it wins over the editable `.pth`), print the resolved module path and the test
+root, and exit non-zero if that path is not inside the worktree. Full explanation in
+`build-loop.md`.
+
+| Field | When null |
+|---|---|
+| `test_command` | `tests` is recorded as `not_applicable` and the **green-claim contradiction check is skipped** (`supervisor_service.py`: `if handoff and project.test_command:`). A Worker that claims `failed: 0, passed: N` is never contradicted, so a false pass can reach the Architect. Prefer a path-independent command over a null one. |
+| `lint_command` | `lint` is `not_applicable`; no `lint.log` artifact is written. |
+| `build_command` | `build` is `not_applicable`. |
+
+```bash
+# opt-in probe: run the configured commands in a throwaway worktree of the base branch and
+# check they exit 0 AND resolve their imports inside that worktree. Off by default (it
+# executes project code), and never reachable from the API or the GUI.
+orchestrator project doctor myapp --run-commands
+```

@@ -66,9 +66,11 @@ Run states: `pending → preparing → running → testing → completed`, with 
 1. **Live verification**, recorded in `verification.json` and `verification.md`:
    - handoff present
    - claimed files exist on disk and match the diff
-   - project test command (re-run independently and written to `test.log`; a worker claim
-     of green tests that the run contradicts sets `contradicts_worker`)
-   - lint and build commands when configured
+   - project test command (re-run independently in the task worktree and written to
+     `test.log`; a worker claim of green tests that the run contradicts sets
+     `contradicts_worker`). **Skipped entirely when `test_command` is null** — see
+     “Verification commands must be path-independent” below
+   - lint and build commands when configured (same worktree, same null-means-N/A rule)
    - migrations, live endpoints, and LLM coherence recorded as N/A with a reason unless
      in scope
 2. **Tests not green or no handoff** → no Architect review. The task goes back to the
@@ -83,6 +85,55 @@ Run states: `pending → preparing → running → testing → completed`, with 
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
    Architect, so cron jobs don't spend Opus tokens.
 5. **Merge gate** (below).
+
+## Verification commands must be path-independent
+
+The gate runs the project's test/lint/build commands with **cwd = the task worktree**
+(`supervisor_service._run_command` → `process_service.run_simple`). That has two consequences
+that are easy to miss and expensive to discover mid-gate:
+
+1. **`git worktree add` copies tracked files only.** A worktree has no `.venv`, no
+   `node_modules`, no built assets. A venv-relative command (`make test`,
+   `.venv/bin/pytest`) exits 127 there → verification fail → `CHANGES_REQUESTED` → requeue
+   loop until `max_review_rounds` → `BLOCKED`, burning one Worker run per round with zero
+   new signal.
+2. **An editable install points at the main checkout — which is worse than failing.** If the
+   interpreter's `site-packages` holds an editable install of the project (a
+   `_editable_impl_*.pth` + `direct_url.json` pointing at the main checkout), then reusing
+   that venv from a worktree makes `import <package>` resolve to the **main** checkout: the
+   suite goes green while verifying code that is not the branch under review. That is a
+   false pass, the exact failure mode independent verification exists to prevent, and
+   `PYTHONPATH` order is the only thing standing between the two checkouts.
+
+So a command that can be verified by the gate must be **path-independent**: it finds its
+interpreter/toolchain wherever it lives, points the import path at the *worktree*, and then
+**asserts** the resolution instead of assuming it. `scripts/orch_verify.sh` in this repo is
+the reference pattern (use it as the template for other projects):
+
+- `git rev-parse --show-toplevel` → the worktree root, `git rev-parse --path-format=absolute
+  --git-common-dir` → the main repo (its `.venv` supplies the interpreter, by absolute path);
+- the inherited `VIRTUAL_ENV` is **ignored** (it points at whatever venv the server runs in,
+  and `core.security.BASE_ENV_ALLOWLIST` passes it through to children);
+- `PYTHONPATH` is set to the **worktree** `src` before invoking `pytest`/`ruff`; PYTHONPATH
+  takes precedence over the editable `.pth`;
+- it prints the resolved module path and the test root into the artifact log, and exits 3 if
+  the resolved import path is not under the worktree root. The run also emits one
+  machine-readable line: `ORCH_VERIFY|mode=…|module=…|module_file=…|worktree_root=…`.
+
+`orchestrator project doctor <name> --run-commands` (opt-in; off by default, and not exposed
+on the API or in the GUI) executes each configured command in a throwaway worktree of the
+base branch and reports both the exit code and whether `module_file` landed inside that
+worktree — so the trap shows up at project registration instead of mid-gate. A command that
+exits 0 **without** an `ORCH_VERIFY` marker is reported as a failure: an unproven resolution
+is not a proven local one.
+
+Registering a project with a null `test_command` avoids the 127 loop, but it also switches
+off the green-claim contradiction check (`supervisor_service.py`, the
+`if handoff and project.test_command:` branch): with no command configured the gate never
+re-runs anything, so a Worker claiming green tests is never contradicted and a false pass
+rides straight through. Prefer a path-independent command over a null one; if a project truly
+cannot be verified, record it in `verification.json` as `not_applicable` and read the Worker's
+test claims as unverified.
 
 ## Handoff artifacts
 
