@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, post } from "../api/client";
-import type { Adapter, ModelProfile, TaskDetail as TD } from "../api/types";
+import type { Adapter, ModelProfile, RecoveryCommit, TaskDetail as TD } from "../api/types";
 import { Code, Diff } from "../components/Code";
 import { Badge, Card, ConfirmButton, Empty, ErrorNote, PageHeader, fmtTime } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
@@ -26,11 +26,34 @@ function Artifact({ runId, name, json }: { runId: number; name: string; json?: b
   return <Code code={text} lang={json ? "json" : null} path={name} />;
 }
 
-function DiffView({ runId }: { runId: number }) {
+function RecoveryNote({ commits }: { commits: RecoveryCommit[] }) {
+  if (!commits.length) return null;
+  const paths = Array.from(new Set(commits.flatMap((c) => c.files.map((f) => f.path))));
+  return (
+    <div className="mb-2 rounded-md border border-warn/40 bg-warn/10 p-3 text-sm">
+      <div className="mb-1 font-medium text-warn">
+        {commits.length} recovery commit{commits.length === 1 ? "" : "s"} — committed by the orchestrator after an aborted turn, never self-checked by the Worker
+      </div>
+      <ul className="list-disc pl-5 text-xs">
+        {commits.map((c) => (
+          <li key={c.sha}>
+            <span className="mono">{c.short}</span> {c.subject}
+            {c.recovery_run ? <span className="text-muted"> (run {c.recovery_run})</span> : null}
+          </li>
+        ))}
+      </ul>
+      {paths.length > 0 && (
+        <div className="mt-1 text-xs text-muted">paths below include harness-captured wreckage: <span className="mono">{paths.join(", ")}</span></div>
+      )}
+    </div>
+  );
+}
+
+function DiffView({ runId, recovery = [] }: { runId: number; recovery?: RecoveryCommit[] }) {
   const [text, setText] = useState("");
   useEffect(() => { api<string>(`/artifacts/${runId}/patch.diff`).then((d) => setText(String(d ?? ""))).catch(() => setText("")); }, [runId]);
-  if (!text.trim()) return <Empty>No diff for this run.</Empty>;
-  return <Diff diff={text} />;
+  if (!text.trim()) return <><RecoveryNote commits={recovery} /><Empty>No diff for this run.</Empty></>;
+  return <><RecoveryNote commits={recovery} /><Diff diff={text} /></>;
 }
 
 function Logs({ runId }: { runId: number }) {
@@ -69,6 +92,7 @@ export default function TaskDetail() {
         subtitle={`${task.kind} · ${task.branch_name ?? "no branch"} · source ${task.source}`}
         actions={<>
           <Badge value={task.status} />
+          {(task.recovery_commits?.length ?? 0) > 0 && <Badge value="recovery" />}
           {["planned", "queued", "rejected", "blocked"].includes(task.status) && <button className="btn btn-primary" onClick={() => action("run")}>Run</button>}
           {task.status === "review" && <button className="btn btn-primary" onClick={() => action("accept", { reason: "accepted in GUI" })}>Accept</button>}
           {task.status === "blocked" && <ConfirmButton label="Accept" danger={false} message="Accept despite the blocker? This records a human decision in the build log." onConfirm={() => action("accept", { reason: "accepted in GUI after block" })} />}
@@ -148,7 +172,7 @@ export default function TaskDetail() {
       )}
       {tab !== "overview" && tab !== "memory" && !run && <Empty>No run selected.</Empty>}
       {run && tab === "logs" && <Card title={`Logs — ${run.short_id}`}><Logs runId={run.id} />{run.error && <p className="mt-2 text-sm text-bad">{run.error}</p>}</Card>}
-      {run && tab === "diff" && <Card title={`Diff — ${run.short_id}`}><DiffView runId={run.id} /></Card>}
+      {run && tab === "diff" && <Card title={`Diff — ${run.short_id}`}><DiffView runId={run.id} recovery={task.recovery_commits ?? []} /></Card>}
       {run && tab === "handoff" && <div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="handoff.md"><Artifact runId={run.id} name="handoff.md" /></Card><Card title="handoff.json"><Artifact runId={run.id} name="handoff.json" json /></Card></div>}
       {run && tab === "review" && <div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="review.md"><Artifact runId={run.id} name="review.md" /></Card><Card title="review.json"><Artifact runId={run.id} name="review.json" json /></Card></div>}
       {run && tab === "verification" && <div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="verification.md"><Artifact runId={run.id} name="verification.md" /></Card><Card title="test.log"><Artifact runId={run.id} name="test.log" /></Card></div>}

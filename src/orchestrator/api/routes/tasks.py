@@ -56,6 +56,17 @@ def _detail(session: Session, task: Task) -> dict[str, Any]:
     data["memory_suggestions"] = [
         dump(m) for m in session.exec(select(MemoryEntry)) if m.source.split(":")[-1] in run_tags
     ]
+    # Recovery commits: content the harness committed after an aborted turn. The GUI header and
+    # diff view mark it distinctly so a human never reads wreckage as the Worker's own work. This
+    # field is the ONLY place it is served — there is deliberately no GET /api/tasks/{id}/recovery
+    # (T-8 reviewer ruling 3: the route was dead code, nothing read it, and a new route is extra
+    # /api surface beyond what any DoD item asked for). The field itself is still contract-bearing
+    # surface: docs/contract-change-request-T8-02-recovery-commits-field.md, status PROPOSED.
+    from orchestrator.services import project_service
+
+    data["recovery_commits"] = [
+        c.as_dict() for c in project_service.recovery_commits_for(session, task)
+    ]
     if (
         task.status == TaskStatus.accepted
         and task.merge_status in ("ready", "merge_refused", "stale")

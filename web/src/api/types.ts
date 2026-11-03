@@ -82,12 +82,24 @@ export interface MemoryEntry {
   updated_at: string;
 }
 
+export interface RecoveryCommit {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  recovery: boolean;
+  recovery_run: string | null;
+  files: { status: string; path: string }[];
+}
+
 export interface TaskDetail extends Task {
   runs: Run[];
   reviews: Review[];
   verifications: Verification[];
   memory_suggestions: MemoryEntry[];
   merge_command?: string;
+  /** Harness-created `chore(orchestrator-recovery)` commits: never self-checked by a Worker. */
+  recovery_commits?: RecoveryCommit[];
 }
 
 export interface Project {

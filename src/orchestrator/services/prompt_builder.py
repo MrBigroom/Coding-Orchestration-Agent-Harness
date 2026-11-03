@@ -123,12 +123,26 @@ class DynamicState:
     feedback: str | None = None
     verification: str | None = None
     history: str | None = None
+    # Harness-detected recovery-commit wreckage on this branch (never self-checked by a Worker).
+    recovery: str | None = None
+    # Findings the harness computed deterministically (contract-file hits, recovery counts).
+    harness_findings: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
 
 def _dynamic(state: DynamicState) -> str:
     s = get_settings()
     parts: list[str] = []
+    if state.recovery:
+        parts.append(
+            "### Recovery commits on this branch (created by the harness, NEVER self-checked "
+            "by the Worker)\n" + truncate_middle(state.recovery, s.max_log_tokens)
+        )
+    if state.harness_findings:
+        parts.append(
+            "### Harness-detected findings (computed by the orchestrator, not asserted by a "
+            "model)\n" + truncate_middle(state.harness_findings, s.max_log_tokens)
+        )
     if state.handoff:
         parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))
     if state.test_summary:

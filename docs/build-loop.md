@@ -41,17 +41,24 @@ Run states: `pending → preparing → running → testing → completed`, with 
    `phase-N-<slug>`.
 2. **Check git status before (re)trying.** A dirty worktree from an aborted turn gets a
    clearly labelled `chore(orchestrator-recovery): …` commit inside the worktree, and the
-   recovery is logged.
+   recovery is logged as `recovery_commit`. The commit is machine-identifiable (see “Recovery
+   commits” below); untracked worker output is swept too, so nothing the Worker wrote is
+   discarded, and sensitive paths are never staged.
 3. **Build the worker prompt** in cache order (see `prompt-caching.md`), including the
-   latest reviewer feedback on retries, and save it as `runs/<id>/prompt.md`.
+   latest reviewer feedback on retries and, when the branch carries recovery commits, the
+   list of them plus the instruction to re-verify before handing off. Saved as
+   `runs/<id>/prompt.md`.
 4. **running.** The adapter command runs inside the worktree with a minimal environment.
    stdout/stderr are redacted and streamed to `runs/<id>/stdout.log|stderr.log` and the
    WebSocket.
-5. After exit: leftover changes get a recovery commit, and `patch.diff` + `diffstat.txt`
-   are collected against the base branch.
+5. After exit: leftover changes get a recovery commit too (a killed agent leaves its edits
+   uncommitted), and `patch.diff` + `diffstat.txt` are collected against the base branch.
 6. **Failure paths.** A non-zero exit → run `failed`. Exceeding the adapter timeout →
    `timeout`. A `CANCEL` marker → `cancelled`. In all three cases the task returns to
-   `planned` for a deliberate retry.
+   `planned` for a deliberate retry, and the failure paths emit `run_failed` / `run_timeout`
+   (a cancel is recorded on the `task_status` line); a run that finishes normally emits
+   `run_completed`. Every new round clears the previous round's lifecycle markers (see
+   “What a new round resets”).
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
    validated and copied to `runs/<id>/handoff.json`, with `handoff.md` rendered next to
    it. If the worker produced none, the orchestrator writes a **synthesized** handoff
@@ -60,6 +67,104 @@ Run states: `pending → preparing → running → testing → completed`, with 
 9. **BLOCKED handoff** → task `blocked` (waiting for a decision, not "still working").
    The run completes and nothing is retried automatically.
 10. Otherwise **testing**: the task moves to `review` and the Supervisor gate runs.
+
+## Recovery commits
+
+A turn that is killed (timeout, cancel, crash) leaves its edits sitting uncommitted in the
+worktree. The harness never discards them: it commits them. A subject line alone is not
+enough, because a half-finished edit then looks exactly like authored work to the next run,
+to the reviewer and in the diff — so a recovery commit is **machine-identifiable**:
+
+- **Subject** `chore(orchestrator-recovery): <label>` — unchanged format, because tests, docs
+  and GUI displays match on it (`git_service.RECOVERY_SUBJECT_PREFIX`).
+- **Trailer** `Orchestrator-Recovery: <run_short_id>` (`RECOVERY_TRAILER_KEY`) naming the
+  aborted run whose work is swept — not the run that finds it. Detection is by trailer
+  (`git_service.recovery_run_of` / `CommitInfo.recovery`), never by subject matching: a
+  hand-authored commit that copies the subject is *not* a recovery commit.
+- **Body** states plainly that the content was never self-checked, and lists
+  `Tracked modifications (n): …` separately from `Newly added untracked paths (n): …`.
+- **Build-log event** `recovery_commit`, line shape unchanged; the structured payload rides
+  inside `details` as `… | findings_json={"recovery": true, "run_short_id": …,
+  "sha": …, "tracked_modified": […], "untracked_added": […]}`
+  (`utils/structured_log.py`, `git_service.recovery_event_details`). Old lines without the
+  marker parse to `None`.
+- **Next run's prompt**: if the branch carries recovery commits, `run_service` lists them
+  (short sha, subject, tracked vs newly-added paths) and requires the Worker to re-verify with
+  the project's lint/test commands, repair or report every defect they introduced, and emit a
+  BLOCKED handoff with a contract-change request instead of continuing if one touched a
+  contract file the phase does not authorize. Logged as `recovery_notice_included`.
+- **Reviewer payload**: `review_service.recovery_section` + `harness_findings_section`, rendered
+  into the Architect's prompt by `prompt_builder._dynamic` ("Recovery commits on this branch",
+  "Harness-detected findings"), and the GUI marks the diff with a warning block
+  (`TaskDetail.tsx` `RecoveryNote`) built from the
+  `recovery_commits` field of `GET /api/tasks/{id}` — that field is the only place the data is
+  served; there is no `GET /api/tasks/{id}/recovery` route (reviewer ruling: the route was dead
+  code, nothing read it, and no DoD item asked for a new endpoint).
+  The payload itself is **not** archived as a new `runs/<id>/` file: that directory layout is a
+  frozen contract and no DoD item grants a new artifact in it — see
+  "Review input size (known limitation)" below.
+- Sensitive paths (`.env`, keys) are **never** staged into a recovery commit; they stay on
+  disk untracked and are reported in `skipped_sensitive`.
+
+A recovery commit is not itself a rejection reason and not itself an approval: it is
+information that the content has no self-check behind it. What *does* fail the gate is what
+re-verification finds in it (a lint error, a failing test) or a harness-detected contract-file
+hit — see “Unauthorized contract edits”.
+
+**Boundary:** detection is the trailer and nothing else. Recovery commits created *before* the
+trailer existed — any `chore(orchestrator-recovery): …` commit without `Orchestrator-Recovery:`,
+including this repo's own history — are **not** flagged. There is deliberately no fallback to
+subject matching: a subject match cannot distinguish wreckage from a hand-authored commit that
+copies the wording (a case covered by a test), so the harness reports what it can prove and
+stays silent about the rest. A reviewer who sees the historical subject prefix without the
+trailer should treat it as a human question, not as verified work.
+
+## What a new round resets
+
+`handoff_status`, `review_status`, `verification_status` and `merge_status` describe the
+**round that just ended**. Leaving them set while a new run is live makes the task row report
+`in_progress` next to `RUN_TIMEOUT` at the same time, which mislabels the GUI header and
+invites a reader to treat a live run as a failed one. So `task_service.clear_round_fields`
+(`ROUND_FIELDS`) runs at the one place a round actually starts — the top of
+`run_service._execute`, right after the run enters `preparing` — and logs
+`retry_fields_reset` with the fields it cleared.
+
+Deliberately **not** cleared on a requeue (`transition → queued`): a task queued after
+`CHANGES_REQUESTED` must keep showing that verdict, because it is the feedback the Worker acts
+on. The reset belongs at the start of a round, not at the end of one. `status` itself is not
+cleared — it is the state machine's business (`core/state.py`, frozen).
+
+## Unauthorized contract edits
+
+Editing a contract document (`docs/plan.md`, `docs/product-spec.md`, `docs/architecture.md`,
+`docs/workflow.md`, `docs/frozen-contracts.md`) is a decision only a human may authorize, and
+the half-finished wreckage a recovery commit sweeps in can contain exactly that. The harness
+computes it — a Worker or reviewer asserting authorization cannot make the claim true:
+
+1. the changed-file set is the branch diff **plus** the worktree's own dirt (`tracked_modified`
+   and `untracked_added`, so an uncommitted edit cannot hide),
+2. intersected with `project_service.contract_files()`,
+3. minus the files the task **explicitly grants** in its stored `definition_of_done`,
+   `acceptance_criteria` or `frozen_contracts` (`authorized_contract_files`).
+
+Step 3 is a **grant test, not a mention test**. A file is authorized only when one clause both
+names it and grants a change to it — "authorized to amend `docs/frozen-contracts.md` to add the
+ORCH_VERIFY field names". Three things are *not* authorization, each covered by a test:
+
+- a **mere mention**: T-8's own DoD 8 lists all five contract files while describing the detector,
+  so a mention rule would have authorized the exact edit it exists to catch;
+- a **prohibition**: "Do NOT modify `docs/frozen-contracts.md`" names the file in order to forbid
+  touching it; where negation and a grant word collide in one clause the prohibition wins, so the
+  control fails closed;
+- the task **description**, a commit message or a diffstat — prose about a contract file is not
+  permission to change one, and a recovery commit's own subject can never launder authorization.
+
+An unauthorized hit emits `contract_change_detected` with a `findings_json` payload, fails the
+`contract files unchanged` verification check (so green tests do not save it), and is handed to
+the reviewer as a harness-detected finding. **Decision: it routes straight to `blocked` with
+`review_status=NEEDS_HUMAN` instead of burning a review round** (`supervisor_service.contract_change_hold`)
+— a requeue would ask the Worker to fix something it is forbidden to fix. It does not reach the
+reviewer for the same reason. Recovery-commit paths are named as such in the finding.
 
 ## Supervisor gate (`supervisor_service.after_run`)
 
@@ -71,20 +176,36 @@ Run states: `pending → preparing → running → testing → completed`, with 
      `contradicts_worker`). **Skipped entirely when `test_command` is null** — see
      “Verification commands must be path-independent” below
    - lint and build commands when configured (same worktree, same null-means-N/A rule)
+   - **contract files changed without authorization** (`contract files unchanged`) —
+     computed by the harness from the branch diff *plus* the worktree's own dirt, and
+     authorized only by an explicit grant in the task's stored `definition_of_done` /
+     `acceptance_criteria` / `frozen_contracts` (a mention, or a prohibition naming the file, is
+     not a grant).
+     A failing check, so it fails verification even when the tests are green
+   - **recovery commits on the branch** (`recovery commits (harness-created)`) —
+     informational: it never rejects and never approves, it names the commits whose content
+     no Worker ever self-checked
    - migrations, live endpoints, and LLM coherence recorded as N/A with a reason unless
      in scope
 2. **Tests not green or no handoff** → no Architect review. The task goes back to the
    Worker on the same branch.
-3. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
-   only artifacts: the diff, handoff, test summary, verification narrative, and a list of
-   missing artifacts.
+3. **Harness-detected contract change** (after tests/handoff, before the reviewer) →
+   `blocked` with `review_status=NEEDS_HUMAN` and a `contract_change_detected` build-log
+   event. It is not folded into a generic rework round: only a human may change a contract,
+   so asking the Worker to "fix" it would ask it to break the same rule again.
+4. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
+   only artifacts: the diff, handoff, test summary, verification narrative, the recovery
+   commit list, the harness-computed contract findings, and a list of missing artifacts.
+   Sections are truncated by the `max_log_tokens` / `max_diff_tokens` settings, and nothing is
+   archived to say which bytes the model actually received — see
+   "Review input size (known limitation)" below.
    - `NEEDS_HUMAN` → `blocked`
    - `CHANGES_REQUESTED` → back to the Worker on the same branch
    - after `max_review_rounds` rounds (default 3) → `blocked`
-4. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
+5. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
    Architect, so cron jobs don't spend Opus tokens.
-5. **Merge gate** (below).
+6. **Merge gate** (below).
 
 ## Verification commands must be path-independent
 
@@ -173,6 +294,24 @@ Missing required artifacts are always added as findings, and an `APPROVED` verdi
 missing artifacts is downgraded to `CHANGES_REQUESTED`. If the reviewer claims it
 executed anything ("I ran…"), a note records that the claim is disregarded.
 
+### Review input size (known limitation)
+
+The Architect prompt is assembled from artifacts and truncated per section
+(`prompt_builder._dynamic`, `max_log_tokens` / `max_diff_tokens`). A large handoff block or a
+long diff can therefore reach the reviewer cut off — measured on T-8 round 5, where the supplied
+handoff block stopped mid DoD 5 and DoD 6-10 plus the trailing fields were never reviewable.
+Nothing today archives the exact bytes the model received, so "the reviewer was shown X" is not
+checkable after the fact.
+
+This is a **harness limitation, not a T-8 deliverable**: no DoD item asked for review-input
+budgeting or archiving, and the obvious fix — writing a new `runs/<run_id>/review_payload.md` —
+would amend the *frozen artifact directory layout* (`frozen-contracts.md`), which requires its
+own contract-change request and a human decision. An earlier revision on this branch did add
+that file; round 6 removed it for exactly this reason (reviewer finding 2). It stays owned by the
+separate review-payload-archiving item, where the sizing policy, the layout change and the CCR
+can be decided together. Workers mitigate in the meantime by keeping the handoff block small and
+pointing evidence at committed files the reviewer can open directly (`verify-evidence/<task>/`).
+
 ## Verification artifacts
 
 `runs/<run_id>/verification.md` + `verification.json`, plus `test.log`,
@@ -185,9 +324,58 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `build_log_entries` table. Each line looks like:
 `{timestamp, phase, task_id, run_id, role, event, details, commit_sha}`. Events include
 `task_status`, `run_created`, `worktree_created`, `recovery_commit`, `run_failed`,
-`run_timeout`, `supervisor_verification`, `architect_review`, `nits_deferred`,
-`merge_candidate`, `merged`, `merge_refused`, `schedule_fired`, `standalone_run`, `escalated`,
-`human_accept`. The GUI Build Log page and `GET /api/build-log` read it.
+`run_timeout`, **`run_completed`**, `supervisor_verification`, `architect_review`,
+`nits_deferred`, `merge_candidate`, `merged`, `merge_refused`, `schedule_fired`,
+`standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
+`retry_fields_reset`, `contract_change_detected`, `run_error`. The GUI Build Log page and
+`GET /api/build-log` read it.
+
+### Terminal run events
+
+A run's terminal status is `completed | failed | timeout | cancelled`. Two of the four had a
+named event (`run_failed`, `run_timeout`); `cancelled` shows up only as a `task_status` line
+reading `run cancelled`, and a run that finished normally had none — there is no
+`run_cancelled` event name either. (`run_error` exists but is not a terminal *status*: it labels
+an unexpected exception inside the harness, after which the run still ends as `failed`.) A green
+run was therefore observable only as a `task_status` transition, so any consumer had to *derive*
+the single most important trigger indirectly. `run_completed` is that missing event.
+
+**Where each terminal event is emitted (deliberate split, reviewer ruling 2).**
+`run_completed` is emitted inside `run_service._set_run`, the single writer of `run.status`, so it
+is impossible to set `completed` without logging it. `run_failed` / `run_timeout` stay where they
+were: emitted from `_execute` immediately after the `_set_run` call that sets the terminal status,
+because at that point `_execute` still holds the run-level error context (`run.error`, the exit
+code, the timeout reason) that their `details` carry, and `_set_run` does not. Moving them into
+`_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
+line. The shared chokepoint is the **status transition** (`_set_run` is the only writer, and every
+terminal status except `cancelled` has exactly one named event — `run_cancelled` does not exist
+yet and is a T-9 requirement, so the honest claim is "three of four"), not the `log_event` call site. The consumer that motivated
+the event — the **T-9** notification fan-out — is the reason it must be a named event at all. It
+is **additive** — no existing event name and no line-shape key changed — and adding it to the
+vocabulary was authorized by this task's Definition of Done, so `docs/frozen-contracts.md`
+itself is untouched (it does not enumerate build-log event names; the frozen list is the
+*line shape*).
+
+Today no in-repo consumer infers run success from a task-status transition (the Build Log page
+renders events as they arrive; the Dashboard counts `task.status`, which is a task verdict, not
+a run outcome), so there was nothing to migrate. The notification fan-out **T-9** must express
+its trigger set against these events rather than deriving success: `run_completed` (a run
+finished normally — the success trigger), `run_failed`, `run_timeout`, `run_error`, `escalated`,
+`merge_refused`, and a `verdict_recorded`/`task_status` line whose reason is `blocked`.
+Notifications key off events, not off status inference.
+
+`details` is redacted (`log_service.log_event`), and the two `sk-` credential patterns in
+`utils/redaction.py` carry a leading anchor — the lookbehind `(?<![A-Za-z0-9])`, not `\b`:
+`_` is a word character, so `\bsk-` would miss `TOKEN_sk-proj-…`, which is a shape keys really
+do appear in. Only a real prefix start matches now, so operational text stays usable: a branch,
+task, phase or path name (`task-8-…`, `risk-…`, `mask-…`) and a `findings_json` payload
+containing one must survive byte-identically, while real keys (`sk-ant-…`, `sk-proj-…`,
+`gh[pousr]_`, …) still redact wherever they appear. The other credential patterns keep their
+historical `\b` anchors unchanged — widening them is not this phase's decision, and the gap that
+leaves open (`OPENAI_TOKEN_ghp_…` is not caught today) is pinned by a test
+(`tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression`)
+so it cannot be lost by accident. The `merge_candidate` instruction in particular must remain
+copy-pasteable — `git -C <repo> checkout main && git -C <repo> merge --no-ff <branch>`.
 
 ## Branch strategy
 

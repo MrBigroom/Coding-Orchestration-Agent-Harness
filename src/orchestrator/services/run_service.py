@@ -75,6 +75,20 @@ def _set_run(session: Session, run: Run, status: str, **fields: Any) -> Run:
     session.add(run)
     session.commit()
     bus.publish(run.id or 0, {"type": "status", "status": run.status})
+    # Terminal success event. `run_failed`/`run_timeout` are emitted on the failure paths of
+    # `_execute`; this is the matching chokepoint for a run that finished normally, so a
+    # consumer (the T-9 notification fan-out, the build-log GUI) never has to INFER success from
+    # a task_status transition. Additive: no existing event name or line shape changed.
+    if run.status == RunStatus.completed:
+        log_service.log_event(
+            session,
+            "run_completed",
+            f"{run.short_id} finished normally (exit {run.exit_code})",
+            role="worker",
+            task_id=run.task_id,
+            run_id=run.id,
+            commit_sha=run.commit_sha,
+        )
     return run
 
 
@@ -140,6 +154,19 @@ def _latest_feedback(session: Session, task: Task) -> str | None:
         for f in review.findings
     )
     return f"Verdict: {review.verdict}\n{items}"
+
+
+def _last_aborted_run(session: Session, task: Task, exclude_id: int | None) -> Run | None:
+    """The most recent run that ended aborted (timeout/failure/cancel) — the one whose half-
+    finished edits a pre-run recovery sweep is about to commit."""
+    for r in reversed(task_service.runs_for(session, task)):
+        if r.id != exclude_id and r.status in (
+            RunStatus.timeout,
+            RunStatus.failed,
+            RunStatus.cancelled,
+        ):
+            return r
+    return None
 
 
 def _synthesize_handoff(
@@ -223,6 +250,9 @@ async def _execute(
     assert run.id is not None and task.id is not None
     started = utcnow()
     _set_run(session, run, RunStatus.preparing, started_at=started)
+    # A new round starts with no handoff/review/verification/merge verdict attached to it; the
+    # markers describe the PREVIOUS round and would contradict `in_progress` (T-8 DoD 7).
+    task_service.clear_round_fields(session, task, reason=f"run {run.short_id} started")
 
     if task.kind == TaskKind.agent or (task.kind != TaskKind.agent and project is None):
         return await _execute_direct(session, task, run, project, profile_override)
@@ -267,23 +297,57 @@ async def _execute(
             task_id=task.id,
             run_id=run.id,
         )
-    # Supervisor duty: check git status BEFORE (re)trying; recover dirty trees safely.
-    rec = git_service.recovery_commit(wt.path, f"leftover changes before run {run.short_id}")
+    # Supervisor duty: check git status BEFORE (re)trying; recover dirty trees safely. The
+    # trailer names the aborted run whose work is being swept, not the run that finds it.
+    leftover_of = _last_aborted_run(session, task, run.id)
+    sweep_for = (leftover_of or run).short_id
+    rec = git_service.recovery_commit_info(
+        wt.path, f"leftover changes from {sweep_for}", run_short_id=sweep_for
+    )
     if rec:
         log_service.log_event(
             session,
             "recovery_commit",
-            "dirty worktree before retry",
+            git_service.recovery_event_details("dirty worktree before retry", rec),
             role="supervisor",
             task_id=task.id,
             run_id=run.id,
-            commit_sha=rec,
+            commit_sha=rec.sha,
         )
     handoff_path = wt.path / git_service.ORCH_DIR / "handoff.json"
     handoff_path.parent.mkdir(exist_ok=True)
     handoff_path.unlink(missing_ok=True)
 
-    state = DynamicState(feedback=_latest_feedback(session, task))
+    # A branch that carries harness wreckage must not pass it on silently: the Worker is told
+    # which commits are recovery commits and is required to re-verify before handing off.
+    recovery_list = git_service.recovery_commits(wt.path, project.base_branch)
+    recovery_state = ""
+    if recovery_list:
+        recovery_state = (
+            f"{len(recovery_list)} commit(s) on {task.branch_name} were created by the "
+            "orchestrator as `chore(orchestrator-recovery)` recovery commits of leftover "
+            "worktree output after an aborted turn. They carry the "
+            "`Orchestrator-Recovery:` trailer. Their content was NEVER self-checked by a "
+            "Worker: it may contain undefined names, half-finished edits, or edits to frozen "
+            "contract files.\n"
+            "Before writing handoff.json you MUST:\n"
+            "1. re-verify the branch with the project's lint and test commands (run them via "
+            "the configured project command, from this worktree), and\n"
+            "2. repair or explicitly report every defect these commits introduced, and\n"
+            "3. if any of them touched a contract file this phase does not authorize, emit a "
+            "BLOCKED handoff with a contract-change request instead of continuing.\n\n"
+            + git_service.format_recovery_commit_list(recovery_list)
+        )
+        log_service.log_event(
+            session,
+            "recovery_notice_included",
+            f"{len(recovery_list)} recovery commit(s) listed in the prompt for {run.short_id}",
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+
+    state = DynamicState(feedback=_latest_feedback(session, task), recovery=recovery_state)
     prompt = prompt_builder.build_prompt(session, Role.worker, task, project, state)
     prompt_text = prompt.static_text() + "\n\n" + prompt.dynamic_text()
     prompt_file = artifact_service.write_text(run.id, "prompt.md", prompt_text)
@@ -342,16 +406,18 @@ async def _execute(
     )
 
     # Collect whatever landed, even on failure (evidence for the next retry).
-    rec = git_service.recovery_commit(wt.path, f"uncommitted worker output from {run.short_id}")
+    rec = git_service.recovery_commit_info(
+        wt.path, f"uncommitted worker output from {run.short_id}", run_short_id=run.short_id
+    )
     if rec:
         log_service.log_event(
             session,
             "recovery_commit",
-            "worker left uncommitted changes",
+            git_service.recovery_event_details("worker left uncommitted changes", rec),
             role="supervisor",
             task_id=task.id,
             run_id=run.id,
-            commit_sha=rec,
+            commit_sha=rec.sha,
         )
     patch, stat = git_service.diff_against_base(wt.path, project.base_branch)
     artifact_service.write_text(run.id, "patch.diff", patch)
