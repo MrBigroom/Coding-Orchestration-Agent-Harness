@@ -9,9 +9,15 @@ from collections.abc import Iterable
 REDACTED = "[REDACTED]"
 
 _PATTERNS: list[re.Pattern[str]] = [
-    # Provider keys
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{10,}"),
-    re.compile(r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
+    # Provider keys. The `\b` anchor is load-bearing (T-8 DoD 10): without it these patterns
+    # match INSIDE ordinary words that end in "sk" followed by a hyphen, so branch/task/phase
+    # names were destroyed by redact() — "task-8-recovery-commits..." lost its value while a
+    # findings_json payload still parsed, i.e. a machine consumer silently read a WRONG branch
+    # name. A real key starts at a word boundary (after whitespace, `=`, `"`, start of line) and
+    # still redacts; "task-", "risk-", "mask-" no longer match because the preceding letter is a
+    # word character, so there is no boundary before the "sk".
+    re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{10,}"),
+    re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
