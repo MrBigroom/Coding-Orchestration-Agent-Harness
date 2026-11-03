@@ -242,11 +242,11 @@ class PiDriver(ChatDriver):
             return
         usage = message.get("usage")
         if isinstance(usage, dict):
+            inp = _n(usage.get("input")) + _n(usage.get("cacheWrite"))
+            cached = _n(usage.get("cacheRead"))
+            # One assistant message is one request, so its input is the context size.
             self.add_usage(
-                _n(usage.get("input")) + _n(usage.get("cacheWrite")),
-                _n(usage.get("cacheRead")),
-                _n(usage.get("output")),
-                total_input=False,
+                inp, cached, _n(usage.get("output")), total_input=False, context=inp + cached
             )
         if message.get("stopReason") in FAILED_STOP_REASONS:
             reason = message.get("errorMessage") or f"stopped: {message['stopReason']}"

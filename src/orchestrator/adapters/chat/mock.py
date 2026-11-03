@@ -66,7 +66,7 @@ class MockDriver(ChatDriver):
             for word in f"Mock harness received: {text}".split(" "):
                 self.emit({"type": "text", "delta": f"{word} "})
                 await asyncio.sleep(0.01)
-            self.add_usage(100, 40, 20, total_input=True)
+            self.add_usage(100, 40, 20, total_input=True, context=100)
         finally:
             self.emit({"type": "status", "status": "idle"})
 

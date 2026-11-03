@@ -10,7 +10,9 @@ events, which `services.chat_service` persists and streams to the GUI:
    "action": {"kind": "read" | "write" | "other", "paths": [str]}}
   {"type": "approval_resolved", "id", "choice"}
   {"type": "status", "status": "busy" | "idle"}
-  {"type": "usage", ...the shape documented in adapters.common}
+  {"type": "usage", ...running totals in the shape documented in adapters.common,
+   "turn": {...the same, for the latest turn alone}, "context_tokens": int,
+   "context_window": int}   (the last two once known; chat_service fills in the window)
   {"type": "config", "model", "effort", "permission", "models", "efforts", "permissions",
    "images": bool, "commands": [{"name", "description"}]}
   {"type": "notice" | "error", "message": str}
@@ -240,9 +242,26 @@ class ChatDriver(ABC):
                 future.set_exception(DriverError(f"the harness exited: {tail[-500:]}"))
         self.emit({"type": "exit", "code": code, "message": tail[-1500:]})
 
-    def add_usage(self, inp: int, cached: int, out: int, *, total_input: bool) -> None:
+    def add_usage(
+        self, inp: int, cached: int, out: int, *, total_input: bool, context: int | None = None
+    ) -> None:
+        """`context` is how many tokens the turn's last request sent, when one request's
+        figures are known (a turn's totals add up every request in its tool loop)."""
         turn = _usage(inp, cached, out, 1, total_input=total_input)
-        self.usage = {k: self.usage.get(k, 0) + v for k, v in turn.items()}
+        self.usage = {**self.usage, **{k: self.usage.get(k, 0) + v for k, v in turn.items()}}
+        if context:
+            self.usage["context_tokens"] = context
+        self.emit({"type": "usage", **self.usage, "turn": turn})
+
+    def set_context(self, tokens: int, window: int | None = None) -> None:
+        """The prompt size of the latest request, and the window if the harness says it."""
+        if tokens == self.usage.get("context_tokens") and window == self.usage.get(
+            "context_window"
+        ):
+            return
+        self.usage["context_tokens"] = tokens
+        if window:
+            self.usage["context_window"] = window
         self.emit({"type": "usage", **self.usage})
 
     def ask(

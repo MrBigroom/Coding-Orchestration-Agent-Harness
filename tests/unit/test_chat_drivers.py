@@ -116,7 +116,7 @@ for line in sys.stdin:
         out({"type": "control_response", "response": {"subtype": "success", "request_id": m["request_id"], "response": reply}})
     elif m["type"] == "user":
         out({"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "hi"}}})
-        out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}})
+        out({"type": "assistant", "message": {"usage": {"input_tokens": 2, "cache_creation_input_tokens": 3, "cache_read_input_tokens": 70}, "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}})
         out({"type": "control_request", "request_id": "c1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "ls"}, "permission_suggestions": [{"type": "addRules"}]}})
         answer = json.loads(sys.stdin.readline())
         behavior = answer["response"]["response"]
@@ -199,6 +199,7 @@ async def test_pi_turn_maps_events_and_gate_prompts(tmp_path):
         assert rec.of("text")[0]["delta"] == "done line"
         assert rec.of("usage")[-1]["input_tokens"] == 100
         assert rec.of("usage")[-1]["cache_read_input_tokens"] == 90
+        assert rec.of("usage")[-1]["context_tokens"] == 100
         assert rec.of("approval_resolved")[0]["choice"] == "Allow"
     finally:
         await driver.close()
@@ -360,6 +361,9 @@ async def test_claude_turn_allows_with_original_input(tmp_path):
         }
         usage = rec.of("usage")[-1]
         assert (usage["input_tokens"], usage["cache_read_input_tokens"]) == (100, 90)
+        # The context is the last request's prompt, not the turn's total.
+        assert usage["context_tokens"] == 75
+        assert usage["turn"]["input_tokens"] == 100
     finally:
         await driver.close()
 
@@ -387,6 +391,17 @@ async def test_acp_usage_handles_input_that_excludes_cached_tokens(tmp_path):
     driver._on_turn_end({"usage": {"inputTokens": 163, "cachedReadTokens": 1000}})
     usage = rec.of("usage")[-1]
     assert (usage["input_tokens"], usage["uncached_input_tokens"]) == (1163, 163)
+    await driver.close()
+
+
+async def test_acp_usage_update_reports_context_and_window(tmp_path):
+    rec = Recorder()
+    driver = AcpDriver(adapter("qwen_code", stub(tmp_path, ACP_STUB)), options(tmp_path), rec)
+    driver._on_update({"sessionUpdate": "usage_update", "used": 52_000, "size": 262_144})
+    driver._on_update({"sessionUpdate": "usage_update", "used": 52_000, "size": 262_144})
+    assert len(rec.of("usage")) == 1  # unchanged figures aren't sent again
+    usage = rec.of("usage")[-1]
+    assert (usage["context_tokens"], usage["context_window"]) == (52_000, 262_144)
     await driver.close()
 
 

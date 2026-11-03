@@ -20,6 +20,7 @@ from orchestrator.providers.base import (
     ProviderError,
 )
 from orchestrator.providers.registry import build_provider
+from orchestrator.services import usage_service
 from orchestrator.utils.json_output import JSONExtractionError, json_instruction, parse_model
 
 M = TypeVar("M", bound=BaseModel)
@@ -320,7 +321,21 @@ async def complete(
         timeout_seconds=profile.timeout_seconds,
         metadata=metadata or {},
     )
-    return await impl.complete(req)
+    res = await impl.complete(req)
+    usage_service.record("api", prov.name, profile.model_name, _total_input(res.usage))
+    return res
+
+
+def _total_input(usage: dict[str, Any]) -> dict[str, Any]:
+    """Anthropic-shaped usage leaves cache reads and writes out of input_tokens;
+    OpenAI-compatible usage already counts them."""
+    if "cache_creation_input_tokens" not in usage:
+        return usage
+    total = sum(
+        usage.get(k, 0) or 0
+        for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    )
+    return {**usage, "input_tokens": total}
 
 
 async def complete_json(

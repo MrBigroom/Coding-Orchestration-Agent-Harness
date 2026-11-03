@@ -5,7 +5,7 @@ import Markdown, { type Components } from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { api, del, getToken, patch, post } from "../api/client";
-import type { ChatCatalog, ChatChanges, ChatHarness, ChatSession, PermissionMode, Project } from "../api/types";
+import type { ChatCatalog, ChatChanges, ChatHarness, ChatSession, ChatUsage, PermissionMode, Project } from "../api/types";
 import { Badge, ConfirmButton, Empty, ErrorNote, Field, Pre } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 import { useChatSession, type ChatItem, type SlashCommand } from "../hooks/useChatSession";
@@ -15,7 +15,27 @@ const ENDED = new Set(["closed", "failed", "interrupted"]);
 
 function compact(n: number | undefined): string {
   if (!n) return "0";
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 2)}M`;
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+}
+
+function ContextMeter({ usage }: { usage: Partial<ChatUsage> }) {
+  const used = usage.context_tokens;
+  if (!used) return null;
+  const limit = usage.context_window;
+  if (!limit) {
+    return <span className="text-xs text-muted" title="Tokens the latest request sent. This model's context window isn't known; set it on the Models page.">{compact(used)} in context</span>;
+  }
+  const pct = Math.min(100, (used / limit) * 100);
+  const tone = pct >= 90 ? "bg-bad" : pct >= 70 ? "bg-warn" : "bg-accent";
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-muted" title={`The latest request sent ${used.toLocaleString()} of this model's ${limit.toLocaleString()} context tokens`}>
+      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-panel-2" role="meter" aria-label="Context used" aria-valuemin={0} aria-valuemax={limit} aria-valuenow={used}>
+        <span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.max(pct, 2)}%` }} />
+      </span>
+      <span className="whitespace-nowrap tabular-nums">{compact(used)} / {compact(limit)} · {pct < 1 ? "<1" : Math.round(pct)}%</span>
+    </span>
+  );
 }
 
 const MARKDOWN: Components = {
@@ -652,7 +672,8 @@ function ActiveSession({ chat, harness, initialPrompt, onChanged }: { chat: Chat
             ? <span className="mono flex min-w-0 items-center gap-1 text-xs text-muted" title={chat.cwd}><FolderOpen size={13} className="shrink-0" aria-hidden="true" /><span className="max-w-xs truncate">{chat.cwd}</span></span>
             : <span className="flex items-center gap-1 text-xs text-warn"><TriangleAlert size={13} aria-hidden="true" />project checkout</span>}
         <div className="ml-auto flex items-center gap-2">
-          {usage.requests ? <span className="text-xs text-muted" title={`${compact(usage.cache_read_input_tokens)} of the input came from cache, over ${usage.requests} requests`}>{compact(usage.input_tokens)} in · {compact(usage.output_tokens)} out</span> : null}
+          <ContextMeter usage={usage} />
+          {usage.requests ? <span className="whitespace-nowrap text-xs text-muted" title={`${compact(usage.cache_read_input_tokens)} of the input came from cache, over ${usage.requests} requests`}>{compact(usage.input_tokens)} in · {compact(usage.output_tokens)} out</span> : null}
           {!ended && !chat.standalone && (
             <button className="btn" disabled={locked || status !== "idle"} onClick={() => send({ type: "suggest_memories" })}
               title="Ask the agent for memory entries worth keeping from this session. They wait for review on the Memory page.">

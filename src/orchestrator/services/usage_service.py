@@ -14,12 +14,22 @@ $2 / $6 per 1M tokens). They rank harnesses; they are not a bill.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, col, select
 
 from orchestrator.adapters.common import parse_usage
-from orchestrator.core.models import ChatSession, Run, Task, TaskStatus
+from orchestrator.core import context_windows
+from orchestrator.core.db import session_scope
+from orchestrator.core.models import (
+    ChatSession,
+    ModelProfile,
+    Run,
+    Task,
+    TaskStatus,
+    UsageEvent,
+)
 
 CACHED_INPUT_WEIGHT = 0.2
 OUTPUT_WEIGHT = 3.0
@@ -150,3 +160,77 @@ def cache_stats(session: Session) -> list[dict[str, Any]]:
     return sorted(
         rows.values(), key=lambda r: (order[r["source"]], -r["input_tokens"], r["harness"])
     )
+
+
+# ---------------------------------------------------------------- per-day usage
+
+USAGE_SOURCES = ("task", "chat", "standalone", "api")
+
+
+def record(source: str, via: str | None, model: str | None, usage: dict[str, Any]) -> None:
+    """Log one call's (or one turn's) tokens for the Usage page. Uses its own session, so it
+    never commits a caller's half-done work."""
+    inp = usage.get("input_tokens", 0) or 0
+    out = usage.get("output_tokens", 0) or 0
+    if not inp and not out:
+        return
+    with session_scope() as s:
+        s.add(
+            UsageEvent(
+                source=source,
+                via=via,
+                model=model,
+                input_tokens=inp,
+                cached_input_tokens=usage.get("cache_read_input_tokens", 0) or 0,
+                output_tokens=out,
+                requests=usage.get("requests", 1) or 1,
+            )
+        )
+        s.commit()
+
+
+def daily(session: Session, days: int = 30, source: str | None = None) -> dict[str, Any]:
+    """Tokens per (local day, model) over the last `days` days, today included."""
+    today = datetime.now().astimezone().date()
+    first = today - timedelta(days=days - 1)
+    since = datetime.combine(first, datetime.min.time()).astimezone().astimezone(UTC)
+    query = select(UsageEvent).where(UsageEvent.created_at >= since)
+    if source:
+        query = query.where(UsageEvent.source == source)
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in session.exec(query):
+        when = e.created_at if e.created_at.tzinfo else e.created_at.replace(tzinfo=UTC)
+        day = when.astimezone().date().isoformat()
+        model = e.model or "unknown"
+        row = rows.setdefault(
+            (day, model),
+            {
+                "day": day,
+                "model": model,
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+                "requests": 0,
+            },
+        )
+        row["input_tokens"] += e.input_tokens
+        row["cached_input_tokens"] += e.cached_input_tokens
+        row["output_tokens"] += e.output_tokens
+        row["requests"] += e.requests
+    return {
+        "days": [(first + timedelta(days=i)).isoformat() for i in range(days)],
+        "rows": sorted(rows.values(), key=lambda r: (r["day"], r["model"])),
+    }
+
+
+def context_window(session: Session, model: str | None) -> int | None:
+    """A profile's own figure for this model wins over the built-in table."""
+    if not model:
+        return None
+    name = context_windows.normalize(model)
+    for p in session.exec(
+        select(ModelProfile).where(col(ModelProfile.context_window).is_not(None))
+    ):
+        if context_windows.normalize(p.model_name) == name:
+            return p.context_window
+    return context_windows.builtin(model)

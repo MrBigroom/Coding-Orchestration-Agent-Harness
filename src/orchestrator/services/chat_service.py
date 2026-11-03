@@ -44,6 +44,7 @@ from orchestrator.services import (
     git_service,
     memory_service,
     settings_service,
+    usage_service,
 )
 from orchestrator.utils.git import is_repo, run_git, status_porcelain
 from orchestrator.utils.redaction import redact
@@ -237,6 +238,8 @@ class LiveSession:
         if event["type"] == "exit":
             self._on_exit(event)
             return
+        if event["type"] == "usage" and not event.get("context_window"):
+            event = {**event, "context_window": self._context_window()}
         self.seq += 1
         event = {**_clean(event), "seq": self.seq}
         if event["type"] in STREAMED:
@@ -276,8 +279,29 @@ class LiveSession:
             fields = {k: event[k] for k in ("model", "effort", "permission") if event.get(k)}
             if fields:
                 self._save(**fields)
+            if event.get("model") and self.driver and self.driver.usage.get("requests"):
+                self.emit({"type": "usage", **self.driver.usage})  # the new model's window
         elif kind == "usage":
-            self._save(usage={k: v for k, v in event.items() if k not in ("type", "seq")})
+            self._on_usage(event)
+
+    def _on_usage(self, event: dict[str, Any]) -> None:
+        """Keeps the running totals on the row, and logs the turn for the Usage page."""
+        with session_scope() as s:
+            row = s.get(ChatSession, self.id)
+            if not row:
+                return
+            row.usage = {k: v for k, v in event.items() if k not in ("type", "seq", "turn")}
+            row.updated_at = utcnow()
+            s.add(row)
+            s.commit()
+            if turn := event.get("turn"):
+                source = "standalone" if self.standalone else "chat"
+                usage_service.record(source, row.adapter, row.model, turn)
+
+    def _context_window(self) -> int | None:
+        with session_scope() as s:
+            row = s.get(ChatSession, self.id)
+            return usage_service.context_window(s, row.model) if row else None
 
     def _on_status(self, status: str) -> None:
         self.status = status
