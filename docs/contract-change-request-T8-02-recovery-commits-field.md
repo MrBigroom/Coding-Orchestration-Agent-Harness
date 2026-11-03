@@ -1,6 +1,8 @@
 # Contract-change request CCR-T8-02 — the added `recovery_commits` field on the task detail response
 
-- **Status:** PROPOSED — awaiting the Architect/human decision. **Not applied.**
+- **Status:** APPROVED by the operator, 2026-11-04. Applied verbatim to `docs/frozen-contracts.md`
+  ("Task detail response"). The route proposed alongside it was dropped as dead code, so only the
+  additive field is frozen. This file is kept as the request of record.
   `docs/frozen-contracts.md` is untouched on this branch, and this request does not edit it.
 - **Raised by:** T-8 (`task-8-recovery-commits-after-a-timeout-commit-half-fin`), 2026-11-04,
   (round 6 corrected `author` to the string the server actually emits — see "Shape, verified

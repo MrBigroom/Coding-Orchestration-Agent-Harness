@@ -1,6 +1,7 @@
 # Contract-change request CCR-T6-01 — freeze the `ORCH_VERIFY|` resolution marker
 
-- **Status:** PROPOSED — awaiting the Architect/human decision. Not applied.
+- **Status:** APPROVED by the operator, 2026-11-04. Applied verbatim to `docs/frozen-contracts.md`
+  ("Path-independent verification commands"). This file is kept as the request of record.
 - **Raised by:** T-6 (`task-6-verification-commands-cannot-run-in-a-worktree-n`), 2026-11-03.
 - **Reason it is a request and not a change:** T-6's Definition of Done does **not** authorize
   a change to `docs/frozen-contracts.md`, so the branch does not edit that file. An earlier

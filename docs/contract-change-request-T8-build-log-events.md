@@ -1,6 +1,9 @@
 # Contract-change request CCR-T8-01 — name the terminal success event and the structured `details` payload
 
-- **Status:** PROPOSED — awaiting the Architect/human decision. **Not applied.**
+- **Status:** APPROVED **as corrected** by the operator, 2026-11-04. Applied to
+  `docs/frozen-contracts.md` ("Build-log events") with the original overclaim fixed: `cancelled` is a
+  fourth terminal status that still has no named event, so `run_cancelled` is recorded as a T-9
+  requirement rather than frozen as if it existed. This file is kept as the request of record.
   `docs/frozen-contracts.md` is untouched on this branch.
 - **Raised by:** T-8 (`task-8-recovery-commits-after-a-timeout-commit-half-fin`), 2026-11-04.
 - **Why this is a request and not a change:** T-8's Definition of Done authorizes *adding* a

@@ -63,6 +63,35 @@ change in its Definition of Done.
 - **Harness adapter interface**: `adapters/base.py` (`detect`, `health`, `build_command`,
   `run`, `cancel`, `parse_result`, `capabilities`) and the template tokens.
 - **CLI command surface**, unless a phase explicitly changes it.
+- **Path-independent verification commands**: the gate runs a project's test/lint/build command
+  with cwd = the task worktree (`worktrees/<project_slug>/<task_id>`), never in the main checkout.
+  A wrapper that proves where its imports resolved emits
+  `ORCH_VERIFY|mode=<mode>|module=<name>|module_file=<abs>|worktree_root=<abs>` on stdout or
+  stderr; `scripts/orch_verify.sh` is the reference implementation and
+  `project_service.parse_orch_verify` (+ `project doctor --run-commands`) consumes it. Keys are
+  order-independent; the field names and the `ORCH_VERIFY|` prefix are the contract. Approved from
+  CCR-T6-01 (T-6) by the operator, 2026-11-04.
+- **Task detail response**: `GET /api/tasks/{task_id}` returns the task row plus read-only derived
+  collections. `recovery_commits` is an additive array of harness-created commits on the task's
+  branch, each entry `{sha: str, short: str, subject: str, recovery: bool, recovery_run: str|null,
+  author: str ("name <email>"), files: [{status: str, path: str}]}`. The field is always present
+  (empty when there are none) and is derived from git history, never stored. Adding a derived field
+  to an existing `/api` response is additive and allowed; changing or removing an existing key, or
+  adding a new route, requires its own contract-change request. Approved from CCR-T8-02 (T-8) by the
+  operator, 2026-11-04.
+- **Build-log events**: the line shape `{timestamp, phase, task_id, run_id, role, event, details,
+  commit_sha}` is frozen. A run's terminal status is one of `completed | failed | timeout |
+  cancelled`, and **three of those four** have a named terminal event: `run_completed` (normal
+  completion), `run_failed`, `run_timeout`. A `cancelled` run has **no** named event today — it is
+  observable only as a `task_status` line reading `run cancelled` — and `run_cancelled` is not an
+  event name yet; adding it is a T-9 requirement, deliberately not frozen here as if it existed.
+  `run_error` is not a terminal status: it labels an unexpected exception inside the harness, after
+  which the run still ends as `failed`. Event names are additive — a phase may add one, never rename
+  or remove one. Where a machine consumer needs structure, `details` may carry a final segment
+  ` | findings_json=<json object>`; the segment is always last, `json.loads` of the remainder is the
+  payload, its absence means no payload, and no payload may contradict the human summary in the same
+  string. Approved from CCR-T8-build-log-events (T-8) by the operator, 2026-11-04, after correcting
+  its original overclaim that every terminal status already had an event.
 
 ## Out of scope
 
