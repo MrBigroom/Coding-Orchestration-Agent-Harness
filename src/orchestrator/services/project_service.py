@@ -105,15 +105,6 @@ def command_allowed(project: Project, command: str) -> bool:
     return command in project.allowed_commands or argv0 in project.allowed_commands
 
 
-def _in_base_branch(project: Project, exe: str) -> bool:
-    """Is `exe` committed on the base branch (as a plain path, not a cwd-relative one)?"""
-    try:
-        res = run_git(["ls-tree", "--name-only", project.base_branch, "--", exe], project.path)
-    except (OSError, GitError):
-        return False
-    return res.code == 0 and bool(res.stdout.strip())
-
-
 def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
@@ -144,22 +135,8 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
         try:
             argv = command_argv(cmd)
             exe = argv[0]
-            if "/" in exe:
-                if (path / exe).exists():
-                    found, detail = True, cmd
-                elif repo and _in_base_branch(project, exe):
-                    # The gate runs commands in a worktree of the base branch, never in the
-                    # main checkout, so a wrapper that only exists there is still runnable —
-                    # exactly the state of a branch that adds its own verify wrapper.
-                    found = True
-                    detail = f"{cmd} (on {project.base_branch!r}, not yet in the main checkout)"
-                else:
-                    found = False
-                    detail = f"`{exe}` not found in the main checkout or on {project.base_branch!r}"
-            else:
-                found = shutil.which(exe) is not None
-                detail = cmd if found else f"`{exe}` not found on PATH"
-            add(f"{label} command", found, detail)
+            found = (path / exe).exists() if "/" in exe else shutil.which(exe) is not None
+            add(f"{label} command", found, cmd if found else f"`{exe}` not found")
         except ProjectError as e:
             add(f"{label} command", False, str(e))
     if run_commands:
@@ -259,9 +236,13 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
             except ProjectError as e:
                 add(f"{label} in worktree", False, str(e))
                 continue
-            code, output, timed_out = process_service.run_simple_sync(
-                argv, info.path, RUN_TIMEOUT_SECONDS
-            )
+            try:
+                code, output, timed_out = process_service.run_simple_sync(
+                    argv, info.path, RUN_TIMEOUT_SECONDS
+                )
+            except Exception as e:  # noqa: BLE001 - doctor reports, it never raises out
+                add(f"{label} in worktree", False, f"could not run: {type(e).__name__}: {e}")
+                continue
             ok = code == 0 and not timed_out
             detail = f"exit {code} (cwd {info.path})"
             if timed_out:
@@ -300,13 +281,18 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
                 or f"{rows[0].get('module', '?')} -> {rows[0].get('module_file')}",
             )
     finally:
-        leftover = [
-            m
-            for m in git_service.managed_worktrees()
-            if m["project_slug"] == project.slug and m["task_id"] == DOCTOR_SNAPSHOT_KEY
-        ]
-        for m in leftover:
-            note = git_service.remove_worktree(repo, m, dry_run=False)
-            if note.startswith("skip"):
-                add("throwaway worktree removed", False, f"{note}; run `orchestrator cleanup`")
+        # Every exit path (green, red, timeout, spawn failure, unexpected error) lands here:
+        # a doctor probe must not leave a worktree behind in ORCHESTRATOR_HOME.
+        try:
+            leftover = [
+                m
+                for m in git_service.managed_worktrees()
+                if m["project_slug"] == project.slug and m["task_id"] == DOCTOR_SNAPSHOT_KEY
+            ]
+            for m in leftover:
+                note = git_service.remove_worktree(repo, m, dry_run=False)
+                if note.startswith("skip"):
+                    add("throwaway worktree removed", False, f"{note}; run `orchestrator cleanup`")
+        except (OSError, GitError) as e:
+            add("throwaway worktree removed", False, f"{e}; run `orchestrator cleanup`")
     return checks
