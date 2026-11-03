@@ -227,10 +227,19 @@ def test_qwen_disables_memory_and_maps_token_plan_env(tmp_path, monkeypatch):
     env = qwen.prepare(_ctx(tmp_path, "qwen3.8-max"), tmp_path)
     settings = json.loads(Path(env["QWEN_CODE_SYSTEM_SETTINGS_PATH"]).read_text())
     assert settings["memory"]["enableManagedAutoMemory"] is False
+    assert settings["general"]["gitCoAuthor"] == {"commit": False, "pr": False}
     assert env["OPENAI_API_KEY"] == "sk-q" and env["OPENAI_MODEL"] == "qwen3.8-max"
     assert env["HOME"] == str(tmp_path)
     argv = qwen.build_command(_ctx(tmp_path, "qwen3.8-max"))
     assert "run_shell_command" in argv and argv[argv.index("-o") + 1] == "json"
+
+
+def test_qwen_drops_coauthor_even_with_auto_memory_on(tmp_path):
+    spec = next(s for s in default_specs() if s.kind == "qwen_code")
+    spec.capabilities["disable_auto_memory"] = False
+    env = build_adapter(spec).prepare(_ctx(tmp_path, "qwen3.8-max"), tmp_path)
+    settings = json.loads(Path(env["QWEN_CODE_SYSTEM_SETTINGS_PATH"]).read_text())
+    assert settings == {"general": {"gitCoAuthor": {"commit": False, "pr": False}}}
 
 
 def test_qwen_keeps_own_home_when_provider_is_null(tmp_path):

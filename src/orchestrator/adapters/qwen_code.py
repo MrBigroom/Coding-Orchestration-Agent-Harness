@@ -21,6 +21,8 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
     - Managed auto-memory is switched off through a per-run system settings file
       (`QWEN_CODE_SYSTEM_SETTINGS_PATH`); otherwise every run makes a second ~6k-token
       "memory extraction" call.
+    - The same file turns off `general.gitCoAuthor`, so commits and PRs get no
+      Qwen-Coder co-author trailer and no `refs/notes/ai-attribution` note.
     - The endpoint comes from `capabilities.provider` (default: QWEN_API_KEY +
       QWEN_OPENAI_BASE_URL, i.e. the Token Plan), mapped to Qwen Code's OPENAI_* variables.
       Set `capabilities.provider` to null to use your own ~/.qwen auth instead.
@@ -62,15 +64,12 @@ class QwenCodeAdapter(JsonOutputMixin, ManagedConfigMixin, BaseHarnessAdapter):
     stdout_to_file = True
 
     def prepare(self, ctx: RunContext, tmp: Path) -> dict[str, str]:
-        env: dict[str, str] = {}
+        system: dict[str, dict] = {"general": {"gitCoAuthor": {"commit": False, "pr": False}}}
         if self.capabilities.get("disable_auto_memory", True):
-            settings = tmp / "system-settings.json"
-            settings.write_text(
-                json.dumps(
-                    {"memory": {"enableManagedAutoMemory": False, "enableManagedAutoDream": False}}
-                )
-            )
-            env["QWEN_CODE_SYSTEM_SETTINGS_PATH"] = str(settings)
+            system["memory"] = {"enableManagedAutoMemory": False, "enableManagedAutoDream": False}
+        settings = tmp / "system-settings.json"
+        settings.write_text(json.dumps(system))
+        env: dict[str, str] = {"QWEN_CODE_SYSTEM_SETTINGS_PATH": str(settings)}
         prov = provider_settings(self.capabilities)
         key = os.environ.get(prov["api_key_env"]) if prov else None
         if prov and key:
