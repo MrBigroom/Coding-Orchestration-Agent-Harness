@@ -1,0 +1,3 @@
+# HEAD=a3eb2fd51768b3ed61dfc5ae3088f7ad90256e0e
+# command: tsc -b --force in a scratch dir with web/node_modules symlinked (outside the worktree)
+exit=0
