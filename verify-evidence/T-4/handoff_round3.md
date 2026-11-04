@@ -1,0 +1,184 @@
+# T-4 handoff — round 3 (R-26 reviewer feedback applied)
+
+**Branch:** `task-4-memory-suggestions-accept-unvalidated-scopes-cre`
+**Base:** `main` @ `db00112` (merge-base). Commits this round: `d5aa57b` (the two source fixes
++ the round-3 tests + docs) → `a550750` (the stamped evidence) → this handoff commit;
+the last two touch only `verify-evidence/T-4/`.
+**Status:** `CHANGES_APPLIED`
+**Task:** T-4 — Memory suggestions accept unvalidated scopes, creating entries no role can ever inject.
+
+## Summary
+
+Round 3: the two R-26 findings are fixed at the source, each with a test and a stamped demo; the provenance and completeness findings are addressed in this handoff and in verify-evidence/T-4/README.md.
+
+(1) DoD 2, the role COLUMN. Injectability keys off `role`, not `scope`, so `role='logbook-writer' scope='worker'` is the damaging shape -- it renders to roles/logbook-writer.md, which no prompt reads, and passes a scope-only check. memory_service.check_role_name (:159) is now the single message naming architect|worker|supervisor and the reviewer->architect / agent->worker aliases; _validate calls it on the role column BEFORE the scope (:340-341), so create (:367), update/PATCH (:477) and import_all (:868) all refuse that shape for the same reason; cli.memory_add validates --role through it (:1070) instead of answering with Pydantic's enum list, which never names the role files. Two real bugs were behind the finding, not just missing tests: a raw role string reaching create() died on `AttributeError: 'str' object has no attribute 'value'` (fixed at :376), and the CLI's message named role VALUES rather than the role FILES DoD 2 requires. 5 unit + 3 integration tests added; over HTTP the Role enum is an extra layer in front (422, frozen {"error","detail"} shape), asserted by test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape. Deliberately NOT done: widening MemoryCreate.role to `str` -- that changes the frozen request shape to buy a message string.
+
+(2) DoD 3, the repair report. `--gc-only` built its report with `removed_files=removed or listed`, so whenever gc_orphan_files() returned [] it printed `removed dead scope-file` for files still sitting on disk. It now carries exactly what was unlinked (cli.py:1147-1156); a --dry-run still previews the list with the verb 'would'. Regression test test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted patches the collector to delete nothing and asserts both the absence of the claim and the file's survival; review_round3.txt R3-FINDING 2 shows all three cases and asserts them.
+
+(3) Evidence for the parts the review payload could not read. capture.sh now emits the FINAL SOURCE (numbered, at this HEAD -- not a patch) of every area the review named: _validate/check_role_name/role_memory_file/normalize_scope/coerce_scope/create/update, fix_scopes/gc_orphan_files/orphan_files/_renderer_output/canonical_file/in_layout_dir, import_all/_import_keys, injectability/reachable_roles/role_file_key, run_service._store_memory_suggestions (the build-log substitution writes), cli memory_add/memory_fix_scopes/memory_list/_print_injectability, the vocabulary constant block, the gc-only branch, and the four test-assertion groups -- 26 slice files, each under 180 lines. Each per-file diff is additionally split into 160-line parts so a 2000-line/50KB view never loses a function mid-hunk, and the split is mechanically checkable: raw `git diff` line count == body line count for all 10 changed files (command + measured numbers in verify-evidence/T-4/README.md).
+
+(4) Provenance, corrected and stated plainly. The stamped logs (full_suite.txt, checks.txt, memory_scope_tests.txt, review_round3.txt) are all at HEAD d5aa57b with tree=0 outside verify-evidence/T-4. Counts measured there: 529 passed / 6 skipped / 0 failed (SUITE_EXIT=0), lint 'All checks passed!' (LINT_EXIT=0), 58 T-4 tests (TARGETED_EXIT=0), cold demos DEMO_EXIT=0 / ROUND2_EXIT=0 / ROUND3_EXIT=0. I did NOT re-run the suite after committing the evidence, and I do not claim a final re-run: the later commits (a550750, this handoff commit) touch only verify-evidence/T-4/, provable with `git diff --name-only d5aa57b HEAD`. Previous rounds mislabelled the tip; this round the claim is exactly what the stamps show.
+
+(5) files_changed is the complete branch-vs-merge-base list (base db00112), evidence files included -- the two round-2 handoff copies the reviewer found unclaimed are listed there, along with this round's handoff_round3.json/.md and the .orchestrator/handoff.json the harness reads (gitignored, so it is named but cannot be shown in the diff).
+
+Docs: docs/memory.md gained the role-column boundary paragraph + the gc-only reporting rule; docs/decisions.md records this round's decision bullet; README.md's memory section states that create/edit boundaries check the role column too. No frozen contract changed: no schema/migration edit, no new route, no renamed field or event, no changed CLI argument or exit code. for_prompt, render_file and _file_for are untouched, so no role-injection semantics moved.
+
+## Tests
+
+- command: `./scripts/orch_verify.sh test   (== make test; run at HEAD d5aa57b)` → **529 passed, 0 failed, 6 skipped**
+- log: `verify-evidence/T-4/full_suite.txt` (`SUITE_EXIT=0`, `ORCH_VERIFY|mode=test|module=orchestrator|module_file=<this worktree>/src/orchestrator/__init__.py|worktree_root=<this worktree>`)
+- lint: `./scripts/orch_verify.sh lint` (== `make lint`) → **All checks passed!** — `verify-evidence/T-4/checks.txt`, `LINT_EXIT=0`
+- T-4 only: `./scripts/orch_verify.sh test tests/unit/test_memory_scopes.py tests/integration/test_memory_scope_boundary.py -vv` → **58 passed** (41 unit + 17 integration) — `memory_scope_tests.txt`, `TARGETED_EXIT=0`
+- cold offline demos: `checks.txt` `DEMO_EXIT=0`, `review_round2.txt` `ROUND2_EXIT=0`, `review_round3.txt` `ROUND3_EXIT=0` — no network, no API keys, throwaway `ORCHESTRATOR_HOME` per demo
+- **not re-run after the evidence commit**: the stamps are at `d5aa57b`; `git diff --name-only d5aa57b HEAD` lists nothing outside `verify-evidence/T-4/`, so no `src/`, `tests/` or `docs/` byte differs from the tested tree.
+
+## DoD self-check (per item, with the evidence that makes it literally true)
+
+### 1. [x] met — 1. Project suggestions whose scope is not conventions|decisions|gotchas are coerced to a deterministic fallback (gotchas) and the substitution is recorded where the operator can see it (run log and/or handoff result); role suggestions outside ROLE_FILES are dropped with a warning rather than stored.
+
+Evidence: src/orchestrator/services/memory_service.py:214 coerce_scope (fallback-only, FALLBACK_SCOPE at :53 project->gotchas/global->environment), :240 _substitution_note, :404 suggest_from_handoff_report returns SuggestionOutcome(created, notes) and DROPS an unresolvable role suggestion; run_service.py:448 _store_memory_suggestions writes each note to the build log as memory_scope_substituted / memory_suggestion_dropped (3 call sites: :485 salvage, :871 _execute, :1268 _execute_direct); chat_service.py:554-567 emits the same notes. Tests: tests/unit/test_memory_scopes.py test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded, test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope, test_a_scope_mentioning_decisions_does_not_route_the_note_to_the_architect, test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored, test_coercion_is_written_to_the_build_log_the_operator_reads (asserts the two BuildLogEntry rows). Logs: verify-evidence/T-4/checks.txt section (1), memory_scope_tests.txt, review_round2.txt FINDING 1. Index: verify-evidence/T-4/README.md.
+
+### 2. [x] met — 2. The API and CLI create/update boundaries reject an out-of-vocabulary scope for EVERY category, with an error naming the allowed values (global, project, role via ROLE_FILES after ROLE_MEMORY_KEY), so category=role stops being only half-guarded by _validate, and the three vocabularies are exposed as named constants (add the missing ROLE_SCOPES).
+
+Evidence: Constants: memory_service.py:35 GLOBAL_SCOPES, :36 PROJECT_SCOPES, :37 ROLE_FILES, :43 ROLE_SCOPES (added by this task), :45 SCOPE_VOCABULARY, :67 ROLE_MEMORY_KEY, :69 ROLE_SCOPE_ALIASES. THE ROLE-COLUMN HALF, fixed this round: :159 check_role_name is the single message naming architect|worker|supervisor plus the reviewer->architect / agent->worker aliases; _validate calls it on entry.role at :340-341 BEFORE the scope, so create():367, update():477 and import_all():868 all refuse role='logbook-writer' scope='worker' (create no longer dies on AttributeError: :376 getattr(data.role,'value',data.role)); cli.py:1070 memory_add validates --role through it before MemoryCreate, so the CLI error names the role FILES instead of Pydantic's enum list. Boundaries: api/routes/memory.py:45 POST / :81 PATCH -> 400 in the frozen {"error","detail"} shape; an unknown role name over HTTP is stopped in front by the Role enum with a 422 in the same shape (api/main.py:149). Tests: unit test_create_rejects_out_of_vocabulary_scope_for_every_category (3 categories), test_create_accepts_the_vocabulary, test_update_rejects_an_out_of_vocabulary_scope, test_update_rejects_without_touching_the_row_or_the_rendered_file, test_check_role_name_names_the_role_vocabulary, test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid, test_update_refuses_a_legacy_role_column_that_no_prompt_reads, test_import_refuses_an_unreadable_role_column_without_storing_it, test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from; integration test_api_create_rejects_an_uninjectable_scope_for_every_category, test_api_patch_rejects_an_uninjectable_scope, test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape, test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope, test_cli_add_rejects_and_names_the_allowed_values, test_cli_add_refuses_a_role_name_no_prompt_can_read. Logs: verify-evidence/T-4/review_round3.txt R3-FINDING 1 (six boundaries + the #39/#47 counter-examples, with the cited lines printed by inspect), slices slice_memory_service__validate.txt / __check_role_name.txt / __create.txt / slice_cli__memory_add.txt.
+
+### 3. [x] met — 3. A repair path migrates entries already stored with invalid scopes (orchestrator memory fix-scopes, or repair during import): it must re-render BOTH the old and the new markdown file so no orphan file keeps a stale line, print the ids it moved, and leave rejected rows alone.
+
+Evidence: memory_service.py:685 fix_scopes moves rows and never deletes one; rejected rows go to ScopeRepair.skipped with a reason; a role row is REPORTED, not re-homed (inventing a role is not a repair); it re-renders old_file AND _file_for(entry) at :772-777; then gc_orphan_files (:663) / orphan_files (:643) / _renderer_output (:620) collect dead rendered files -- the measured orphan memory/projects/ai-livestreaming-avatar/ai-livestreaming-avatar.md (title line only) -- while hand-edited markdown survives; idempotent, dry_run writes nothing. cli.py:1124 memory_fix_scopes prints `moved #<id> <category>: '<from>' -> '<to>'`, both re-rendered paths, `(ids: ...)` on one line, and every row left alone with its reason. THIS ROUND'S FIX (DoD 3 reporting honesty): cli.py:1147-1156 -- `--gc-only` built its report with `removed or listed`, so when gc_orphan_files() returned [] it printed `removed dead scope-file` for files still on disk; it now reports exactly what was unlinked (a --dry-run still previews via orphan_files with the verb 'would'). Second repair surface (the DoD's 'or'): import_all :868 + _import_keys :849 repair a legacy export's scope and de-duplicate on both spellings. Tests: unit test_fix_scopes_moves_legacy_rows_and_re_renders_both_files, test_fix_scopes_leaves_rejected_rows_alone, test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row, test_fix_scopes_reports_a_canonical_scope_that_is_still_unreachable, test_fix_scopes_dry_run_writes_nothing, test_gc_removes_dead_files_and_keeps_the_canonical_layout, test_gc_only_deletes_files_render_file_could_have_written, test_fix_scopes_can_move_rows_without_deleting_a_single_file, test_import_does_not_duplicate_a_row_that_is_still_awaiting_fix_scopes, test_import_repairs_a_legacy_export_instead_of_dropping_it; integration test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files, test_cli_fix_scopes_reports_lines_the_operator_can_actually_read, test_cli_fix_scopes_no_gc_moves_rows_and_deletes_nothing, test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted (monkeypatches the collector to delete nothing, asserts no claim and the file still exists), test_cli_import_repairs_a_legacy_export_scope. Logs: review_round3.txt R3-FINDING 2 (three cases), checks.txt section (3), review_round2.txt FINDINGS 3+5, slices slice_memory_service__fix_scopes.txt / __gc_orphan_files.txt / __orphan_files.txt / __renderer_output.txt / slice_cli__memory_fix_scopes.txt / slice_cli__gc_only_branch.txt.
+
+### 4. [x] met — 4. orchestrator memory list marks any entry whose scope cannot be reached by its OWN category as uninjectable (global read by every role, project filtered by ROLE_PROJECT_SCOPES, role resolved through _file_for/ROLE_MEMORY_KEY), and valid role entries such as category=role scope=worker are never misflagged.
+
+Evidence: memory_service.py:281 injectability / :263 reachable_roles / :248 role_file_key resolve a role row exactly the way for_prompt (:790) and _file_for (:309) do -- role column, else scope, through ROLE_MEMORY_KEY -- and only then test membership in ROLE_FILES; project scopes are filtered by ROLE_PROJECT_SCOPES (:59); global is read by every Role. cli.py:1027 memory_list shows the `inj` column (:980 _memory_table) and prints the full reason under the table (:1007 _print_injectability), plus --uninjectable. Counter-examples #39/#47 (category=role scope=worker, with and without role='worker') stay ok. Tests: unit test_injectability_marks_only_the_unreachable, test_role_rows_still_render_by_the_rule_main_used, test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt; integration test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone, test_cli_list_prints_an_uninjectable_scope_literally. Logs: checks.txt sections (4) and (5), and live_home_readonly.txt -- a READ-ONLY (sqlite3 mode=ro, no CLI call, no write) audit of the operator's live home that names the real uninjectable rows and the live ghost file's contents under this branch's rule.
+
+### 5. [x] met — 5. New offline unit tests cover coercion, boundary rejection, the repair path re-rendering both files, and the list marker; make test and make lint both pass with no network access and no API keys.
+
+Evidence: tests/unit/test_memory_scopes.py (737 lines) + tests/integration/test_memory_scope_boundary.py (465 lines): 58 tests, all four DoD areas plus the round-3 boundary/reporting cases. Measured at HEAD d5aa57b: `./scripts/orch_verify.sh test` (== make test) -> 529 passed, 6 skipped, 0 failed (verify-evidence/T-4/full_suite.txt, SUITE_EXIT=0, marker ORCH_VERIFY|mode=test|module=orchestrator|module_file=<this worktree>/src/orchestrator/__init__.py|worktree_root=<this worktree>, so the BRANCH's code was imported, not main's); `./scripts/orch_verify.sh lint` (== make lint) -> All checks passed! (checks.txt, LINT_EXIT=0); the two T-4 files with -vv -> 58 passed (memory_scope_tests.txt, TARGETED_EXIT=0). Offline: the `home` fixture (tests/conftest.py:26-37) gives every test an isolated tmp_path ORCHESTRATOR_HOME, disables the worker and scheduler, and deletes the six SECRET_ENV vars listed at conftest.py:14-21; API tests use an in-process TestClient (no socket), CLI tests Typer CliRunner; no adapter, provider, network or git-remote call. PROVENANCE: those stamps are at d5aa57b (tree clean outside verify-evidence/T-4). The only later commits are a550750 and the handoff commit, both confined to verify-evidence/T-4/ -- `git diff --name-only d5aa57b HEAD` prints nothing else -- so no src/, tests/ or docs/ byte differs from the tree that was tested. The counts were NOT re-run after the evidence commit; the stamped logs at d5aa57b are the evidence.
+
+## Files changed (73)
+
+Complete list vs the merge-base `db00112`, evidence included. `.orchestrator/handoff.json` (the
+machine-readable handoff the harness reads) is gitignored, so it is named below but cannot appear
+in the diff.
+
+Non-evidence (11):
+
+- `.orchestrator/handoff.json`
+- `README.md`
+- `docs/decisions.md`
+- `docs/memory.md`
+- `src/orchestrator/api/routes/memory.py`
+- `src/orchestrator/cli.py`
+- `src/orchestrator/services/chat_service.py`
+- `src/orchestrator/services/memory_service.py`
+- `src/orchestrator/services/run_service.py`
+- `tests/integration/test_memory_scope_boundary.py`
+- `tests/unit/test_memory_scopes.py`
+
+Evidence under `verify-evidence/T-4/` (62 files — stamped logs, 26 `slice_*.txt` final-source
+readings (each under 180 lines), 22 `diff_*.partN.txt` split per-file diffs, the round-2/3 handoff
+copies and the `README.md` index that maps every DoD item to file:line, test and log):
+
+- `verify-evidence/T-4/README.md`
+- `verify-evidence/T-4/capture.sh`
+- `verify-evidence/T-4/checks.txt`
+- `verify-evidence/T-4/diff_README.md.part1.txt`
+- `verify-evidence/T-4/diff_docs_decisions.md.part1.txt`
+- `verify-evidence/T-4/diff_docs_memory.md.part1.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_api_routes_memory.py.part1.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_cli.py.part1.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_cli.py.part2.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_chat_service.py.part1.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part1.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part2.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part3.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part4.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part5.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part6.txt`
+- `verify-evidence/T-4/diff_src_orchestrator_services_run_service.py.part1.txt`
+- `verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part1.txt`
+- `verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part2.txt`
+- `verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part3.txt`
+- `verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part1.txt`
+- `verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part2.txt`
+- `verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part3.txt`
+- `verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part4.txt`
+- `verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part5.txt`
+- `verify-evidence/T-4/full_suite.txt`
+- `verify-evidence/T-4/handoff_round2.json`
+- `verify-evidence/T-4/handoff_round2.md`
+- `verify-evidence/T-4/handoff_round3.json`
+- `verify-evidence/T-4/handoff_round3.md`
+- `verify-evidence/T-4/live_home_readonly.txt`
+- `verify-evidence/T-4/manifest.txt`
+- `verify-evidence/T-4/memory_scope_tests.txt`
+- `verify-evidence/T-4/review_round2.txt`
+- `verify-evidence/T-4/review_round3.txt`
+- `verify-evidence/T-4/slice_cli__gc_only_branch.txt`
+- `verify-evidence/T-4/slice_cli__memory_add.txt`
+- `verify-evidence/T-4/slice_cli__memory_fix_scopes.txt`
+- `verify-evidence/T-4/slice_cli__memory_list.txt`
+- `verify-evidence/T-4/slice_cli__print_injectability.txt`
+- `verify-evidence/T-4/slice_memory_service___renderer_output.txt`
+- `verify-evidence/T-4/slice_memory_service__check_role_name.txt`
+- `verify-evidence/T-4/slice_memory_service__coerce_scope.txt`
+- `verify-evidence/T-4/slice_memory_service__create.txt`
+- `verify-evidence/T-4/slice_memory_service__fix_scopes.txt`
+- `verify-evidence/T-4/slice_memory_service__gc_orphan_files.txt`
+- `verify-evidence/T-4/slice_memory_service__import_all.txt`
+- `verify-evidence/T-4/slice_memory_service__injectability.txt`
+- `verify-evidence/T-4/slice_memory_service__normalize_scope.txt`
+- `verify-evidence/T-4/slice_memory_service__orphan_files.txt`
+- `verify-evidence/T-4/slice_memory_service__reachable_roles.txt`
+- `verify-evidence/T-4/slice_memory_service__role_memory_file.txt`
+- `verify-evidence/T-4/slice_memory_service__update.txt`
+- `verify-evidence/T-4/slice_memory_service__validate.txt`
+- `verify-evidence/T-4/slice_memory_service__vocabularies.txt`
+- `verify-evidence/T-4/slice_run_service__store_memory_suggestions.txt`
+- `verify-evidence/T-4/slice_tests_integration__gc_only_honesty.txt`
+- `verify-evidence/T-4/slice_tests_unit__coercion_and_log.txt`
+- `verify-evidence/T-4/slice_tests_unit__list_marker.txt`
+- `verify-evidence/T-4/slice_tests_unit__repair_and_gc.txt`
+- `verify-evidence/T-4/slice_tests_unit__role_column_boundary.txt`
+- `verify-evidence/T-4/slices_index.txt`
+
+## New dependencies
+
+None.
+
+## Contracts touched
+
+- SQLite/SQLModel schema: unchanged (no model or migration edit; no memory_entries row is deleted).
+- REST API shapes under /api: no new route, no renamed field; POST/PATCH use the already-frozen {"error","detail"} body (400 from the vocabulary check, 422 from the existing Role enum).
+- Build-log events: line shape unchanged; two ADDITIVE event names memory_scope_substituted / memory_suggestion_dropped (event names are additive by contract).
+- CLI command surface: one additive command `memory fix-scopes` (authorised by DoD 3) with additive options; no existing argument or exit code changed.
+- Artifact directory layout: unchanged. Evidence is committed under verify-evidence/T-4/ because .orchestrator/ is gitignored and not archived into runs/<run_id>/.
+- docs/frozen-contracts.md: not modified. Task-level frozen constraints honoured: approved entries still render to $ORCHESTRATOR_HOME/memory/**.md as `- <content>  <!-- mem:ID -->`; existing memory_entries rows are never deleted; scope repair is idempotent (asserted).
+- Role-injection semantics: not changed -- for_prompt, ROLE_PROJECT_SCOPES and _file_for are byte-identical to the merge-base (_file_for reverted to main's body in round 2).
+
+## Assumptions
+
+- MemoryCreate.role stays the Role enum, so an unknown role name over HTTP is a 422 with the frozen {"error","detail"} shape rather than our 400. Widening it to str would change the frozen request shape to buy a message string, so the service check is the boundary and the enum is an extra layer in front. Pinned by test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape.
+- MemoryUpdate has no `role` field (frozen PATCH shape), so an operator cannot re-home a legacy role row over the API: the row stays editable by content, is flagged by `memory list`, and `fix-scopes` reports it rather than inventing a role. If the operator wants an API repair for role rows, that needs its own contract-change request (question 1 below).
+- DoD 1 names only the project fallback; global's fallback is the symmetric constant FALLBACK_SCOPE[global]='environment', documented in docs/memory.md and tested.
+- DoD 4 judges a role row by the file it renders into (role column, else scope, through ROLE_MEMORY_KEY), which is main's rule; a legacy row with an empty role and a valid scope therefore reads `ok` while for_prompt selects on role. That asymmetry is main's, cannot be created any more (_validate fills role from scope), is documented, and is deliberately not auto-repaired because DoD 3 covers invalid scopes.
+- The `--gc-only` fix is about the REPORT, not the collector: gc_orphan_files still deletes exactly the files orphan_files lists; the CLI no longer claims a deletion it did not perform.
+- The 529/6/0 and lint-green numbers were measured at d5aa57b and not re-run after the evidence commits; those commits touch only verify-evidence/T-4/, which is why the claim is made against the stamped tree.
+
+## Questions
+
+1. Should approve() refuse an uninjectable row (today it renders to the dead file and `memory list` flags it)? Not required by any DoD item, so I left it alone -- say the word and it is a small, tested follow-up.
+2. DoD 3 says 'fix-scopes, OR repair during import'; both are implemented. Name one to drop if exactly one repair surface is wanted.
+3. Confirm the GUI 'uninjectable' indicator on the Memory page stays a follow-up task (out of scope here per the task's own out-of-scope list).
+4. Should scripts/orch_verify.sh accept pytest node IDs (file::test) as a subset filter? Today an arg that is not an existing path does not replace the collection target, so `orch_verify.sh test path::name` runs the WHOLE suite plus the id -- I worked around it by passing file paths.
+
+## Blockers
+
+None.
+
+## Memory suggestions (in-vocabulary scopes, as this task requires)
+
+- **[project/gotchas]** scripts/orch_verify.sh replaces its collection target only when an extra arg is an EXISTING PATH: `./scripts/orch_verify.sh test tests/x.py::test_y` does not filter -- the id is appended to the whole `tests` target and the FULL suite runs (measured: 529 items from 7 node IDs). Pass file paths to get a subset, and use -vv (pyproject addopts is `-q`, so a single -v cancels it).
+- **[project/conventions]** A reviewer's read tool truncates at ~2000 lines / 50KB, so `patch.diff` for a large branch is unreadable and 'could not be inspected' findings follow. capture-style evidence for this repo should emit (a) FINAL SOURCE slices, numbered at the stamped HEAD via inspect.getsourcelines, for exactly the areas the review names, and (b) each per-file diff split at ~160 lines with a `DIFF_PART_COMPLETE` trailer, plus a raw-vs-body line-count check that proves the split lost nothing.
+- **[project/gotchas]** In memory_service, category=role rows are judged and selected by the `role` COLUMN (`for_prompt` matches ROLE_MEMORY_KEY.get(e.role), `_file_for` names the file from `role` with `scope` only as fallback), so a scope-only vocabulary check misses the damaging shape `role='logbook-writer' scope='worker'`: it renders to roles/logbook-writer.md and reaches no prompt while looking injectable. Any new role-category check must go through check_role_name, which validates the column that injection actually reads.
+- **[global/patterns]** A repair/report command must claim only what it did: `removed_files=removed or listed` (fall back to the pre-run listing when the action returns nothing) lets a report print 'removed X' while X is still on disk. Keep the dry-run preview in a separate field from the performed-action list, and test the empty-action case by patching the action to return [] and asserting BOTH the absence of the claim and the object's survival.
+

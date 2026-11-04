@@ -180,8 +180,9 @@ never misflags a valid role entry.
 * T-4 only → `./scripts/orch_verify.sh test tests/unit/test_memory_scopes.py
   tests/integration/test_memory_scope_boundary.py -vv` → **58 passed** (41 unit + 17
   integration), `memory_scope_tests.txt`, `TARGETED_EXIT=0`, every test named individually.
-* Offline: `tests/conftest.py` gives each test an isolated `/tmp` `ORCHESTRATOR_HOME` and deletes
-  the provider/adapter secret env vars; the API tests use an in-process `TestClient` (no socket),
+* Offline: the `home` fixture (`tests/conftest.py:26-37`) gives every test an isolated
+  `tmp_path` `ORCHESTRATOR_HOME`, sets `ORCHESTRATOR_ENABLE_WORKER|SCHEDULER=false` and deletes the
+  six `SECRET_ENV` vars (`tests/conftest.py:14-21`); the API tests use an in-process `TestClient` (no socket),
   the CLI tests Typer's `CliRunner`; no adapter, provider or git-remote call is made. Re-run
   yourself: `bash verify-evidence/T-4/capture.sh`.
 
@@ -216,4 +217,5 @@ scope repair is idempotent" — is asserted by
 `test_fix_scopes_moves_legacy_rows_and_re_renders_both_files`,
 `test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row`,
 `test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files` and the idempotence half
-of `test_cli_fix_scopes_...` ("moved 0 entries" on the second run).
+of `test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files` ("moved 0 entries"
+on the second run).
