@@ -17,39 +17,45 @@ marker line. No network, no API keys: every test uses an isolated `ORCHESTRATOR_
 
 | Evidence | Command | What it proves |
 |---|---|---|
-| `full_suite.txt` | `./scripts/orch_verify.sh test` | the whole `tests/` tree of this branch passes |
-| `memory_scope_tests.txt` | `./scripts/orch_verify.sh test tests/unit/test_memory_scopes.py tests/integration/test_memory_scope_boundary.py -vv` | every new T-4 test named individually (`-vv` because `addopts = "-q"`) |
-| `checks.txt` | `./scripts/orch_verify.sh lint` + a cold offline demo of coercion, rejection, repair, the marker and the CLI | lint clean, and the behaviour shown end-to-end on real files in a throwaway home |
-| `live_home_before_after.txt` | read-only queries + `--dry-run` against the operator's live `ORCHESTRATOR_HOME` | the shape of the repair on the real 49 rows; **no writes** |
+| `full_suite.txt` | `./scripts/orch_verify.sh test` | `507 passed, 6 skipped`, `SUITE_EXIT=0` over the whole `tests/` tree of this branch |
+| `memory_scope_tests.txt` | `./scripts/orch_verify.sh test tests/unit/test_memory_scopes.py tests/integration/test_memory_scope_boundary.py -vv` | every new T-4 test named individually, `36 passed`, `TARGETED_EXIT=0` (`-vv` because `addopts = "-q"`) |
+| `checks.txt` | `./scripts/orch_verify.sh lint` + a cold offline demo (throwaway home) of coercion, rejection, repair, the marker and the CLI | `All checks passed!` `LINT_EXIT=0`, `DEMO_EXIT=0`, and the behaviour shown end-to-end on real files |
+| `live_home_readonly.txt` | `sqlite3 …?mode=ro` plus the pure `injectability()`/`canonical_file()` helpers against the operator's live home | the shape of the problem on real data; **strictly read-only, no CLI call and no repair run** (a CLI command would `_ensure_ready()` → `db.upgrade()` the live DB with branch code) |
 
 ## Definition of Done → code and proof
 
 1. **Project suggestions with a bad scope are coerced to `gotchas`, the substitution is
    recorded; role suggestions outside `ROLE_FILES` are dropped with a warning.**
    `memory_service.coerce_scope` (vocabulary token → substring → `FALLBACK_SCOPE`,
-   `memory_service.py:190`), `suggest_from_handoff_report` returning
-   `SuggestionOutcome(created, notes)` (`memory_service.py:340`), the role drop at
-   `memory_service.py:369`. The notes reach the operator through
-   `run_service._store_memory_suggestions` (`run_service.py:448`), which writes
-   `memory_scope_substituted` / `memory_suggestion_dropped` build-log events from all three
-   handoff paths (clean exit `run_service.py:1226`, salvage `run_service.py:565`, agent run
-   `run_service.py:1330`), and through `chat_service.py:556` as a visible notice.
+   `src/orchestrator/services/memory_service.py:190`); `suggest_from_handoff_report` returns
+   `SuggestionOutcome(created, notes)` (`:340`, dataclass at `:77`) and the role drop is
+   `:374` — nothing is stored where no prompt can reach it. The notes reach the operator
+   through `run_service._store_memory_suggestions`
+   (`src/orchestrator/services/run_service.py:448`), which writes the build-log events
+   `memory_scope_substituted` / `memory_suggestion_dropped` from all three handoff paths:
+   salvage `:565`, clean exit `:1212`, agent run `:1327`; and through
+   `src/orchestrator/services/chat_service.py:554` + `:566`, which says each note out loud in
+   the chat stream.
    Proof: `test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded`,
    `test_global_suggestion_infers_the_scope_it_names`,
    `test_suggestions_with_no_hint_fall_back_deterministically`,
    `test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored`,
+   `test_in_vocabulary_suggestions_are_stored_untouched_and_silent`,
    `test_coerced_suggestion_reaches_a_prompt_once_approved`,
    `test_duplicate_suggestions_are_compared_on_the_repaired_scope`,
-   `test_coercion_is_written_to_the_build_log_the_operator_reads`; `checks.txt` sections (1).
+   `test_coercion_is_written_to_the_build_log_the_operator_reads`; `checks.txt` section (1).
 2. **API and CLI create/update reject an out-of-vocabulary scope for EVERY category, naming
-   the allowed values; the vocabularies are importable constants incl. the new `ROLE_SCOPES`.**
-   `GLOBAL_SCOPES`/`PROJECT_SCOPES`/`ROLE_SCOPES`/`ROLE_SCOPE_ALIASES`/`SCOPE_VOCABULARY`/
-   `FALLBACK_SCOPE` at `memory_service.py:34-61`; one boundary check
-   `_validate` (`memory_service.py:271`) used by `create`, `update`
-   (`memory_service.py:413`), `import_all` and the suggestion path; the API keeps the frozen
-   error body `{"error", "detail"}` — `POST` and `PATCH` map `MemoryError_` to 400 in
-   `api/routes/memory.py:45` and `:78` — and the CLI turns the same error into
-   `error: …` + exit 1 via `handled` (`cli.py:1044`).
+   the allowed values; the vocabularies are importable constants including the new
+   `ROLE_SCOPES`.**
+   `GLOBAL_SCOPES` `:35`, `PROJECT_SCOPES` `:36`, `ROLE_FILES` `:37`, `ROLE_SCOPES` `:43`
+   (the role *files* — the missing constant), `SCOPE_VOCABULARY` `:45`, `FALLBACK_SCOPE` `:53`,
+   `ROLE_MEMORY_KEY` `:67`, `ROLE_SCOPE_ALIASES` `:69`. One boundary check
+   `_validate` (`:271`) is used by `create` (`:307`), `update` (`:413`), `import_all` (`:706`)
+   and the suggestion path, so the API and the CLI refuse the same rows for the same reason.
+   The API keeps the frozen error body `{"error", "detail"}`: `POST` maps `MemoryError_` →
+   400 at `src/orchestrator/api/routes/memory.py:44`, `PATCH` at `:80`; the CLI turns the same
+   error into `error: …` + exit 1 through `handled` (`src/orchestrator/cli.py:60`, command at
+   `:1046`). `MemoryError_` subclasses `ValueError`, so no new error contract was invented.
    Proof: `test_the_three_vocabularies_are_importable_named_constants`,
    `test_normalize_scope_applies_the_role_aliases`,
    `test_create_rejects_out_of_vocabulary_scope_for_every_category`,
@@ -60,15 +66,16 @@ marker line. No network, no API keys: every test uses an isolated `ORCHESTRATOR_
    `test_cli_add_rejects_and_names_the_allowed_values` (boundary); `checks.txt` section (2).
 3. **A repair path migrates rows stored with invalid scopes, re-renders BOTH files, prints the
    ids it moved, leaves rejected rows alone; orphan rendered files are collected.**
-   `fix_scopes` (`memory_service.py:540`) moves rows and never deletes them, records
-   `moved`/`skipped`/`removed_files`, re-renders `old_file` then the new file, and is
-   idempotent; `canonical_file`/`orphan_files`/`gc_orphan_files`
-   (`memory_service.py:500-538`) delete a rendered file only when no approved entry owns it and
-   its name is not part of the `ensure_layout` vocabulary — the title-only
-   `memory/projects/<slug>/<slug>.md` ghost from the task report; the CLI command
-   `orchestrator memory fix-scopes [--dry-run] [--gc-only]` prints the moved ids
-   (`cli.py:1110`); `import_all` repairs a legacy export on the way in and dedupes on the
-   repaired values (`memory_service.py:727`).
+   `fix_scopes` (`:554`) moves rows and never deletes them and reports
+   `moved`/`skipped`/`removed_files`; it re-renders `old_file` and then the new file, and
+   `canonical_file` / `orphan_files` / `gc_orphan_files` (`:502`, `:523`, `:534`) delete a
+   rendered file only when no approved entry owns it **and** its name is outside the
+   `ensure_layout` vocabulary — which is exactly the title-only
+   `memory/projects/<slug>/<slug>.md` ghost named in the task report (measured live:
+   `'# ai-livestreaming-avatar\n'`, unowned, the only non-canonical file in the tree).
+   `orchestrator memory fix-scopes [--dry-run] [--gc-only]`
+   (`src/orchestrator/cli.py:1110`) prints `moved N entries (ids: …)`. `import_all` repairs a
+   legacy export on the way in and dedupes on the repaired values (`:706`).
    Proof: `test_fix_scopes_moves_legacy_rows_and_re_renders_both_files`,
    `test_fix_scopes_leaves_rejected_rows_alone`,
    `test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row`,
@@ -77,34 +84,41 @@ marker line. No network, no API keys: every test uses an isolated `ORCHESTRATOR_
    `test_gc_removes_dead_files_and_keeps_the_canonical_layout`,
    `test_import_repairs_a_legacy_export_instead_of_dropping_it`,
    `test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files`; `checks.txt`
-   section (3).
+   section (3) — moved ids `[6, 7]`, both files re-rendered, `collected files` names the ghost,
+   rejected `#8` left alone, second run `moved [] … collected 0`.
 4. **`orchestrator memory list` marks any entry whose own category cannot reach its scope, and
-   never misflags a valid role entry.** `reachable_roles` / `injectability` / `is_injectable`
-   (`memory_service.py:224-256`) resolve global → `GLOBAL_SCOPES`, project →
-   `ROLE_PROJECT_SCOPES`, role → `_file_for`/`ROLE_MEMORY_KEY`; the `inj` column and the reason
-   lines under it are `_memory_table`/`_print_injectability` (`cli.py:979`, `cli.py:1007`),
-   used by `memory list` (with `--uninjectable`) and `memory search`.
-   Proof: `test_injectability_marks_only_the_unreachable` (asserts the counter-examples
-   `category=role scope=worker` are **ok**, and `role=reviewer`/`agent` resolve),
-   `test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt`,
-   `test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone`; `checks.txt`
-   sections (4) and (5).
+   never misflags a valid role entry.** `reachable_roles` (`:224`), `injectability` (`:242`),
+   `is_injectable` (`:254`): global → `GLOBAL_SCOPES` (read by every role), project →
+   `ROLE_PROJECT_SCOPES`, role → resolved through `_file_for`/`ROLE_MEMORY_KEY`. The `inj`
+   column is `_memory_table` (`src/orchestrator/cli.py:979`) and the reason lines under it are
+   `_print_injectability` (`:1004`), used by `memory list` (plus `--uninjectable`, `:1020`) and
+   `memory search` (`:1100`).
+   Proof: `test_injectability_marks_only_the_unreachable` and
+   `test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt` (unit),
+   `test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone` (boundary);
+   `checks.txt` section (4) shows `scope='worker'` with and without a `role`, plus
+   `reviewer`/`agent`/`supervisor`, all `ok`, and only the invented project scope `NO`;
+   `live_home_readonly.txt` shows all 9 live `category=role scope=worker` rows are **not**
+   flagged.
 5. **New offline tests for coercion, rejection, repair (both files) and the marker; test and
-   lint pass with no network and no API keys.** `tests/unit/test_memory_scopes.py` (28 tests)
-   and `tests/integration/test_memory_scope_boundary.py` (8 tests) — DoD 5 asks for unit
+   lint pass with no network and no API keys.**
+   `tests/unit/test_memory_scopes.py` (28 tests) and
+   `tests/integration/test_memory_scope_boundary.py` (8 tests) — DoD 5 asks for offline unit
    coverage of the four behaviours; the second file drives the same behaviours through the real
-   HTTP and CLI boundaries, which is where DoD 2 is written. Counts and the per-test list are in
-   `memory_scope_tests.txt`; the whole-tree run and `All checks passed!` are in
-   `full_suite.txt` and `checks.txt`.
+   HTTP and CLI boundaries, which is where DoD 2 is written. Counts and the per-test list are
+   in `memory_scope_tests.txt` (`36 passed`); the whole-tree run (`507 passed, 6 skipped`) is
+   `full_suite.txt`; `All checks passed!` is in `checks.txt`.
 
 ## What this phase did NOT do
 
-- No model/migration change: `memory_entries` is the frozen baseline shape; the marker is
-  derived, never stored.
-- No new response fields on `GET /api/memory`: the marker is CLI-only, matching the task's
-  "No GUI redesign; a Memory-page indicator can be a follow-up task".
-- `for_prompt` injection semantics are untouched — which scopes each role receives is
-  unchanged.
-- docs/product-spec.md's CLI list was not edited: it is already a subset of the shipped
+- No model or migration change: `memory_entries` keeps the frozen baseline shape; the
+  injectability marker is derived at read time, never stored.
+- No new fields on `GET /api/memory` and no new route: the marker is CLI-only, matching the
+  task's "No GUI redesign; a Memory-page indicator can be a follow-up task".
+- `for_prompt` semantics are untouched — which scopes each role receives did not change.
+- The live `ORCHESTRATOR_HOME` was audited read-only. Running `orchestrator memory
+  fix-scopes` against it is the operator's call, not a Worker's: this branch is not merged,
+  and the command in a linked worktree would run the branch's code against the live DB.
+- `docs/product-spec.md`'s CLI list was not edited: it is already a subset of the shipped
   surface (no `task escalate|merge|plan|archive`, no `agent`/`sync`/`desktop`), so it is not a
-  live inventory. DoD 3 authorises the command name itself.
+  live inventory; DoD 3 authorises the command name itself.

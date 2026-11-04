@@ -1,0 +1,58 @@
+# HEAD=df08273c30465b261c03efa78203c7959237e756 (df08273) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:00:15+08:00 tree=0 dirty-entries
+# command: ./scripts/orch_verify.sh test tests/unit/test_memory_scopes.py
+#          tests/integration/test_memory_scope_boundary.py -vv
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: pytest target tests/unit/test_memory_scopes.py tests/integration/test_memory_scope_boundary.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 36 items
+
+tests/unit/test_memory_scopes.py::test_the_three_vocabularies_are_importable_named_constants PASSED [  2%]
+tests/unit/test_memory_scopes.py::test_normalize_scope_applies_the_role_aliases PASSED [  5%]
+tests/unit/test_memory_scopes.py::test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded PASSED [  8%]
+tests/unit/test_memory_scopes.py::test_global_suggestion_infers_the_scope_it_names PASSED [ 11%]
+tests/unit/test_memory_scopes.py::test_suggestions_with_no_hint_fall_back_deterministically PASSED [ 13%]
+tests/unit/test_memory_scopes.py::test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored PASSED [ 16%]
+tests/unit/test_memory_scopes.py::test_in_vocabulary_suggestions_are_stored_untouched_and_silent PASSED [ 19%]
+tests/unit/test_memory_scopes.py::test_role_alias_suggestion_lands_in_the_shared_role_file PASSED [ 22%]
+tests/unit/test_memory_scopes.py::test_coerced_suggestion_reaches_a_prompt_once_approved PASSED [ 25%]
+tests/unit/test_memory_scopes.py::test_duplicate_suggestions_are_compared_on_the_repaired_scope PASSED [ 27%]
+tests/unit/test_memory_scopes.py::test_create_rejects_out_of_vocabulary_scope_for_every_category[kwargs0-environment|preferences|patterns] PASSED [ 30%]
+tests/unit/test_memory_scopes.py::test_create_rejects_out_of_vocabulary_scope_for_every_category[kwargs1-conventions|decisions|gotchas] PASSED [ 33%]
+tests/unit/test_memory_scopes.py::test_create_rejects_out_of_vocabulary_scope_for_every_category[kwargs2-architect|worker|supervisor] PASSED [ 36%]
+tests/unit/test_memory_scopes.py::test_create_accepts_the_vocabulary[kwargs0] PASSED [ 38%]
+tests/unit/test_memory_scopes.py::test_create_accepts_the_vocabulary[kwargs1] PASSED [ 41%]
+tests/unit/test_memory_scopes.py::test_create_accepts_the_vocabulary[kwargs2] PASSED [ 44%]
+tests/unit/test_memory_scopes.py::test_create_accepts_the_vocabulary[kwargs3] PASSED [ 47%]
+tests/unit/test_memory_scopes.py::test_update_rejects_an_out_of_vocabulary_scope PASSED [ 50%]
+tests/unit/test_memory_scopes.py::test_fix_scopes_moves_legacy_rows_and_re_renders_both_files PASSED [ 52%]
+tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone PASSED [ 55%]
+tests/unit/test_memory_scopes.py::test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row PASSED [ 58%]
+tests/unit/test_memory_scopes.py::test_fix_scopes_reports_a_canonical_scope_that_is_still_unreachable PASSED [ 61%]
+tests/unit/test_memory_scopes.py::test_fix_scopes_dry_run_writes_nothing PASSED [ 63%]
+tests/unit/test_memory_scopes.py::test_gc_removes_dead_files_and_keeps_the_canonical_layout PASSED [ 66%]
+tests/unit/test_memory_scopes.py::test_import_repairs_a_legacy_export_instead_of_dropping_it PASSED [ 69%]
+tests/unit/test_memory_scopes.py::test_injectability_marks_only_the_unreachable PASSED [ 72%]
+tests/unit/test_memory_scopes.py::test_coercion_is_written_to_the_build_log_the_operator_reads PASSED [ 75%]
+tests/unit/test_memory_scopes.py::test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt PASSED [ 77%]
+tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body0-environment|preferences|patterns] PASSED [ 80%]
+tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body1-conventions|decisions|gotchas] PASSED [ 83%]
+tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body2-architect|worker|supervisor] PASSED [ 86%]
+tests/integration/test_memory_scope_boundary.py::test_api_create_still_accepts_the_vocabulary_including_role_aliases PASSED [ 88%]
+tests/integration/test_memory_scope_boundary.py::test_api_patch_rejects_an_uninjectable_scope PASSED [ 91%]
+tests/integration/test_memory_scope_boundary.py::test_cli_add_rejects_and_names_the_allowed_values PASSED [ 94%]
+tests/integration/test_memory_scope_boundary.py::test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone PASSED [ 97%]
+tests/integration/test_memory_scope_boundary.py::test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files PASSED [100%]
+
+============================== 36 passed in 2.40s ==============================
+TARGETED_EXIT=0
