@@ -1,7 +1,8 @@
-# HEAD=b2f5372 merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
+# HEAD=0b05f6e merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
 # command: python3 verify-evidence/T-10/collect_code_map.py
 
 ## Commits on the branch since the merge-base
+0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
 b2f5372 test(T-10): regenerate reviewer-reachable evidence for the round-2 fixes
 7a8215b fix(T-10): attach provenance without gating, refuse stale leftovers, de-race cancel
 d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
@@ -27,24 +28,24 @@ d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
  10 files changed, 1575 insertions(+), 83 deletions(-)
 
 ## Diffstat since the merge-base
- docs/build-loop.md                              |  117 +-
- src/orchestrator/adapters/mock_harness.py       |  228 +++-
- src/orchestrator/core/config.py                 |   10 +
- src/orchestrator/services/artifact_service.py   |  144 +++
- src/orchestrator/services/prompt_builder.py     |    8 +
- src/orchestrator/services/review_service.py     |   20 +
- src/orchestrator/services/run_service.py        |  623 ++++++++-
- src/orchestrator/services/supervisor_service.py |   70 ++
- tests/integration/test_handoff_salvage.py       |  559 +++++++++
- tests/integration/test_mock_run.py              |   10 +-
- tests/unit/test_handoff_salvage.py              |  271 ++++
- verify-evidence/T-10/README.md                  |  150 +++
- verify-evidence/T-10/changed_existing_tests.txt |   23 +
- verify-evidence/T-10/code_map.txt               | 1524 +++++++++++++++++++++++
- verify-evidence/T-10/collect_code_map.py        |  122 ++
- verify-evidence/T-10/full_suite.txt             |   20 +
- verify-evidence/T-10/handoff_salvage_tests.txt  |   50 +
- 17 files changed, 3860 insertions(+), 89 deletions(-)
+ docs/build-loop.md                              | 117 ++++-
+ src/orchestrator/adapters/mock_harness.py       | 228 ++++++---
+ src/orchestrator/core/config.py                 |  10 +
+ src/orchestrator/services/artifact_service.py   | 150 ++++++
+ src/orchestrator/services/prompt_builder.py     |   8 +
+ src/orchestrator/services/review_service.py     |  20 +
+ src/orchestrator/services/run_service.py        | 623 +++++++++++++++++++++++-
+ src/orchestrator/services/supervisor_service.py |  70 +++
+ tests/integration/test_handoff_salvage.py       | 618 +++++++++++++++++++++++
+ tests/integration/test_mock_run.py              |  10 +-
+ tests/unit/test_handoff_salvage.py              | 275 +++++++++++
+ verify-evidence/T-10/README.md                  | 150 ++++++
+ verify-evidence/T-10/changed_existing_tests.txt |  23 +
+ verify-evidence/T-10/collect_code_map.py        | 151 ++++++
+ verify-evidence/T-10/full_suite.txt             |  20 +
+ verify-evidence/T-10/handoff_salvage_tests.txt  |  50 ++
+ verify-evidence/T-10/zz_code_map.txt            | 449 +++++++++++++++++
+ 17 files changed, 2883 insertions(+), 89 deletions(-)
 
 ## Cited functions (bodies truncated per function, file:line from THIS checkout)
 --- DoD 3 fingerprint: src/orchestrator/services/run_service.py handoff_snapshot
@@ -447,3 +448,14 @@ tests/integration/test_handoff_salvage.py:389:def test_a_stale_leftover_is_not_s
 tests/integration/test_handoff_salvage.py:442:def test_a_clean_exit_does_not_ingest_a_stale_leftover_and_synthesizes(
 tests/integration/test_handoff_salvage.py:502:def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate(
 tests/integration/test_handoff_salvage.py:549:def test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence(
+
+## Commits since the merge-base (repeated at the tail for truncated diffs)
+0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
+b2f5372 test(T-10): regenerate reviewer-reachable evidence for the round-2 fixes
+7a8215b fix(T-10): attach provenance without gating, refuse stale leftovers, de-race cancel
+d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
+967aea9 test(T-10): drive the salvage paths instead of asserting them, and stay offline
+47057d4 docs(T-10): document salvaging a handoff from a killed run
+3582afc fix(T-10): archive the clean-exit run status, not the mid-transition one
+01d8c75 feat(T-10): make the mock harness actually emit the failure shapes its tags name
+3e6a1a7 chore(orchestrator-recovery): uncommitted worker output from R-16

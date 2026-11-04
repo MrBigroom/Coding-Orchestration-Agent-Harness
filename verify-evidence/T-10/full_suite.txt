@@ -1,4 +1,4 @@
-# HEAD=7a8215bed9f7e2aa207ecfaf6bee7d708258de41 tree-entries=262 dirty=1
+# HEAD=0b05f6ec42b22295a8f2873504ae99c94ae9d512 branch=task-10-a-run-that-times-out-discards-the-valid-handoff merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d tree=1 dirty-entries
 # command: ./scripts/orch_verify.sh all
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -15,6 +15,6 @@ orch-verify: lint target  ruff check src tests
 ........................................................................ [ 62%]
 ........................................................................ [ 77%]
 ........................................................................ [ 93%]
-..............................                                           [100%]
-456 passed, 6 skipped in 80.89s (0:01:20)
+...............................                                          [100%]
+457 passed, 6 skipped in 83.48s (0:01:23)
 All checks passed!
