@@ -1,4 +1,5 @@
-# HEAD=58605975bb933028233a284d7b3487b632528e4e command: ./scripts/orch_verify.sh test tests/unit/test_review_audit.py tests/integration/test_review_payload.py -vv
+# HEAD=b9b3f1c71023a243d05d57989d937b85110a8d96 (b9b3f1c) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:20:13+08:00 tree=1 dirty-entries
+# command: ./scripts/orch_verify.sh test -vv -k 'review_audit or review_payload or diff_budget or visibility or sensitive_files_withheld or partly'
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -6,25 +7,35 @@ orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/tests
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
-orch-verify: pytest target tests/unit/test_review_audit.py tests/integration/test_review_payload.py -vv
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/tests -vv -k review_audit or review_payload or diff_budget or visibility or sensitive_files_withheld or partly
 ============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
 cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 11 items
+collecting ... collected 560 items / 540 deselected / 20 selected
 
-tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim PASSED [  9%]
-tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim PASSED [ 18%]
-tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked PASSED [ 27%]
-tests/unit/test_review_audit.py::test_reviewer_missing_artifact_claim_is_checked_the_same_way PASSED [ 36%]
-tests/unit/test_review_audit.py::test_diff_budget_names_every_omitted_file_and_records_the_manifest PASSED [ 45%]
-tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task PASSED [ 54%]
-tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block PASSED [ 63%]
-tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body PASSED [ 72%]
-tests/integration/test_review_payload.py::test_review_payload_is_archived_and_names_what_truncation_dropped PASSED [ 81%]
-tests/integration/test_review_payload.py::test_refuted_absence_finding_is_recorded_and_does_not_requeue PASSED [ 90%]
-tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections PASSED [100%]
+tests/integration/test_review_payload.py::test_review_payload_is_archived_and_names_what_truncation_dropped PASSED [  5%]
+tests/integration/test_review_payload.py::test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval PASSED [ 10%]
+tests/integration/test_review_payload.py::test_visibility_claim_is_refuted_by_the_supplied_patch_not_by_the_file_existing PASSED [ 15%]
+tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections PASSED [ 20%]
+tests/integration/test_review_payload.py::test_manifest_names_the_files_a_diff_budget_dropped PASSED [ 25%]
+tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim PASSED [ 30%]
+tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim PASSED [ 35%]
+tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked PASSED [ 40%]
+tests/unit/test_review_audit.py::test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim PASSED [ 45%]
+tests/unit/test_review_audit.py::test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence PASSED [ 50%]
+tests/unit/test_review_audit.py::test_a_partially_supplied_file_confirms_a_truncation_claim PASSED [ 55%]
+tests/unit/test_review_audit.py::test_an_unknowable_visibility_claim_is_unchecked_not_refuted PASSED [ 60%]
+tests/unit/test_review_audit.py::test_supplied_evidence_is_derived_from_the_recorder_that_cut PASSED [ 65%]
+tests/unit/test_review_audit.py::test_diff_budget_names_every_omitted_file_and_records_the_manifest PASSED [ 70%]
+tests/unit/test_review_audit.py::test_a_partially_supplied_file_says_so_in_the_text_the_reviewer_reads PASSED [ 75%]
+tests/unit/test_review_audit.py::test_an_omitted_file_is_listed_and_recorded PASSED [ 80%]
+tests/unit/test_review_audit.py::test_sensitive_files_withheld_from_the_diff_are_recorded_and_named PASSED [ 85%]
+tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task PASSED [ 90%]
+tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block PASSED [ 95%]
+tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body PASSED [100%]
 
-============================== 11 passed in 1.95s ==============================
+====================== 20 passed, 540 deselected in 3.71s ======================
+TARGETED_EXIT=0

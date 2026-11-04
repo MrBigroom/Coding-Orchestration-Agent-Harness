@@ -199,13 +199,15 @@ def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, 
         shown = [hunks[0]]
         sliced = True
     if sliced or len(shown) < len(hunks):
-        what = "the body of the shown hunk was cut" if sliced else f"{len(hunks) - len(shown)} hunk(s) omitted"
+        what = (
+            "the body of the shown hunk was cut"
+            if sliced
+            else f"{len(hunks) - len(shown)} hunk(s) omitted"
+        )
         omitted_headers = [
             hunk.splitlines()[0] for hunk in hunks[len(shown) :] if hunk.splitlines()
         ]
-        where = (
-            " (" + ", ".join(omitted_headers) + ")" if omitted_headers else ""
-        )
+        where = " (" + ", ".join(omitted_headers) + ")" if omitted_headers else ""
         rendered += (
             f"\n... [review diff: {len(shown)} of {len(hunks)} hunks shown for "
             f"{path or 'this file'}; {what} by the per-file diff budget{where} — the "
