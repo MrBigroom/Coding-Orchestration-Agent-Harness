@@ -1,4 +1,4 @@
-# HEAD=a3eb2fd51768b3ed61dfc5ae3088f7ad90256e0e
+# HEAD=bb43acc1d105953004093d315805308f9b58b533 (bb43acc) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T10:51:44+08:00 tree=0 dirty-entries
 # command: ./scripts/orch_verify.sh test tests/integration/test_attempt_cap.py -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -14,14 +14,19 @@ cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 7 items
+collecting ... collected 11 items
 
-tests/integration/test_attempt_cap.py::test_three_consecutive_timeouts_reach_blocked_on_the_attempt_limit PASSED [ 14%]
-tests/integration/test_attempt_cap.py::test_default_attempt_limit_preserves_the_completed_only_flow PASSED [ 28%]
-tests/integration/test_attempt_cap.py::test_mixed_sequence_counts_correctly_against_both_limits PASSED [ 42%]
-tests/integration/test_attempt_cap.py::test_changes_requested_requeue_names_the_previous_submission PASSED [ 57%]
-tests/integration/test_attempt_cap.py::test_next_prompt_states_an_absent_previous_submission PASSED [ 71%]
-tests/integration/test_attempt_cap.py::test_salvaged_round_is_named_in_the_requeue_and_the_next_prompt PASSED [ 85%]
+tests/integration/test_attempt_cap.py::test_three_consecutive_timeouts_reach_blocked_on_the_attempt_limit PASSED [  9%]
+tests/integration/test_attempt_cap.py::test_default_attempt_limit_preserves_the_completed_only_flow PASSED [ 18%]
+tests/integration/test_attempt_cap.py::test_mixed_sequence_counts_correctly_against_both_limits PASSED [ 27%]
+tests/integration/test_attempt_cap.py::test_cancelled_run_at_the_attempt_limit_blocks_with_its_submission_status PASSED [ 36%]
+tests/integration/test_attempt_cap.py::test_failed_run_at_the_attempt_limit_blocks_with_its_submission_status PASSED [ 45%]
+tests/integration/test_attempt_cap.py::test_unexpected_exception_at_the_attempt_limit_blocks PASSED [ 54%]
+tests/integration/test_attempt_cap.py::test_provider_error_at_the_attempt_limit_blocks PASSED [ 63%]
+tests/integration/test_attempt_cap.py::test_changes_requested_requeue_names_the_previous_submission PASSED [ 72%]
+tests/integration/test_attempt_cap.py::test_next_prompt_states_an_absent_previous_submission PASSED [ 81%]
+tests/integration/test_attempt_cap.py::test_salvaged_round_is_named_in_the_requeue_and_the_next_prompt PASSED [ 90%]
 tests/integration/test_attempt_cap.py::test_task_api_exposes_attempts_in_the_list_and_detail PASSED [100%]
 
-============================== 7 passed in 10.91s ==============================
+============================= 11 passed in 13.95s ==============================
+TARGETED_EXIT=0
