@@ -499,7 +499,7 @@ def triage(
         for i in g:
             group_of[i] = [x for x in g if x != i]
 
-    budgets = memory_service.memory_budgets()
+    budgets = memory_service.memory_budgets(session)
     current = memory_service.select_for_prompt(session, role, project_slug)
     left = {b: max(0, budgets.get(b, 0) - current.used.get(b, 0)) for b in BUCKETS}
 
@@ -536,7 +536,7 @@ def triage(
         "project_slug": project_slug,
         "role": role,
         "budgets": budgets,
-        "budget_enabled": memory_service.memory_budgets_enabled(),
+        "budget_enabled": memory_service.memory_budgets_enabled(session),
         "current_usage": current.used,
         "budget_left": left,
         "headroom": current.headroom(),
@@ -578,8 +578,8 @@ def budget_projection(session: Session, project_slug: str | None = None) -> dict
 def budget_report(session: Session, project_slug: str | None = None) -> dict[str, Any]:
     """Static cost of memory + the pending queue, independent of any triage row."""
     return {
-        "budgets": memory_service.memory_budgets(),
-        "budget_enabled": memory_service.memory_budgets_enabled(),
+        "budgets": memory_service.memory_budgets(session),
+        "budget_enabled": memory_service.memory_budgets_enabled(session),
         "project_slug": project_slug,
         "roles": budget_projection(session, project_slug),
         "pending_count": memory_service.pending_count(session),

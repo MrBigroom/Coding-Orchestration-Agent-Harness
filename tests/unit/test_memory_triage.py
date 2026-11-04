@@ -407,3 +407,51 @@ def test_cap_pressure_is_not_reported_as_a_merge_suggestion(session, repo_projec
     pend = mt.triage(session, status="pending", project_slug="demo")
     row = next(r for r in pend["rows"] if r["id"] == big.id)
     assert row["suggested_action"] == "merge" and "budget" in row["reason"]
+
+
+def test_runtime_setting_override_actually_binds_the_cap(session, repo_project, budgets):
+    """The caps are advertised as runtime-editable, so a settings-table row must change
+    injection — not just be accepted by PATCH /api/settings and then ignored."""
+    from orchestrator.services import settings_service
+
+    budgets(max_memory_tokens_project=5000)  # env default: everything fits
+    for i in range(3):
+        add(
+            session,
+            f"Rule {i}: "
+            + " ".join(["epsilon"] * 50)
+            + f" resolve the interpreter in the worktree {i}.",
+        )
+    wide = memory_service.select_for_prompt(session, "worker", "demo")
+    assert wide.excluded == [], "env cap of 5000 should admit everything here"
+
+    settings_service.update(session, {"max_memory_tokens_project": 200})
+    tight = memory_service.select_for_prompt(session, "worker", "demo")
+    assert tight.budgets["project"] == 200, "the settings row must win over env"
+    assert tight.excluded, "a runtime override that cannot demote is not a cap"
+    assert wide.used["project"] > tight.used["project"]
+
+    settings_service.update(session, {"max_memory_tokens_project": 0})
+    assert memory_service.select_for_prompt(session, "worker", "demo").excluded == []
+
+
+def test_budget_enabled_and_warn_fraction_are_runtime_editable(session, repo_project, budgets):
+    from orchestrator.services import settings_service
+
+    budgets(max_memory_tokens_project=120)
+    for i in range(3):
+        add(session, f"Rule {i}: " + " ".join(["zeta"] * 40) + f" durable tail {i}.")
+    assert memory_service.select_for_prompt(session, "worker", "demo").excluded
+
+    settings_service.update(session, {"memory_budget_enabled": False})
+    assert memory_service.memory_budgets_enabled(session) is False
+    assert memory_service.select_for_prompt(session, "worker", "demo").excluded == []
+
+    settings_service.update(
+        session, {"memory_budget_enabled": True, "memory_budget_warn_fraction": 0.5}
+    )
+    assert memory_service.memory_warn_fraction(session) == 0.5
+    sel = memory_service.select_for_prompt(session, "worker", "demo")
+    assert sel.warnings, "a lower warn fraction must fire earlier"
+    with pytest.raises(ValueError):
+        settings_service.update(session, {"memory_budget_warn_fraction": 1.5})

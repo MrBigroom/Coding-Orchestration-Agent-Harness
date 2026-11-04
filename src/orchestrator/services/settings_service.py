@@ -32,6 +32,7 @@ EDITABLE: dict[str, type] = {
     "max_memory_tokens_global": int,
     "max_memory_tokens_role": int,
     "max_memory_tokens_project": int,
+    "memory_budget_warn_fraction": float,
     "theme": str,
     # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code
     # defaults in adapter_service.DEFAULT_HARNESS_ROUTES.
@@ -66,6 +67,7 @@ def defaults() -> dict[str, Any]:
         "max_memory_tokens_global": s.max_memory_tokens_global,
         "max_memory_tokens_role": s.max_memory_tokens_role,
         "max_memory_tokens_project": s.max_memory_tokens_project,
+        "memory_budget_warn_fraction": s.memory_budget_warn_fraction,
         "theme": "dark",
         "harness_routing": {},
     }
@@ -106,6 +108,10 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{key} must be a boolean")
         if typ is int and (not isinstance(val, int) or isinstance(val, bool)):
             raise ValueError(f"{key} must be an integer")
+        if typ is float and (not isinstance(val, (int, float)) or isinstance(val, bool)):
+            raise ValueError(f"{key} must be a number")
+        if typ is float and not 0.0 < float(val) <= 1.0:
+            raise ValueError(f"{key} must be greater than 0 and at most 1")
         if typ is int and val < (0 if key in ALLOW_ZERO else 1):
             lo = "0 (no cap) or a positive" if key in ALLOW_ZERO else "a positive"
             raise ValueError(f"{key} must be {lo} integer")
