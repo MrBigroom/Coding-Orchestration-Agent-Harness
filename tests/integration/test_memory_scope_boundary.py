@@ -129,25 +129,99 @@ def test_api_patch_still_edits_the_content_of_a_legacy_row(client):
                         json={"scope": "housekeeping"}).status_code == 400
 
 
-def test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape(client):
-    """The POST boundary cannot be fed an unreadable role, and says so in the frozen shape.
+def test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files(client):
+    """DoD 2 at the POST boundary, asserted on the ERROR TEXT and not on the status code.
 
-    `MemoryCreate.role` is the Role enum, so Pydantic stops 'logbook-writer' before the
-    service is entered (422, not 400). The service boundary under it refuses the same shape
-    with the role vocabulary named -- see
-    `test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid`.
+    The `role` COLUMN is what `for_prompt` selects on, so `role="logbook-writer"` is the
+    damaging shape. `MemoryCreate.role` is the `Role` enum, so Pydantic used to answer with
+    `Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'` — role VALUES
+    with no mention of the role memory FILES, and no mention of the `reviewer -> architect` /
+    `agent -> worker` aliases that make those extra values legal. `MemoryCreate` now runs the
+    service's own `check_role_name` in a `model_validator(mode="before")`, which fires before
+    the enum coercion, so the body carries the same words the CLI and the service use. The
+    status code stays 422 (the value never reaches the service, so nothing can be half-stored)
+    and the body keeps the frozen {error, detail} shape. `role` stays typed as `Role`: the
+    request shape and the accepted set are untouched, only the rejection TEXT changed.
     """
     r = client.post(
         "/api/memory",
         json={"category": "role", "scope": "worker", "role": "logbook-writer",
               "content": "Diary."},
     )
-    assert r.status_code == 422, r.json()
-    assert set(r.json()) == {"error", "detail"}  # the frozen error shape
+    assert r.status_code == 422, r.text
+    body = r.json()
+    assert set(body) == {"error", "detail"}  # the frozen error shape
+    # `detail` is a list of error dicts; read the whole body as whitespace-normalized prose so
+    # the assertions are about the WORDS, not the JSON layout or the line wrapping.
+    text = flat(" ".join(str(x) for x in body["detail"]) + " " + str(body["error"]))
+    # The load-bearing assertions are these three, and they are what Pydantic's own enum
+    # message does NOT satisfy: it lists the role VALUES (`'architect', 'supervisor',
+    # 'worker', 'reviewer' or 'agent'`), which would pass a per-value loop while still naming
+    # no vocabulary and no alias. Verified by mutation: with the `MemoryCreate` validator
+    # neutered, only these three fail (see verify-evidence/T-4/README.md, R4-D2).
+    assert "architect|worker|supervisor" in text  # the vocabulary, as one string
+    assert "allowed role memory files" in text  # FILES, not enum values
+    assert "reviewer -> architect" in text and "agent -> worker" in text
+    assert "logbook-writer" in text  # and the refused value itself
+    # Each allowed file appears, checked as the joined vocabulary rather than as loose words.
+    assert "|".join(m.ROLE_SCOPES) in text
+    # Nothing was stored, and no dead file was created.
     with session_scope() as s:
         assert [e for e in m.list_entries(s, category="role")
                 if e.role == "logbook-writer"] == []
     assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
+
+
+def test_api_create_still_accepts_every_role_name_the_enum_allows(client):
+    """The message got sharper; the ACCEPTED SET did not change (frozen request shape).
+
+    All five `Role` members are still valid at POST, the aliases included, and each lands in
+    the role memory file its prompt actually reads — `reviewer`/`agent` resolve through
+    `ROLE_MEMORY_KEY`, so a row is never stored under a file no injector opens.
+    """
+    expected = {
+        "architect": "architect", "reviewer": "architect",
+        "worker": "worker", "agent": "worker", "supervisor": "supervisor",
+    }
+    for name, home in expected.items():
+        r = client.post(
+            "/api/memory",
+            json={"category": "role", "scope": name, "role": name, "content": f"R-{name}."},
+        )
+        assert r.status_code == 201, (name, r.text)
+        assert r.json()["scope"] == home, name
+        assert r.json()["role"] == name, name
+        assert (m.memory_root() / "roles" / f"{home}.md").exists()
+    # and the one value the enum has never accepted is the one refused by name, above
+    assert client.post(
+        "/api/memory",
+        json={"category": "role", "scope": "worker", "role": "logbook-writer",
+              "content": "Diary."},
+    ).status_code == 422
+
+
+def test_api_rejects_every_category_with_its_own_named_vocabulary(client):
+    """DoD 2 as ONE table: each category's rejection names exactly its own allowed values.
+
+    The three vocabularies are asserted from the constants the tests import, so a vocabulary
+    that silently loses a member fails here instead of in the prose of a handoff.
+    """
+    cases = [
+        ({"category": "global", "scope": "global-environment-verifying", "content": "x"},
+         m.GLOBAL_SCOPES),
+        ({"category": "project", "scope": "ai-livestreaming-avatar-logbook",
+          "project_slug": "demo", "content": "x"}, m.PROJECT_SCOPES),
+        ({"category": "role", "scope": "logbook-writer", "content": "x"}, m.ROLE_SCOPES),
+    ]
+    for body, vocab in cases:
+        r = client.post("/api/memory", json=body)
+        assert r.status_code == 400, (body, r.text)
+        err = r.json()["error"]
+        assert "|".join(vocab) in err, (vocab, err)
+        for value in vocab:
+            assert value in err, value
+        assert body["scope"] in err  # names the offending value too
+        assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
 
 
 def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope(client):

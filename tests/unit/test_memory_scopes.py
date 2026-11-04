@@ -356,6 +356,59 @@ def test_check_role_name_names_the_role_vocabulary():
         assert repr(bad) in msg, bad
 
 
+def test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files():
+    """DoD 2 at the SCHEMA boundary itself, with no HTTP in the picture.
+
+    `MemoryCreate.role` is typed as the `Role` enum, so before this round an unknown role was
+    answered by Pydantic with `Input should be 'architect', 'supervisor', 'worker',
+    'reviewer' or 'agent'`: role VALUES, no vocabulary joined as `architect|worker|supervisor`,
+    no mention of the `reviewer -> architect` / `agent -> worker` aliases that make those two
+    extra names legal, and no "files" wording at all. Note that a loop over the three
+    vocabulary words is NOT enough — the enum message contains each word — so the assertions
+    below are on the joined vocabulary and on the phrases only `check_role_name` emits.
+    Verified by mutation: with the validator neutered this test fails (see
+    verify-evidence/T-4/README.md, R4-D2).
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc:
+        MemoryCreate(category="role", scope="worker", content="Diary.",
+                     role="logbook-writer")
+    text = " ".join(str(exc.value).split())
+    assert "architect|worker|supervisor" in text
+    assert "allowed role memory files" in text
+    assert "reviewer -> architect" in text and "agent -> worker" in text
+    assert "logbook-writer" in text
+    # The accepted set is UNCHANGED: all five Role members still validate, aliases included.
+    for name in ("architect", "worker", "supervisor", "reviewer", "agent"):
+        assert MemoryCreate(category="role", scope=name, content="x", role=name).role == name
+    # ...and each one still resolves to a role memory FILE the injectors read.
+    assert m.normalize_scope(MemoryCategory.role, "reviewer") == "architect"
+    assert m.role_memory_file("agent") == "worker"
+
+
+def test_the_vocabularies_are_one_source_importable_from_core_and_re_exported():
+    """The constants moved to `core/memory_vocab` so `schemas` can use them without a cycle.
+
+    `memory_service` imports `schemas`, so `schemas` must not import `memory_service`: the
+    shared vocabulary needs a module BELOW both. The re-exports are what keep
+    `memory_service.GLOBAL_SCOPES` & co. working for every existing caller and test, and they
+    are asserted to be the SAME objects, not copies that can drift apart.
+    """
+    from orchestrator.core import memory_vocab
+
+    for name in (
+        "GLOBAL_SCOPES", "PROJECT_SCOPES", "ROLE_SCOPES", "ROLE_FILES", "SCOPE_VOCABULARY",
+        "FALLBACK_SCOPE", "ROLE_PROJECT_SCOPES", "ROLE_MEMORY_KEY", "ROLE_SCOPE_ALIASES",
+    ):
+        assert getattr(m, name) is getattr(memory_vocab, name), name
+    for name in ("scope_vocabulary", "role_memory_file", "check_role_name", "normalize_scope",
+                 "coerce_scope", "substitution_note", "vocab_error"):
+        assert getattr(m, name) is getattr(memory_vocab, name), name
+    assert issubclass(memory_vocab.MemoryError_, ValueError)
+    assert m.MemoryError_ is memory_vocab.MemoryError_  # one exception type, one except clause
+
+
 def test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid(session):
     """DoD 2 at the create boundary: `role` is what decides which prompt reads the row.
 
@@ -438,7 +491,16 @@ def test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from(sess
 # ---------------------------------------------------------------- repair (DoD 3)
 
 
-def test_fix_scopes_moves_legacy_rows_and_re_renders_both_files(session):
+def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(session):
+    """DoD 3, ONE outcome: the repair re-RENDERS the old file so no stale line survives.
+
+    Run with `gc=False` on purpose. With the collector on (the default) the dead file is
+    deleted, and an assertion of the form `not orphan.exists() or "mem:N" not in text` passes
+    on the deletion alone -- it proves nothing about re-rendering (review round 3, finding 6).
+    Keeping the file on disk turns the assertion into a statement about its CONTENT, compared
+    exactly rather than by substring. The deletion is a separate case:
+    `test_fix_scopes_with_gc_on_deletes_the_dead_old_file`.
+    """
     slug = "ai-livestreaming-avatar"
     stale = legacy(
         session,
@@ -458,23 +520,67 @@ def test_fix_scopes_moves_legacy_rows_and_re_renders_both_files(session):
     root = m.memory_root()
     orphan = root / "projects" / slug / f"{slug}.md"
     home = root / "projects" / slug / "gotchas.md"
-    assert f"mem:{stale.id}" in orphan.read_text()  # the rendered orphan from the live DB
+    # Before the repair the orphan file really does hold the row's line, under a name no
+    # injector reads -- which is the defect the measured entry #5 left in the live memory tree.
+    assert orphan.read_text() == (
+        f"# {slug}\n\n- The repo is reachable directly on this host."
+        f"  <!-- mem:{stale.id} -->\n"
+    )
 
-    repair = m.fix_scopes(session)
+    repair = m.fix_scopes(session, gc=False)
     assert repair.moved_ids == [stale.id]
     assert repair.moved[0]["from"] == slug and repair.moved[0]["to"] == "gotchas"
+    assert repair.removed_files == []  # gc=False deleted nothing at all
     session.refresh(stale)
     assert stale.scope == "gotchas"
-    # The NEW file was re-rendered and keeps the entry it already owned.
-    text = home.read_text()
-    assert f"mem:{stale.id}" in text and f"mem:{other.id}" in text
-    # The OLD file cannot keep a stale line: it is re-rendered, then collected because it
-    # is named after something no injector reads.
-    assert not orphan.exists() or f"mem:{stale.id}" not in orphan.read_text()
+    assert repair.ghost_files == [orphan]  # ...and the dead file is still REPORTED, not hidden
+    # THE OLD FILE: on disk, re-rendered to exactly what `render_file` writes when no approved
+    # entry maps to it any more. Exact text, so a stale line cannot slip past.
+    assert orphan.exists()
+    assert orphan.read_text() == f"# {slug}\n"
+    # THE NEW FILE: both lines, in id order, which is `render_file`'s documented order.
+    assert home.read_text() == (
+        "# gotchas\n\n"
+        f"- The repo is reachable directly on this host.  <!-- mem:{stale.id} -->\n"
+        f"- Keep this line.  <!-- mem:{other.id} -->\n"
+    )
     assert m.is_injectable(stale)
     # Idempotent: a second run moves nothing.
-    again = m.fix_scopes(session)
+    again = m.fix_scopes(session, gc=False)
     assert again.moved == [] and again.skipped == []
+
+
+def test_fix_scopes_with_gc_on_deletes_the_dead_old_file(session):
+    """DoD 3, the OTHER outcome: with the collector on, the dead scope-file is removed.
+
+    One outcome per case. Here the file the row moved away from must be GONE, and its
+    contents are not asserted (it cannot be read); the re-rendered content of that same file
+    is the subject of `test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_
+    file`. The surviving line is asserted in the NEW file by exact text.
+    """
+    slug = "ai-livestreaming-avatar"
+    stale = legacy(
+        session,
+        category="project",
+        scope=slug,
+        project_slug=slug,
+        content="The /sessions/<id>/mnt mount in briefs does not exist.",
+        approved=True,
+    )
+    orphan = m.memory_root() / "projects" / slug / f"{slug}.md"
+    home = m.memory_root() / "projects" / slug / "gotchas.md"
+    assert orphan.exists()
+
+    repair = m.fix_scopes(session)  # gc defaults to True: this is the CLI's normal run
+    assert repair.moved_ids == [stale.id]
+    assert repair.removed_files == [orphan]  # exactly this file, nothing else
+    assert not orphan.exists()
+    assert repair.ghost_files == []
+    assert home.read_text() == (
+        "# gotchas\n\n"
+        "- The /sessions/<id>/mnt mount in briefs does not exist."
+        f"  <!-- mem:{stale.id} -->\n"
+    )
 
 
 def test_fix_scopes_leaves_rejected_rows_alone(session):
