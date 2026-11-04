@@ -68,7 +68,7 @@ the cancelled salvaged run — the T-9 DoD 8 contract, not a weakened assertion.
 
 ## Review note
 
-The branch diff is ~72.8k characters, above the reviewer's ~48k diff budget. The implementation
+The code diff before this evidence directory is ~72.8k characters (the branch diff including these logs is ~82k), above the reviewer's ~48k diff budget. The implementation
 lives in `src/orchestrator/services/notification_service.py` (381 lines) and
 `src/orchestrator/core/notification_vocab.py` (100 lines); this README and the handoff name the
 decisive lines so the wiring is checkable even if the supplied diff is middle-truncated.
