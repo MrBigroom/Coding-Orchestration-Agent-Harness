@@ -23,9 +23,11 @@ from orchestrator.core.models import Review, Run, TaskStatus, Verification
 from orchestrator.core.schemas import Handoff, ProjectCreate, TaskCreate
 from orchestrator.services import (
     artifact_service,
+    git_service,
     log_service,
     project_service,
     prompt_builder,
+    provider_service,
     review_service,
     run_service,
     settings_service,
@@ -137,16 +139,24 @@ def _checks(run_id) -> dict:
     }
 
 
-def _cancel_soon(task_id: int, delay: float = 1.2) -> threading.Thread:
-    """Cancel from another thread, the way the API/GUI cancel button does (cross-process marker).
+def _cancel_when_handoff_written(task_id: int, worktree: Path, timeout: float = 12.0) -> threading.Thread:
+    """Cancel once the submission is actually on disk, not after a guessed sleep.
 
-    The delay sits between the mock's own startup+write (~0.4s) and its clamped 2s timeout, so the
-    run is cancelled with the submission already on disk — the exact shape measured live at 01:33:05
-    while cancelling run 13.
+    The measured shape is a cancelled run whose handoff was already written. Polling for the file
+    removes the race the old 1.2s sleep had with the mock's startup; the mock's own cancel clamp
+    (15s) is only a safety net if this thread fails, not the thing that ends the run.
     """
+    handoff = worktree / ".orchestrator" / "handoff.json"
 
     def go():
-        time.sleep(delay)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if handoff.is_file() and handoff.stat().st_size > 0:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.02)
         from orchestrator.core.db import session_scope
 
         with session_scope() as s:
@@ -189,7 +199,7 @@ def test_timeout_with_a_valid_handoff_is_salvaged_and_reaches_the_gate(session, 
     assert checks["handoff present"]["status"] == "pass"
     assert checks[supervisor_service.SALVAGE_CHECK]["status"] == "pass"
     assert "killed" in checks[supervisor_service.SALVAGE_CHECK]["notes"]
-    assert checks[supervisor_service.CLAIMS_CHECK]["status"] == "pass"
+    assert "handoff claims backed by Worker commits" not in checks  # provenance, not a new gate
     assert checks["tests"]["status"] == "pass"  # the T-6 wrapper path is untouched
 
     # lifecycle representation (DoD 4): SALVAGED, distinguishable, routed to a human
@@ -222,9 +232,10 @@ def test_timeout_with_a_valid_handoff_is_salvaged_and_reaches_the_gate(session, 
 
 def test_cancel_with_a_valid_handoff_is_salvaged(session, project):
     task = _task(session, project, ["mock-cancel-handoff"], 2)
-    thread = _cancel_soon(task.id or 0)
+    worktree = git_service.worktree_path(project.slug, task.id)
+    thread = _cancel_when_handoff_written(task.id or 0, worktree)
     outcome = _run(session, task)
-    thread.join(timeout=5)
+    thread.join(timeout=10)
     run = session.get(Run, outcome["run_id"])
 
     assert outcome["status"] == "cancelled" and run.status == "cancelled", outcome
@@ -373,10 +384,65 @@ def test_a_retry_after_a_salvaged_round_does_not_lose_the_archived_copy(session,
     assert [e for e in _events(session, task, "handoff_salvaged") if "pre_round_archive" in e.details] == []
 
 
+def test_a_stale_leftover_is_not_salvaged_as_the_new_rounds_submission(
+    session, project, monkeypatch
+):
+    """The round-start archive can fail (ORDINATOR_HOME/evidence unwritable).
+
+    The stale file then stays in the worktree. A killed round must NOT ingest it: it is the
+    previous round's submission, and attributing it to this run would be exactly the provenance
+    failure the salvage path exists to avoid. Fall back to today's behaviour instead.
+    """
+    task = _task(session, project, ["mock-timeout"], 11)
+    first = _run(session, task)
+    wt = Path(session.get(Run, first["run_id"]).worktree_path)
+    leftover = {
+        "phase": "phase-11-p11",
+        "branch": task.branch_name,
+        "status": "READY_FOR_REVIEW",
+        "summary": "previous round's submission, never ingested",
+        "files_changed": ["README.md"],
+    }
+    (wt / ".orchestrator" / "handoff.json").write_text(json.dumps(leftover, indent=2))
+
+    # the evidence root is unavailable, so archive_before_round_start must leave the file in place
+    def unavailable(kind, key):
+        raise OSError("evidence root unavailable")
+
+    monkeypatch.setattr(artifact_service, "evidence_dir", unavailable)
+
+    second = _run(session, task)
+    run2 = session.get(Run, second["run_id"])
+    assert second["status"] == "timeout" and "salvaged" not in second
+    assert task.handoff_status == "RUN_TIMEOUT" and task.status == TaskStatus.planned
+    assert artifact_service.read_text(run2.id, "handoff.json") is None
+    assert session.exec(select(Verification)).first() is None
+    failures = [
+        structured_log.parse(e.details)
+        for e in _events(session, task, "handoff_salvage_failed")
+        if e.run_id == run2.id
+    ]
+    assert any(p and p.get("stale") is True for p in failures), failures
+    assert any(
+        p and "unchanged since round start" in (p.get("reason") or "") for p in failures
+    ), failures
+    assert [
+        e
+        for e in _events(session, task, "handoff_salvaged")
+        if e.run_id == run2.id and "non_clean_exit" in e.details
+    ] == []
+    # the leftover is still on disk untouched: refusing to read it is not permission to delete it
+    assert json.loads((wt / ".orchestrator" / "handoff.json").read_text())["summary"] == (
+        "previous round's submission, never ingested"
+    )
+
+
 # ------------------------------------------------------ DoD 7: a promise reads as a promise
 
 
-def test_salvaged_claims_that_were_never_committed_fail_the_claims_check(session, project):
+def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate(
+    session, project
+):
     task = _task(session, project, ["mock-timeout-promise-handoff"], 9)
     outcome = _run(session, task)
     run = session.get(Run, outcome["run_id"])
@@ -386,21 +452,13 @@ def test_salvaged_claims_that_were_never_committed_fail_the_claims_check(session
     assert json.loads(artifact_service.read_text(run.id, "handoff.json"))["files_changed"] == [
         "PROMISE_ONLY.md"
     ]
-    # ...but the harness proves it was never the Worker's commit: the file arrived only as
-    # uncommitted dirt that the recovery sweep had to commit, so it is a promise, and a promise
-    # does not pass the gate (DoD 6: an incomplete round is still reported incomplete).
+    # ...but it was never a Worker commit: the file arrived only as uncommitted dirt that the
+    # recovery sweep had to commit. DoD 7 asks for that fact to be ATTACHED (artifacts + reviewer
+    # payload) and for a structured flag, not for a new gate-failing check: a harness recovery
+    # commit is still content on the branch and T-8 owns how recovery commits are treated.
     checks = _checks(run.id)
-    assert checks[supervisor_service.CLAIMS_CHECK]["status"] == "fail", checks
-    assert "PROMISE_ONLY.md=recovery_commit_only" in checks[supervisor_service.CLAIMS_CHECK]["notes"]
-    assert outcome["verification"] == "fail", outcome
-    # The gate believed the deterministic check, not the promise: the round was requeued and never
-    # accepted. The canned mock reviewer's verdict is irrelevant here — verification decides —
-    # which is exactly the property that must hold when a salvaged handoff over-promises.
-    assert task.status == TaskStatus.queued
-    assert task.verification_status == "fail"
-    assert task.merge_status != "ready"
-    for event in _events(session, task, "verdict_recorded"):
-        assert "accepted" not in event.details
+    assert "handoff claims backed by Worker commits" not in checks, checks
+    assert outcome["verification"] == "pass", outcome
 
     evidence = artifact_service.handoff_delivery_evidence(run.id)
     assert artifact_service.handoff_arrival(run.id) == "salvaged"
@@ -420,6 +478,45 @@ def test_salvaged_claims_that_were_never_committed_fail_the_claims_check(session
     assert "claims_all_backed_by_worker_commits=false" in text
     assert "git status --porcelain -uall at ingestion: clean" in text
 
+    # The promise is visible, and the round still cannot auto-complete: a salvaged submission is
+    # routed to a human, so a reviewer reads the flag before anything is accepted or merged.
+    assert task.status == TaskStatus.blocked
+    assert task.review_status == "NEEDS_HUMAN"
+    assert task.merge_status != "ready"
+    for event in _events(session, task, "verdict_recorded"):
+        assert "accepted" not in event.details
+
+
+def test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence(
+    session, project, monkeypatch
+):
+    """DoD 7: the evidence must reach the REVIEWER PAYLOAD, not only the run.json artifact.
+
+    The unit test renders the section; this one captures the actual prompt handed to the architect
+    provider for a salvaged run, so the wiring from archived evidence -> review prompt is asserted.
+    """
+    captured: dict[str, str] = {}
+    original = provider_service.complete
+
+    async def capture(session, profile, prompt, metadata=None):
+        if (metadata or {}).get("purpose") == "review":
+            captured["text"] = prompt.static_text() + "\n\n" + prompt.dynamic_text()
+        return await original(session, profile, prompt, metadata)
+
+    monkeypatch.setattr(provider_service, "complete", capture)
+    task = _task(session, project, ["mock-timeout-handoff"], 13)
+    outcome = _run(session, task)
+    run = session.get(Run, outcome["run_id"])
+
+    assert outcome.get("verdict") == "APPROVED"
+    text = captured["text"]
+    assert "### Handoff provenance and delivery evidence" in text
+    assert "handoff arrival: salvaged" in text
+    assert "MOCK_CHANGE.md -> worker_commit" in text
+    assert f"run {run.short_id} status=timeout" in text
+    assert "structured flag: claims_all_backed_by_worker_commits=true" in text
+    assert "git status --porcelain -uall at ingestion" in text
+
 
 def test_the_clean_exit_path_carries_the_same_evidence(session, project):
     task = _task(session, project, ["mock"], 10)
@@ -435,7 +532,7 @@ def test_the_clean_exit_path_carries_the_same_evidence(session, project):
     assert evidence["exit_state"].startswith(f"run {run.short_id} status=completed")
     checks = _checks(run.id)
     assert supervisor_service.SALVAGE_CHECK not in checks  # nothing was salvaged
-    assert checks[supervisor_service.CLAIMS_CHECK]["status"] == "pass"
+    assert "handoff claims backed by Worker commits" not in checks  # evidence, not a new gate
 
     # the reviewer is shown the git facts, from the archived artifact, not from the Worker's prose
     section = review_service.delivery_evidence_section(session, task, run)

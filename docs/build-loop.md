@@ -154,7 +154,13 @@ Recorded as `mode` in the `handoff_salvaged` details payload:
 
 All three are best-effort by design: a file that cannot be read or archived leaves the unlink
 skipped and logs `handoff_salvage_failed`. Keeping a stale file in the scratch dir is
-recoverable; deleting an unread submission is not.
+recoverable; deleting an unread submission is not. Because that means a stale file can survive
+into the next round, the round notes a fingerprint of it (`run_service.handoff_snapshot`: stat +
+sha256) when the archive fails, and the salvage path refuses a file that is byte-for-byte
+unchanged at the end of the run — it is the previous round's submission, not this round's, and
+attributing it to this run would be a provenance failure. The clean-exit path applies the same
+rule and synthesizes from observed evidence instead. A Worker that writes a new handoff over the
+leftover changes the fingerprint and is salvaged normally.
 
 ### Lifecycle: `SALVAGED` is not `SYNTHESIZED` and not `READY_FOR_REVIEW`
 
@@ -188,13 +194,17 @@ changed). `details` carries `mode`, `run_status`, `exit_code`, `timed_out`, `can
 `source_run_status`, `valid`, `parse_error`, `bytes` and `archived_to`. Its summary states the
 exit state and that the handoff arrived out of band. A present-but-unusable file emits
 `handoff_salvage_failed` instead — a truncated write from a killed process is the normal shape,
-so parse failures are logged, never raised.
+so parse failures are logged, never raised. `handoff_salvage_failed` also covers a file left over
+from a previous round when the round-start archive could not copy it: the payload carries
+`reason=unchanged since round start` and `stale=true`, and the file is refused rather than
+attributed to this run.
 
 ### Salvaged handoffs are provenance-limited evidence
 
 A salvaged handoff is **not** worker self-certification and it does not skip the gate: the
-Supervisor verification runs the project's real commands (the T-6 wrapper included), the claims
-check below compares its claims against git, and the Architect review still runs. It is also
+Supervisor verification runs the project's real commands (the T-6 wrapper included), the delivery
+evidence attached to the run is compared against git, and the Architect review still runs. It is
+also
 weaker evidence than a clean-exit handoff, because an early handoff is partly a statement of
 *intent* — measured on run 13 (cancelled at 01:33:05): a 1164-byte handoff claimed four code/doc
 fixes while the branch had no new commits and the worktree had no tracked modifications.
@@ -204,11 +214,18 @@ So every ingestion path — clean exit **and** salvage — archives delivery evi
 recovery flag), the diffstat, `git status --porcelain -uall` at ingestion time, and the dirt that
 existed *before* the harness recovery sweep. Each claimed path is classified `worker_commit`,
 `recovery_commit_only`, `uncommitted_only` or `absent`, and
-`claims_all_backed_by_worker_commits` is the one-line answer. A claim not backed by a
-Worker-authored commit fails the `claims vs commits` verification check, even though the older
-"claimed files exist on disk" check can pass for files that only ever existed as scratch. The
-reviewer prompt renders the same evidence, so a reviewer sees a promise labelled as a promise
-rather than reading it as delivered work.
+`claims_all_backed_by_worker_commits` is the one-line answer. The reviewer prompt renders the same
+evidence, so a reviewer sees a promise labelled as a promise rather than reading it as delivered
+work.
+
+This is **attached provenance, not a new gate**. T-10 does not add a verification check for
+claims, and deliberately does not make `recovery_commit_only` or `uncommitted_only` fail
+automatically: a harness recovery commit is still content on the branch, and how recovery
+commits are treated is T-8's machinery (`recovery commits (harness-created)`), which T-10 must
+not widen. The reviewer and the operator read the flag — a salvaged round already routes to
+`NEEDS_HUMAN` — and the older "claimed files exist on disk" check is unchanged. Turning the flag
+into a gate failure would have made every round that needed a recovery sweep reject its own
+committed work, which is the opposite of recoverable.
 
 ## What a new round resets
 

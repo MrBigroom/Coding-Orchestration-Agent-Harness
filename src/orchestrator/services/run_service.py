@@ -8,6 +8,7 @@ then hands over to the Supervisor gate (review/accept/requeue/block/merge).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import uuid
@@ -228,6 +229,27 @@ def _one_line(text: str) -> str:
     return " ".join((text or "").split())[:600]
 
 
+def handoff_snapshot(path: Path) -> dict[str, Any] | None:
+    """A cheap fingerprint of the handoff file as it stands right now.
+
+    Used to answer one question at the end of a run: is the file still the exact leftover that was
+    already in the worktree when the round started? A stat-only check is not enough (a same-size
+    rewrite with a coarse timestamp would collide), so the digest is included. An unreadable file
+    still gets a stat-based fingerprint; ingestion will report why it cannot be used.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if not path.is_file():
+        return None
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        digest = None
+    return {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "sha256": digest}
+
+
 def _normalize_rel(path: str) -> str:
     return path.strip().removeprefix("./").removeprefix("/")
 
@@ -408,6 +430,7 @@ def try_salvage_handoff(
     harness_name: str | None,
     result: AdapterResult,
     uncommitted_before_sweep: list[str],
+    stale_snapshot: dict[str, Any] | None = None,
 ) -> Handoff | None:
     """Ingest a handoff the killed Worker already wrote (T-10 DoD 1 + 2).
 
@@ -417,6 +440,27 @@ def try_salvage_handoff(
     crashing the run, because a half-written file is the expected shape of a killed process.
     """
     handoff, error = read_handoff_file(handoff_path)
+    if stale_snapshot is not None and handoff_snapshot(handoff_path) == stale_snapshot:
+        # The round-start archive failed, so the previous round's file was left in place — and the
+        # Worker never replaced it. Ingesting it here would attribute a previous round's
+        # submission to this run, which is exactly the provenance failure the salvage path exists
+        # to avoid. Fail closed: this round produced nothing and is reported as incomplete.
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{run.short_id} ({run.status}) left a handoff.json in the worktree, but it is "
+                "byte-for-byte unchanged since the round started: it is the previous round's "
+                "leftover (the round-start archive could not copy it), not this run's submission. "
+                "Refusing to salvage it and falling back to the normal non-clean-exit path.",
+                _salvage_log_payload(task, run, result, None, SALVAGE_MODE_NON_CLEAN_EXIT, None)
+                | {"reason": "unchanged since round start", "stale": True},
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        return None
     if handoff is None and error is None:
         return None
     if handoff is None:
@@ -770,6 +814,10 @@ async def _execute(
     # meant to recover). Archive first, unlink only when the copy provably exists (T-10 DoD 3).
     if archive_before_round_start(session, task, run, project, handoff_path):
         handoff_path.unlink(missing_ok=True)
+    # Only survives that attempt when the archive failed. Remember the exact leftover: if it is
+    # still identical when the run ends, it is the previous round's file and must never be read as
+    # this round's submission (DoD 3 + DoD 6).
+    stale_handoff = handoff_snapshot(handoff_path)
 
     # A branch that carries harness wreckage must not pass it on silently: the Worker is told
     # which commits are recovery commits and is required to re-verify before handing off.
@@ -892,6 +940,7 @@ async def _execute(
             harness_name,
             result,
             dirt_before_sweep,
+            stale_snapshot=stale_handoff,
         )
         if salvaged is None:
             task_service.transition(
@@ -924,6 +973,7 @@ async def _execute(
             harness_name,
             result,
             dirt_before_sweep,
+            stale_snapshot=stale_handoff,
         )
         if salvaged is None:
             task.handoff_status = "RUN_" + status.upper()
@@ -933,7 +983,32 @@ async def _execute(
             return {"run_id": run.id, "status": run.status, "error": run.error}
         return await _gate_salvaged(session, task, run, project, salvaged)
 
-    handoff = adapter.parse_result(ctx, result)
+    stale_unchanged = stale_handoff is not None and handoff_snapshot(handoff_path) == stale_handoff
+    if stale_unchanged:
+        # A clean exit that never replaced the leftover: do not read the previous round's handoff
+        # as this round's work. Synthesize from observed evidence instead. (The archive failure
+        # that left the file in place is already logged; this records why it was not ingested.)
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{run.short_id} exited cleanly but the handoff.json in the worktree is "
+                "byte-for-byte unchanged since the round started; it is a previous round's "
+                "leftover, not this round's submission, so it is not ingested",
+                {
+                    "task_id": task.id,
+                    "run_id": run.id,
+                    "reason": "unchanged since round start",
+                    "stale": True,
+                },
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        handoff = None
+    else:
+        handoff = adapter.parse_result(ctx, result)
     synthesized = handoff is None
     if handoff is None:
         handoff = _synthesize_handoff(

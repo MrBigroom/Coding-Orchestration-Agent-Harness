@@ -45,10 +45,12 @@ VERIFY_TIMEOUT = 900
 # finding here is never a model assertion.
 CONTRACT_CHECK = "contract files unchanged"
 RECOVERY_CHECK = "recovery commits (harness-created)"
-# T-10: provenance of the submission itself, read back from the archived `run.json`, plus the
-# claims-vs-commits flag computed from git at ingestion time.
+# T-10: provenance of the submission itself, read back from the archived `run.json`. This is
+# informational: the claims-vs-commits evidence is attached to the artifacts and the reviewer
+# payload (DoD 7), not turned into a new gate. Harness recovery commits are content the Worker
+# never self-checked, but they are still content on the branch, and T-8 owns the machinery that
+# decides what to do about them; T-10 must not turn them into an automatic rejection here.
 SALVAGE_CHECK = "handoff arrived out of band (salvaged)"
-CLAIMS_CHECK = "handoff claims backed by Worker commits"
 
 
 async def _run_command(
@@ -123,36 +125,12 @@ async def verify(
             )
         )
 
-    # 1c. Claims vs. commits (T-10 DoD 7). A handoff is a statement; `git log base..HEAD`, the
-    # diffstat and `git status --porcelain -uall` at ingestion time are evidence. A claim that was
-    # never committed — or that exists only inside a harness recovery commit — is a promise, and it
-    # fails here even though "claimed files exist on disk" can pass, because a file that exists as
-    # uncommitted scratch in the worktree is not on the branch.
-    evidence = artifact_service.handoff_delivery_evidence(run.id)
-    if evidence and not handoff_synthesized and evidence.get("claimed_count"):
-        unbacked = {
-            p: s
-            for p, s in (evidence.get("claim_status") or {}).items()
-            if s != artifact_service.CLAIM_WORKER_COMMIT
-        }
-        checks.append(
-            VerificationCheck(
-                name=CLAIMS_CHECK,
-                status="pass" if not unbacked else "fail",
-                evidence=(
-                    f"{evidence.get('claimed_count', 0)} claim(s), "
-                    f"{len(unbacked)} not backed by a Worker commit "
-                    f"(commits on branch: {evidence.get('commit_count', 0)}, "
-                    f"recovery: {evidence.get('recovery_commit_count', 0)})"
-                ),
-                notes=(
-                    "not delivered as committed work: "
-                    + ", ".join(f"{p}={s}" for p, s in sorted(unbacked.items()))
-                    if unbacked
-                    else ""
-                ),
-            )
-        )
+    # 1c. Claims vs. commits (T-10 DoD 7) is deliberately NOT a verification check. The evidence
+    # is computed at ingestion, archived in `run.json` and rendered into the reviewer payload; the
+    # reviewer and the operator judge it. A claim that exists only as uncommitted worktree state is
+    # a promise, and a harness recovery commit is content the Worker never self-checked — both are
+    # labelled in that evidence, but neither may become a new automatic gate here: T-8 owns the
+    # recovery-commit machinery and DoD 7 asks for provenance, not extra rejection.
 
     # 2. Claimed files exist on disk
     if cwd and handoff and handoff.files_changed:

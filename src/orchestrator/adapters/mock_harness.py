@@ -28,6 +28,11 @@ from pathlib import Path
 from orchestrator.adapters.base import AdapterSpec, BaseHarnessAdapter, RunContext
 
 MOCK_TIMEOUT_SECONDS = 2
+# A cancel test must cancel itself; the clamp is only a safety net so a broken cancel fails in
+# ~15s instead of hanging for the adapter's real timeout. Keeping it at 2s raced the cancel marker
+# (the mock needs ~0.4s to write its handoff and the cancel has to land after that), which made the
+# cancel test flake into a timeout.
+MOCK_CANCEL_SECONDS = 15
 
 # `<root>/src`: the src root of the checkout whose `mock_harness.py` is executing right now.
 # The child process must import THIS module tree, not whichever checkout the interpreter's
@@ -45,14 +50,16 @@ KNOWN_TAGS = {
     "mock-timeout-bad-handoff",
     "mock-timeout-promise-handoff",
 }
-# Tags that hang: the adapter timeout is clamped so a test waits ~2s, not an hour.
+# Tags that hang until the adapter timeout: the timeout is clamped so a test waits ~2s, not an
+# hour. Cancel hangs separately: its clamp is only a failure safety net, so it must not race the
+# cancel marker the test is about to send.
 HANG_TAGS = {
     "mock-timeout",
     "mock-timeout-handoff",
-    "mock-cancel-handoff",
     "mock-timeout-bad-handoff",
     "mock-timeout-promise-handoff",
 }
+CANCEL_HANG_TAGS = {"mock-cancel-handoff"}
 
 
 class MockHarnessAdapter(BaseHarnessAdapter):
@@ -87,7 +94,9 @@ class MockHarnessAdapter(BaseHarnessAdapter):
         return argv
 
     async def run(self, ctx: RunContext, runner):
-        if any(t in HANG_TAGS for t in ctx.tags):
+        if any(t in CANCEL_HANG_TAGS for t in ctx.tags):
+            ctx.timeout_seconds = min(ctx.timeout_seconds, MOCK_CANCEL_SECONDS)
+        elif any(t in HANG_TAGS for t in ctx.tags):
             ctx.timeout_seconds = min(ctx.timeout_seconds, MOCK_TIMEOUT_SECONDS)
 
         # Pin PYTHONPATH to the src root of the checkout under test. `process_service` builds the
