@@ -10,9 +10,12 @@ stamped HEAD, offline (throwaway `ORCHESTRATOR_HOME` per demo, in-process `TestC
 so every claim below is tied to the tree it was measured on. The dirty-entry count excludes
 this directory because the capture rewrites its own outputs; `git status` outside it was clean.
 
-**Captured at HEAD `d5aa57b`** (`git rev-parse --short` of the last code/test/docs commit). The
+**Captured at HEAD `d5aa57b`** — the last commit that carries source, tests and docs. The
 commits after it touch only `verify-evidence/T-4/` — check with
-`git diff --name-only d5aa57b HEAD` (expect nothing outside this directory).
+`git diff --name-only d5aa57b HEAD | grep -v '^verify-evidence/T-4/'` (measured: 0 lines).
+`final_rerun.txt` repeats `test` + `lint` at the branch tip `56b2990`, stamped and clean, and
+reports the identical 529 passed / 6 skipped / 0 failed and `All checks passed!` — so no
+number in this index comes from a tree other than the one it names.
 
 ## What the R-26 review asked for, and where the proof is
 
@@ -191,7 +194,8 @@ never misflags a valid role entry.
 | Name | What it is |
 |---|---|
 | `capture.sh` | the whole capture: one HEAD, one command, staged in `/tmp` and moved in at the end |
-| `full_suite.txt` | stamped `./scripts/orch_verify.sh test` — 529 passed / 6 skipped / 0 failed |
+| `full_suite.txt` | stamped `./scripts/orch_verify.sh test` — 529 passed / 6 skipped / 0 failed (at `d5aa57b`) |
+| `final_rerun.txt` | the suite and lint RE-RUN at the branch tip `56b2990`, stamped: identical 529 / 6 / 0 and `All checks passed!`, `FINAL_SUITE_EXIT=0`, `FINAL_LINT_EXIT=0` |
 | `checks.txt` | stamped lint + the five-part cold demo + the CLI verbatim |
 | `memory_scope_tests.txt` | stamped `-vv` run of the two T-4 test files, 58 named tests |
 | `live_home_readonly.txt` | read-only audit of the operator's live home (no writes, no CLI) |

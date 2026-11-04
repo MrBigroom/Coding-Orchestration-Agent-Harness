@@ -1,0 +1,97 @@
+# HEAD=56b2990dbd213b058ba6f4082ee7df5f7cc82a75 (56b2990) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:05:59+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL RE-RUN at the branch tip, after the evidence and handoff commits. The only
+# commits between the stamped code HEAD d5aa57b and this one touch verify-evidence/T-4:
+#   verify-evidence/T-4/README.md
+#   verify-evidence/T-4/checks.txt
+#   verify-evidence/T-4/diff_README.md.part1.txt
+#   verify-evidence/T-4/diff_docs_decisions.md.part1.txt
+#   verify-evidence/T-4/diff_docs_memory.md.part1.txt
+#   verify-evidence/T-4/diff_src_orchestrator_api_routes_memory.py.part1.txt
+#   verify-evidence/T-4/diff_src_orchestrator_cli.py.part1.txt
+#   verify-evidence/T-4/diff_src_orchestrator_cli.py.part2.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_chat_service.py.part1.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part1.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part2.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part3.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part4.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part5.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part6.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.txt
+#   verify-evidence/T-4/diff_src_orchestrator_services_run_service.py.part1.txt
+#   verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part1.txt
+#   verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part2.txt
+#   verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part3.txt
+#   verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part1.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part2.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part3.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part4.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part5.txt
+#   verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.txt
+#   verify-evidence/T-4/full_suite.txt
+#   verify-evidence/T-4/handoff_round3.json
+#   verify-evidence/T-4/handoff_round3.md
+#   verify-evidence/T-4/live_home_readonly.txt
+#   verify-evidence/T-4/manifest.txt
+#   verify-evidence/T-4/memory_scope_tests.txt
+#   verify-evidence/T-4/review_round2.txt
+#   verify-evidence/T-4/review_round3.txt
+#   verify-evidence/T-4/slice_cli__gc_only_branch.txt
+#   verify-evidence/T-4/slice_cli__memory_add.txt
+#   verify-evidence/T-4/slice_cli__memory_fix_scopes.txt
+#   verify-evidence/T-4/slice_cli__memory_list.txt
+#   verify-evidence/T-4/slice_cli__print_injectability.txt
+#   verify-evidence/T-4/slice_memory_service___renderer_output.txt
+#   verify-evidence/T-4/slice_memory_service__check_role_name.txt
+#   verify-evidence/T-4/slice_memory_service__coerce_scope.txt
+#   verify-evidence/T-4/slice_memory_service__create.txt
+#   verify-evidence/T-4/slice_memory_service__fix_scopes.txt
+#   verify-evidence/T-4/slice_memory_service__gc_orphan_files.txt
+#   verify-evidence/T-4/slice_memory_service__import_all.txt
+#   verify-evidence/T-4/slice_memory_service__injectability.txt
+#   verify-evidence/T-4/slice_memory_service__normalize_scope.txt
+#   verify-evidence/T-4/slice_memory_service__orphan_files.txt
+#   verify-evidence/T-4/slice_memory_service__reachable_roles.txt
+#   verify-evidence/T-4/slice_memory_service__role_memory_file.txt
+#   verify-evidence/T-4/slice_memory_service__update.txt
+#   verify-evidence/T-4/slice_memory_service__validate.txt
+#   verify-evidence/T-4/slice_memory_service__vocabularies.txt
+#   verify-evidence/T-4/slice_run_service__store_memory_suggestions.txt
+#   verify-evidence/T-4/slice_tests_integration__gc_only_honesty.txt
+#   verify-evidence/T-4/slice_tests_unit__coercion_and_log.txt
+#   verify-evidence/T-4/slice_tests_unit__list_marker.txt
+#   verify-evidence/T-4/slice_tests_unit__repair_and_gc.txt
+#   verify-evidence/T-4/slice_tests_unit__role_column_boundary.txt
+#   verify-evidence/T-4/slices_index.txt
+# Therefore the src/, tests/ and docs/ bytes are identical to the tree full_suite.txt
+# measured, and the counts below must match it exactly if nothing drifted.
+# command: ./scripts/orch_verify.sh test
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
+........................................................................ [ 13%]
+.....................................ssssss............................. [ 26%]
+........................................................................ [ 40%]
+........................................................................ [ 53%]
+........................................................................ [ 67%]
+........................................................................ [ 80%]
+........................................................................ [ 94%]
+...............................                                          [100%]
+529 passed, 6 skipped in 104.08s (0:01:44)
+FINAL_SUITE_EXIT=0
+# command: ./scripts/orch_verify.sh lint
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: lint target  ruff check src tests
+All checks passed!
+FINAL_LINT_EXIT=0
