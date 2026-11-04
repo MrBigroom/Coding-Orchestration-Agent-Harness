@@ -1,6 +1,5 @@
-# HEAD=967aea9b332f0beab40701a90c2fcabfb7799aa4 tree-entries=259 dirty=2
+# HEAD=7a8215bed9f7e2aa207ecfaf6bee7d708258de41 tree-entries=262 dirty=3
 # command: ./scripts/orch_verify.sh test -k handoff_salvage -vv
-
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -15,35 +14,37 @@ cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 460 items / 432 deselected / 28 selected
+collecting ... collected 462 items / 432 deselected / 30 selected
 
 tests/integration/test_handoff_salvage.py::test_timeout_with_a_valid_handoff_is_salvaged_and_reaches_the_gate PASSED [  3%]
-tests/integration/test_handoff_salvage.py::test_cancel_with_a_valid_handoff_is_salvaged PASSED [  7%]
+tests/integration/test_handoff_salvage.py::test_cancel_with_a_valid_handoff_is_salvaged PASSED [  6%]
 tests/integration/test_handoff_salvage.py::test_non_zero_exit_with_a_valid_handoff_is_salvaged PASSED [ 10%]
-tests/integration/test_handoff_salvage.py::test_timeout_with_no_handoff_is_exactly_todays_behaviour PASSED [ 14%]
-tests/integration/test_handoff_salvage.py::test_timeout_with_a_truncated_handoff_falls_back_and_logs_the_parse_failure PASSED [ 17%]
-tests/integration/test_handoff_salvage.py::test_a_pre_existing_submission_is_archived_before_the_round_start_unlink PASSED [ 21%]
-tests/integration/test_handoff_salvage.py::test_an_unusable_leftover_is_archived_raw_and_the_round_still_starts PASSED [ 25%]
-tests/integration/test_handoff_salvage.py::test_a_retry_after_a_salvaged_round_does_not_lose_the_archived_copy PASSED [ 28%]
-tests/integration/test_handoff_salvage.py::test_salvaged_claims_that_were_never_committed_fail_the_claims_check PASSED [ 32%]
-tests/integration/test_handoff_salvage.py::test_the_clean_exit_path_carries_the_same_evidence PASSED [ 35%]
-tests/integration/test_handoff_salvage.py::test_a_run_with_no_archived_evidence_says_so PASSED [ 39%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_absent_is_not_an_error PASSED [ 42%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[-is empty] PASSED [ 46%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[   \n-is empty] PASSED [ 50%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"phase": "p", "summary": "trunca-not valid JSON] PASSED [ 53%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"phase": "phase-1-p1"}-does not validate as Handoff] PASSED [ 57%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"status": "ALMOST_READY", "phase": "p", "branch": "b", "summary": "s"}-status] PASSED [ 60%]
-tests/unit/test_handoff_salvage.py::test_read_handoff_file_accepts_a_valid_submission PASSED [ 64%]
-tests/unit/test_handoff_salvage.py::test_exit_state_text_names_the_run_and_the_reason PASSED [ 67%]
-tests/unit/test_handoff_salvage.py::test_claims_are_classified_against_commits_dirt_and_absence PASSED [ 71%]
-tests/unit/test_handoff_salvage.py::test_a_path_only_a_worker_commit_touched_still_counts_when_the_harness_sweeps_more PASSED [ 75%]
-tests/unit/test_handoff_salvage.py::test_normalised_prefixes_do_not_hide_a_claim PASSED [ 78%]
-tests/unit/test_handoff_salvage.py::test_a_handoff_with_no_claims_is_not_reported_as_delivered PASSED [ 82%]
-tests/unit/test_handoff_salvage.py::test_no_handoff_at_all_yields_an_empty_claim_set PASSED [ 85%]
-tests/unit/test_handoff_salvage.py::test_render_is_empty_when_there_is_nothing_to_render PASSED [ 89%]
-tests/unit/test_handoff_salvage.py::test_render_carries_the_provenance_and_the_flag PASSED [ 92%]
+tests/integration/test_handoff_salvage.py::test_timeout_with_no_handoff_is_exactly_todays_behaviour PASSED [ 13%]
+tests/integration/test_handoff_salvage.py::test_timeout_with_a_truncated_handoff_falls_back_and_logs_the_parse_failure PASSED [ 16%]
+tests/integration/test_handoff_salvage.py::test_a_pre_existing_submission_is_archived_before_the_round_start_unlink PASSED [ 20%]
+tests/integration/test_handoff_salvage.py::test_an_unusable_leftover_is_archived_raw_and_the_round_still_starts PASSED [ 23%]
+tests/integration/test_handoff_salvage.py::test_a_retry_after_a_salvaged_round_does_not_lose_the_archived_copy PASSED [ 26%]
+tests/integration/test_handoff_salvage.py::test_a_stale_leftover_is_not_salvaged_as_the_new_rounds_submission PASSED [ 30%]
+tests/integration/test_handoff_salvage.py::test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate PASSED [ 33%]
+tests/integration/test_handoff_salvage.py::test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence PASSED [ 36%]
+tests/integration/test_handoff_salvage.py::test_the_clean_exit_path_carries_the_same_evidence PASSED [ 40%]
+tests/integration/test_handoff_salvage.py::test_a_run_with_no_archived_evidence_says_so PASSED [ 43%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_absent_is_not_an_error PASSED [ 46%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[-is empty] PASSED [ 50%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[   \n-is empty] PASSED [ 53%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"phase": "p", "summary": "trunca-not valid JSON] PASSED [ 56%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"phase": "phase-1-p1"}-does not validate as Handoff] PASSED [ 60%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_reports_why_it_cannot_use_the_file[{"status": "ALMOST_READY", "phase": "p", "branch": "b", "summary": "s"}-status] PASSED [ 63%]
+tests/unit/test_handoff_salvage.py::test_read_handoff_file_accepts_a_valid_submission PASSED [ 66%]
+tests/unit/test_handoff_salvage.py::test_exit_state_text_names_the_run_and_the_reason PASSED [ 70%]
+tests/unit/test_handoff_salvage.py::test_claims_are_classified_against_commits_dirt_and_absence PASSED [ 73%]
+tests/unit/test_handoff_salvage.py::test_a_path_only_a_worker_commit_touched_still_counts_when_the_harness_sweeps_more PASSED [ 76%]
+tests/unit/test_handoff_salvage.py::test_normalised_prefixes_do_not_hide_a_claim PASSED [ 80%]
+tests/unit/test_handoff_salvage.py::test_a_handoff_with_no_claims_is_not_reported_as_delivered PASSED [ 83%]
+tests/unit/test_handoff_salvage.py::test_no_handoff_at_all_yields_an_empty_claim_set PASSED [ 86%]
+tests/unit/test_handoff_salvage.py::test_render_is_empty_when_there_is_nothing_to_render PASSED [ 90%]
+tests/unit/test_handoff_salvage.py::test_render_carries_the_provenance_and_the_flag PASSED [ 93%]
 tests/unit/test_handoff_salvage.py::test_mock_child_process_is_pinned_to_the_checkout_under_test PASSED [ 96%]
 tests/unit/test_handoff_salvage.py::test_mock_harness_refuses_an_unknown_behaviour_tag PASSED [100%]
 
-===================== 28 passed, 432 deselected in 25.28s ======================
+===================== 30 passed, 432 deselected in 30.74s ======================
