@@ -1,8 +1,8 @@
 # T-12 GUI type-check evidence (DoD 2, frontend half)
-# generated: 2026-11-04T11:12:48+08:00
+# generated: 2026-11-04T11:16:26+08:00
 # worktree: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
-# HEAD=b60bd66c2e1f3870fcdb9ae52f9dfd0ceb9700f2
-# dirty-entries(-uall, excludes this file, written to /tmp first)=0
+# HEAD=cb48865463cae16c603cfc8df9847fbd8cf0962f
+# dirty-entries(-uall, excluding gui_typecheck.txt itself, which this run rewrites)=0
 # web/ unchanged since c4f0ae9? yes
 
 ## Scratch tree (recipe from approved project memory: never inside the worktree)
@@ -12,14 +12,14 @@ $ ln -s /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orches
 
 $ ls -l /tmp/t12-gui-typecheck
 lrwxrwxrwx 1 mrbigroom mrbigroom    96 Nov  4 11:12 index.html -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/index.html
--rw-r--r-- 1 mrbigroom mrbigroom 34775 Nov  4 11:12 listFiles.txt
+-rw-r--r-- 1 mrbigroom mrbigroom 34775 Nov  4 11:16 listFiles.txt
 lrwxrwxrwx 1 mrbigroom mrbigroom    91 Nov  4 11:12 node_modules -> /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules
 lrwxrwxrwx 1 mrbigroom mrbigroom    98 Nov  4 11:12 package.json -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/package.json
 lrwxrwxrwx 1 mrbigroom mrbigroom   103 Nov  4 11:12 postcss.config.js -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/postcss.config.js
 lrwxrwxrwx 1 mrbigroom mrbigroom    89 Nov  4 11:12 src -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src
 lrwxrwxrwx 1 mrbigroom mrbigroom   104 Nov  4 11:12 tailwind.config.js -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/tailwind.config.js
 lrwxrwxrwx 1 mrbigroom mrbigroom    99 Nov  4 11:12 tsconfig.json -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/tsconfig.json
--rw-r--r-- 1 mrbigroom mrbigroom 22507 Nov  4 11:12 tsconfig.tsbuildinfo
+-rw-r--r-- 1 mrbigroom mrbigroom 22507 Nov  4 11:16 tsconfig.tsbuildinfo
 lrwxrwxrwx 1 mrbigroom mrbigroom   100 Nov  4 11:12 vite.config.ts -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/vite.config.ts
 
 ## Tool
