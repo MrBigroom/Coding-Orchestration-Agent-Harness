@@ -1,4 +1,4 @@
-# HEAD=44f77692fdb21cb515b87ef2893f3a088aa8a50c (44f7769) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:22:16+08:00 tree=1 dirty-entries
+# HEAD=96289d700be8bd45da5e8672778946ed2e73eec0 (96289d7) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:24:40+08:00 tree=0 dirty-entries
 # command: git diff --name-only (merge-base main..HEAD) and git diff --stat
 docs/build-loop.md
 docs/contract-change-request-T11-review-payload.md
@@ -16,6 +16,7 @@ tests/integration/test_review_payload.py
 tests/unit/test_recovery_markers.py
 tests/unit/test_review_audit.py
 verify-evidence/T-11/README.md
+verify-evidence/T-11/capture.sh
 verify-evidence/T-11/changed_files.txt
 verify-evidence/T-11/suite_and_lint.txt
 verify-evidence/T-11/t11_tests.txt
@@ -35,8 +36,9 @@ verify-evidence/T-11/t11_tests.txt
  tests/integration/test_review_payload.py           | 173 +++++
  tests/unit/test_recovery_markers.py                |   8 +-
  tests/unit/test_review_audit.py                    | 286 ++++++++
- verify-evidence/T-11/README.md                     |  29 +
+ verify-evidence/T-11/README.md                     |  40 ++
+ verify-evidence/T-11/capture.sh                    |  38 ++
  verify-evidence/T-11/changed_files.txt             |  42 ++
- verify-evidence/T-11/suite_and_lint.txt            |  33 +
+ verify-evidence/T-11/suite_and_lint.txt            |  22 +
  verify-evidence/T-11/t11_tests.txt                 |  41 ++
- 19 files changed, 2258 insertions(+), 67 deletions(-)
+ 20 files changed, 2296 insertions(+), 67 deletions(-)

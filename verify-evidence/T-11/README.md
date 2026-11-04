@@ -1,8 +1,10 @@
 # T-11 evidence index
 
-Measured at `44f7769` — the HEAD stamped inside every file in this directory. `capture.sh` is the
-one script that produced them, so the numbers here cannot come from a different tree than the one
-under review.
+Measured at `96289d7` — the HEAD stamped inside every file in this directory, with
+`tree=0 dirty-entries` at capture time. `capture.sh` is the one script that produced them, so the
+numbers here cannot come from a different tree than the one under review. The commit that contains
+this index changes only files under `verify-evidence/T-11/`; it touches no source and no test, so
+the counts above are the counts for the code the reviewer is reading.
 
 | DoD item | Landed where | Proved by |
 |---|---|---|
