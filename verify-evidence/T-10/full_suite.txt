@@ -1,4 +1,4 @@
-# HEAD=d65150b78e82168e5b9f6e05484417fc92705969 branch=task-10-a-run-that-times-out-discards-the-valid-handoff merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d tree=7 dirty-entries
+# HEAD=c0a4954731381da5967c2af0f4a258df9843f9a9 branch=task-10-a-run-that-times-out-discards-the-valid-handoff merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d tree=1 dirty-entries
 # command: ./scripts/orch_verify.sh test
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -15,4 +15,4 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 77%]
 ........................................................................ [ 92%]
 ..................................                                       [100%]
-460 passed, 6 skipped in 86.22s (0:01:26)
+460 passed, 6 skipped in 86.17s (0:01:26)

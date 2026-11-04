@@ -7,8 +7,9 @@ Branch `task-10-a-run-that-times-out-discards-the-valid-handoff`, cut from `main
 
 | file | command | result |
 | --- | --- | --- |
-| `full_suite.txt` | `./scripts/orch_verify.sh test` (the configured gate command) | `460 passed, 6 skipped` (0 failed) at code HEAD `d65150b`; lint is recorded separately by the wrapper command |
-| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -vv` | `34 passed` (see the file for the exact deselected count) |
+| `full_suite.txt` | `./scripts/orch_verify.sh test` (the configured gate command) | `460 passed, 6 skipped` (0 failed) at code HEAD `c0a4954`; `All checks passed!` is in `lint.txt` from the same round |
+| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -vv` | `34 passed, 432 deselected` at code HEAD `c0a4954` |
+| `lint.txt` | `./scripts/orch_verify.sh lint` | `All checks passed!` at code HEAD `c0a4954` |
 | `zz_code_map.txt` | `python3 verify-evidence/T-10/collect_code_map.py` | commit list, recovery-commit stat, diffstat, cited function bodies/anchors with `file:line` from this checkout |
 | `changed_existing_tests.txt` | `git diff <merge-base>..HEAD -- tests/integration/test_mock_run.py` | the one pre-existing test whose assertions changed |
 
