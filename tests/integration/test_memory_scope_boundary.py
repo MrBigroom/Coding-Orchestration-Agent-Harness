@@ -29,6 +29,32 @@ def flat(out: str) -> str:
     return " ".join(out.split())
 
 
+def vocab_rejection(category: str, scope: str) -> str:
+    """The EXACT rejection sentence for one category, built from the imported vocabularies.
+
+    Equality, not substring containment: DoD 2 says the error NAMES the allowed values, so a
+    message that drops, duplicates or garbles one must fail (review round 4, finding 3 / 6).
+    """
+    allowed = "|".join(m.SCOPE_VOCABULARY[category])
+    if category == "role":
+        aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(m.ROLE_SCOPE_ALIASES.items()))
+        return (
+            f"role memory scope {scope!r} is not injectable; allowed scopes for role: "
+            f"{allowed} (role names {aliases} are accepted and resolve to their file)"
+        )
+    return f"memory scope {scope!r} is not injectable; allowed scopes for {category}: {allowed}"
+
+
+def role_rejection(name: str) -> str:
+    """The EXACT sentence `check_role_name` emits for a role name no prompt can read."""
+    allowed = "|".join(m.ROLE_SCOPES)
+    aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(m.ROLE_SCOPE_ALIASES.items()))
+    return (
+        f"role name {name!r} cannot be injected; allowed role memory files: {allowed} "
+        f"(role names {aliases} are accepted and resolve to their file)"
+    )
+
+
 @pytest.fixture
 def client(initialized):
     from orchestrator.api.main import create_app
@@ -65,16 +91,16 @@ def legacy(session, **kw) -> MemoryEntry:
     [
         (
             {"category": "global", "scope": "global-environment-verifying", "content": "x"},
-            "environment|preferences|patterns",
+            vocab_rejection("global", "global-environment-verifying"),
         ),
         (
             {"category": "project", "scope": "ai-livestreaming-avatar", "project_slug": "demo",
              "content": "x"},
-            "conventions|decisions|gotchas",
+            vocab_rejection("project", "ai-livestreaming-avatar"),
         ),
         (
             {"category": "role", "scope": "ai-livestreaming-avatar-logbook", "content": "x"},
-            "architect|worker|supervisor",
+            vocab_rejection("role", "ai-livestreaming-avatar-logbook"),
         ),
     ],
 )
@@ -83,7 +109,8 @@ def test_api_create_rejects_an_uninjectable_scope_for_every_category(client, bod
     assert r.status_code == 400
     err = r.json()
     assert set(err) == {"error", "detail"}  # the frozen error shape
-    assert expected in err["error"] and body["scope"] in err["error"]
+    # The WHOLE sentence, for GLOBAL and PROJECT as well as role: one outcome per assertion.
+    assert err["error"] == expected
     assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
 
 
@@ -105,7 +132,8 @@ def test_api_patch_rejects_an_uninjectable_scope(client):
               "content": "Watch out."},
     ).json()["id"]
     r = client.patch(f"/api/memory/{mid}", json={"scope": "housekeeping"})
-    assert r.status_code == 400 and "conventions|decisions|gotchas" in r.json()["error"]
+    assert r.status_code == 400
+    assert r.json()["error"] == vocab_rejection("project", "housekeeping")
     got = [e for e in client.get("/api/memory").json() if e["id"] == mid][0]
     assert got["scope"] == "gotchas"
     assert client.patch(f"/api/memory/{mid}", json={"scope": "decisions"}).json()["scope"] == (
@@ -151,20 +179,16 @@ def test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files
     assert r.status_code == 422, r.text
     body = r.json()
     assert set(body) == {"error", "detail"}  # the frozen error shape
-    # `detail` is a list of error dicts; read the whole body as whitespace-normalized prose so
-    # the assertions are about the WORDS, not the JSON layout or the line wrapping.
-    text = flat(" ".join(str(x) for x in body["detail"]) + " " + str(body["error"]))
-    # The load-bearing assertions are these three, and they are what Pydantic's own enum
-    # message does NOT satisfy: it lists the role VALUES (`'architect', 'supervisor',
-    # 'worker', 'reviewer' or 'agent'`), which would pass a per-value loop while still naming
-    # no vocabulary and no alias. Verified by mutation: with the `MemoryCreate` validator
-    # neutered, only these three fail (see verify-evidence/T-4/README.md, R4-D2).
-    assert "architect|worker|supervisor" in text  # the vocabulary, as one string
-    assert "allowed role memory files" in text  # FILES, not enum values
-    assert "reviewer -> architect" in text and "agent -> worker" in text
-    assert "logbook-writer" in text  # and the refused value itself
-    # Each allowed file appears, checked as the joined vocabulary rather than as loose words.
-    assert "|".join(m.ROLE_SCOPES) in text
+    # Read the STRUCTURED error list: exactly one error, on the request body, naming the
+    # refused role, carrying exactly the service's sentence. Pydantic's own enum message
+    # (`Input should be 'architect', 'supervisor', ...`) fails every one of these.
+    errors = body["detail"]
+    assert len(errors) == 1
+    expected = role_rejection("logbook-writer")
+    assert errors[0]["loc"] == ["body"]
+    assert errors[0]["input"]["role"] == "logbook-writer"
+    assert errors[0]["ctx"] == {"error": expected}
+    assert errors[0]["msg"] == f"Value error, {expected}"
     # Nothing was stored, and no dead file was created.
     with session_scope() as s:
         assert [e for e in m.list_entries(s, category="role")
@@ -208,19 +232,19 @@ def test_api_rejects_every_category_with_its_own_named_vocabulary(client):
     """
     cases = [
         ({"category": "global", "scope": "global-environment-verifying", "content": "x"},
-         m.GLOBAL_SCOPES),
+         vocab_rejection("global", "global-environment-verifying")),
         ({"category": "project", "scope": "ai-livestreaming-avatar-logbook",
-          "project_slug": "demo", "content": "x"}, m.PROJECT_SCOPES),
-        ({"category": "role", "scope": "logbook-writer", "content": "x"}, m.ROLE_SCOPES),
+          "project_slug": "demo", "content": "x"},
+         vocab_rejection("project", "ai-livestreaming-avatar-logbook")),
+        ({"category": "role", "scope": "logbook-writer", "content": "x"},
+         vocab_rejection("role", "logbook-writer")),
     ]
-    for body, vocab in cases:
+    for body, expected in cases:
         r = client.post("/api/memory", json=body)
         assert r.status_code == 400, (body, r.text)
-        err = r.json()["error"]
-        assert "|".join(vocab) in err, (vocab, err)
-        for value in vocab:
-            assert value in err, value
-        assert body["scope"] in err  # names the offending value too
+        # The exact sentence, derived from `SCOPE_VOCABULARY`, so a vocabulary that silently
+        # loses a member fails here instead of in the prose of a handoff.
+        assert r.json()["error"] == expected, (body, r.text)
         assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
 
 
@@ -238,8 +262,7 @@ def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope
     before = home.read_text()
     r = client.patch(f"/api/memory/{row_id}", json={"scope": "worker"})
     assert r.status_code == 400, r.json()
-    assert "architect|worker|supervisor" in r.json()["error"]
-    assert "logbook-writer" in r.json()["error"]
+    assert r.json()["error"] == role_rejection("logbook-writer")
     got = [e for e in client.get("/api/memory").json() if e["id"] == row_id][0]
     assert got["role"] == "logbook-writer" and got["scope"] == "worker"
     assert home.read_text() == before
@@ -289,10 +312,7 @@ def test_cli_add_refuses_a_role_name_no_prompt_can_read(initialized):
         env=WIDE,
     )
     assert bad.exit_code == 1, bad.output
-    assert "error:" in bad.output
-    assert "architect|worker|supervisor" in flat(bad.output)
-    assert "logbook-writer" in flat(bad.output)
-    assert "reviewer -> architect" in flat(bad.output)  # the aliases are spelled out
+    assert f"error: {role_rejection('logbook-writer')}" in flat(bad.output)
     with session_scope() as s:
         assert len(m.list_entries(s)) == before  # nothing half-stored
     # A real role name (including an alias) is still accepted, and lands in the file it is

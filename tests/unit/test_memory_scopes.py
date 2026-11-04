@@ -43,6 +43,20 @@ def suggest(session, *items, project_slug="ai-livestreaming-avatar", role="worke
     )
 
 
+def role_rejection(name: str) -> str:
+    """The EXACT sentence `check_role_name` emits, built from the imported vocabulary.
+
+    Written as one whole string so an assertion can be equality: a duplicated, reordered or
+    garbled message fails, unlike substring containment (review round 4, finding 3).
+    """
+    allowed = "|".join(m.ROLE_SCOPES)
+    aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(m.ROLE_SCOPE_ALIASES.items()))
+    return (
+        f"role name {name!r} cannot be injected; allowed role memory files: {allowed} "
+        f"(role names {aliases} are accepted and resolve to their file)"
+    )
+
+
 # ------------------------------------------------------------------ vocabularies
 
 
@@ -175,7 +189,10 @@ def test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored(session):
     )
     assert out.created == []
     assert len(out.notes) == 1 and out.notes[0].startswith("dropped ")
-    assert "architect|worker|supervisor" in out.notes[0]
+    assert out.notes[0] == (
+        "dropped suggestion from handoff:R-3: "
+        f"{m.vocab_error('role', 'ai-livestreaming-avatar-logbook')}"
+    )
     assert m.list_entries(session, category="role") == []
 
 
@@ -351,9 +368,7 @@ def test_check_role_name_names_the_role_vocabulary():
     for bad in ("logbook-writer", "ai-livestreaming-avatar", ""):
         with pytest.raises(m.MemoryError_) as exc:
             m.check_role_name(bad)
-        msg = str(exc.value)
-        assert "architect|worker|supervisor" in msg, bad
-        assert repr(bad) in msg, bad
+        assert str(exc.value) == role_rejection(bad)
 
 
 def test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files():
@@ -371,14 +386,18 @@ def test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files():
     """
     from pydantic import ValidationError
 
+    expected = role_rejection("logbook-writer")
     with pytest.raises(ValidationError) as exc:
         MemoryCreate(category="role", scope="worker", content="Diary.",
                      role="logbook-writer")
-    text = " ".join(str(exc.value).split())
-    assert "architect|worker|supervisor" in text
-    assert "allowed role memory files" in text
-    assert "reviewer -> architect" in text and "agent -> worker" in text
-    assert "logbook-writer" in text
+    # One assertion per outcome, against the STRUCTURED error, not a prose blob: exactly one
+    # error, raised on the request body, naming the refused input, carrying the exact sentence.
+    errors = exc.value.errors()
+    assert len(errors) == 1
+    assert errors[0]["loc"] == ()
+    assert errors[0]["input"]["role"] == "logbook-writer"
+    assert str(errors[0]["ctx"]["error"]) == expected
+    assert errors[0]["msg"] == f"Value error, {expected}"
     # The accepted set is UNCHANGED: all five Role members still validate, aliases included.
     for name in ("architect", "worker", "supervisor", "reviewer", "agent"):
         assert MemoryCreate(category="role", scope=name, content="x", role=name).role == name
@@ -433,8 +452,7 @@ def test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid(s
     before = len(m.list_entries(session))
     with pytest.raises(m.MemoryError_) as exc:
         m.create(session, body)
-    assert "architect|worker|supervisor" in str(exc.value)
-    assert "logbook-writer" in str(exc.value)
+    assert str(exc.value) == role_rejection("logbook-writer")
     assert len(m.list_entries(session)) == before  # nothing half-stored
     assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
 
@@ -447,7 +465,7 @@ def test_update_refuses_a_legacy_role_column_that_no_prompt_reads(session):
     before = home.read_text()
     with pytest.raises(m.MemoryError_) as exc:
         m.update(session, dead.id, MemoryUpdate(scope="worker"))
-    assert "architect|worker|supervisor" in str(exc.value)
+    assert str(exc.value) == role_rejection("logbook-writer")
     session.refresh(dead)
     assert dead.role == "logbook-writer" and dead.scope == "worker"
     assert home.read_text() == before  # the refused PATCH wrote nothing; no rollback needed
@@ -826,7 +844,10 @@ def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
     assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
     assert "gotchas" in events["memory_scope_substituted"]
     assert "memory_suggestion_dropped" in events
-    assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
+    assert events["memory_suggestion_dropped"] == (
+        "dropped suggestion from handoff:R-3: "
+        f"{m.vocab_error('role', 'logbook-writer')}"
+    )
 
 
 def test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt(session):
