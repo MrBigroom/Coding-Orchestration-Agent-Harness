@@ -54,10 +54,12 @@ Run states: `pending → preparing → running → testing → completed`, with 
 5. After exit: leftover changes get a recovery commit too (a killed agent leaves its edits
    uncommitted), and `patch.diff` + `diffstat.txt` are collected against the base branch.
 6. **Failure paths.** A non-zero exit → run `failed`. Exceeding the adapter timeout →
-   `timeout`. A `CANCEL` marker → `cancelled`. In all three cases the task returns to
-   `planned` for a deliberate retry, and the failure paths emit `run_failed` / `run_timeout`
+   `timeout`. A `CANCEL` marker → `cancelled`. The failure paths emit `run_failed` / `run_timeout`
    (a cancel is recorded on the `task_status` line); a run that finishes normally emits
-   `run_completed`. Every new round clears the previous round's lifecycle markers (see
+   `run_completed`. **Before the task goes back to `planned`,** the harness tries to salvage a
+   `handoff.json` the killed Worker already wrote — see “Salvaging a handoff from a killed run”.
+   With no usable submission the task returns to `planned` for a deliberate retry, exactly as
+   before. Every new round clears the previous round's lifecycle markers (see
    “What a new round resets”).
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
    validated and copied to `runs/<id>/handoff.json`, with `handoff.md` rendered next to
@@ -118,6 +120,95 @@ subject matching: a subject match cannot distinguish wreckage from a hand-author
 copies the wording (a case covered by a test), so the harness reports what it can prove and
 stays silent about the rest. A reviewer who sees the historical subject prefix without the
 trailer should treat it as a human question, not as verified work.
+
+## Salvaging a handoff from a killed run
+
+A Worker writes `.orchestrator/handoff.json` before it finishes. A run that is killed — adapter
+timeout, `CANCEL` marker, non-zero exit, harness-reported error — can therefore leave a complete,
+valid submission on disk that nobody reads. Measured on run 11 (T-8 round 2, 2026-11-04): a
+36184-byte handoff validated cleanly and was never ingested; the round was treated as if the
+Worker had produced nothing. The bug had **two halves**, and fixing one without the other does
+not recover the round:
+
+1. **The early return.** `_execute` took the non-clean-exit branch, set the terminal run status,
+   set `handoff_status = RUN_TIMEOUT`/`RUN_FAILED` (or transitioned `run cancelled`), and
+   **returned** — before `adapter.parse_result`, before the synthesized-handoff fallback, and
+   before `runs/<id>/handoff.json` was written. Ingestion simply lived after the `return`.
+2. **The round-start unlink.** The next attempt began with
+   `handoff_path.unlink(missing_ok=True)` and no archive, so a retry after a timeout actively
+   *destroyed* the previous round's submission. The operator could only recover it by copying the
+   file out in the gap between runs, which is what happened for run 11.
+
+Now the non-clean-exit path attempts ingestion **before** returning (`run_service.try_salvage_handoff`),
+and the round-start unlink archives first (`run_service.archive_before_round_start`).
+
+### Salvage modes
+
+Recorded as `mode` in the `handoff_salvaged` details payload:
+
+| mode | when | what lands |
+| --- | --- | --- |
+| `non_clean_exit` | the run was killed/errored and a `handoff.json` was on disk when the result was read | `runs/<id>/handoff.json` + `handoff.md`, `run.json` gains `handoff_arrival`/`handoff_delivery_evidence`, the run continues to verification + review |
+| `pre_round_archive` | a submission was still in the worktree at the start of the next round | copied to `ORCHESTRATOR_HOME/evidence/pre-round-handoff/<project>-<task>-<run>-<ts>/` (`handoff.json`, plus `handoff.md` when it validated) and only then unlinked |
+| `already_archived` | the leftover is byte-identical to the previous round's `runs/<id>/handoff.json` | nothing copied, nothing logged, unlink allowed — firing an event on every ordinary retry would say nothing |
+
+All three are best-effort by design: a file that cannot be read or archived leaves the unlink
+skipped and logs `handoff_salvage_failed`. Keeping a stale file in the scratch dir is
+recoverable; deleting an unread submission is not.
+
+### Lifecycle: `SALVAGED` is not `SYNTHESIZED` and not `READY_FOR_REVIEW`
+
+A salvaged submission is a third thing, and the task row says which:
+
+- `handoff_status = SALVAGED` (`artifact_service.HANDOFF_STATUS_SALVAGED`) — the Worker's own
+  status (`READY_FOR_REVIEW`, `CHANGES_APPLIED`, `BLOCKED`) is preserved **inside** the archived
+  handoff and in the event payload (`handoff_status`); the task-level field records how the
+  submission arrived.
+- `SYNTHESIZED` means the orchestrator wrote a handoff from observed evidence because none
+  existed. `SALVAGED` means the Worker did write one; a reviewer must not read the first as the
+  second, or a killed round's real submission is thrown away as orchestrator filler.
+- `RUN_TIMEOUT` / `RUN_FAILED` are what the task carries when **no** usable handoff was salvaged.
+  That remains exactly today's behaviour: task back to `planned`, no verification row, no review.
+- The **run** keeps its terminal status (`timeout`, `failed`, `cancelled`). The frozen run
+  vocabulary has no edge out of a terminal state, and widening it to `completed` would hide the
+  fact that the process was killed from every consumer that watches run outcomes — including the
+  T-9 notification fan-out. A salvaged run is a killed run that was not wasted.
+- **Routing: `NEEDS_HUMAN`.** When everything else is green, a salvaged submission goes to the
+  Architect reviewer and then to `task blocked` with `review_status = NEEDS_HUMAN`, never to
+  `accepted` and never to an automatic merge. The Worker process never saw the gate result and
+  cannot apply reviewer feedback on the same branch; the operator accepts or retries
+  (`blocked -> queued`) with the handoff, review and verification artifacts attached. If the gate
+  fails, the round is requeued exactly like any other failing round.
+
+### Events
+
+`handoff_salvaged` is a new, **additive** build-log event (no existing name or line-shape key
+changed). `details` carries `mode`, `run_status`, `exit_code`, `timed_out`, `cancelled`, `error`,
+`handoff_status`, claim/commit counts, and for the pre-round archive the `source_run`,
+`source_run_status`, `valid`, `parse_error`, `bytes` and `archived_to`. Its summary states the
+exit state and that the handoff arrived out of band. A present-but-unusable file emits
+`handoff_salvage_failed` instead — a truncated write from a killed process is the normal shape,
+so parse failures are logged, never raised.
+
+### Salvaged handoffs are provenance-limited evidence
+
+A salvaged handoff is **not** worker self-certification and it does not skip the gate: the
+Supervisor verification runs the project's real commands (the T-6 wrapper included), the claims
+check below compares its claims against git, and the Architect review still runs. It is also
+weaker evidence than a clean-exit handoff, because an early handoff is partly a statement of
+*intent* — measured on run 13 (cancelled at 01:33:05): a 1164-byte handoff claimed four code/doc
+fixes while the branch had no new commits and the worktree had no tracked modifications.
+
+So every ingestion path — clean exit **and** salvage — archives delivery evidence in
+`runs/<id>/run.json` (`handoff_delivery_evidence`): the commit list since the merge base (with the
+recovery flag), the diffstat, `git status --porcelain -uall` at ingestion time, and the dirt that
+existed *before* the harness recovery sweep. Each claimed path is classified `worker_commit`,
+`recovery_commit_only`, `uncommitted_only` or `absent`, and
+`claims_all_backed_by_worker_commits` is the one-line answer. A claim not backed by a
+Worker-authored commit fails the `claims vs commits` verification check, even though the older
+"claimed files exist on disk" check can pass for files that only ever existed as scratch. The
+reviewer prompt renders the same evidence, so a reviewer sees a promise labelled as a promise
+rather than reading it as delivered work.
 
 ## What a new round resets
 
@@ -327,7 +418,8 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `run_timeout`, **`run_completed`**, `supervisor_verification`, `architect_review`,
 `nits_deferred`, `merge_candidate`, `merged`, `merge_refused`, `schedule_fired`,
 `standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
-`retry_fields_reset`, `contract_change_detected`, `run_error`. The GUI Build Log page and
+`retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
+`handoff_salvage_failed`, `run_error`. The GUI Build Log page and
 `GET /api/build-log` read it.
 
 ### Terminal run events
