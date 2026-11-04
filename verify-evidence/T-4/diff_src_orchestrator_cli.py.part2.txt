@@ -1,4 +1,4 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/cli.py   PART 2/2
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff

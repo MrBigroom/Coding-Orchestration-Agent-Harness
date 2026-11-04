@@ -1,15 +1,15 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.role_memory_file
-# lines 147-156 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.core.memory_vocab.role_memory_file
+# lines 79-88 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/core/memory_vocab.py
 # why the reviewer asked for it: the alias resolution (reviewer -> architect, agent -> worker)
 # part 1/1
-  147 | def role_memory_file(name: str | None) -> str | None:
-  148 |     """Resolve a role name (including the reviewer/agent aliases) to its memory file.
-  149 | 
-  150 |     Returns None when the name cannot reach any role memory file. Dict lookups work with
-  151 |     plain strings because `Role` is a StrEnum, which is how `for_prompt` already matches.
-  152 |     """
-  153 |     if not name:
-  154 |         return None
-  155 |     key = ROLE_MEMORY_KEY.get(name, name)
-  156 |     return key if key in ROLE_SCOPES else None
+   79 | def role_memory_file(name: str | None) -> str | None:
+   80 |     """Resolve a role name (including the reviewer/agent aliases) to its memory file.
+   81 | 
+   82 |     Returns None when the name cannot reach any role memory file. Dict lookups work with
+   83 |     plain strings because `Role` is a StrEnum, which is how `for_prompt` already matches.
+   84 |     """
+   85 |     if not name:
+   86 |         return None
+   87 |     key = ROLE_MEMORY_KEY.get(name, name)
+   88 |     return key if key in ROLE_SCOPES else None

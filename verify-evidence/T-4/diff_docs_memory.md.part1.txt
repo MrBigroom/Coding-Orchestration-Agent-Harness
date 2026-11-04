@@ -1,13 +1,13 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- docs/memory.md   PART 1/1
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 141 lines.
+# line appears in exactly one part, in order. Raw diff = 152 lines.
 diff --git a/docs/memory.md b/docs/memory.md
-index 15f349e..ec7522a 100644
+index 15f349e..177b56b 100644
 --- a/docs/memory.md
 +++ b/docs/memory.md
-@@ -20,11 +20,112 @@ be indexed (as pending entries) with `orchestrator memory import --markdown`.
+@@ -20,11 +20,123 @@ be indexed (as pending entries) with `orchestrator memory import --markdown`.
  
  ## Categories and scopes
  
@@ -35,8 +35,12 @@ index 15f349e..ec7522a 100644
 +`role='logbook-writer' scope='worker'` — a row that looks fine to a scope-only check and is
 +read by nothing. `orchestrator memory add --role` takes a plain string, so it runs that same
 +check before Pydantic's enum can answer with a list of role *values* that never names the
-+role *files*; over HTTP the enum is an extra layer in front (a 422 in the frozen shape, so
-+an unknown role name is refused before the service is even entered).
++role *files*. `POST /api/memory` gets the same words from `MemoryCreate` itself: a
++`model_validator(mode="before")` runs `check_role_name` before the enum coerces, so the 422
++detail says `allowed role memory files: architect|worker|supervisor` plus the two aliases
++instead of `Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'`. The
++accepted set is unchanged — `role` is still typed as `Role`, so the request shape and its
++OpenAPI enum are untouched and this is an error-text fix, not a contract change.
 +
 +Two paths *repair* instead of refusing, because refusing would lose facts that already
 +exist and cannot be re-typed by the caller:
@@ -50,9 +54,16 @@ index 15f349e..ec7522a 100644
 +| `memory fix-scopes` | **moves** the row | the repair path for rows already stored |
 +
 +`memory_service.GLOBAL_SCOPES`, `PROJECT_SCOPES`, `ROLE_SCOPES` (the role *files*,
-+`ROLE_FILES` after applying `ROLE_MEMORY_KEY`), `ROLE_SCOPE_ALIASES` and
-+`SCOPE_VOCABULARY` are importable constants; before T-4 there was no `ROLE_SCOPES`, so no
-+check could be written for the role category.
++`ROLE_FILES` after applying `ROLE_MEMORY_KEY`), `ROLE_SCOPE_ALIASES` and `SCOPE_VOCABULARY`
++are importable constants; before T-4 there was no `ROLE_SCOPES`, so no vocabulary check could
++be written for the role category. They live in `core/memory_vocab.py` and `memory_service`
++re-exports every one of them: `core/schemas.py` has to refuse the same shapes with the same
++words, and it cannot import the service (`memory_service` imports `schemas`, so the reverse
++import would be circular). The three rejection messages are produced there too —
++`vocab_error(category, scope)` for a scope and `check_role_name(role)` for a role — so a
++global rejection names `environment|preferences|patterns`, a project rejection
++`conventions|decisions|gotchas` and a role rejection `architect|worker|supervisor`, at the
++CLI, the service, the request model and the HTTP route alike.
 +
 +### What happens to a Worker suggestion with a made-up scope
 +
@@ -122,7 +133,7 @@ index 15f349e..ec7522a 100644
  
  ## Role-aware injection
  
-@@ -36,6 +137,12 @@ Only **approved** entries are injected:
+@@ -36,6 +148,12 @@ Only **approved** entries are injected:
  | Worker / Agent | all | worker | conventions, gotchas |
  | Supervisor | all | supervisor | decisions, gotchas |
  
@@ -135,7 +146,7 @@ index 15f349e..ec7522a 100644
  ## Approval workflow
  
  1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
-@@ -44,6 +151,8 @@ Only **approved** entries are injected:
+@@ -44,6 +162,8 @@ Only **approved** entries are injected:
     entries. Content is redacted before storage.
  3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →
     memory tab, `orchestrator memory approve|reject ID`, or `POST /api/memory/{id}/approve`.

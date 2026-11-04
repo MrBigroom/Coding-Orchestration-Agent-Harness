@@ -1,24 +1,25 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.check_role_name
-# lines 159-177 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.core.memory_vocab.check_role_name
+# lines 91-110 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/core/memory_vocab.py
 # why the reviewer asked for it: DoD 2 round-3 finding: the single message that names the role FILES and their aliases
 # part 1/1
-  159 | def check_role_name(name: str) -> str:
-  160 |     """Validate a ROLE NAME, or raise an error naming the role vocabulary.
-  161 | 
-  162 |     The `role` column — not `scope` — is what `for_prompt` selects on and what `_file_for`
-  163 |     keys the filename off first, so an out-of-vocabulary role is the *more* damaging of the
-  164 |     two: `role='logbook-writer' scope='worker'` renders to `roles/logbook-writer.md`, which
-  165 |     no prompt reads, while looking injectable to a naive scope-only check. This is the single
-  166 |     message used by `_validate` (so create, update and import all refuse the same shape for
-  167 |     the same reason) and by the CLI's `--role`, which is a plain string and would otherwise
-  168 |     be refused by Pydantic's enum with a message that never names the role FILES.
-  169 |     """
-  170 |     if role_memory_file(name) is None:
-  171 |         aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(ROLE_SCOPE_ALIASES.items()))
-  172 |         raise MemoryError_(
-  173 |             f"role name {name!r} cannot be injected; allowed role memory files: "
-  174 |             f"{'|'.join(ROLE_SCOPES)} (role names {aliases} are accepted and resolve to "
-  175 |             f"their file)"
-  176 |         )
-  177 |     return name
+   91 | def check_role_name(name: str) -> str:
+   92 |     """Validate a ROLE NAME, or raise an error naming the role vocabulary.
+   93 | 
+   94 |     The `role` column — not `scope` — is what `for_prompt` selects on and what `_file_for`
+   95 |     keys the filename off first, so an out-of-vocabulary role is the *more* damaging of the
+   96 |     two: `role='logbook-writer' scope='worker'` renders to `roles/logbook-writer.md`, which
+   97 |     no prompt reads, while looking injectable to a naive scope-only check. This is the single
+   98 |     message used by `_validate` (so create, update and import all refuse the same shape for
+   99 |     the same reason), by the CLI's `--role` (a plain string), and by `MemoryCreate`'s
+  100 |     request-model validator, which is what makes the API's 422 name the role FILES instead
+  101 |     of Pydantic's bare enum list.
+  102 |     """
+  103 |     if role_memory_file(name) is None:
+  104 |         aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(ROLE_SCOPE_ALIASES.items()))
+  105 |         raise MemoryError_(
+  106 |             f"role name {name!r} cannot be injected; allowed role memory files: "
+  107 |             f"{'|'.join(ROLE_SCOPES)} (role names {aliases} are accepted and resolve to "
+  108 |             f"their file)"
+  109 |         )
+  110 |     return name

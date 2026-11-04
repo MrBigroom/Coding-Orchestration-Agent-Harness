@@ -1,0 +1,45 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: src/orchestrator/core/memory_vocab.py lines 24-64
+# why the reviewer asked for it: ROUND 4: the three named constants + FALLBACK_SCOPE + ROLE_PROJECT_SCOPES + ROLE_MEMORY_KEY now live in core, below schemas, so both boundaries share one source (memory_service imports schemas, so schemas cannot import the service)
+# part 1/1
+   24 | # These three tuples are the ONLY scopes any injector can read. Tests import these names.
+   25 | GLOBAL_SCOPES: tuple[str, ...] = ("environment", "preferences", "patterns")
+   26 | PROJECT_SCOPES: tuple[str, ...] = ("conventions", "decisions", "gotchas")
+   27 | ROLE_FILES: tuple[str, ...] = ("architect", "worker", "supervisor")
+   28 | # The scope vocabulary for category=role: the role-memory FILE names, i.e. ROLE_FILES
+   29 | # after applying the ROLE_MEMORY_KEY aliases (reviewer -> architect, agent -> worker).
+   30 | # `reviewer`/`agent` are accepted at the boundary as role NAMES and resolved to a file;
+   31 | # they are never scopes of their own. There was no ROLE_SCOPES before T-4, which is why
+   32 | # an out-of-vocabulary check could only ever be written for two of three categories.
+   33 | ROLE_SCOPES: tuple[str, ...] = ROLE_FILES
+   34 | 
+   35 | SCOPE_VOCABULARY: dict[str, tuple[str, ...]] = {
+   36 |     MemoryCategory.global_: GLOBAL_SCOPES,
+   37 |     MemoryCategory.project: PROJECT_SCOPES,
+   38 |     MemoryCategory.role: ROLE_SCOPES,
+   39 | }
+   40 | # Deterministic fallback scope used to COERCE a suggestion whose scope is out of
+   41 | # vocabulary. Only global and project have one: a role suggestion with no resolvable
+   42 | # role would land in a file that no injector reads, so it is dropped with a warning.
+   43 | FALLBACK_SCOPE: dict[str, str] = {
+   44 |     MemoryCategory.global_: "environment",
+   45 |     MemoryCategory.project: "gotchas",
+   46 | }
+   47 | 
+   48 | # Which project scopes each role receives.
+   49 | ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
+   50 |     Role.architect: ("decisions", "conventions"),
+   51 |     Role.reviewer: ("decisions", "conventions"),
+   52 |     Role.worker: ("conventions", "gotchas"),
+   53 |     Role.agent: ("conventions", "gotchas"),
+   54 |     Role.supervisor: ("decisions", "gotchas"),
+   55 | }
+   56 | # Role memory file used for each role (reviewer shares the architect file).
+   57 | ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
+   58 | # Role names accepted for category=role, resolved through ROLE_MEMORY_KEY.
+   59 | ROLE_SCOPE_ALIASES: dict[str, str] = {k.value: v for k, v in ROLE_MEMORY_KEY.items()}
+   60 | 
+   61 | 
+   62 | class MemoryError_(ValueError):
+   63 |     pass
+   64 | 

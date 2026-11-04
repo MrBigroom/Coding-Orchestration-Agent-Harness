@@ -1,115 +1,8 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 3/6
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 3/5
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 808 lines.
-+        return
-+    entry.scope = normalize_scope(entry.category, entry.scope)
- 
- 
- def render_file(session: Session, path: Path) -> None:
-@@ -113,7 +369,11 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
-         category=data.category.value,
-         scope=data.scope,
-         project_slug=slugify(data.project_slug) if data.project_slug else None,
--        role=data.role.value if data.role else None,
-+        # `getattr(..., "value", ...)`: MemoryCreate types `role` as the Role enum, so an
-+        # HTTP caller cannot send an unknown one — but the service boundary must still refuse
-+        # that shape (an unvalidated object, an import payload, a future caller) with the
-+        # vocabulary error rather than crashing on `.value`.
-+        role=getattr(data.role, "value", data.role) or None,
-         content=redact(data.content.strip()),
-         source=data.source,
-         tags_json=sorted(set(data.tags)),
-@@ -135,54 +395,111 @@ def suggest_from_handoff(
-     project_slug: str | None,
-     role: str = "worker",
- ) -> list[MemoryEntry]:
--    """Store worker/architect suggestions as unapproved entries for Supervisor review."""
--    created = []
-+    """The created entries only. Kept for callers that do not read the notes."""
-+    return suggest_from_handoff_report(
-+        session, suggestions, source, project_slug, role=role
-+    ).created
-+
-+
-+def suggest_from_handoff_report(
-+    session: Session,
-+    suggestions: list[MemorySuggestion],
-+    source: str,
-+    project_slug: str | None,
-+    role: str = "worker",
-+) -> SuggestionOutcome:
-+    """Store worker/architect suggestions as unapproved entries for Supervisor review.
-+
-+    T-4: a Worker's proposed scope is never trusted. `project`/`global` suggestions whose
-+    scope is outside their category vocabulary are coerced to a deterministic scope and
-+    every substitution is reported in `notes` (the caller writes them to the build log,
-+    where the operator sees them); `role` suggestions that resolve to no role memory file
-+    are dropped with a warning instead of being stored. Nothing is stored with a scope no
-+    injector can read.
-+    """
-+    outcome = SuggestionOutcome()
-     existing = {
-         (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
-     }
-     for s in suggestions:
--        key = (
--            s.category,
--            slugify(s.scope),
--            slugify(project_slug) if s.category == "project" and project_slug else None,
--            redact(s.content.strip()),
--        )
--        if key in existing:
-+        try:
-+            category = MemoryCategory(s.category)
-+        except ValueError:
-+            outcome.notes.append(
-+                f"dropped suggestion from {source}: unknown category {s.category!r}; "
-+                f"allowed: global|project|role"
-+            )
-             continue
--        existing.add(key)
-+        slug = slugify(s.scope)
-         try:
--            scope = slugify(s.scope)
--            created.append(
-+            if category == MemoryCategory.role:
-+                file_key = role_memory_file(slug)
-+                if file_key is None:
-+                    raise MemoryError_(str(_vocab_error(category, slug)))
-+                scope = file_key
-+                role_value = slug if slug in Role.__members__ else role
-+                create_role = Role(role_value) if role_value in Role.__members__ else Role.worker
-+            else:
-+                scope, note = coerce_scope(category, slug)
-+                if note:
-+                    outcome.notes.append(f"memory suggestion from {source}: {note}")
-+                create_role = None
-+            proj = (
-+                slugify(project_slug)
-+                if category == MemoryCategory.project and project_slug
-+                else None
-+            )
-+            key = (category, scope, proj, redact(s.content.strip()))
-+            if key in existing:
-+                continue
-+            existing.add(key)
-+            outcome.created.append(
-                 create(
-                     session,
-                     MemoryCreate(
--                        category=MemoryCategory(s.category),
-+                        category=category,
-                         scope=scope,
-                         content=s.content,
--                        project_slug=project_slug if s.category == "project" else None,
--                        role=Role(scope)
--                        if s.category == "role" and scope in Role.__members__
--                        else (Role(role) if s.category == "role" else None),
-+                        project_slug=project_slug if category == MemoryCategory.project else None,
-+                        role=create_role,
-                         tags=s.tags,
+# line appears in exactly one part, in order. Raw diff = 701 lines.
                          source=source,
                          approved=False,
                      ),
@@ -160,7 +53,114 @@
      entry.updated_at = utcnow()
      session.add(entry)
      session.commit()
-@@ -258,6 +575,215 @@ def pending_count(session: Session) -> int:
+@@ -258,6 +449,215 @@ def pending_count(session: Session) -> int:
      return len(list_entries(session, status="pending"))
  
-DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 3/6
+ 
++# ---------------------------------------------------------------- repair (T-4)
++
++
++def canonical_file(path: Path) -> bool:
++    """Is this rendered file part of the layout that `ensure_layout` writes and that the
++    injectors name? An empty canonical file is not an orphan; a file whose stem is not a
++    vocabulary scope (e.g. `projects/<slug>/<slug>.md`) can never be read, so it is."""
++    root = memory_root()
++    try:
++        rel = path.relative_to(root).parts
++    except ValueError:
++        return False
++    if len(rel) < 2 or not rel[-1].endswith(".md"):
++        return False
++    kind, stem = rel[0], rel[-1][: -len(".md")]
++    if kind == "global":
++        return len(rel) == 2 and stem in GLOBAL_SCOPES
++    if kind == "roles":
++        return len(rel) == 2 and stem in ROLE_FILES
++    if kind == "projects":
++        return len(rel) == 3 and stem in PROJECT_SCOPES
++    return False
++
++
++def in_layout_dir(path: Path) -> bool:
++    """Is the file somewhere `ensure_layout`/`render_file` write: global/, roles/ or
++    projects/<slug>/ — and nothing deeper, and nothing outside the memory root?"""
++    root = memory_root()
++    try:
++        rel = path.relative_to(root).parts
++    except ValueError:
++        return False
++    if len(rel) == 2:
++        return rel[0] in ("global", "roles") and rel[1].endswith(".md")
++    if len(rel) == 3:
++        return rel[0] == "projects" and rel[1] and rel[2].endswith(".md")
++    return False
++
++
++_MD_MARKER_LINE = re.compile(r"^- .+  <!-- mem:\d+ -->\s*$")
++
++
++def _renderer_output(path: Path) -> bool:
++    """Could `render_file` have written this text? Only then may the GC delete it.
++
++    `render_file` emits exactly `# <stem>` as its first line, then blank lines and
++    `- <content>  <!-- mem:N -->` marker lines. So the title line must equal `# ` + the
++    filename stem, and every other non-blank line must be a marker line. Anything else —
++    prose, an un-marked bullet, a different or deeper heading, an `ensure_layout` header
++    such as `# Project X — decisions` — disqualifies the whole file.
++
++    This matters because `docs/memory.md` tells operators to hand-edit these files and
++    index the lines with `memory import --markdown`: a hand-authored note must never be
++    swept up by a garbage collector. The measured orphan (`# ai-livestreaming-avatar\n`,
++    left title-only when entry #5 was re-scoped by hand) matches this predicate exactly.
++    """
++    try:
++        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
++    except (OSError, UnicodeDecodeError):
++        return False
++    if not lines or lines[0] != f"# {path.stem}":
++        return False
++    return all(_MD_MARKER_LINE.match(ln) for ln in lines[1:])
++
++
++def orphan_files(session: Session) -> list[Path]:
++    """Rendered markdown files that are dead output: no owning approved entry, not a name
++    `ensure_layout` owns, and text that only `render_file` could have produced.
++
++    A hand-authored file fails `_renderer_output`, so it is never listed here.
++    """
++    root = memory_root()
++    if not root.exists():
++        return []
++    owned = {_file_for(e) for e in list_entries(session, status="approved")}
++    return [
++        p
++        for p in sorted(root.rglob("*.md"))
++        if p not in owned
++        and in_layout_dir(p)
++        and not canonical_file(p)
++        and _renderer_output(p)
++    ]
++
++
++def gc_orphan_files(session: Session, *, dry_run: bool = False) -> list[Path]:
++    """Delete dead scope-files so a re-scoped entry cannot leave a title-only ghost behind.
++
++    Only rows are ever left untouched (nothing here deletes a `memory_entries` row, and no
++    canonical layout file is removed); the files it deletes are derived output that passes
++    `orphan_files` — unowned, outside the canonical names, and text `render_file` wrote.
++    Hand-written markdown in the tree is protected by `_renderer_output`.
++    """
++    root = memory_root()
++    removed: list[Path] = []
++    for path in orphan_files(session):
++        removed.append(path)
++        if dry_run:
++            continue
++        path.unlink(missing_ok=True)
++        parent = path.parent
++        if parent != root and parent.relative_to(root).parts[0] == "projects":
++            if not any(parent.iterdir()):
++                parent.rmdir()
++    return removed
++
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 3/5

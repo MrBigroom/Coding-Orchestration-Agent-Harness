@@ -1,4 +1,4 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # FINAL SOURCE at this HEAD: tests/unit/test_memory_scopes.py — the assertions themselves, numbered
 # tests: test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope, test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored, test_coercion_is_written_to_the_build_log_the_operator_reads
 # why the reviewer asked for it: DoD 1 coercion + the substitution record
@@ -48,36 +48,36 @@
   180 | 
   181 | 
 
-  693 | def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
-  694 |     """DoD 1: the substitution is recorded where the run's log shows it.
-  695 | 
-  696 |     `run_service._store_memory_suggestions` is the seam every handoff path goes through
-  697 |     (clean exit, salvage, agent run); the notes come back with the entries and become
-  698 |     build-log events instead of a silent `continue`.
-  699 |     """
-  700 |     from sqlmodel import select
-  701 | 
-  702 |     from orchestrator.core.models import BuildLogEntry
-  703 |     from orchestrator.services import run_service
-  704 | 
-  705 |     out = run_service._store_memory_suggestions(
-  706 |         session,
-  707 |         [
-  708 |             MemorySuggestion(
-  709 |                 category="project", scope="ai-livestreaming-avatar", content="Reachable host."
-  710 |             ),
-  711 |             MemorySuggestion(category="role", scope="logbook-writer", content="Diary."),
-  712 |         ],
-  713 |         source="handoff:R-3",
-  714 |         project_slug="ai-livestreaming-avatar",
-  715 |         role="worker",
-  716 |     )
-  717 |     assert [e.scope for e in out.created] == ["gotchas"]
-  718 |     events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
-  719 |     assert "memory_scope_substituted" in events
-  720 |     assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
-  721 |     assert "gotchas" in events["memory_scope_substituted"]
-  722 |     assert "memory_suggestion_dropped" in events
-  723 |     assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
-  724 | 
-  725 | 
+  799 | def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
+  800 |     """DoD 1: the substitution is recorded where the run's log shows it.
+  801 | 
+  802 |     `run_service._store_memory_suggestions` is the seam every handoff path goes through
+  803 |     (clean exit, salvage, agent run); the notes come back with the entries and become
+  804 |     build-log events instead of a silent `continue`.
+  805 |     """
+  806 |     from sqlmodel import select
+  807 | 
+  808 |     from orchestrator.core.models import BuildLogEntry
+  809 |     from orchestrator.services import run_service
+  810 | 
+  811 |     out = run_service._store_memory_suggestions(
+  812 |         session,
+  813 |         [
+  814 |             MemorySuggestion(
+  815 |                 category="project", scope="ai-livestreaming-avatar", content="Reachable host."
+  816 |             ),
+  817 |             MemorySuggestion(category="role", scope="logbook-writer", content="Diary."),
+  818 |         ],
+  819 |         source="handoff:R-3",
+  820 |         project_slug="ai-livestreaming-avatar",
+  821 |         role="worker",
+  822 |     )
+  823 |     assert [e.scope for e in out.created] == ["gotchas"]
+  824 |     events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
+  825 |     assert "memory_scope_substituted" in events
+  826 |     assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
+  827 |     assert "gotchas" in events["memory_scope_substituted"]
+  828 |     assert "memory_suggestion_dropped" in events
+  829 |     assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
+  830 | 
+  831 | 

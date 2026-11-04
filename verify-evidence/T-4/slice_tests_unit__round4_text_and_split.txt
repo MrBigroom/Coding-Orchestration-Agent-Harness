@@ -1,0 +1,60 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: tests/unit/test_memory_scopes.py — the assertions themselves, numbered
+# tests: test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files, test_the_vocabularies_are_one_source_importable_from_core_and_re_exported
+# why the reviewer asked for it: R-27 findings 5/6 in the unit layer: the schema boundary's message, and one vocabulary source shared by core and the service (asserted to be the SAME objects)
+# part 1/1
+
+  359 | def test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files():
+  360 |     """DoD 2 at the SCHEMA boundary itself, with no HTTP in the picture.
+  361 | 
+  362 |     `MemoryCreate.role` is typed as the `Role` enum, so before this round an unknown role was
+  363 |     answered by Pydantic with `Input should be 'architect', 'supervisor', 'worker',
+  364 |     'reviewer' or 'agent'`: role VALUES, no vocabulary joined as `architect|worker|supervisor`,
+  365 |     no mention of the `reviewer -> architect` / `agent -> worker` aliases that make those two
+  366 |     extra names legal, and no "files" wording at all. Note that a loop over the three
+  367 |     vocabulary words is NOT enough — the enum message contains each word — so the assertions
+  368 |     below are on the joined vocabulary and on the phrases only `check_role_name` emits.
+  369 |     Verified by mutation: with the validator neutered this test fails (see
+  370 |     verify-evidence/T-4/README.md, R4-D2).
+  371 |     """
+  372 |     from pydantic import ValidationError
+  373 | 
+  374 |     with pytest.raises(ValidationError) as exc:
+  375 |         MemoryCreate(category="role", scope="worker", content="Diary.",
+  376 |                      role="logbook-writer")
+  377 |     text = " ".join(str(exc.value).split())
+  378 |     assert "architect|worker|supervisor" in text
+  379 |     assert "allowed role memory files" in text
+  380 |     assert "reviewer -> architect" in text and "agent -> worker" in text
+  381 |     assert "logbook-writer" in text
+  382 |     # The accepted set is UNCHANGED: all five Role members still validate, aliases included.
+  383 |     for name in ("architect", "worker", "supervisor", "reviewer", "agent"):
+  384 |         assert MemoryCreate(category="role", scope=name, content="x", role=name).role == name
+  385 |     # ...and each one still resolves to a role memory FILE the injectors read.
+  386 |     assert m.normalize_scope(MemoryCategory.role, "reviewer") == "architect"
+  387 |     assert m.role_memory_file("agent") == "worker"
+  388 | 
+  389 | 
+
+  390 | def test_the_vocabularies_are_one_source_importable_from_core_and_re_exported():
+  391 |     """The constants moved to `core/memory_vocab` so `schemas` can use them without a cycle.
+  392 | 
+  393 |     `memory_service` imports `schemas`, so `schemas` must not import `memory_service`: the
+  394 |     shared vocabulary needs a module BELOW both. The re-exports are what keep
+  395 |     `memory_service.GLOBAL_SCOPES` & co. working for every existing caller and test, and they
+  396 |     are asserted to be the SAME objects, not copies that can drift apart.
+  397 |     """
+  398 |     from orchestrator.core import memory_vocab
+  399 | 
+  400 |     for name in (
+  401 |         "GLOBAL_SCOPES", "PROJECT_SCOPES", "ROLE_SCOPES", "ROLE_FILES", "SCOPE_VOCABULARY",
+  402 |         "FALLBACK_SCOPE", "ROLE_PROJECT_SCOPES", "ROLE_MEMORY_KEY", "ROLE_SCOPE_ALIASES",
+  403 |     ):
+  404 |         assert getattr(m, name) is getattr(memory_vocab, name), name
+  405 |     for name in ("scope_vocabulary", "role_memory_file", "check_role_name", "normalize_scope",
+  406 |                  "coerce_scope", "substitution_note", "vocab_error"):
+  407 |         assert getattr(m, name) is getattr(memory_vocab, name), name
+  408 |     assert issubclass(memory_vocab.MemoryError_, ValueError)
+  409 |     assert m.MemoryError_ is memory_vocab.MemoryError_  # one exception type, one except clause
+  410 | 
+  411 | 

@@ -1,105 +1,105 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.fix_scopes
-# lines 685-784 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# lines 559-658 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
 # why the reviewer asked for it: DoD 3 the repair: re-render BOTH files, print ids, leave rejected rows alone
 # part 1/1
-  685 | def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> ScopeRepair:
-  686 |     """Migrate entries already stored with an out-of-vocabulary scope.
-  687 | 
-  688 |     Rows are moved, never deleted, and rejected rows are left exactly as they are. Both
-  689 |     the OLD and the NEW markdown file are re-rendered so the old file cannot keep a stale
-  690 |     `<!-- mem:ID -->` line, then — with `gc=True`, which is what the CLI's `--no-gc` turns
-  691 |     off — dead rendered files are collected (the measured orphan was
-  692 |     `memory/projects/<slug>/<slug>.md`, left title-only when entry #5 was re-scoped by
-  693 |     hand). `orphan_files` is deliberately narrow: unowned AND not a canonical layout name
-  694 |     AND text `render_file` could have written, so hand-authored markdown indexed via
-  695 |     `memory import --markdown` is never deleted.
-  696 | 
-  697 |     Idempotent: a second run moves nothing. A dry run computes the same report and writes
-  698 |     nothing, including the file list.
-  699 |     """
-  700 |     repair = ScopeRepair(dry_run=dry_run)
-  701 |     for entry in list_entries(session):
-  702 |         ok, reason = injectability(entry)
-  703 |         if ok:
-  704 |             continue
-  705 |         detail: dict[str, Any] = {
-  706 |             "id": entry.id,
-  707 |             "category": entry.category,
-  708 |             "scope": entry.scope,
-  709 |             "reason": reason,
-  710 |         }
-  711 |         if entry.rejected:
-  712 |             repair.skipped.append({**detail, "why": "rejected rows are left alone"})
-  713 |             continue
-  714 |         if entry.category == MemoryCategory.role:
-  715 |             repair.skipped.append(
-  716 |                 {
-  717 |                     **detail,
-  718 |                     "why": "role memory has no fallback file: an unresolvable role would be "
-  719 |                     "invented, so the row is reported instead (approve it under a real role "
-  720 |                     "or reject it). Note that for_prompt selects on the `role` column, so a "
-  721 |                     "legacy row with an empty role and a valid scope is a shape the boundary "
-  722 |                     "can no longer create (_validate fills role from scope).",
-  723 |                 }
-  724 |             )
-  725 |             continue
-  726 |         try:
-  727 |             new_scope, note = coerce_scope(entry.category, entry.scope)
-  728 |         except MemoryError_ as e:  # pragma: no cover - the vocabularies above always fall back
-  729 |             repair.skipped.append({**detail, "why": str(e)})
-  730 |             continue
-  731 |         if new_scope == entry.scope:
-  732 |             # The scope is in vocabulary but the row is still unreachable (e.g. a project
-  733 |             # row with no project_slug). Repairing a scope cannot fix that; report it.
-  734 |             repair.skipped.append({**detail, "why": f"scope already in vocabulary: {reason}"})
-  735 |             continue
-  736 |         old_file = _file_for(entry)
-  737 |         # A row that moves away from a non-canonical file leaves that file with no owner;
-  738 |         # the GC below collects it. Computed before the mutation so a dry run can say so.
-  739 |         other_owners = {
-  740 |             _file_for(e)
-  741 |             for e in list_entries(session, status="approved")
-  742 |             if e.id != entry.id
-  743 |         }
-  744 |         preview = MemoryEntry(
-  745 |             category=entry.category,
-  746 |             scope=new_scope,
-  747 |             project_slug=entry.project_slug,
-  748 |             role=entry.role,
-  749 |             content=entry.content,
-  750 |         )
-  751 |         moved = {
-  752 |             "id": entry.id,
-  753 |             "category": entry.category,
-  754 |             "project_slug": entry.project_slug,
-  755 |             "from": entry.scope,
-  756 |             "to": new_scope,
-  757 |             "note": note,
-  758 |             "approved": entry.approved,
-  759 |             "old_file": str(old_file),
-  760 |             "new_file": str(_file_for(preview)),
-  761 |             "collect_old_file": not canonical_file(old_file) and old_file not in other_owners,
-  762 |         }
-  763 |         repair.moved.append(moved)
-  764 |         if dry_run:
-  765 |             continue
-  766 |         entry.scope = new_scope
-  767 |         _validate(entry)
-  768 |         entry.updated_at = utcnow()
-  769 |         session.add(entry)
-  770 |         session.commit()
-  771 |         if entry.approved:
-  772 |             render_file(session, old_file)
-  773 |             render_file(session, _file_for(entry))
-  774 |         elif old_file.exists():
-  775 |             # An unapproved row never rendered, but a stale copy from an earlier approval
-  776 |             # may still name it.
-  777 |             render_file(session, old_file)
-  778 |     if gc:
-  779 |         for path in gc_orphan_files(session, dry_run=dry_run):
-  780 |             repair.removed_files.append(path)
-  781 |     else:
-  782 |         # --no-gc: the operator still has to SEE the dead files, they are just not deleted.
-  783 |         repair.ghost_files = orphan_files(session)
-  784 |     return repair
+  559 | def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> ScopeRepair:
+  560 |     """Migrate entries already stored with an out-of-vocabulary scope.
+  561 | 
+  562 |     Rows are moved, never deleted, and rejected rows are left exactly as they are. Both
+  563 |     the OLD and the NEW markdown file are re-rendered so the old file cannot keep a stale
+  564 |     `<!-- mem:ID -->` line, then — with `gc=True`, which is what the CLI's `--no-gc` turns
+  565 |     off — dead rendered files are collected (the measured orphan was
+  566 |     `memory/projects/<slug>/<slug>.md`, left title-only when entry #5 was re-scoped by
+  567 |     hand). `orphan_files` is deliberately narrow: unowned AND not a canonical layout name
+  568 |     AND text `render_file` could have written, so hand-authored markdown indexed via
+  569 |     `memory import --markdown` is never deleted.
+  570 | 
+  571 |     Idempotent: a second run moves nothing. A dry run computes the same report and writes
+  572 |     nothing, including the file list.
+  573 |     """
+  574 |     repair = ScopeRepair(dry_run=dry_run)
+  575 |     for entry in list_entries(session):
+  576 |         ok, reason = injectability(entry)
+  577 |         if ok:
+  578 |             continue
+  579 |         detail: dict[str, Any] = {
+  580 |             "id": entry.id,
+  581 |             "category": entry.category,
+  582 |             "scope": entry.scope,
+  583 |             "reason": reason,
+  584 |         }
+  585 |         if entry.rejected:
+  586 |             repair.skipped.append({**detail, "why": "rejected rows are left alone"})
+  587 |             continue
+  588 |         if entry.category == MemoryCategory.role:
+  589 |             repair.skipped.append(
+  590 |                 {
+  591 |                     **detail,
+  592 |                     "why": "role memory has no fallback file: an unresolvable role would be "
+  593 |                     "invented, so the row is reported instead (approve it under a real role "
+  594 |                     "or reject it). Note that for_prompt selects on the `role` column, so a "
+  595 |                     "legacy row with an empty role and a valid scope is a shape the boundary "
+  596 |                     "can no longer create (_validate fills role from scope).",
+  597 |                 }
+  598 |             )
+  599 |             continue
+  600 |         try:
+  601 |             new_scope, note = coerce_scope(entry.category, entry.scope)
+  602 |         except MemoryError_ as e:  # pragma: no cover - the vocabularies above always fall back
+  603 |             repair.skipped.append({**detail, "why": str(e)})
+  604 |             continue
+  605 |         if new_scope == entry.scope:
+  606 |             # The scope is in vocabulary but the row is still unreachable (e.g. a project
+  607 |             # row with no project_slug). Repairing a scope cannot fix that; report it.
+  608 |             repair.skipped.append({**detail, "why": f"scope already in vocabulary: {reason}"})
+  609 |             continue
+  610 |         old_file = _file_for(entry)
+  611 |         # A row that moves away from a non-canonical file leaves that file with no owner;
+  612 |         # the GC below collects it. Computed before the mutation so a dry run can say so.
+  613 |         other_owners = {
+  614 |             _file_for(e)
+  615 |             for e in list_entries(session, status="approved")
+  616 |             if e.id != entry.id
+  617 |         }
+  618 |         preview = MemoryEntry(
+  619 |             category=entry.category,
+  620 |             scope=new_scope,
+  621 |             project_slug=entry.project_slug,
+  622 |             role=entry.role,
+  623 |             content=entry.content,
+  624 |         )
+  625 |         moved = {
+  626 |             "id": entry.id,
+  627 |             "category": entry.category,
+  628 |             "project_slug": entry.project_slug,
+  629 |             "from": entry.scope,
+  630 |             "to": new_scope,
+  631 |             "note": note,
+  632 |             "approved": entry.approved,
+  633 |             "old_file": str(old_file),
+  634 |             "new_file": str(_file_for(preview)),
+  635 |             "collect_old_file": not canonical_file(old_file) and old_file not in other_owners,
+  636 |         }
+  637 |         repair.moved.append(moved)
+  638 |         if dry_run:
+  639 |             continue
+  640 |         entry.scope = new_scope
+  641 |         _validate(entry)
+  642 |         entry.updated_at = utcnow()
+  643 |         session.add(entry)
+  644 |         session.commit()
+  645 |         if entry.approved:
+  646 |             render_file(session, old_file)
+  647 |             render_file(session, _file_for(entry))
+  648 |         elif old_file.exists():
+  649 |             # An unapproved row never rendered, but a stale copy from an earlier approval
+  650 |             # may still name it.
+  651 |             render_file(session, old_file)
+  652 |     if gc:
+  653 |         for path in gc_orphan_files(session, dry_run=dry_run):
+  654 |             repair.removed_files.append(path)
+  655 |     else:
+  656 |         # --no-gc: the operator still has to SEE the dead files, they are just not deleted.
+  657 |         repair.ghost_files = orphan_files(session)
+  658 |     return repair

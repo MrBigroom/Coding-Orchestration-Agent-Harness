@@ -1,116 +1,9 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 2/6
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 2/5
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 808 lines.
-+    """The canonical, injectable scope for (category, scope).
-+
-+    Raises `MemoryError_` naming the allowed values when the scope cannot be reached by
-+    its own category — this is the single boundary check used by create, update, import
-+    and the suggestion path, so the API and the CLI reject the same rows for the same
-+    reason.
-+    """
-+    vocab = scope_vocabulary(category)
-+    if category == MemoryCategory.role:
-+        key = role_memory_file(scope)
-+        if key is None:
-+            raise _vocab_error(category, scope or "")
-+        return key
-+    slug = slugify(scope or "")
-+    if slug in vocab:
-+        return slug
-+    raise _vocab_error(category, scope or "")
-+
-+
-+def coerce_scope(category: str, scope: str) -> tuple[str, str]:
-+    """Repair an out-of-vocabulary scope by falling back. Returns (scope, note).
-+
-+    `note` is empty when the scope was already injectable. The fallback is the WHOLE rule:
-+    a scope that is not in its category's vocabulary goes to `FALLBACK_SCOPE[category]`
-+    (`gotchas` for project, `environment` for global) and is reported. Nothing is ever
-+    *inferred* from the words inside a proposed scope, because the scope decides which
-+    roles receive the note — guessing that `decisions-and-gating` means `decisions` would
-+    silently route a Worker's gotcha to the Architect and the Supervisor, and a substring
-+    match fires inside unrelated words. A predictable place to find it beats a clever
-+    guess, and the operator sees the substitution either way.
-+
-+    Categories with no fallback (`role`) re-raise: inventing a role would file someone's
-+    note under the wrong agent, so the suggestion path drops it with a warning instead of
-+    storing an unreachable row.
-+    """
-+    try:
-+        return normalize_scope(category, scope), ""
-+    except MemoryError_ as e:
-+        err = e
-+    fallback = FALLBACK_SCOPE.get(category)
-+    if fallback is None:
-+        raise err
-+    return fallback, _substitution_note(category, scope, fallback)
-+
-+
-+def _substitution_note(category: str, requested: str, stored: str) -> str:
-+    return (
-+        f"{category} scope {requested!r} is not in "
-+        f"{'|'.join(SCOPE_VOCABULARY.get(category, ()))}; stored as {stored!r} "
-+        f"(deterministic fallback, not inferred from the words)"
-+    )
-+
-+
-+def role_file_key(entry: MemoryEntry) -> str | None:
-+    """The role-memory file a row maps to, by the rule `for_prompt` and `_file_for` use.
-+
-+    Identical to the pre-T-4 resolution — `role`, falling back to `scope`, through
-+    `ROLE_MEMORY_KEY` — and deliberately NOT checked against `ROLE_FILES`: a legacy row
-+    with a non-file role and a valid scope must keep rendering to (and being judged by) the
-+    same file it always did. Task T-4 changes no role-injection semantics; membership is
-+    tested by the caller so an uninjectable row is reported instead of re-homed.
-+    """
-+    name = entry.role or entry.scope
-+    if not name:
-+        return None
-+    return ROLE_MEMORY_KEY.get(name, name)
-+
-+
-+def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
-+    """Which prompt roles would actually read this entry's scope, once approved."""
-+    if entry.category == MemoryCategory.global_:
-+        if entry.scope not in GLOBAL_SCOPES:
-+            return ()
-+        return tuple(r.value for r in Role)
-+    if entry.category == MemoryCategory.project:
-+        if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
-+            return ()
-+        return tuple(
-+            r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
-+        )
-+    key = role_file_key(entry)
-+    if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
-+        return ()
-+    return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)
-+
-+
-+def injectability(entry: MemoryEntry) -> tuple[bool, str]:
-+    """(ok, reason). reason names the vocabulary that the entry failed."""
-+    if entry.category not in SCOPE_VOCABULARY:
-+        return False, f"unknown category {entry.category!r}"
-+    if entry.category == MemoryCategory.project and not entry.project_slug:
-+        return False, "project memory requires project_slug"
-+    if reachable_roles(entry):
-+        return True, ""
-+    if entry.category == MemoryCategory.role:
-+        name = entry.role or entry.scope
-+        allowed = "|".join(ROLE_SCOPES)
-+        if not name:
-+            return False, f"role memory needs a role or a scope resolving to one of {allowed}"
-+        # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
-+        # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
-+        # vocabulary it has to resolve into.
-+        return False, (
-+            f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
-+            f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
-+            f"(reviewer -> architect, agent -> worker)"
-+        )
-+    return False, str(_vocab_error(entry.category, entry.scope or ""))
+# line appears in exactly one part, in order. Raw diff = 701 lines.
++    return False, str(vocab_error(entry.category, entry.scope or ""))
 +
 +
 +def is_injectable(entry: MemoryEntry) -> bool:
@@ -120,7 +13,7 @@
  def _file_for(entry: MemoryEntry) -> Path:
      root = memory_root()
      if entry.category == MemoryCategory.global_:
-@@ -81,17 +314,40 @@ def _file_for(entry: MemoryEntry) -> Path:
+@@ -81,17 +188,40 @@ def _file_for(entry: MemoryEntry) -> Path:
          return safe_join(
              root, "projects", slugify(entry.project_slug or "unknown"), f"{slugify(entry.scope)}.md"
          )
@@ -158,9 +51,116 @@
 +            check_role_name(entry.role)
 +        key = role_memory_file(entry.role) or role_memory_file(entry.scope)
 +        if key is None:
-+            raise _vocab_error(entry.category, entry.scope or entry.role or "")
++            raise vocab_error(entry.category, entry.scope or entry.role or "")
 +        if not entry.role:
 +            # Historic behaviour kept: a role row may carry its role in `scope`.
 +            entry.role = entry.scope
 +        entry.scope = key
-DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 2/6
++        return
++    entry.scope = normalize_scope(entry.category, entry.scope)
+ 
+ 
+ def render_file(session: Session, path: Path) -> None:
+@@ -113,7 +243,11 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+         category=data.category.value,
+         scope=data.scope,
+         project_slug=slugify(data.project_slug) if data.project_slug else None,
+-        role=data.role.value if data.role else None,
++        # `getattr(..., "value", ...)`: MemoryCreate types `role` as the Role enum, so an
++        # HTTP caller cannot send an unknown one — but the service boundary must still refuse
++        # that shape (an unvalidated object, an import payload, a future caller) with the
++        # vocabulary error rather than crashing on `.value`.
++        role=getattr(data.role, "value", data.role) or None,
+         content=redact(data.content.strip()),
+         source=data.source,
+         tags_json=sorted(set(data.tags)),
+@@ -135,54 +269,111 @@ def suggest_from_handoff(
+     project_slug: str | None,
+     role: str = "worker",
+ ) -> list[MemoryEntry]:
+-    """Store worker/architect suggestions as unapproved entries for Supervisor review."""
+-    created = []
++    """The created entries only. Kept for callers that do not read the notes."""
++    return suggest_from_handoff_report(
++        session, suggestions, source, project_slug, role=role
++    ).created
++
++
++def suggest_from_handoff_report(
++    session: Session,
++    suggestions: list[MemorySuggestion],
++    source: str,
++    project_slug: str | None,
++    role: str = "worker",
++) -> SuggestionOutcome:
++    """Store worker/architect suggestions as unapproved entries for Supervisor review.
++
++    T-4: a Worker's proposed scope is never trusted. `project`/`global` suggestions whose
++    scope is outside their category vocabulary are coerced to a deterministic scope and
++    every substitution is reported in `notes` (the caller writes them to the build log,
++    where the operator sees them); `role` suggestions that resolve to no role memory file
++    are dropped with a warning instead of being stored. Nothing is stored with a scope no
++    injector can read.
++    """
++    outcome = SuggestionOutcome()
+     existing = {
+         (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
+     }
+     for s in suggestions:
+-        key = (
+-            s.category,
+-            slugify(s.scope),
+-            slugify(project_slug) if s.category == "project" and project_slug else None,
+-            redact(s.content.strip()),
+-        )
+-        if key in existing:
++        try:
++            category = MemoryCategory(s.category)
++        except ValueError:
++            outcome.notes.append(
++                f"dropped suggestion from {source}: unknown category {s.category!r}; "
++                f"allowed: global|project|role"
++            )
+             continue
+-        existing.add(key)
++        slug = slugify(s.scope)
+         try:
+-            scope = slugify(s.scope)
+-            created.append(
++            if category == MemoryCategory.role:
++                file_key = role_memory_file(slug)
++                if file_key is None:
++                    raise MemoryError_(str(vocab_error(category, slug)))
++                scope = file_key
++                role_value = slug if slug in Role.__members__ else role
++                create_role = Role(role_value) if role_value in Role.__members__ else Role.worker
++            else:
++                scope, note = coerce_scope(category, slug)
++                if note:
++                    outcome.notes.append(f"memory suggestion from {source}: {note}")
++                create_role = None
++            proj = (
++                slugify(project_slug)
++                if category == MemoryCategory.project and project_slug
++                else None
++            )
++            key = (category, scope, proj, redact(s.content.strip()))
++            if key in existing:
++                continue
++            existing.add(key)
++            outcome.created.append(
+                 create(
+                     session,
+                     MemoryCreate(
+-                        category=MemoryCategory(s.category),
++                        category=category,
+                         scope=scope,
+                         content=s.content,
+-                        project_slug=project_slug if s.category == "project" else None,
+-                        role=Role(scope)
+-                        if s.category == "role" and scope in Role.__members__
+-                        else (Role(role) if s.category == "role" else None),
++                        project_slug=project_slug if category == MemoryCategory.project else None,
++                        role=create_role,
+                         tags=s.tags,
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 2/5

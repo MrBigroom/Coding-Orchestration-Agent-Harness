@@ -1,0 +1,31 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/core/memory_vocab.py   PART 2/2
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 185 lines.
++
++def coerce_scope(category: str, scope: str) -> tuple[str, str]:
++    """Repair an out-of-vocabulary scope by falling back. Returns (scope, note).
++
++    `note` is empty when the scope was already injectable. The fallback is the WHOLE rule:
++    a scope that is not in its category's vocabulary goes to `FALLBACK_SCOPE[category]`
++    (`gotchas` for project, `environment` for global) and is reported. Nothing is ever
++    *inferred* from the words inside a proposed scope, because the scope decides which
++    roles receive the note — guessing that `decisions-and-gating` means `decisions` would
++    silently route a Worker's gotcha to the Architect and the Supervisor, and a substring
++    match fires inside unrelated words. A predictable place to find it beats a clever
++    guess, and the operator sees the substitution either way.
++
++    Categories with no fallback (`role`) re-raise: inventing a role would file someone's
++    note under the wrong agent, so the suggestion path drops it with a warning instead of
++    storing an unreachable row.
++    """
++    try:
++        return normalize_scope(category, scope), ""
++    except MemoryError_ as e:
++        err = e
++    fallback = FALLBACK_SCOPE.get(category)
++    if fallback is None:
++        raise err
++    return fallback, substitution_note(category, scope, fallback)
+DIFF_PART_COMPLETE=src/orchestrator/core/memory_vocab.py part 2/2

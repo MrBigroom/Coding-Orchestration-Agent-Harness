@@ -1,13 +1,13 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- docs/decisions.md   PART 1/1
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 59 lines.
+# line appears in exactly one part, in order. Raw diff = 86 lines.
 diff --git a/docs/decisions.md b/docs/decisions.md
-index 3fab74e..11b0ba7 100644
+index 3fab74e..2a074f8 100644
 --- a/docs/decisions.md
 +++ b/docs/decisions.md
-@@ -222,3 +222,54 @@ Running log of architecture decisions. Newest last. Format: date — decision 
+@@ -222,3 +222,81 @@ Running log of architecture decisions. Newest last. Format: date — decision 
    those chunks. Tokens carry both theme colors, so switching light and dark needs no
    re-highlighting. Blocks over 150k characters or 3,000 lines stay plain. The Chat Changes
    panel now returns the diff itself, untracked files included.
@@ -62,4 +62,31 @@ index 3fab74e..11b0ba7 100644
 +  it now carries exactly what `gc_orphan_files` unlinked, so a repair run can never claim a
 +  deletion the disk contradicts — the same "never narrate unverified success" rule the harness
 +  holds Workers to, applied to its own CLI.
++- **2026-11-04 — T-4 round 4: one vocabulary source, and an error is only proven by its TEXT.**
++  The round-3 review was right that `POST /api/memory` still refused an unknown `role` with
++  Pydantic's enum message and no shown assertion covered the words. The message is the
++  contract here: a status code alone tells the operator that something was wrong, while DoD 2
++  asks for the boundary to say *what is allowed*. `MemoryCreate` now runs `check_role_name` in
++  a `model_validator(mode="before")`, which fires before the enum coerces, so the 422 detail
++  carries `allowed role memory files: architect|worker|supervisor` and the
++  `reviewer -> architect` / `agent -> worker` aliases. Round 3 had rejected this as "widening
++  `MemoryCreate.role` to `str` for a message string" — but the field is still typed `Role`,
++  all five members still validate, and nothing that was accepted is refused now: only the
++  rejection text changed, so the frozen request shape is intact. A before-validator is the
++  only place that can beat an enum coercion. Second: the vocabularies and the pure
++  scope/role resolution moved to `core/memory_vocab.py`, because `schemas` must refuse the
++  same shapes with the same words and cannot import the service (`memory_service` imports
++  `schemas`). `memory_service` re-exports every name and a test asserts they are the SAME
++  objects, so callers and `memory_service.GLOBAL_SCOPES`-style test imports are unaffected.
++  Third, an assertion-hygiene rule the reviewer had to repeat three tasks running: assert one
++  outcome per case. The repair test's `not orphan.exists() or "mem:N" not in text` passed
++  whether the old file had been re-rendered or merely deleted, i.e. it proved nothing about
++  re-rendering. It is now two named cases — `gc=False` compares the OLD file's exact text
++  (`"# <slug>\n"`, still on disk, stale line gone, the other entry's line intact in the new
++  file), and the default run asserts `removed_files == [<old file>]` and that it is gone. Both
++  were mutation-checked: dropping the old-file `render_file` call fails only the first, and
++  disabling the collector fails only the second. The same trap applies to the role message —
++  the enum text contains each word `architect`, `worker`, `supervisor`, so a per-value loop
++  passes on it; only the joined vocabulary and the "allowed role memory files" phrasing
++  distinguish the two, and those are the assertions the test is built on.
 DIFF_PART_COMPLETE=docs/decisions.md part 1/1

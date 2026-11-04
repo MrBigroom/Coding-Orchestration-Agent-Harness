@@ -1,14 +1,14 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 1/3
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 1/4
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 471 lines.
+# line appears in exactly one part, in order. Raw diff = 545 lines.
 diff --git a/tests/integration/test_memory_scope_boundary.py b/tests/integration/test_memory_scope_boundary.py
 new file mode 100644
-index 0000000..1a51ba3
+index 0000000..b47b21c
 --- /dev/null
 +++ b/tests/integration/test_memory_scope_boundary.py
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,539 @@
 +"""T-4 DoD 2/3/4 at the real boundaries: the API rejects, the CLI rejects, repairs and marks.
 +
 +Offline: in-process TestClient and CliRunner against an isolated ORCHESTRATOR_HOME.
@@ -140,27 +140,27 @@ index 0000000..1a51ba3
 +                        json={"scope": "housekeeping"}).status_code == 400
 +
 +
-+def test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape(client):
-+    """The POST boundary cannot be fed an unreadable role, and says so in the frozen shape.
++def test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files(client):
++    """DoD 2 at the POST boundary, asserted on the ERROR TEXT and not on the status code.
 +
-+    `MemoryCreate.role` is the Role enum, so Pydantic stops 'logbook-writer' before the
-+    service is entered (422, not 400). The service boundary under it refuses the same shape
-+    with the role vocabulary named -- see
-+    `test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid`.
++    The `role` COLUMN is what `for_prompt` selects on, so `role="logbook-writer"` is the
++    damaging shape. `MemoryCreate.role` is the `Role` enum, so Pydantic used to answer with
++    `Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'` — role VALUES
++    with no mention of the role memory FILES, and no mention of the `reviewer -> architect` /
++    `agent -> worker` aliases that make those extra values legal. `MemoryCreate` now runs the
++    service's own `check_role_name` in a `model_validator(mode="before")`, which fires before
++    the enum coercion, so the body carries the same words the CLI and the service use. The
++    status code stays 422 (the value never reaches the service, so nothing can be half-stored)
++    and the body keeps the frozen {error, detail} shape. `role` stays typed as `Role`: the
++    request shape and the accepted set are untouched, only the rejection TEXT changed.
 +    """
 +    r = client.post(
 +        "/api/memory",
 +        json={"category": "role", "scope": "worker", "role": "logbook-writer",
 +              "content": "Diary."},
 +    )
-+    assert r.status_code == 422, r.json()
-+    assert set(r.json()) == {"error", "detail"}  # the frozen error shape
-+    with session_scope() as s:
-+        assert [e for e in m.list_entries(s, category="role")
-+                if e.role == "logbook-writer"] == []
-+    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
-+
-+
-+def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope(client):
-+    """DoD 2 at the PATCH boundary for a row already stored in the dead shape.
-DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 1/3
++    assert r.status_code == 422, r.text
++    body = r.json()
++    assert set(body) == {"error", "detail"}  # the frozen error shape
++    # `detail` is a list of error dicts; read the whole body as whitespace-normalized prose so
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 1/4

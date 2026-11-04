@@ -1,0 +1,55 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 6/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 849 lines.
++    assert m.reachable_roles(reviewer) == ("architect", "reviewer")
++    assert m.reachable_roles(agent) == ("worker", "agent")
++
++
++def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
++    """DoD 1: the substitution is recorded where the run's log shows it.
++
++    `run_service._store_memory_suggestions` is the seam every handoff path goes through
++    (clean exit, salvage, agent run); the notes come back with the entries and become
++    build-log events instead of a silent `continue`.
++    """
++    from sqlmodel import select
++
++    from orchestrator.core.models import BuildLogEntry
++    from orchestrator.services import run_service
++
++    out = run_service._store_memory_suggestions(
++        session,
++        [
++            MemorySuggestion(
++                category="project", scope="ai-livestreaming-avatar", content="Reachable host."
++            ),
++            MemorySuggestion(category="role", scope="logbook-writer", content="Diary."),
++        ],
++        source="handoff:R-3",
++        project_slug="ai-livestreaming-avatar",
++        role="worker",
++    )
++    assert [e.scope for e in out.created] == ["gotchas"]
++    events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
++    assert "memory_scope_substituted" in events
++    assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
++    assert "gotchas" in events["memory_scope_substituted"]
++    assert "memory_suggestion_dropped" in events
++    assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
++
++
++def test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt(session):
++    slug = "ai-livestreaming-avatar"
++    orphan = legacy(
++        session, category="project", scope=slug, project_slug=slug,
++        content="Invisible to every prompt.", approved=True,
++    )
++    assert not m.is_injectable(orphan)
++    for role in ("worker", "architect", "supervisor", "reviewer", "agent"):
++        assert "Invisible to every prompt." not in m.for_prompt(session, role, slug)[ "project"]
++    repair = m.fix_scopes(session)
++    assert repair.moved_ids == [orphan.id]
++    assert "Invisible to every prompt." in m.for_prompt(session, "worker", slug)["project"]
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 6/6

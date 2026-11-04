@@ -1,0 +1,71 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 4/4
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 545 lines.
++    d = flat(out.output)
++    assert "removed dead scope-file" not in d  # the false claim, gone
++    assert "0 dead scope-file(s) removed" in d
++    assert ghost.exists()  # and the disk agrees with the report
++
++    # A --gc-only --dry-run still shows the operator what a real run would collect.
++    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
++                             env=WIDE).output)
++    assert f"would remove dead scope-file {ghost}" in dry
++    assert "1 dead scope-file(s) to remove" in dry
++    assert "removed dead scope-file" not in dry
++    assert ghost.exists()
++
++
++def test_cli_list_prints_an_uninjectable_scope_literally(initialized):
++    """The `inj` marker has to NAME the bad scope; a swallowed bracket hides the defect."""
++    with session_scope() as s:
++        legacy(s, category="project", scope="[logbook]", project_slug="demo",
++               content="Bracketed scope.")
++    out = runner.invoke(app, ["memory", "list"])
++    assert out.exit_code == 0, out.output
++    assert "uninjectable #" in out.output
++    assert "'[logbook]'" in out.output
++    assert "conventions|decisions|gotchas" in out.output
++
++
++def test_cli_import_repairs_a_legacy_export_scope(initialized):
++    """`import` REPAIRS; the create boundaries REJECT (docs/memory.md says which is which).
++
++    An export written before validation existed must not lose its facts, while a live
++    create/PATCH can still be refused and corrected. Both are true at once, and a legacy row
++    that is ALREADY stored under its dead scope is not duplicated by importing its export.
++    """
++    payload = {
++        "version": 1,
++        "entries": [
++            {"category": "project", "scope": "logbook", "project_slug": "demo",
++             "content": "A fact worth keeping.", "approved": False, "source": "handoff:R-3"},
++            {"category": "role", "scope": "logbook-writer", "content": "Unplaceable.",
++             "approved": False},
++        ],
++    }
++    exported = initialized / "mem.json"
++    exported.write_text(json.dumps(payload))
++    assert "imported 1" in runner.invoke(app, ["memory", "import", str(exported)]).output
++    assert "imported 0" in runner.invoke(app, ["memory", "import", str(exported)]).output
++    with session_scope() as s:
++        rows = m.list_entries(s, category="project")
++        assert [(e.scope, e.project_slug) for e in rows] == [("gotchas", "demo")]
++        assert m.list_entries(s, category="role") == []  # the unplaceable one was skipped
++    # a legacy row still stored under its dead scope is the SAME fact, not a new one
++    with session_scope() as s:
++        legacy(s, category="global", scope="logbook", content="Already stored, badly scoped.")
++        again = json.loads(m.dumps_export(s))
++    round2 = initialized / "mem2.json"
++    round2.write_text(json.dumps(again))
++    assert "imported 0" in runner.invoke(app, ["memory", "import", str(round2)]).output
++    with session_scope() as s:
++        same = [e for e in m.list_entries(s) if e.content == "Already stored, badly scoped."]
++        assert len(same) == 1 and same[0].scope == "logbook"  # untouched, awaiting fix-scopes
++    # and the same scope is still refused at the create boundary
++    refused = runner.invoke(app, ["memory", "add", "x", "--category", "project",
++                                  "--scope", "logbook", "--project", "demo"])
++    assert refused.exit_code == 1
++    assert "conventions|decisions|gotchas" in refused.output
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 4/4

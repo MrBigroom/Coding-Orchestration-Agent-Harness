@@ -1,115 +1,8 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 4/6
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 4/5
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 808 lines.
- 
-+# ---------------------------------------------------------------- repair (T-4)
-+
-+
-+def canonical_file(path: Path) -> bool:
-+    """Is this rendered file part of the layout that `ensure_layout` writes and that the
-+    injectors name? An empty canonical file is not an orphan; a file whose stem is not a
-+    vocabulary scope (e.g. `projects/<slug>/<slug>.md`) can never be read, so it is."""
-+    root = memory_root()
-+    try:
-+        rel = path.relative_to(root).parts
-+    except ValueError:
-+        return False
-+    if len(rel) < 2 or not rel[-1].endswith(".md"):
-+        return False
-+    kind, stem = rel[0], rel[-1][: -len(".md")]
-+    if kind == "global":
-+        return len(rel) == 2 and stem in GLOBAL_SCOPES
-+    if kind == "roles":
-+        return len(rel) == 2 and stem in ROLE_FILES
-+    if kind == "projects":
-+        return len(rel) == 3 and stem in PROJECT_SCOPES
-+    return False
-+
-+
-+def in_layout_dir(path: Path) -> bool:
-+    """Is the file somewhere `ensure_layout`/`render_file` write: global/, roles/ or
-+    projects/<slug>/ — and nothing deeper, and nothing outside the memory root?"""
-+    root = memory_root()
-+    try:
-+        rel = path.relative_to(root).parts
-+    except ValueError:
-+        return False
-+    if len(rel) == 2:
-+        return rel[0] in ("global", "roles") and rel[1].endswith(".md")
-+    if len(rel) == 3:
-+        return rel[0] == "projects" and rel[1] and rel[2].endswith(".md")
-+    return False
-+
-+
-+_MD_MARKER_LINE = re.compile(r"^- .+  <!-- mem:\d+ -->\s*$")
-+
-+
-+def _renderer_output(path: Path) -> bool:
-+    """Could `render_file` have written this text? Only then may the GC delete it.
-+
-+    `render_file` emits exactly `# <stem>` as its first line, then blank lines and
-+    `- <content>  <!-- mem:N -->` marker lines. So the title line must equal `# ` + the
-+    filename stem, and every other non-blank line must be a marker line. Anything else —
-+    prose, an un-marked bullet, a different or deeper heading, an `ensure_layout` header
-+    such as `# Project X — decisions` — disqualifies the whole file.
-+
-+    This matters because `docs/memory.md` tells operators to hand-edit these files and
-+    index the lines with `memory import --markdown`: a hand-authored note must never be
-+    swept up by a garbage collector. The measured orphan (`# ai-livestreaming-avatar\n`,
-+    left title-only when entry #5 was re-scoped by hand) matches this predicate exactly.
-+    """
-+    try:
-+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-+    except (OSError, UnicodeDecodeError):
-+        return False
-+    if not lines or lines[0] != f"# {path.stem}":
-+        return False
-+    return all(_MD_MARKER_LINE.match(ln) for ln in lines[1:])
-+
-+
-+def orphan_files(session: Session) -> list[Path]:
-+    """Rendered markdown files that are dead output: no owning approved entry, not a name
-+    `ensure_layout` owns, and text that only `render_file` could have produced.
-+
-+    A hand-authored file fails `_renderer_output`, so it is never listed here.
-+    """
-+    root = memory_root()
-+    if not root.exists():
-+        return []
-+    owned = {_file_for(e) for e in list_entries(session, status="approved")}
-+    return [
-+        p
-+        for p in sorted(root.rglob("*.md"))
-+        if p not in owned
-+        and in_layout_dir(p)
-+        and not canonical_file(p)
-+        and _renderer_output(p)
-+    ]
-+
-+
-+def gc_orphan_files(session: Session, *, dry_run: bool = False) -> list[Path]:
-+    """Delete dead scope-files so a re-scoped entry cannot leave a title-only ghost behind.
-+
-+    Only rows are ever left untouched (nothing here deletes a `memory_entries` row, and no
-+    canonical layout file is removed); the files it deletes are derived output that passes
-+    `orphan_files` — unowned, outside the canonical names, and text `render_file` wrote.
-+    Hand-written markdown in the tree is protected by `_renderer_output`.
-+    """
-+    root = memory_root()
-+    removed: list[Path] = []
-+    for path in orphan_files(session):
-+        removed.append(path)
-+        if dry_run:
-+            continue
-+        path.unlink(missing_ok=True)
-+        parent = path.parent
-+        if parent != root and parent.relative_to(root).parts[0] == "projects":
-+            if not any(parent.iterdir()):
-+                parent.rmdir()
-+    return removed
-+
+# line appears in exactly one part, in order. Raw diff = 701 lines.
 +
 +def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> ScopeRepair:
 +    """Migrate entries already stored with an out-of-vocabulary scope.
@@ -163,4 +56,111 @@
 +            repair.skipped.append({**detail, "why": f"scope already in vocabulary: {reason}"})
 +            continue
 +        old_file = _file_for(entry)
-DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 4/6
++        # A row that moves away from a non-canonical file leaves that file with no owner;
++        # the GC below collects it. Computed before the mutation so a dry run can say so.
++        other_owners = {
++            _file_for(e)
++            for e in list_entries(session, status="approved")
++            if e.id != entry.id
++        }
++        preview = MemoryEntry(
++            category=entry.category,
++            scope=new_scope,
++            project_slug=entry.project_slug,
++            role=entry.role,
++            content=entry.content,
++        )
++        moved = {
++            "id": entry.id,
++            "category": entry.category,
++            "project_slug": entry.project_slug,
++            "from": entry.scope,
++            "to": new_scope,
++            "note": note,
++            "approved": entry.approved,
++            "old_file": str(old_file),
++            "new_file": str(_file_for(preview)),
++            "collect_old_file": not canonical_file(old_file) and old_file not in other_owners,
++        }
++        repair.moved.append(moved)
++        if dry_run:
++            continue
++        entry.scope = new_scope
++        _validate(entry)
++        entry.updated_at = utcnow()
++        session.add(entry)
++        session.commit()
++        if entry.approved:
++            render_file(session, old_file)
++            render_file(session, _file_for(entry))
++        elif old_file.exists():
++            # An unapproved row never rendered, but a stale copy from an earlier approval
++            # may still name it.
++            render_file(session, old_file)
++    if gc:
++        for path in gc_orphan_files(session, dry_run=dry_run):
++            repair.removed_files.append(path)
++    else:
++        # --no-gc: the operator still has to SEE the dead files, they are just not deleted.
++        repair.ghost_files = orphan_files(session)
++    return repair
++
++
+ # ---------------------------------------------------------------- injection
+ 
+ 
+@@ -320,44 +720,71 @@ def export_all(session: Session) -> dict[str, Any]:
+     }
+ 
+ 
++def _import_keys(category: str, scope: str, project_slug: str | None, role: str | None,
++                 content: str) -> set[tuple[Any, ...]]:
++    """Every tuple that identifies this fact, before AND after the scope repair.
++
++    A stored legacy row keeps its dead scope until `fix-scopes` runs, so an import of the
++    same export would otherwise add a SECOND row with the same content under the fallback
++    scope and render the line twice. Recognising both spellings keeps `import` idempotent
++    in both directions; a repairable category contributes its coerced scope too.
++    """
++    keys = {(category, scope, project_slug, role, content)}
++    if category in FALLBACK_SCOPE:
++        try:
++            repaired, _ = coerce_scope(category, scope)
++            keys.add((category, repaired, project_slug, role, content))
++        except MemoryError_:
++            pass
++    return keys
++
++
+ def import_all(session: Session, payload: dict[str, Any]) -> int:
+-    """Import entries; skips exact duplicates (same category/scope/project/role/content)."""
++    """Import entries; skips duplicates (same category/scope/project/role/content).
++
++    T-4: an export written before scope validation existed carries free-form scopes, so the
++    scope is repaired on the way in rather than dropping a good fact over a vocabulary
++    mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
++    importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
++    nor re-adds anything on a second pass.
++    """
+     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
+-    existing = {
+-        (e.category, e.scope, e.project_slug, e.role, e.content) for e in list_entries(session)
+-    }
++    existing: set[tuple[Any, ...]] = set()
++    for e in list_entries(session):
++        existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
+     count = 0
+     touched: set[Path] = set()
+     for raw in payload["entries"]:
+-        key = (
+-            raw.get("category"),
+-            raw.get("scope"),
+-            raw.get("project_slug"),
+-            raw.get("role"),
+-            redact(str(raw.get("content", "")).strip()),
+-        )
+-        if key in existing or not key[4]:
++        content = redact(str(raw.get("content", "")).strip())
++        category = raw.get("category")
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 4/5

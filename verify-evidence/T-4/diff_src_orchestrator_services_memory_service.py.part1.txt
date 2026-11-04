@@ -1,13 +1,13 @@
-# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 1/6
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 1/5
 # The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
 # 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
-# line appears in exactly one part, in order. Raw diff = 808 lines.
+# line appears in exactly one part, in order. Raw diff = 701 lines.
 diff --git a/src/orchestrator/services/memory_service.py b/src/orchestrator/services/memory_service.py
-index 4289f85..03da91f 100644
+index 4289f85..e7647a2 100644
 --- a/src/orchestrator/services/memory_service.py
 +++ b/src/orchestrator/services/memory_service.py
-@@ -15,6 +15,7 @@ from __future__ import annotations
+@@ -15,36 +15,82 @@ from __future__ import annotations
  
  import json
  import re
@@ -15,54 +15,58 @@ index 4289f85..03da91f 100644
  from pathlib import Path
  from typing import Any
  
-@@ -27,9 +28,32 @@ from orchestrator.utils.paths import safe_join
+ from sqlmodel import Session, col, or_, select
+ 
+ from orchestrator.core.config import get_settings
++
++# The vocabularies and the pure scope/role resolution live in core (T-4 DoD 2): the API
++# request model in `core/schemas.py` has to refuse the same shapes with the same words, and
++# it cannot import THIS module (memory_service imports schemas -> circular import). Every
++# name is re-imported here so `memory_service.GLOBAL_SCOPES`, `memory_service.coerce_scope`
++# and the rest keep resolving exactly as they did before the move. Three of the lines below
++# are marked as intentional RE-EXPORTS: nothing in this module calls them, but
++# `memory_service.ROLE_SCOPE_ALIASES`, `memory_service.scope_vocabulary` and
++# `memory_service.substitution_note` belong to the surface tests and callers read, and
++# removing them would break those imports.
++from orchestrator.core.memory_vocab import (
++    FALLBACK_SCOPE,
++    GLOBAL_SCOPES,
++    PROJECT_SCOPES,
++    ROLE_FILES,
++    ROLE_MEMORY_KEY,
++    ROLE_PROJECT_SCOPES,
++    ROLE_SCOPE_ALIASES,  # noqa: F401 - re-export
++    ROLE_SCOPES,
++    SCOPE_VOCABULARY,
++    MemoryError_,
++    check_role_name,
++    coerce_scope,
++    normalize_scope,
++    role_memory_file,
++    scope_vocabulary,  # noqa: F401 - re-export
++    substitution_note,  # noqa: F401 - re-export
++    vocab_error,
++)
+ from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, utcnow
+ from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
+ from orchestrator.utils.paths import safe_join
  from orchestrator.utils.redaction import redact
  from orchestrator.utils.slug import slugify
  
 -GLOBAL_SCOPES = ("environment", "preferences", "patterns")
 -PROJECT_SCOPES = ("conventions", "decisions", "gotchas")
 -ROLE_FILES = ("architect", "worker", "supervisor")
-+# ---------------------------------------------------------------- vocabularies
-+# These three tuples are the ONLY scopes any injector can read. A row stored with a
-+# scope outside its own category's vocabulary is invisible to every prompt (task T-4),
-+# so the boundary checks membership and not just shape. Tests import these names.
-+GLOBAL_SCOPES: tuple[str, ...] = ("environment", "preferences", "patterns")
-+PROJECT_SCOPES: tuple[str, ...] = ("conventions", "decisions", "gotchas")
-+ROLE_FILES: tuple[str, ...] = ("architect", "worker", "supervisor")
-+# The scope vocabulary for category=role: the role-memory FILE names, i.e. ROLE_FILES
-+# after applying the ROLE_MEMORY_KEY aliases (reviewer -> architect, agent -> worker).
-+# `reviewer`/`agent` are accepted at the boundary as role NAMES and resolved to a file;
-+# they are never scopes of their own. There was no ROLE_SCOPES before T-4, which is why
-+# an out-of-vocabulary check could only ever be written for two of three categories.
-+ROLE_SCOPES: tuple[str, ...] = ROLE_FILES
-+
-+SCOPE_VOCABULARY: dict[str, tuple[str, ...]] = {
-+    MemoryCategory.global_: GLOBAL_SCOPES,
-+    MemoryCategory.project: PROJECT_SCOPES,
-+    MemoryCategory.role: ROLE_SCOPES,
-+}
-+# Deterministic fallback scope used to COERCE a suggestion whose scope is out of
-+# vocabulary. Only global and project have one: a role suggestion with no resolvable
-+# role would land in a file that no injector reads, so it is dropped with a warning.
-+FALLBACK_SCOPE: dict[str, str] = {
-+    MemoryCategory.global_: "environment",
-+    MemoryCategory.project: "gotchas",
-+}
  
- # Which project scopes each role receives.
- ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
-@@ -41,12 +65,49 @@ ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
- }
- # Role memory file used for each role (reviewer shares the architect file).
- ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
-+# Role names accepted for category=role, resolved through ROLE_MEMORY_KEY.
-+ROLE_SCOPE_ALIASES: dict[str, str] = {k.value: v for k, v in ROLE_MEMORY_KEY.items()}
- 
- 
- class MemoryError_(ValueError):
-     pass
- 
- 
+-# Which project scopes each role receives.
+-ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
+-    Role.architect: ("decisions", "conventions"),
+-    Role.reviewer: ("decisions", "conventions"),
+-    Role.worker: ("conventions", "gotchas"),
+-    Role.agent: ("conventions", "gotchas"),
+-    Role.supervisor: ("decisions", "gotchas"),
+-}
+-# Role memory file used for each role (reviewer shares the architect file).
+-ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
 +@dataclass
 +class SuggestionOutcome:
 +    """What the suggestion path stored, and what it refused to store.
@@ -80,11 +84,13 @@ index 4289f85..03da91f 100644
 +        """Just the substitution notes (drops start with 'dropped ')."""
 +        return [n for n in self.notes if not n.startswith("dropped ")]
 +
-+
+ 
 +@dataclass
 +class ScopeRepair:
 +    """Result of `fix_scopes`: rows moved, rows left alone, dead files removed."""
-+
+ 
+-class MemoryError_(ValueError):
+-    pass
 +    moved: list[dict[str, Any]] = field(default_factory=list)
 +    skipped: list[dict[str, Any]] = field(default_factory=list)
 +    removed_files: list[Path] = field(default_factory=list)
@@ -96,71 +102,65 @@ index 4289f85..03da91f 100644
 +    @property
 +    def moved_ids(self) -> list[int]:
 +        return [int(m["id"]) for m in self.moved]
-+
-+
+ 
+ 
  def memory_root() -> Path:
-     root = get_settings().memory_root
-     assert root
-@@ -73,6 +134,178 @@ def _touch(path: Path, header: str) -> None:
+@@ -73,6 +119,67 @@ def _touch(path: Path, header: str) -> None:
          path.write_text(header)
  
  
-+def scope_vocabulary(category: str) -> tuple[str, ...]:
-+    """The injectable scopes for one category, or an error naming them."""
-+    vocab = SCOPE_VOCABULARY.get(category)
-+    if vocab is None:
-+        raise MemoryError_(
-+            f"unknown memory category {category!r}; allowed: global|project|role"
-+        )
-+    return vocab
++def role_file_key(entry: MemoryEntry) -> str | None:
++    """The role-memory file a row maps to, by the rule `for_prompt` and `_file_for` use.
 +
-+
-+def role_memory_file(name: str | None) -> str | None:
-+    """Resolve a role name (including the reviewer/agent aliases) to its memory file.
-+
-+    Returns None when the name cannot reach any role memory file. Dict lookups work with
-+    plain strings because `Role` is a StrEnum, which is how `for_prompt` already matches.
++    Identical to the pre-T-4 resolution — `role`, falling back to `scope`, through
++    `ROLE_MEMORY_KEY` — and deliberately NOT checked against `ROLE_FILES`: a legacy row
++    with a non-file role and a valid scope must keep rendering to (and being judged by) the
++    same file it always did. Task T-4 changes no role-injection semantics; membership is
++    tested by the caller so an uninjectable row is reported instead of re-homed.
 +    """
++    name = entry.role or entry.scope
 +    if not name:
 +        return None
-+    key = ROLE_MEMORY_KEY.get(name, name)
-+    return key if key in ROLE_SCOPES else None
++    return ROLE_MEMORY_KEY.get(name, name)
 +
 +
-+def check_role_name(name: str) -> str:
-+    """Validate a ROLE NAME, or raise an error naming the role vocabulary.
-+
-+    The `role` column — not `scope` — is what `for_prompt` selects on and what `_file_for`
-+    keys the filename off first, so an out-of-vocabulary role is the *more* damaging of the
-+    two: `role='logbook-writer' scope='worker'` renders to `roles/logbook-writer.md`, which
-+    no prompt reads, while looking injectable to a naive scope-only check. This is the single
-+    message used by `_validate` (so create, update and import all refuse the same shape for
-+    the same reason) and by the CLI's `--role`, which is a plain string and would otherwise
-+    be refused by Pydantic's enum with a message that never names the role FILES.
-+    """
-+    if role_memory_file(name) is None:
-+        aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(ROLE_SCOPE_ALIASES.items()))
-+        raise MemoryError_(
-+            f"role name {name!r} cannot be injected; allowed role memory files: "
-+            f"{'|'.join(ROLE_SCOPES)} (role names {aliases} are accepted and resolve to "
-+            f"their file)"
++def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
++    """Which prompt roles would actually read this entry's scope, once approved."""
++    if entry.category == MemoryCategory.global_:
++        if entry.scope not in GLOBAL_SCOPES:
++            return ()
++        return tuple(r.value for r in Role)
++    if entry.category == MemoryCategory.project:
++        if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
++            return ()
++        return tuple(
++            r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
 +        )
-+    return name
++    key = role_file_key(entry)
++    if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
++        return ()
++    return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)
 +
 +
-+def _vocab_error(category: str, scope: str) -> MemoryError_:
-+    vocab = SCOPE_VOCABULARY.get(category, ())
-+    allowed = "|".join(vocab)
-+    if category == MemoryCategory.role:
-+        alias = ", ".join(f"{k} -> {v}" for k, v in sorted(ROLE_SCOPE_ALIASES.items()))
-+        return MemoryError_(
-+            f"role memory scope {scope!r} is not injectable; allowed scopes for role: "
-+            f"{allowed} (role names {alias} are accepted and resolve to their file)"
++def injectability(entry: MemoryEntry) -> tuple[bool, str]:
++    """(ok, reason). reason names the vocabulary that the entry failed."""
++    if entry.category not in SCOPE_VOCABULARY:
++        return False, f"unknown category {entry.category!r}"
++    if entry.category == MemoryCategory.project and not entry.project_slug:
++        return False, "project memory requires project_slug"
++    if reachable_roles(entry):
++        return True, ""
++    if entry.category == MemoryCategory.role:
++        name = entry.role or entry.scope
++        allowed = "|".join(ROLE_SCOPES)
++        if not name:
++            return False, f"role memory needs a role or a scope resolving to one of {allowed}"
++        # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
++        # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
++        # vocabulary it has to resolve into.
++        return False, (
++            f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
++            f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
++            f"(reviewer -> architect, agent -> worker)"
 +        )
-+    return MemoryError_(
-+        f"memory scope {scope!r} is not injectable; allowed scopes for {category}: {allowed}"
-+    )
-+
-+
-+def normalize_scope(category: str, scope: str) -> str:
-DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 1/6
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 1/5

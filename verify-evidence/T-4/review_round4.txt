@@ -1,0 +1,195 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# REVIEW ROUND 4 - the operator's items 1-4, each MEASURED on THIS worktree's code in
+# a throwaway ORCHESTRATOR_HOME (round4_demo.py, committed on this branch). No network,
+# no API keys, the live home is never opened. ITEM 3's mutations are runtime patches of
+# that process only (m.render_file / m.gc_orphan_files): no committed file is edited.
+# ITEM 1 prints the very list the handoff's files_changed is generated from, and checks
+# each path against 100644 blob 228b052a6e1f41bf1e93501c856334cf2ae491ce	.env.example
+100644 blob 82a6d771643656fdfef8c6451ecc15372b4b5105	.gitignore
+100644 blob 531bbc7e6fcf132a97eff924434abb8d6c835b29	Makefile
+100644 blob 29f4b6cb639b32d7c8c12b44ca351c780808a4bd	README.md
+100644 blob 1e0e1a8e465f88a9c49831e982ad85cba1360713	alembic.ini
+040000 tree ab4590e82df38a03164ac7b87565ee0010ad05a7	docs
+040000 tree 86464c746d2d8cd498e27298e863a790448d6d19	examples
+100644 blob 56a357ad610f5247403c6338ca65807e6e045917	justfile
+100644 blob ce8c3538790d2b00c6149e8a3ce648790b5b103d	pyproject.toml
+040000 tree 6ec706c156fd4004c8da18b112b5654febea9ef1	scripts
+040000 tree be038ad8d6dcea2e24fe94ae3232920dcef3b979	src
+040000 tree 3b173246dfd525c2e8bfed3a971b92a2c346f11c	supabase
+040000 tree bffa6b1fd1ca3060789f7384f7a54e1716de4426	tests
+100644 blob a066747da732b2011fbf5c46c2e5774ea82e413d	uv.lock
+040000 tree d656226e77e3e7c5a805b32c9e1c7fbd9dd5c6e4	verify-evidence
+040000 tree dc6d7a71ece562064fbbb705b4c856126f42a4b8	web; ITEM 2 prints the rejection text at POST/PATCH,
+# MemoryCreate and the CLI for all three vocabularies; ITEM 4 prints this HEAD.
+# A non-zero ROUND4_EXIT means one of the demo's own claims stopped being true.
+# command: ORCHESTRATOR_HOME=$TMP/home4 PYTHONPATH=$WT/src $MAIN/.venv/bin/python verify-evidence/T-4/round4_demo.py
+ITEM 1 - files_changed = paths ON THE BRANCH (git diff --name-only <base>..HEAD)
+  base db00112 -> HEAD fcff05d74326127fd14842cc03cad21dfb234a91: 76 changed paths
+  [PASS] every changed path exists in HEAD's tree :: 76/76
+  [PASS] no gitignored path (.orchestrator/**, *.log) is in the branch diff :: []
+  `.orchestrator/handoff.json` is ignored by: .gitignore:28:.orchestrator/	.orchestrator/handoff.json
+  -> the handoff's files_changed is GENERATED from this list, never typed by hand:
+     README.md
+     docs/decisions.md
+     docs/memory.md
+     src/orchestrator/api/routes/memory.py
+     src/orchestrator/cli.py
+     src/orchestrator/core/memory_vocab.py
+     src/orchestrator/core/schemas.py
+     src/orchestrator/services/chat_service.py
+     src/orchestrator/services/memory_service.py
+     src/orchestrator/services/run_service.py
+     tests/integration/test_memory_scope_boundary.py
+     tests/unit/test_memory_scopes.py
+     verify-evidence/T-4/README.md
+     verify-evidence/T-4/capture.sh
+     verify-evidence/T-4/checks.txt
+     verify-evidence/T-4/diff_README.md.part1.txt
+     verify-evidence/T-4/diff_docs_decisions.md.part1.txt
+     verify-evidence/T-4/diff_docs_memory.md.part1.txt
+     verify-evidence/T-4/diff_src_orchestrator_api_routes_memory.py.part1.txt
+     verify-evidence/T-4/diff_src_orchestrator_cli.py.part1.txt
+     verify-evidence/T-4/diff_src_orchestrator_cli.py.part2.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_chat_service.py.part1.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part1.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part2.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part3.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part4.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part5.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.part6.txt
+     verify-evidence/T-4/diff_src_orchestrator_services_run_service.py.part1.txt
+     verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part1.txt
+     verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part2.txt
+     verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.part3.txt
+     verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part1.txt
+     verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part2.txt
+     verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part3.txt
+     verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part4.txt
+     verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.part5.txt
+     verify-evidence/T-4/final_rerun.txt
+     verify-evidence/T-4/full_suite.txt
+     verify-evidence/T-4/handoff_round2.json
+     verify-evidence/T-4/handoff_round2.md
+     verify-evidence/T-4/handoff_round3.json
+     verify-evidence/T-4/handoff_round3.md
+     verify-evidence/T-4/live_home_readonly.txt
+     verify-evidence/T-4/manifest.txt
+     verify-evidence/T-4/memory_scope_tests.txt
+     verify-evidence/T-4/review_round2.txt
+     verify-evidence/T-4/review_round3.txt
+     verify-evidence/T-4/round4_demo.py
+     verify-evidence/T-4/slice_cli__gc_only_branch.txt
+     verify-evidence/T-4/slice_cli__memory_add.txt
+     verify-evidence/T-4/slice_cli__memory_fix_scopes.txt
+     verify-evidence/T-4/slice_cli__memory_list.txt
+     verify-evidence/T-4/slice_cli__print_injectability.txt
+     verify-evidence/T-4/slice_memory_service___renderer_output.txt
+     verify-evidence/T-4/slice_memory_service__check_role_name.txt
+     verify-evidence/T-4/slice_memory_service__coerce_scope.txt
+     verify-evidence/T-4/slice_memory_service__create.txt
+     verify-evidence/T-4/slice_memory_service__fix_scopes.txt
+     verify-evidence/T-4/slice_memory_service__gc_orphan_files.txt
+     verify-evidence/T-4/slice_memory_service__import_all.txt
+     verify-evidence/T-4/slice_memory_service__injectability.txt
+     verify-evidence/T-4/slice_memory_service__normalize_scope.txt
+     verify-evidence/T-4/slice_memory_service__orphan_files.txt
+     verify-evidence/T-4/slice_memory_service__reachable_roles.txt
+     verify-evidence/T-4/slice_memory_service__role_memory_file.txt
+     verify-evidence/T-4/slice_memory_service__update.txt
+     verify-evidence/T-4/slice_memory_service__validate.txt
+     verify-evidence/T-4/slice_memory_service__vocabularies.txt
+     verify-evidence/T-4/slice_run_service__store_memory_suggestions.txt
+     verify-evidence/T-4/slice_tests_integration__gc_only_honesty.txt
+     verify-evidence/T-4/slice_tests_unit__coercion_and_log.txt
+     verify-evidence/T-4/slice_tests_unit__list_marker.txt
+     verify-evidence/T-4/slice_tests_unit__repair_and_gc.txt
+     verify-evidence/T-4/slice_tests_unit__role_column_boundary.txt
+     verify-evidence/T-4/slices_index.txt
+
+ITEM 2 - the rejection TEXT at every boundary names the allowed values
+  (a) POST /api/memory with an out-of-vocabulary SCOPE, one case per category
+    global: 400 :: memory scope 'global-environment-verifying-orchestrator-change' is not injectable; allowed scopes for global: environment|preferences|patterns
+  [PASS] POST global names environment|preferences|patterns
+  [PASS] POST global names the refused value
+  [PASS] POST global keeps the frozen error shape :: ['detail', 'error']
+    project: 400 :: memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  [PASS] POST project names conventions|decisions|gotchas
+  [PASS] POST project names the refused value
+  [PASS] POST project keeps the frozen error shape :: ['detail', 'error']
+    role: 400 :: role memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+  [PASS] POST role names architect|worker|supervisor
+  [PASS] POST role names the refused value
+  [PASS] POST role keeps the frozen error shape :: ['detail', 'error']
+  (b) POST /api/memory with an unreadable ROLE COLUMN (R-27 finding 5: the message
+      was never asserted). The 422 must carry the role FILES, not just a code.
+    status 422, body keys ['detail', 'error']
+    detail[0][msg]: Value error, role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+  [PASS] the 422 names the vocabulary as architect|worker|supervisor
+  [PASS] the 422 says 'allowed role memory files' (FILES, not enum values)
+  [PASS] the 422 spells out both aliases
+  [PASS] the 422 names the refused value
+    for contrast, what Pydantic's enum ALONE answers - the message DoD 2 refuses:
+      enum-only msg: Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'
+  [PASS] the enum-only message does NOT contain the joined vocabulary, so the assertion above is load-bearing and not satisfiable by the enum text
+    the ACCEPTED set is unchanged: all five Role members still POST, aliases incl.
+      role=architect   -> 201 stored scope=architect
+  [PASS] POST accepts role=architect
+      role=worker      -> 201 stored scope=worker
+  [PASS] POST accepts role=worker
+      role=supervisor  -> 201 stored scope=supervisor
+  [PASS] POST accepts role=supervisor
+      role=reviewer    -> 201 stored scope=architect
+  [PASS] POST accepts role=reviewer
+      role=agent       -> 201 stored scope=worker
+  [PASS] POST accepts role=agent
+  [PASS] nothing was stored under the refused role name
+  [PASS] no dead role file was rendered
+  (c) the request model itself, with no HTTP in the picture
+  [PASS] MemoryCreate's message names the vocabulary and the FILES :: 1 validation error for MemoryCreate Value error, role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role nam
+  [PASS] check_role_name passes every role name that resolves to a memory file
+  (d) CLI `memory add`, one case per category, asserted on the words it prints
+    global: exit 1 :: error: memory scope 'global-environment-verifying-orchestrator-change' is not injectable; allowed scopes for global: environment|preferences|patterns
+  [PASS] CLI global names environment|preferences|patterns
+    project: exit 1 :: error: memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  [PASS] CLI project names conventions|decisions|gotchas
+    role: exit 1 :: error: role memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -
+  [PASS] CLI role names architect|worker|supervisor
+    --role: exit 1 :: error: role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role names agent -> worker, reviewer -> 
+  [PASS] CLI --role names the role files
+
+ITEM 3 - the repair: one assertion per outcome, and what the old disjunction proved
+  CASE A - gc=False. The dead file SURVIVES, so its content can be judged.
+    before: projects/case-a/case-a.md holds '# case-a\n\n- The repo is reachable directly on this host.  <!-- mem:8 -->\n'
+    moved : [(8, 'case-a', 'gotchas')]
+  [PASS] A1 the old file is still on disk (gc=False deleted nothing)
+  [PASS] A2 the old file was RE-RENDERED to exactly the renderer's empty output :: '# case-a\n'
+  [PASS] A3 nothing at all was reported as deleted :: []
+  [PASS] A4 the dead file is still REPORTED, so --no-gc cannot hide it
+  [PASS] A5 the new file holds both lines in id order :: '# gotchas\n\n- The repo is reachable directly on this host.  <!-- mem:8 -->\n- Keep this line.  <!-- mem:9 -->\n'
+  MUTATION 1 - keep the deletion, drop the old file's re-render.
+    the R-27 disjunctive assertion (`not exists or marker gone`) : PASSES  <- it cannot tell deletion from re-render
+    CASE A's exact-text assertion, same mutation with gc=False   : FAILS as it must
+  [PASS] the mutation slips past the OLD disjunction and is caught by CASE A's shape
+    with gc=False the same mutation leaves the stale line ON DISK : yes, so CASE A fails on it
+  [PASS] a no-re-render mutant leaves exactly the stale line CASE A forbids
+  CASE B - gc on (the CLI default). The dead file is GONE. The other single outcome.
+    orphans before: []
+  [PASS] B1 the old file no longer exists
+  [PASS] B2 removed_files names exactly that file and nothing else :: [PosixPath('/tmp/t4-evidence.5DyXK9/home4/memory/projects/case-b/case-b.md')]
+  [PASS] B3 the moved row's line lives in the file an injector reads :: '# gotchas\n\n- A fact worth keeping.  <!-- mem:12 -->\n'
+  [PASS] B4 a run reports no ghost files when the GC did its job
+  MUTATION 2 - disable the collector: CASE B's assertion fails, CASE A's still holds.
+    removed_files under the mutation: [] (the assertion `== [old file]` therefore fails)
+  [PASS] the collector mutation is caught by CASE B's assertion
+  [PASS] and the file is really still on disk, so any claim of deletion would be a lie
+  [PASS] CASE A's own outcome (re-render) is unaffected by the collector mutation :: '# mutant-two\n'
+
+ITEM 4 - one HEAD, one stamp
+  HEAD                : fcff05d74326127fd14842cc03cad21dfb234a91
+  branch              : task-4-memory-suggestions-accept-unvalidated-scopes-cre
+  dirty entries at capture: 0 []
+  full_suite.txt, checks.txt, memory_scope_tests.txt, review_round4.txt and this demo
+  all begin with the same `# HEAD=` line, so every count is attributable to one tree.
+
+SUMMARY: ALL CHECKS HELD
+ROUND4_EXIT=0
