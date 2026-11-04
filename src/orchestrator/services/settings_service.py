@@ -25,11 +25,24 @@ EDITABLE: dict[str, type] = {
     "max_review_rounds": int,
     # T-12: separate cap on every adapter attempt, not just runs that reach the gate.
     "max_run_attempts_per_task": int,
+    # Memory injection budgets (tokens, ~4 chars each). Memory is a static prompt section,
+    # so it can never be trimmed by the prompt budget; these caps are enforced in
+    # memory_service.select_for_prompt. 0 disables the cap for that section.
+    "memory_budget_enabled": bool,
+    "max_memory_tokens_global": int,
+    "max_memory_tokens_role": int,
+    "max_memory_tokens_project": int,
     "theme": str,
     # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code
     # defaults in adapter_service.DEFAULT_HARNESS_ROUTES.
     "harness_routing": dict,
 }
+
+
+# Settings where 0 is a meaningful value (it disables the cap), not an error.
+ALLOW_ZERO = frozenset(
+    {"max_memory_tokens_global", "max_memory_tokens_role", "max_memory_tokens_project"}
+)
 
 
 def defaults() -> dict[str, Any]:
@@ -49,6 +62,10 @@ def defaults() -> dict[str, Any]:
         "supabase_sync_interval_seconds": s.supabase_sync_interval_seconds,
         "max_review_rounds": 3,
         "max_run_attempts_per_task": 6,
+        "memory_budget_enabled": s.memory_budget_enabled,
+        "max_memory_tokens_global": s.max_memory_tokens_global,
+        "max_memory_tokens_role": s.max_memory_tokens_role,
+        "max_memory_tokens_project": s.max_memory_tokens_project,
         "theme": "dark",
         "harness_routing": {},
     }
@@ -87,8 +104,11 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
         typ = EDITABLE[key]
         if typ is bool and not isinstance(val, bool):
             raise ValueError(f"{key} must be a boolean")
-        if typ is int and (not isinstance(val, int) or isinstance(val, bool) or val < 1):
-            raise ValueError(f"{key} must be a positive integer")
+        if typ is int and (not isinstance(val, int) or isinstance(val, bool)):
+            raise ValueError(f"{key} must be an integer")
+        if typ is int and val < (0 if key in ALLOW_ZERO else 1):
+            lo = "0 (no cap) or a positive" if key in ALLOW_ZERO else "a positive"
+            raise ValueError(f"{key} must be {lo} integer")
         if key == "supabase_sync_interval_seconds" and not 15 <= val <= 86400:
             raise ValueError(f"{key} must be between 15 and 86400 seconds")
         if typ is str and not isinstance(val, str):

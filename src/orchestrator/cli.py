@@ -282,7 +282,7 @@ def prompt_preview(
         t = task_service.get(s, task) if task else None
         p = s.get(Project, t.project_id) if t and t.project_id else None
         built = prompt_builder.build_prompt(s, role, t, p)
-        report = prompt_builder.preview(built.sections)
+        report = prompt_builder.preview(built.sections, built)
     if as_json:
         _print_json(report)
         return
@@ -447,9 +447,7 @@ def project_doctor(
 
     _ensure_ready()
     with _session() as s:
-        checks = project_service.doctor(
-            project_service.get(s, project), run_commands=run_commands
-        )
+        checks = project_service.doctor(project_service.get(s, project), run_commands=run_commands)
     bad = 0
     for c in checks:
         bad += 0 if c["ok"] else 1
@@ -1199,6 +1197,163 @@ def memory_fix_scopes(
             else ""
         )
         + (" (dry run, nothing written)" if dry_run else "")
+    )
+
+
+_ACTION_STYLE = {
+    "approve": "green",
+    "merge": "cyan",
+    "amend": "cyan",
+    "split": "yellow",
+    "rewrite-durable": "yellow",
+    "verify-claims": "magenta",
+    "fix-stale": "red",
+    "reject": "red",
+}
+
+
+@memory_app.command("triage")
+@handled
+def memory_triage(
+    status: str = typer.Option("pending", help="pending|approved|rejected"),
+    project: str = typer.Option(None, help="Filter to one project slug."),
+    role: str = typer.Option("worker", help="Role whose injection budget prices the queue."),
+    action: str = typer.Option(None, "--action", help="Only show rows with this suggested action."),
+    show_all: bool = typer.Option(False, "--all", help="Include unflagged 'approve' rows."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Report-only memory triage: rot flags, staleness claims, merge/amend groups, token cost.
+
+    It never writes. Approve, reject, update and the GUI stay the only paths that change what
+    is injected, so the gate stays human.
+    """
+    from orchestrator.services import memory_triage as mt
+
+    _ensure_ready()
+    with _session() as s:
+        report = mt.triage(s, status=status, project_slug=project, role=role)
+    if as_json:
+        _print_json(report)
+        return
+
+    rows = report["rows"]
+    if action:
+        rows = [r for r in rows if r["suggested_action"] == action]
+    elif not show_all:
+        rows = [r for r in rows if r["suggested_action"] != "approve"]
+
+    table = Table("id", "bucket", "~tok", "action", "flags / grouping / why", title="memory triage")
+    for r in rows:
+        flags = ", ".join(f["code"] for f in r["flags"]) or "-"
+        extra = []
+        if r["duplicates_of"]:
+            extra.append("same as " + ",".join(f"#{i}" for i in r["duplicates_of"]))
+        if r["amend_candidates"]:
+            extra.append("amend " + ",".join(f"#{a['id']}" for a in r["amend_candidates"]))
+        hard = [f["detail"] for f in r["flags"] if f["code"] != "repo-unavailable"]
+        table.add_row(
+            str(r["id"]),
+            f"{r['category']}/{r['scope']}",
+            str(r["tokens"]),
+            f"[{_ACTION_STYLE.get(r['suggested_action'], 'white')}]{r['suggested_action']}[/]",
+            "\n".join(
+                filter(
+                    None,
+                    [
+                        flags,
+                        " | ".join(extra) if extra else "",
+                        f"[dim]{'; '.join(hard)[:200] or r['reason']}[/dim]",
+                    ],
+                )
+            ),
+        )
+    console.print(table)
+
+    t = report["totals"]
+    counts = "  ".join(f"{a}:{n}" for a, n in t["by_action"].items() if n)
+    console.print(
+        f"\n[bold]{t['entries']} {report['status']} entries ≈{t['tokens']} tokens[/bold]  {counts}"
+    )
+    if t["merge_groups"]:
+        console.print(
+            "duplicate groups: "
+            + "  ".join("(" + ",".join(f"#{i}" for i in g) + ")" for g in t["merge_groups"])
+        )
+    if report["excluded_now"]:
+        console.print(
+            "[red]approved but NOT injected (over budget):[/red] "
+            + ", ".join(
+                f"#{x['id']} ({x['bucket']}/{x['scope']} ~{x['tokens']}tok)"
+                for x in report["excluded_now"]
+            )
+        )
+    b = report["budgets"]
+    for w in report["warnings"]:
+        console.print(f"[yellow]warning:[/yellow] {w}")
+    if report["budget_enabled"]:
+        used = report["current_usage"]
+        head = report["headroom"]
+        usage = "  ".join(
+            f"{k}: {used.get(k, 0)}/{b[k]} tok ({round((head.get(k) or 0) * 100)}%)"
+            for k in ("global", "role", "project")
+        )
+        console.print(f"section caps  {usage}")
+    else:
+        console.print(
+            "memory budget disabled (ORCHESTRATOR_MEMORY_BUDGET_ENABLED=false): "
+            "every approved entry injects"
+        )
+    console.print("\n[bold]if the whole queue were approved:[/bold]")
+    for rl, p in report["projection"].items():
+        console.print(
+            f"  {rl:<11} memory ≈{p['total_now']} → ≈{p['total_after']} tokens"
+            + (
+                f"   demoted by cap: {', '.join(f'#{i}' for i in p['excluded_after'])}"
+                if p["excluded_after"]
+                else ""
+            )
+        )
+
+
+@memory_app.command("budget")
+@handled
+def memory_budget(
+    project: str = typer.Option(None, help="Project slug to price."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Static cost of injected memory per role, and what is demoted by the caps."""
+    from orchestrator.services import memory_triage as mt
+
+    _ensure_ready()
+    with _session() as s:
+        rep = mt.budget_report(s, project)
+    if as_json:
+        _print_json(rep)
+        return
+    table = Table("role", "global", "role", "project", "total", "cap use", "demoted by cap")
+    for rl, p in rep["roles"].items():
+        sec = p["sections_now"]
+        head = p["headroom"]
+        table.add_row(
+            rl,
+            str(sec.get("global", 0)),
+            str(sec.get("role", 0)),
+            str(sec.get("project", 0)),
+            str(p["total_now"]),
+            " ".join(
+                f"{k[:4]}:{round((head.get(k) or 0) * 100)}%" for k in ("global", "role", "project")
+            ),
+            ",".join(f"#{i}" for i in p["excluded_now"]) or "-",
+        )
+    console.print(table)
+    for rl, p in rep["roles"].items():
+        for w in p["warnings"]:
+            console.print(f"[yellow]{rl}: {w}[/yellow]")
+    b = rep["budgets"]
+    console.print(
+        f"caps: global {b['global']}  role {b['role']}  project {b['project']} "
+        f"(enabled={rep['budget_enabled']}) | pending {rep['pending_count']} entries "
+        f"≈{rep['pending_tokens']} tokens"
     )
 
 

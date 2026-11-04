@@ -335,3 +335,24 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `partially included` list instead of being reported as simply included; the diff is ordered
   source-first with a per-file floor so code is funded before evidence, and the budget is not
   widened.
+- **2026-11-04 — Memory budgets are enforced in `memory_service.select_for_prompt`, not in
+  `prompt_builder.enforce_budget`.** Memory is a static section, and `enforce_budget`
+  shrinks only dynamic sections (`room = limit - static_tokens`), so a cap applied there
+  could never fire: growth would keep squeezing diff/handoff/verification instead. Caps are
+  per injected section (global 2000 / role 800 / project 4000 tokens). Demotion order is
+  rot-prone first, then oldest — never silently newest-first — and every exclusion is
+  reported as a prompt-preview warning. Selection reads only entry content and ids (no
+  clock, no file access), so the rendered section stays byte-identical across calls and does
+  not churn the cache.
+- **2026-11-04 — Memory duplication is measured with rare-token containment, not a text
+  similarity ratio.** On a single-project corpus every pair shares the domain vocabulary:
+  a bag-of-words ratio called 461 of 595 pending pairs duplicates (>0.72) when the true
+  duplicate count was zero. Words appearing in ≤3 entries, nested at ≥50%, separate
+  "same fact, new wording" from "different fact, same subject".
+- **2026-11-04 — Triage is read-only; the gate stays human.** `orchestrator memory triage`,
+  `orchestrator memory budget`, `GET /api/memory/triage|budget` report flags, groupings,
+  token cost and one suggested action per entry, but approve nothing. Approved memory is
+  injected into every future prompt for a role, so a wrong approve is permanent and a wrong
+  defer costs only a re-suggestion. Live state checks (missing paths, gone branches,
+  `projects.test_command`) are advisory: an unreadable checkout yields "unknown", never
+  "false".

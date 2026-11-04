@@ -186,7 +186,7 @@ def _preview(session: Session, body: PromptPreviewRequest) -> dict[str, Any]:
     elif body.project_slug:
         project = project_service.get(session, body.project_slug)
     built = prompt_builder.build_prompt(session, body.role, task, project)
-    return prompt_builder.preview(built.sections)
+    return prompt_builder.preview(built.sections, built)
 
 
 @router.post("/prompt-preview", dependencies=AUTH)

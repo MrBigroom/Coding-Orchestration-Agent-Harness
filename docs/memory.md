@@ -154,6 +154,68 @@ right file but is not injected; `create` can no longer produce that shape (`_val
 fills `role` from `scope`), and `memory fix-scopes` reports role rows instead of guessing
 a role for them.
 
+## Injection budget
+
+Memory is a **static** prompt section, so `prompt_builder.enforce_budget` can never trim it:
+uncapped growth squeezes the dynamic evidence (diff, handoff, verification) instead. Each
+injected section therefore has its own cap, enforced in `memory_service.select_for_prompt`:
+
+| Section | Cap setting | Default | Env |
+|---|---|---|---|
+| global | `max_memory_tokens_global` | 2000 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_GLOBAL` |
+| role | `max_memory_tokens_role` | 800 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_ROLE` |
+| project | `max_memory_tokens_project` | 4000 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT` |
+
+`memory_budget_enabled=false` (env or `PATCH /api/settings`) restores inject-everything; a
+cap of `0` disables that one section. `memory_budget_warn_fraction` (default `0.8`, env-only)
+warns before anything is dropped.
+
+Demotion rule, stated so it is reviewable: if a section fits, every approved entry is
+injected. If it does not, entries are demoted **rot-prone first (names a task/round/commit),
+then oldest first** — the newest durable entries are never the ones silently dropped.
+Demotion is reporting, not deletion: the row stays approved in SQLite and is simply left out
+of the render. Every exclusion surfaces as a warning in prompt preview
+(`orchestrator prompt-preview`, the GUI Prompt Cache page) and in `orchestrator memory budget`.
+
+Selection depends on entry content and ids only — no clock, no file access — so a rendered
+section stays byte-identical between calls and does not churn the prompt cache.
+
+## Triage (read-only)
+
+```bash
+orchestrator memory triage                      # pending queue, flagged and priced
+orchestrator memory triage --status approved    # audit what is already injected
+orchestrator memory triage --action merge --json
+orchestrator memory budget --project myapp      # caps, usage, headroom, demotions
+```
+
+API: `GET /api/memory/triage` and `GET /api/memory/budget`. Both are additive, read-only, and
+approve nothing.
+
+Flags per entry:
+
+| Flag | Meaning |
+|---|---|
+| `task_shape`, `bare_sha`, `forward_looking` | true only while the referenced task is open |
+| `absolute_date`, `relative_time` | date- or "currently"-anchored; unverifiable later |
+| `multi_fact` | several facts in one bullet; cannot be retracted singly |
+| `imperative` | instruction-shaped text (memory is injected into every future prompt) |
+| `missing-path` | a named repository file is not in the project checkout |
+| `stale-branch-claim`, `stale-merge-claim` | the branch it describes is gone or merged |
+| `contradicts-live-config` | claims, e.g., no test command while `projects.test_command` is set |
+| `unknown-project` | `project_slug` matches no registered project |
+
+Groupings: a **duplicate group** is two pending rows whose rare content words overlap by
+≥50%; **amend candidates** are approved rows sharing ≥2 code entities. Duplication is
+measured with rare-token containment, never a whole-text ratio — on a single-project corpus
+every pair shares the domain vocabulary (measured: 461 of 595 pending pairs above 0.72 while
+the true duplicate count was zero), so ratio dedup collapses unrelated entries.
+
+Suggested actions (advisory, one per entry): `fix-stale`, `rewrite-durable`, `merge`,
+`amend`, `split`, `verify-claims`, `approve`. Triage never writes: approving and rejecting
+stay explicit (`memory approve|reject`, the GUI, `POST /api/memory/{id}/approve`), so the
+gate remains human by construction.
+
 ## Approval workflow
 
 1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
@@ -181,4 +243,4 @@ API: `GET /api/memory/export`, `POST /api/memory/import`. The export format is
 
 Memory sits inside the static, cached prefix (sections 2–4). Any approval or edit changes
 that prefix, which is fine at phase boundaries. Avoid changing memory while a phase is in
-its review loop.
+its review loop. Caps and demotions change the prefix too, so trim memory in one batch at a phase boundary rather than entry by entry — every edit costs a cache miss on the next run.

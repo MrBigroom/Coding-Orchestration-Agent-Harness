@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from orchestrator.api.dependencies import AUTH, SessionDep
 from orchestrator.core.schemas import MemoryCreate, MemoryUpdate
-from orchestrator.services import memory_service
+from orchestrator.services import memory_service, memory_triage
 
 router = APIRouter(dependencies=AUTH)
 
@@ -58,6 +58,26 @@ def search_memory(
     q: str = Query(..., min_length=1), session: Session = SessionDep
 ) -> list[dict[str, Any]]:
     return [dump(e) for e in memory_service.search(session, q)]
+
+
+@router.get("/memory/triage")
+def triage_memory(
+    status: str = Query("pending", pattern="^(approved|pending|rejected)$"),
+    project: str | None = None,
+    role: str = Query("worker", pattern="^(architect|supervisor|worker|reviewer|agent)$"),
+    session: Session = SessionDep,
+) -> dict[str, Any]:
+    """Read-only triage report: rot flags, live staleness claims, merge/amend groups, cost.
+
+    Additive and non-mutating; approving and rejecting stay separate explicit calls.
+    """
+    return memory_triage.triage(session, status=status, project_slug=project, role=role)
+
+
+@router.get("/memory/budget")
+def memory_budget(project: str | None = None, session: Session = SessionDep) -> dict[str, Any]:
+    """Static cost of injected memory per role, caps, and what the caps demote."""
+    return memory_triage.budget_report(session, project)
 
 
 @router.get("/memory/export")

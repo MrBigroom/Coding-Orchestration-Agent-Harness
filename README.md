@@ -11,7 +11,9 @@ not chat**: phase branches in isolated git worktrees, `handoff.json`, `review.js
   dependency-free fallback UI)
 - Mock provider and mock harness, so the whole loop runs with **no API keys and no network**
 - Prompt construction ordered for prompt caching, plus a cache preview (CLI and GUI)
-- Persistent, role-aware shared memory with an approval workflow
+- Persistent, role-aware shared memory with an approval workflow, per-section token
+  budgets (memory is static, so it otherwise squeezes the evidence), and read-only
+  `orchestrator memory triage` / `memory budget` reporting for rot, staleness and merges
 - Binds to `127.0.0.1`, no telemetry, no Docker, Redis, or Postgres
 
 The full product spec is in [`docs/product-spec.md`](docs/product-spec.md).

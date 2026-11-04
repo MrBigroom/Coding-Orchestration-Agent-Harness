@@ -546,7 +546,10 @@ def build_prompt(
 ) -> BuiltPrompt:
     state = state or DynamicState()
     recorder = TruncationRecorder()
-    mem = memory_service.for_prompt(session, role, project.slug if project else None)
+    # Budgeted selection: memory is a static section, so the cap is enforced here rather
+    # than by enforce_budget, which can only shrink dynamic content.
+    selection = memory_service.select_for_prompt(session, role, project.slug if project else None)
+    mem = selection.sections
 
     def sec(name: str, content: str) -> PromptSection:
         return PromptSection(
@@ -572,7 +575,12 @@ def build_prompt(
         ),
         sec("dynamic_state", _dynamic(state, recorder)),
     ]
-    prompt = BuiltPrompt(role=role, sections=sections)
+    prompt = BuiltPrompt(
+        role=role,
+        sections=sections,
+        memory_exclusions=selection.excluded,
+        memory_warnings=selection.warnings,
+    )
     prompt = enforce_budget(prompt, recorder)
     prompt.truncations = [r.as_dict() for r in recorder.records]
     return prompt
@@ -610,9 +618,16 @@ def enforce_budget(prompt: BuiltPrompt, recorder: TruncationRecorder | None = No
 # ---------------------------------------------------------------- preview
 
 
-def preview(sections: list[PromptSection]) -> dict[str, Any]:
+def preview(sections: list[PromptSection], prompt: BuiltPrompt | None = None) -> dict[str, Any]:
     rows = []
     warnings: list[str] = []
+    for warning in prompt.memory_warnings if prompt else []:
+        warnings.append(warning)
+    for exc in prompt.memory_exclusions if prompt else []:
+        warnings.append(
+            f"memory #{exc['id']} ({exc['bucket']}/{exc['scope']}, ~{exc['tokens']} tok) "
+            f"is approved but NOT injected: {exc['reason']}"
+        )
     seen_dynamic: str | None = None
     for idx, s in enumerate(sections):
         tokens = estimate_tokens(s.content)
