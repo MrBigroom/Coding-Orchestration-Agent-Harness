@@ -439,8 +439,15 @@ def _suggest(
     amends: list[dict[str, Any]],
     tokens: int,
     budget_left: int,
+    status: str = "pending",
 ) -> tuple[str, str]:
-    """One suggested action + reason. Advisory only; the operator decides."""
+    """One suggested action + reason. Advisory only; the operator decides.
+
+    The budget branch answers a question about a row that has NOT been approved yet ("would
+    this fit?"). Approved rows are already injected or already demoted, and that fact is
+    reported by `warnings` and `excluded`, so applying it there would mislabel a full
+    section as four unrelated rows each needing a merge.
+    """
     codes = {f["code"] for f in flags}
     if codes & _HARD_STALE:
         return (
@@ -467,13 +474,13 @@ def _suggest(
     if "missing-path" in codes:
         missing = [f["detail"] for f in flags if f["code"] == "missing-path"]
         return "verify-claims", "; ".join(missing[:2])
-    if {"absolute_date", "relative_time"} & codes:
-        return "rewrite-durable", "date/relative-time anchored; state the rule, not the day"
-    if budget_left - tokens < 0:
+    if status == "pending" and budget_left - tokens < 0:
         return (
             "merge",
             f"no room in the section budget ({budget_left} tok left, entry costs {tokens})",
         )
+    if {"absolute_date", "relative_time"} & codes:
+        return "rewrite-durable", "date/relative-time anchored; state the rule, not the day"
     return "approve", "no flags and it fits the section budget"
 
 
@@ -504,7 +511,7 @@ def triage(
         bucket = e.category if e.category in ("global", "role") else "project"
         dups = group_of.get(e.id or 0, [])
         amends = [] if dups else related_approved(session, e)
-        action, reason = _suggest(flags, dups, amends, tokens, left.get(bucket, 0))
+        action, reason = _suggest(flags, dups, amends, tokens, left.get(bucket, 0), status)
         rows.append(
             {
                 "id": e.id,
