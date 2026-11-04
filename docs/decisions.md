@@ -222,3 +222,22 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   those chunks. Tokens carry both theme colors, so switching light and dark needs no
   re-highlighting. Blocks over 150k characters or 3,000 lines stay plain. The Chat Changes
   panel now returns the diff itself, untracked files included.
+
+- **2026-11-04 — Memory scopes are a closed vocabulary, checked at every boundary (T-4).**
+  Suggestions used to store whatever scope a Worker proposed, so entries #5, #22 and #24
+  were approved or pending with scopes like `ai-livestreaming-avatar` and
+  `global-environment-verifying-orchestrator-change` that no injector can read: `for_prompt`
+  filters project memory through `ROLE_PROJECT_SCOPES` and role memory through `ROLE_FILES`,
+  and there was no `ROLE_SCOPES` to check the role category against at all. We chose to keep
+  the fact instead of the label: a `project`/`global` suggestion is coerced deterministically
+  (a vocabulary word inside the proposed scope, else `gotchas`/`environment`) and `role`
+  suggestions that resolve to no role file are dropped with a warning, because guessing a
+  role would file a note under the wrong agent. Every substitution and drop is a build-log
+  event, never a silent `continue`. `create`/`update` — the API's POST and PATCH and the CLI
+  — now reject an out-of-vocabulary scope for all three categories, naming the allowed values.
+  Repair is part of the fix and moves rows, never deletes them: `orchestrator memory
+  fix-scopes` re-renders both the old and the new file and collects rendered files with no
+  owning entry, since a hand re-scope had left a title-only
+  `memory/projects/<slug>/<slug>.md` ghost in the tree. `orchestrator memory list` marks the
+  defect (an entry's own category can never reach its scope) so the next occurrence is
+  visible the day it lands rather than months later.

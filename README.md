@@ -178,7 +178,13 @@ yourself, run `scripts/harness-bench/bench.sh`.
 
 Memory lives in SQLite (`memory_entries`) and is rendered to markdown under
 `$ORCHESTRATOR_HOME/memory/{global,projects/<slug>,roles}/`. Workers and Architects
-*suggest* entries via `memory_suggestions` in their JSON. Suggestions start **pending**,
+*suggest* entries via `memory_suggestions` in their JSON. A suggestion's scope is checked
+against the closed vocabulary (`environment|preferences|patterns`,
+`conventions|decisions|gotchas`, `architect|worker|supervisor`): a project/global scope
+that is not in it is coerced to a deterministic one and the substitution is written to the
+build log, a role suggestion that resolves to no role file is dropped with a warning, and
+`orchestrator memory list` / `memory fix-scopes` mark and repair rows stored before that
+check existed. Suggestions start **pending**,
 and only **approved** entries are injected into prompts. Each role gets its own slice:
 the Architect gets decisions + conventions, the Worker conventions + gotchas, the
 Supervisor decisions + gotchas, and every role gets global memory. See
