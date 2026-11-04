@@ -99,24 +99,16 @@ Settings are editable in the GUI or with `PATCH /api/settings`, stored in SQLite
 through `settings_service`. Defaults come from the environment where noted; the rest are
 code defaults.
 
+The two loop limits are:
+
 | Key | Default | Meaning |
 |---|---|---|
-| `merge_enabled` | `false` | Allow `--no-ff` merges of accepted phase branches |
-| `auto_merge_enabled` | `false` | Auto-merge after APPROVED + verification (needs `merge_enabled`) |
-| `supervisor_microfixes_enabled` | `false` | Stored policy flag; no micro-fix executor exists |
-| `max_parallel_runs` | `2` | Global concurrent runs |
-| `max_parallel_runs_per_project` | `1` | Concurrent runs per project |
-| `scheduler_enabled` | `true` | Cron runner (applies on restart) |
-| `worker_enabled` | `true` | Background queue worker |
-| `allow_gui_commands` | `false` | Allow configured project test/lint/build commands from the GUI |
-| `allow_interactive_sessions` | `false` | Allow chat sessions with shell access |
-| `allow_unattended_sessions` | `false` | Allow standalone agent runs with nobody watching |
-| `supabase_sync_enabled` | `false` | Automatic Supabase synchronization |
-| `supabase_sync_interval_seconds` | `60` | Sync interval (15–86400) |
 | `max_review_rounds` | `3` | **Verified rounds** before `blocked` (runs that reached the gate) |
 | `max_run_attempts_per_task` | `6` | **All attempts** before `blocked`, including timeout/failed/cancelled runs |
-| `theme` | `dark` | Stored value; the React GUI keeps its theme per browser instead |
-| `harness_routing` | `{}` | Model-prefix/profile overrides for harness selection |
+
+The other runtime keys (merge flags, concurrency, scheduler/worker, chat permissions,
+Supabase sync, theme, harness routing) and their defaults are listed in
+[`docs/configuration.md`](docs/configuration.md).
 
 `max_review_rounds` deliberately counts only verified rounds, so it says nothing about a run
 that timed out before submitting. `max_run_attempts_per_task` is the separate bound on paid

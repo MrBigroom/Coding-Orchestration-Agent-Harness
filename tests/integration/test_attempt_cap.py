@@ -50,13 +50,14 @@ def client(initialized):
         yield c
 
 
-def _task(session, project, tags, phase=1):
+def _task(session, project, tags, phase=1, kind="coding"):
     return task_service.create(
         session,
         TaskCreate(
             title="attempt cap phase",
             project_id=project.id,
             tags=list(tags),
+            kind=kind,
             phase_number=phase,
             phase_slug=f"p{phase}",
             definition_of_done=["MOCK_CHANGE.md updated"],
@@ -162,10 +163,16 @@ def test_mixed_sequence_counts_correctly_against_both_limits(session, project, m
 
     assert _run(session, task)["status"] == "timeout"
     assert task.status == "planned"
+    timeout_requeue = _last_task_status(session, task, "in_progress -> planned")
+    assert "previous round submission" in timeout_requeue.details
+    assert "absent (run ended timeout without a usable handoff)" in timeout_requeue.details
 
     _cancel_soon(task.id)
     assert _run(session, task, ["mock-timeout"])["status"] == "cancelled"
     assert task.status == "planned"
+    cancel_requeue = _last_task_status(session, task, "in_progress -> planned")
+    assert "previous round submission" in cancel_requeue.details
+    assert "absent (run ended cancelled without a usable handoff)" in cancel_requeue.details
 
     outcome = _run(session, task, ["mock", "mock-reject"])
     assert outcome["verdict"] == "CHANGES_REQUESTED" and task.status == "queued"
@@ -190,14 +197,108 @@ def test_mixed_sequence_counts_correctly_against_both_limits(session, project, m
         "verified_rounds": 1,
     }
 
-    blocked = _last_task_status(session, task, "-> blocked")
+    blocked = _last_task_status(session, task, "in_progress -> blocked")
     assert "run attempt limit (max_run_attempts_per_task=4)" in blocked.details
     assert (
         "attempts=4 (completed=1, timeout=2, failed=0, cancelled=1); verified rounds=1"
         in blocked.details
     )
+    assert "previous round submission" in blocked.details
+    assert "absent (run ended timeout without a usable handoff)" in blocked.details
     payload = structured_log.parse(_events(session, task, "task_limits_exhausted")[0].details)
     assert payload is not None and payload["limits"] == ["attempts"]
+
+
+def test_cancelled_run_at_the_attempt_limit_blocks_with_its_submission_status(
+    session, project, monkeypatch
+):
+    monkeypatch.setattr(mock_harness, "MOCK_TIMEOUT_SECONDS", 1.0)
+    settings_service.update(session, {"max_review_rounds": 3, "max_run_attempts_per_task": 2})
+    task = _task(session, project, ["mock-timeout"])
+
+    assert _run(session, task)["status"] == "timeout"
+    assert task.status == "planned"
+
+    _cancel_soon(task.id)
+    assert _run(session, task, ["mock-timeout"])["status"] == "cancelled"
+    assert task.status == "blocked"
+
+    blocked = _last_task_status(session, task, "in_progress -> blocked")
+    assert "run cancelled" in blocked.details
+    assert "run attempt limit (max_run_attempts_per_task=2)" in blocked.details
+    assert "attempts=2 (completed=0, timeout=1, failed=0, cancelled=1)" in blocked.details
+    assert "previous round submission" in blocked.details
+    assert "absent (run ended cancelled without a usable handoff)" in blocked.details
+    payload = structured_log.parse(_events(session, task, "task_limits_exhausted")[0].details)
+    assert payload is not None and payload["limits"] == ["attempts"]
+    assert payload["cancelled"] == 1 and payload["attempts"] == 2
+
+
+def test_failed_run_at_the_attempt_limit_blocks_with_its_submission_status(session, project):
+    settings_service.update(session, {"max_review_rounds": 3, "max_run_attempts_per_task": 2})
+    task = _task(session, project, ["mock-fail"])
+
+    assert _run(session, task)["status"] == "failed"
+    assert task.status == "planned"
+    planned = _last_task_status(session, task, "in_progress -> planned")
+    assert "previous round submission" in planned.details
+    assert "absent (run ended failed without a usable handoff)" in planned.details
+
+    assert _run(session, task)["status"] == "failed"
+    assert task.status == "blocked"
+    blocked = _last_task_status(session, task, "in_progress -> blocked")
+    assert "run failed" in blocked.details
+    assert "run attempt limit (max_run_attempts_per_task=2)" in blocked.details
+    assert "attempts=2 (completed=0, timeout=0, failed=2, cancelled=0)" in blocked.details
+    assert "previous round submission" in blocked.details
+    assert "absent (run ended failed without a usable handoff)" in blocked.details
+
+
+def test_unexpected_exception_at_the_attempt_limit_blocks(session, project, monkeypatch):
+    monkeypatch.setattr(mock_harness, "MOCK_TIMEOUT_SECONDS", 0.4)
+    settings_service.update(session, {"max_review_rounds": 3, "max_run_attempts_per_task": 2})
+    task = _task(session, project, ["mock-timeout"])
+    assert _run(session, task)["status"] == "timeout"
+    assert task.status == "planned"
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("simulated crash after the run row existed")
+
+    monkeypatch.setattr(run_service, "_execute", boom)
+    outcome = _run(session, task, ["mock"])
+    assert outcome["status"] == "failed"
+    assert "simulated crash after the run row existed" in outcome["error"]
+    assert task.status == "blocked"
+
+    blocked = _last_task_status(session, task, "in_progress -> blocked")
+    assert "run failed: simulated crash after the run row existed" in blocked.details
+    assert "run attempt limit (max_run_attempts_per_task=2)" in blocked.details
+    assert "attempts=2 (completed=0, timeout=1, failed=1, cancelled=0)" in blocked.details
+    assert "previous round submission" in blocked.details
+    assert "absent (run ended failed without a usable handoff)" in blocked.details
+
+
+def test_provider_error_at_the_attempt_limit_blocks(session, project):
+    settings_service.update(session, {"max_review_rounds": 3, "max_run_attempts_per_task": 2})
+    task = _task(session, project, ["mock", "mock-provider-error"], kind="agent")
+
+    first = _run(session, task)
+    assert first["status"] == "failed"
+    assert "mock provider simulated failure" in first["error"]
+    assert task.status == "planned"
+    planned = _last_task_status(session, task, "in_progress -> planned")
+    assert "previous round submission" in planned.details
+    assert "absent (run ended failed without a usable handoff)" in planned.details
+
+    second = _run(session, task)
+    assert second["status"] == "failed"
+    assert task.status == "blocked"
+    blocked = _last_task_status(session, task, "in_progress -> blocked")
+    assert "provider error: mock provider simulated failure" in blocked.details
+    assert "run attempt limit (max_run_attempts_per_task=2)" in blocked.details
+    assert "attempts=2 (completed=0, timeout=0, failed=2, cancelled=0)" in blocked.details
+    assert "previous round submission" in blocked.details
+    assert "absent (run ended failed without a usable handoff)" in blocked.details
 
 
 def test_changes_requested_requeue_names_the_previous_submission(session, project):

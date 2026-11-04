@@ -63,7 +63,9 @@ Run states: `pending → preparing → running → testing → completed`, with 
    been spent, the task goes to `blocked` instead of `planned`, so a timeout/cancel loop cannot
    run forever. Every new round clears the previous round's lifecycle markers (see
    “What a new round resets”) and its prompt states what became of the previous round's
-   submission (salvaged, absent, or archived at round start).
+   submission (salvaged, absent, or archived at round start). The `in_progress → planned`
+   requeue reason and the attempt-limit `blocked` reason carry the same submission-status
+   clause, so the decision to retry is visible even before the next prompt is built.
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
    validated and copied to `runs/<id>/handoff.json`, with `handoff.md` rendered next to
    it. If the worker produced none, the orchestrator writes a **synthesized** handoff

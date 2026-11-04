@@ -816,11 +816,10 @@ async def execute(
                 session, run, RunStatus.failed, error=redact(str(e))[:2000], finished_at=utcnow()
             )
         if task.status == TaskStatus.in_progress:
-            if not supervisor_service.enforce_attempt_limit(
-                session, task, run, f"run failed: {e}"
-            ):
+            reason = f"run failed: {e}{supervisor_service.submission_reason_suffix(run)}"
+            if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, f"run failed: {e}", role="supervisor"
+                    session, task, TaskStatus.planned, reason, role="supervisor"
                 )
         log_service.log_event(
             session, "run_error", str(e), role="supervisor", task_id=task.id, run_id=run.id
@@ -1056,11 +1055,10 @@ async def _execute(
             baseline_sha=baseline_sha,
         )
         if salvaged is None:
-            if not supervisor_service.enforce_attempt_limit(
-                session, task, run, "run cancelled"
-            ):
+            reason = f"run cancelled{supervisor_service.submission_reason_suffix(run)}"
+            if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, "run cancelled", role="supervisor"
+                    session, task, TaskStatus.planned, reason, role="supervisor"
                 )
             return {"run_id": run.id, "status": run.status}
         return await _gate_salvaged(session, task, run, project, salvaged)
@@ -1094,11 +1092,10 @@ async def _execute(
         )
         if salvaged is None:
             task.handoff_status = "RUN_" + status.upper()
-            if not supervisor_service.enforce_attempt_limit(
-                session, task, run, f"run {status}"
-            ):
+            reason = f"run {status}{supervisor_service.submission_reason_suffix(run)}"
+            if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, f"run {status}", role="supervisor"
+                    session, task, TaskStatus.planned, reason, role="supervisor"
                 )
             return {"run_id": run.id, "status": run.status, "error": run.error}
         return await _gate_salvaged(session, task, run, project, salvaged)
@@ -1258,11 +1255,10 @@ async def _execute_direct(
     except ProviderError as e:
         finished = utcnow()
         _set_run(session, run, RunStatus.failed, error=redact(str(e)), finished_at=finished)
-        if not supervisor_service.enforce_attempt_limit(
-            session, task, run, f"provider error: {e}"
-        ):
+        reason = f"provider error: {e}{supervisor_service.submission_reason_suffix(run)}"
+        if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
             task_service.transition(
-                session, task, TaskStatus.planned, f"provider error: {e}", role="supervisor"
+                session, task, TaskStatus.planned, reason, role="supervisor"
             )
         return {"run_id": run.id, "status": run.status, "error": str(e)}
     artifact_service.write_text(run.id, "stdout.log", res.text)

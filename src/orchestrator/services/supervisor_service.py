@@ -473,11 +473,27 @@ def submission_status(run: Run) -> str:
     return f"absent (run ended {run.status} without a usable handoff)"
 
 
+def submission_reason_suffix(run: Run) -> str:
+    """The submission-status clause every requeue/limit reason must carry (T-12 DoD 3).
+
+    A run that ended timeout/failed/cancelled may still have left a salvageable submission, and a
+    run that left nothing must say so. Appending the same clause to the transition back to
+    `planned` and to the attempt-limit block means an operator never has to guess whether a retry
+    is recovering a submission or starting from an empty worktree.
+    """
+    return (
+        f"; previous round submission ({run.short_id}, {run.status}): "
+        f"{submission_status(run)}"
+    )
+
+
 def enforce_attempt_limit(session: Session, task: Task, run: Run, reason: str) -> bool:
     """Block a failed/timed-out/cancelled run once it has spent the attempt budget.
 
     Called from the non-clean-exit paths in `run_service`, before the task is returned to
-    `planned`. Returns True when it blocked, so the caller does not move the task again.
+    `planned`. Returns True when it blocked, so the caller does not move the task again. The
+    blocked reason carries this run's submission status, not just the exit reason, so the state
+    that cannot ingest a handoff is visible at the point the loop stops (T-12 DoD 3).
     """
     stats = run_attempt_stats(session, task)
     attempt_limit = settings_service.get(session, "max_run_attempts_per_task")
@@ -486,7 +502,7 @@ def enforce_attempt_limit(session: Session, task: Task, run: Run, reason: str) -
             session,
             task,
             run,
-            reason,
+            f"{reason}{submission_reason_suffix(run)}",
             stats,
             [f"run attempt limit (max_run_attempts_per_task={attempt_limit})"],
         )
@@ -507,10 +523,7 @@ def _requeue_or_block(session: Session, task: Task, run: Run, reason: str) -> No
             session,
             task,
             TaskStatus.queued,
-            (
-                f"{reason}; previous round submission ({run.short_id}, {run.status}): "
-                f"{submission_status(run)}; returned to Worker on the same branch"
-            ),
+            f"{reason}{submission_reason_suffix(run)}; returned to Worker on the same branch",
             role="supervisor",
         )
 
