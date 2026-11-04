@@ -45,14 +45,12 @@ Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `allow_gui_commands`, `allow_interactive_sessions`, `allow_unattended_sessions`,
 `max_review_rounds` (default 3), `max_run_attempts_per_task` (default 6), and `theme` (dark).
 
-`max_review_rounds` counts **verified rounds**: runs that reached the gate, i.e. `completed`,
-plus the `testing` run currently being gated. `max_run_attempts_per_task` counts **every adapter
-attempt**, including runs that ended `timeout`, `failed` or `cancelled` without a submission. The
-default 6 is deliberately above the default 3 review rounds: a flow that only ever completes still
-blocks on the review-round limit exactly as before, while a Worker that keeps timing out cannot
-consume unbounded adapter windows. When either limit fires, the task goes to `blocked`, the
-`task_limits_exhausted` build-log event records which limit fired and the attempt breakdown, and
-the blocked reason names both the limit and the counts.
+`max_review_rounds` counts **verified rounds**: runs that reached the gate (including the
+`testing` run being gated). `max_run_attempts_per_task` counts **every adapter attempt**,
+including `timeout`, `failed` and `cancelled` runs. The default 6 is above the default 3, so a
+completed-only flow blocks on the review-round limit as before while a timeout loop cannot consume
+unbounded adapter windows. When either fires, the task goes to `blocked`, `task_limits_exhausted`
+records which limit and the breakdown, and the blocked reason names both.
 
 The React GUI doesn't read the stored `theme` setting. Theme is a per-browser choice
 (Light / Dark / System, default System) made in the sidebar or on Settings → Appearance,

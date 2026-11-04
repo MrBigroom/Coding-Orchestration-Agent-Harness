@@ -329,17 +329,15 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
 ### Verified rounds versus attempts
 
 Two limits bound the loop, and they count different things. `max_review_rounds` (default 3)
-counts a **verified round**: a run that reached the gate, i.e. status `completed`, plus the
-`testing` run currently being gated. It says nothing about a run that timed out, failed or was
-cancelled before submitting. `max_run_attempts_per_task` (default 6) counts **every adapter
-attempt**, including those timeout/failed/cancelled runs, because each one costs a full paid
-adapter window even though it buys no verified round. With the defaults, a flow that only ever
-completes still blocks at three review rounds exactly as before; a flow that keeps timing out now
-blocks after six attempts instead of requeueing forever. Either limit firing transitions the task
-to `blocked`, names the fired limit and the `completed / timeout / failed / cancelled` breakdown
-in the transition reason, and emits the additive `task_limits_exhausted` build-log event. The
-Tasks list and Task Detail render the derived `attempts` summary (“6 attempts, 2 verified rounds”)
-from `GET /api/tasks` / `GET /api/tasks/{id}`; that field is additive and never stored.
+counts a **verified round**: a run that reached the gate (`completed`, or `testing` while gated).
+`max_run_attempts_per_task` (default 6) counts **every adapter attempt**, including
+`timeout`/`failed`/`cancelled` runs, because each costs a full paid adapter window without buying
+a verified round. A completed-only flow still blocks at three review rounds; a timeout loop blocks
+after six attempts instead of requeueing forever. Either limit firing moves the task to `blocked`,
+names the fired limit and the `completed / timeout / failed / cancelled` breakdown in the reason,
+and emits the additive `task_limits_exhausted` event. Tasks and Task Detail render the derived
+`attempts` summary (“6 attempts, 2 verified rounds”) from `GET /api/tasks[/{id}]`; it is never
+stored.
 
 ## Verification commands must be path-independent
 

@@ -361,11 +361,9 @@ async def verify(
     return result
 
 
-# T-12: a review round is still a run that reached the gate (its status is `testing` while the
-# gate runs, then `completed`). An *attempt* is every run that consumed an adapter window,
-# including the ones that ended timeout/failed/cancelled and so produced no submission. The two
-# counters are deliberately separate: the old cap counted only successes, which let a Worker that
-# never submits be retried forever at full adapter cost.
+# T-12: a review round is a run that reached the gate (`testing` while gated, then `completed`).
+# An *attempt* is every run that consumed an adapter window, including timeout/failed/cancelled.
+# The old cap counted only successes, so a Worker that never submits was retried forever.
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
@@ -373,10 +371,8 @@ def _plural(n: int, word: str) -> str:
 def run_attempt_stats(session: Session, task: Task) -> dict[str, int]:
     """Count verified rounds and every attempt from the runs table, not from prose.
 
-    `completed` includes `testing` because the current run is still in that state when
-    `_requeue_or_block` decides: it has produced its submission and reached the gate, which is
-    exactly what the old `_rounds_used` counted. Every timeout/failed/cancelled run is an attempt
-    that bought no verified round, and is counted here as well.
+    `completed` includes `testing` (the current run is gated then), matching old `_rounds_used`;
+    timeout/failed/cancelled runs are attempts that bought no verified round.
     """
     counts = {"completed": 0, "timeout": 0, "failed": 0, "cancelled": 0}
     for r in task_service.runs_for(session, task):
@@ -458,10 +454,7 @@ def _block_for_limits(
 def submission_status(run: Run) -> str:
     """How the previous round's submission reached (or failed to reach) its artifacts.
 
-    Read back from `run.json` (`artifact_service.handoff_arrival`), never inferred from the
-    Worker's prose. T-10 made the round-start unlink archive-safe; this label is what the next
-    requeue reason and Worker prompt state so a retry cannot silently look like a fresh first
-    attempt when the previous round left nothing usable behind.
+    Read back from `run.json` (`artifact_service.handoff_arrival`), never from Worker prose.
     """
     arrival = artifact_service.handoff_arrival(run.id)
     if arrival == artifact_service.HANDOFF_ARRIVAL_SALVAGED:
@@ -474,13 +467,7 @@ def submission_status(run: Run) -> str:
 
 
 def submission_reason_suffix(run: Run) -> str:
-    """The submission-status clause every requeue/limit reason must carry (T-12 DoD 3).
-
-    A run that ended timeout/failed/cancelled may still have left a salvageable submission, and a
-    run that left nothing must say so. Appending the same clause to the transition back to
-    `planned` and to the attempt-limit block means an operator never has to guess whether a retry
-    is recovering a submission or starting from an empty worktree.
-    """
+    """The submission-status clause every requeue/limit reason carries exactly once (DoD 3)."""
     return (
         f"; previous round submission ({run.short_id}, {run.status}): "
         f"{submission_status(run)}"
@@ -490,10 +477,8 @@ def submission_reason_suffix(run: Run) -> str:
 def enforce_attempt_limit(session: Session, task: Task, run: Run, reason: str) -> bool:
     """Block a failed/timed-out/cancelled run once it has spent the attempt budget.
 
-    Called from the non-clean-exit paths in `run_service`, before the task is returned to
-    `planned`. Returns True when it blocked, so the caller does not move the task again. The
-    blocked reason carries this run's submission status, not just the exit reason, so the state
-    that cannot ingest a handoff is visible at the point the loop stops (T-12 DoD 3).
+    Callers pass the bare exit reason; this function adds the submission clause exactly once.
+    Returns True when it blocked, so the caller does not move the task again.
     """
     stats = run_attempt_stats(session, task)
     attempt_limit = settings_service.get(session, "max_run_attempts_per_task")
@@ -516,7 +501,9 @@ def _requeue_or_block(session: Session, task: Task, run: Run, reason: str) -> No
     attempt_limit = settings_service.get(session, "max_run_attempts_per_task")
     fired = _fired_limits(stats, review_limit, attempt_limit)
     if fired:
-        _block_for_limits(session, task, run, reason, stats, fired)
+        _block_for_limits(
+            session, task, run, f"{reason}{submission_reason_suffix(run)}", stats, fired
+        )
     else:
         task.source = "retry"
         task_service.transition(

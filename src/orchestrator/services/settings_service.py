@@ -23,9 +23,7 @@ EDITABLE: dict[str, type] = {
     "supabase_sync_enabled": bool,
     "supabase_sync_interval_seconds": int,
     "max_review_rounds": int,
-    # T-12: a separate cap on every adapter attempt, not just the runs that reach the gate.
-    # `max_review_rounds` still counts completed/verified rounds; this one also counts timeout,
-    # failed and cancelled runs so a Worker that never submits cannot be retried forever.
+    # T-12: separate cap on every adapter attempt, not just runs that reach the gate.
     "max_run_attempts_per_task": int,
     "theme": str,
     # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code

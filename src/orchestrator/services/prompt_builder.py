@@ -130,8 +130,8 @@ class DynamicState:
     # How the handoff arrived (clean exit / salvaged from a killed run / synthesized) and what git
     # says about the files it claims — provenance a Worker cannot edit (T-10 DoD 7).
     delivery_evidence: str | None = None
-    # T-12: what happened to the PREVIOUS round's submission (salvaged / absent / archived at
-    # round start), so a retry cannot silently look like a fresh first attempt.
+    # T-12: what happened to the PREVIOUS round's submission, so a retry cannot look like a
+    # fresh first attempt.
     submission: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 

@@ -1,10 +1,7 @@
 """T-12: a review-round cap that counts only completed runs cannot bound paid attempts.
 
-The two counters are deliberately different:
-  * `max_review_rounds` — runs that reached the gate (completed, or `testing` while the gate runs);
-  * `max_run_attempts_per_task` — every adapter attempt, including timeout/failed/cancelled.
-
-These tests use the mock harness against a real local git repo. Offline: no network, no service.
+`max_review_rounds` counts runs that reached the gate; `max_run_attempts_per_task` counts every
+adapter attempt, including timeout/failed/cancelled. Mock harness, local git repo, offline.
 """
 
 import asyncio
@@ -88,6 +85,12 @@ def _last_task_status(session, task, needle):
     raise AssertionError(f"no task_status event containing {needle!r}")
 
 
+def _assert_one_submission_clause(details):
+    # Round-2 review: callers and `enforce_attempt_limit` both appended the clause, so the
+    # operator-facing reason contained it twice. Substring assertions cannot catch that.
+    assert details.count("previous round submission") == 1, details
+
+
 def _cancel_soon(task_id, delay=0.3):
     def cancel():
         time.sleep(delay)
@@ -127,6 +130,7 @@ def test_three_consecutive_timeouts_reach_blocked_on_the_attempt_limit(
     assert "run attempt limit (max_run_attempts_per_task=3)" in blocked.details
     assert "attempts=3 (completed=0, timeout=3, failed=0, cancelled=0)" in blocked.details
     assert "review round limit" not in blocked.details
+    _assert_one_submission_clause(blocked.details)
 
     limits = _events(session, task, "task_limits_exhausted")
     assert len(limits) == 1
@@ -152,6 +156,7 @@ def test_default_attempt_limit_preserves_the_completed_only_flow(session, projec
     assert "review round limit (max_review_rounds=2)" in blocked.details
     assert "attempts=2 (completed=2, timeout=0, failed=0, cancelled=0)" in blocked.details
     assert "run attempt limit" not in blocked.details
+    _assert_one_submission_clause(blocked.details)
     stats = supervisor_service.run_attempt_stats(session, task)
     assert stats["attempts"] == 2 and stats["verified_rounds"] == 2
 
@@ -205,6 +210,7 @@ def test_mixed_sequence_counts_correctly_against_both_limits(session, project, m
     )
     assert "previous round submission" in blocked.details
     assert "absent (run ended timeout without a usable handoff)" in blocked.details
+    _assert_one_submission_clause(blocked.details)
     payload = structured_log.parse(_events(session, task, "task_limits_exhausted")[0].details)
     assert payload is not None and payload["limits"] == ["attempts"]
 
@@ -229,6 +235,7 @@ def test_cancelled_run_at_the_attempt_limit_blocks_with_its_submission_status(
     assert "attempts=2 (completed=0, timeout=1, failed=0, cancelled=1)" in blocked.details
     assert "previous round submission" in blocked.details
     assert "absent (run ended cancelled without a usable handoff)" in blocked.details
+    _assert_one_submission_clause(blocked.details)
     payload = structured_log.parse(_events(session, task, "task_limits_exhausted")[0].details)
     assert payload is not None and payload["limits"] == ["attempts"]
     assert payload["cancelled"] == 1 and payload["attempts"] == 2
@@ -252,6 +259,7 @@ def test_failed_run_at_the_attempt_limit_blocks_with_its_submission_status(sessi
     assert "attempts=2 (completed=0, timeout=0, failed=2, cancelled=0)" in blocked.details
     assert "previous round submission" in blocked.details
     assert "absent (run ended failed without a usable handoff)" in blocked.details
+    _assert_one_submission_clause(blocked.details)
 
 
 def test_unexpected_exception_at_the_attempt_limit_blocks(session, project, monkeypatch):
@@ -276,6 +284,7 @@ def test_unexpected_exception_at_the_attempt_limit_blocks(session, project, monk
     assert "attempts=2 (completed=0, timeout=1, failed=1, cancelled=0)" in blocked.details
     assert "previous round submission" in blocked.details
     assert "absent (run ended failed without a usable handoff)" in blocked.details
+    _assert_one_submission_clause(blocked.details)
 
 
 def test_provider_error_at_the_attempt_limit_blocks(session, project):
@@ -299,6 +308,7 @@ def test_provider_error_at_the_attempt_limit_blocks(session, project):
     assert "attempts=2 (completed=0, timeout=0, failed=2, cancelled=0)" in blocked.details
     assert "previous round submission" in blocked.details
     assert "absent (run ended failed without a usable handoff)" in blocked.details
+    _assert_one_submission_clause(blocked.details)
 
 
 def test_changes_requested_requeue_names_the_previous_submission(session, project):

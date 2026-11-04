@@ -96,25 +96,17 @@ button.
 ## Runtime settings
 
 Settings are editable in the GUI or with `PATCH /api/settings`, stored in SQLite, and read
-through `settings_service`. Defaults come from the environment where noted; the rest are
-code defaults.
-
-The two loop limits are:
+through `settings_service`. The two loop limits are:
 
 | Key | Default | Meaning |
 |---|---|---|
 | `max_review_rounds` | `3` | **Verified rounds** before `blocked` (runs that reached the gate) |
 | `max_run_attempts_per_task` | `6` | **All attempts** before `blocked`, including timeout/failed/cancelled runs |
 
-The other runtime keys (merge flags, concurrency, scheduler/worker, chat permissions,
-Supabase sync, theme, harness routing) and their defaults are listed in
-[`docs/configuration.md`](docs/configuration.md).
-
-`max_review_rounds` deliberately counts only verified rounds, so it says nothing about a run
-that timed out before submitting. `max_run_attempts_per_task` is the separate bound on paid
-attempts: the default 6 is above the default 3 review rounds, so a completed-only flow behaves
-exactly as before while a timeout loop stops after six attempts. The `task_limits_exhausted`
-build-log event names the limit that fired and the completed/timeout/failed/cancelled breakdown.
+The default 6 is above the default 3 review rounds, so a completed-only flow behaves exactly as
+before while a timeout loop stops after six attempts. The `task_limits_exhausted` build-log event
+names the fired limit and the completed/timeout/failed/cancelled breakdown. All other runtime
+keys are listed in [`docs/configuration.md`](docs/configuration.md).
 
 ## Chat with a harness directly
 

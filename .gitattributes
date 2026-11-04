@@ -1,0 +1,3 @@
+# T-12 evidence is generated output, committed for provenance but kept out of the review diff so
+# the 12k-token diff budget carries the source and test bodies instead of pasted logs.
+verify-evidence/T-12/* -diff

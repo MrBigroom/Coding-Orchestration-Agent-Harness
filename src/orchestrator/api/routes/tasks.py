@@ -37,9 +37,7 @@ def dump(obj: Any) -> dict[str, Any]:
 
 def _detail(session: Session, task: Task) -> dict[str, Any]:
     data = dump(task)
-    # T-12: an additive derived field, never stored. It answers "how many attempts did this loop
-    # already spend?" on the same payload the GUI header already reads, so an operator sees the
-    # loop before paying for another round.
+    # T-12: additive derived field, never stored; shows the loop before another paid round.
     data["attempts"] = supervisor_service.attempt_summary(session, task)
     data["runs"] = [dump(r) for r in task_service.runs_for(session, task)]
     data["reviews"] = [

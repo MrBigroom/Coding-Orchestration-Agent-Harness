@@ -573,11 +573,9 @@ def _submission_note(
 ) -> str | None:
     """State what became of the previous round's submission (T-12 DoD 3).
 
-    The next Worker prompt is built in the same round that runs the round-start archive/unlink.
-    Without this note a retry after a timeout looks identical to a first attempt, even though the
-    previous round produced no submission at all. Read the status back from the archived run
-    artifact, and describe the worktree copy separately: T-10 archives it before the unlink, so
-    the honest wording is "archived at round start", not "deleted".
+    The next prompt is built in the round that archives/unlinks the leftover; without this note a
+    retry after a timeout looks like a first attempt. T-10 archives before the unlink, so the
+    honest wording is "archived at round start", not "deleted".
     """
     prev = _previous_round_run(session, task, run)
     if prev is None:
@@ -816,10 +814,14 @@ async def execute(
                 session, run, RunStatus.failed, error=redact(str(e))[:2000], finished_at=utcnow()
             )
         if task.status == TaskStatus.in_progress:
-            reason = f"run failed: {e}{supervisor_service.submission_reason_suffix(run)}"
+            reason = f"run failed: {e}"
             if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, reason, role="supervisor"
+                    session,
+                    task,
+                    TaskStatus.planned,
+                    f"{reason}{supervisor_service.submission_reason_suffix(run)}",
+                    role="supervisor",
                 )
         log_service.log_event(
             session, "run_error", str(e), role="supervisor", task_id=task.id, run_id=run.id
@@ -1055,10 +1057,14 @@ async def _execute(
             baseline_sha=baseline_sha,
         )
         if salvaged is None:
-            reason = f"run cancelled{supervisor_service.submission_reason_suffix(run)}"
+            reason = "run cancelled"
             if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, reason, role="supervisor"
+                    session,
+                    task,
+                    TaskStatus.planned,
+                    f"{reason}{supervisor_service.submission_reason_suffix(run)}",
+                    role="supervisor",
                 )
             return {"run_id": run.id, "status": run.status}
         return await _gate_salvaged(session, task, run, project, salvaged)
@@ -1092,10 +1098,14 @@ async def _execute(
         )
         if salvaged is None:
             task.handoff_status = "RUN_" + status.upper()
-            reason = f"run {status}{supervisor_service.submission_reason_suffix(run)}"
+            reason = f"run {status}"
             if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
                 task_service.transition(
-                    session, task, TaskStatus.planned, reason, role="supervisor"
+                    session,
+                    task,
+                    TaskStatus.planned,
+                    f"{reason}{supervisor_service.submission_reason_suffix(run)}",
+                    role="supervisor",
                 )
             return {"run_id": run.id, "status": run.status, "error": run.error}
         return await _gate_salvaged(session, task, run, project, salvaged)
@@ -1255,10 +1265,14 @@ async def _execute_direct(
     except ProviderError as e:
         finished = utcnow()
         _set_run(session, run, RunStatus.failed, error=redact(str(e)), finished_at=finished)
-        reason = f"provider error: {e}{supervisor_service.submission_reason_suffix(run)}"
+        reason = f"provider error: {e}"
         if not supervisor_service.enforce_attempt_limit(session, task, run, reason):
             task_service.transition(
-                session, task, TaskStatus.planned, reason, role="supervisor"
+                session,
+                task,
+                TaskStatus.planned,
+                f"{reason}{supervisor_service.submission_reason_suffix(run)}",
+                role="supervisor",
             )
         return {"run_id": run.id, "status": run.status, "error": str(e)}
     artifact_service.write_text(run.id, "stdout.log", res.text)
