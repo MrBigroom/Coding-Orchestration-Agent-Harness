@@ -359,12 +359,10 @@ Running log of architecture decisions. Newest last. Format: date — decision �
 - **2026-11-04 — T-9 notifications are an event consumer at `log_service.log_event`, with a
   persistent record.** The fan-out runs after the build-log row is committed and maps the
   existing event vocabulary (plus the new `run_cancelled`) to triggers; it never changes a run
-  or task. Desktop delivery is best-effort over freedesktop D-Bus (`notify-send`, else a direct
-  `gdbus` Notifications call), so every decision is also a `notifications` row served by
-  `GET /api/notifications`: `skipped` (master/trigger off) is distinct from `failed` (attempted,
-  with the channel error). A unique per-run, per-trigger key enforces at most one notification;
-  several triggers within a short window are coalesced into one desktop summary while each
-  trigger keeps its own row. Terminal-run durations quote both `run.json.process_ms` (compute,
-  the number the monotonic deadline used) and the DB wall duration, and name a clock freeze only
-  when the gap is large — informational, never an alert. New installs stay silent
-  (`notifications_enabled=false`); the noisy machinery triggers need an explicit opt-in.
+  or task. Delivery is best-effort over freedesktop D-Bus, so every decision is also a
+  `notifications` row served by `GET /api/notifications`: `skipped` (channel off) is distinct
+  from `failed` (attempted, with the error). A unique per-run, per-trigger key enforces at most
+  one; pending rows within a short window (including parallel runs) become one summary.
+  Terminal-run durations quote both `run.json.process_ms` and the DB wall duration, naming a
+  clock freeze only when the gap is large — informational, never an alert. New installs stay
+  silent (`notifications_enabled=false`).

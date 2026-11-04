@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 
 from sqlmodel import Session, select
@@ -11,6 +12,8 @@ from orchestrator.core.config import get_settings
 from orchestrator.core.models import BuildLogEntry, utcnow
 from orchestrator.core.schemas import BuildLogRecord
 from orchestrator.utils.redaction import redact
+
+log = logging.getLogger(__name__)
 
 
 def log_event(
@@ -65,14 +68,17 @@ def log_event(
         from orchestrator.services import notification_service
 
         notification_service.notify_event(
-            session,
-            event=event,
-            details=details,
-            task_id=task_id,
-            run_id=run_id,
+            event=event, details=details, task_id=task_id, run_id=run_id
         )
-    except Exception:  # noqa: BLE001, S110 - notification is best-effort by contract
-        pass
+    except Exception as e:  # noqa: BLE001 - notification is best-effort by contract
+        # The fan-out uses its own session, but a failure here must still leave the caller's
+        # session usable: roll back only if SQLAlchemy already marked it failed.
+        try:
+            if not session.is_active:
+                session.rollback()
+        except Exception:  # noqa: BLE001, S110
+            pass
+        log.warning("notification fan-out failed for %s: %s", event, redact(str(e)))
     return entry
 
 

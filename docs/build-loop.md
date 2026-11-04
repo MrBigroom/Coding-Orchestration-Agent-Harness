@@ -54,9 +54,9 @@ Run states: `pending → preparing → running → testing → completed`, with 
 5. After exit: leftover changes get a recovery commit too (a killed agent leaves its edits
    uncommitted), and `patch.diff` + `diffstat.txt` are collected against the base branch.
 6. **Failure paths.** A non-zero exit → run `failed`. Exceeding the adapter timeout →
-   `timeout`. A `CANCEL` marker → `cancelled`. The failure paths emit `run_failed` / `run_timeout`,
-   a cancel emits `run_cancelled`, and a run that finishes normally emits `run_completed`.
-   **Before the task goes back to `planned`,** the harness tries to salvage a
+   `timeout`. A `CANCEL` marker → `cancelled`. The failure paths emit `run_failed` / `run_timeout`
+   (a cancel is recorded on the `task_status` line); a run that finishes normally emits
+   `run_completed`. **Before the task goes back to `planned`,** the harness tries to salvage a
    `handoff.json` the killed Worker already wrote — see “Salvaging a handoff from a killed run”.
    With no usable submission the task returns to `planned` for a deliberate retry, exactly as
    before — **unless the attempt cap has fired**: once `max_run_attempts_per_task` attempts have
@@ -508,13 +508,31 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 
 ### Terminal run events
 
-All four terminal statuses (`completed | failed | timeout | cancelled`) now have a named event:
-`run_completed`, `run_failed`, `run_timeout`, `run_cancelled`. T-8 recorded the honest gap —
-cancelled was only a `task_status` line reading `run cancelled` — and T-9 closed it. `run_completed`
-is emitted in `run_service._set_run`; the other three stay in `_execute`, where the run-level error
-context is at hand, with `run_cancelled` in the cancel branch before handoff salvage. All are
-additive: no existing name or line-shape key changed. Notifications key off these events and the
-task/merge events, never off status inference (see `docs/configuration.md`).
+A run's terminal status is `completed | failed | timeout | cancelled`. T-8 named the success
+event (`run_completed`), and T-9 added `run_cancelled`, so all four now have a named event.
+Before those names existed, `cancelled` was only a `task_status` line reading `run cancelled`. (`run_error` exists but is not a terminal *status*: it labels
+an unexpected exception inside the harness, after which the run still ends as `failed`.) A green
+run was therefore observable only as a `task_status` transition, so any consumer had to *derive*
+the single most important trigger indirectly. `run_completed` is that missing event.
+
+**Where each terminal event is emitted (deliberate split, reviewer ruling 2).**
+`run_completed` is emitted inside `run_service._set_run`, the single writer of `run.status`, so it
+is impossible to set `completed` without logging it. `run_failed` / `run_timeout` stay where they
+were: emitted from `_execute` immediately after the `_set_run` call that sets the terminal status,
+because at that point `_execute` still holds the run-level error context (`run.error`, the exit
+code, the timeout reason) that their `details` carry, and `_set_run` does not. Moving them into
+`_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
+line. The shared chokepoint is the **status transition** (`_set_run` is the only writer), and
+`run_cancelled` is emitted from the cancel branch of `_execute` after the terminal status commits
+and before handoff salvage. It is **additive** — no existing event name and no line-shape key
+changed — and `docs/frozen-contracts.md` now records all four (CCR-T9-01).
+
+Today no in-repo consumer infers run success from a task-status transition (the Build Log page
+renders events as they arrive; the Dashboard counts `task.status`, which is a task verdict, not
+a run outcome). The T-9 fan-out keys its triggers off these events rather than inferring
+success: `run_completed`, `run_failed`, `run_timeout`, `run_cancelled`, `escalated`,
+`merge_candidate`, `merged`, `merge_refused`, and the exact `task_status` transitions `-> review`
+and `-> blocked` (see `docs/configuration.md`).
 
 `details` is redacted (`log_service.log_event`), and the two `sk-` credential patterns in
 `utils/redaction.py` carry a leading anchor — the lookbehind `(?<![A-Za-z0-9])`, not `\b`:

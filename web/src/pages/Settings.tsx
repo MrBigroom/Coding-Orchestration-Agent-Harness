@@ -101,11 +101,9 @@ export default function Settings() {
             </div>
           </Card>
           <Card title="Notifications">
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex items-center justify-between gap-4">
-                <span className="text-sm">Desktop notifications
-                  <span className="block text-xs text-muted">Off by default on a new install. Uses the freedesktop D-Bus channel; every attempt is also kept in the Notifications list.</span>
-                </span>
+                <span className="text-sm">Desktop notifications<span className="block text-xs text-muted">Off by default. Freedesktop D-Bus; every decision is also kept in the Notifications list.</span></span>
                 <Toggle checked={Boolean(data.notifications_enabled)} onChange={(v) => update("notifications_enabled", v)} />
               </div>
               <div className="space-y-2 border-t border-line pt-3">

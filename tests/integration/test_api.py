@@ -388,27 +388,3 @@ def test_one_time_schedule_api(client):
     past = {**body, "run_at": "2020-01-02T09:00"}
     assert client.post("/api/schedules/validate", json=past).json()["valid"] is False
     assert client.post("/api/schedules", json={"name": "past", **past}).status_code == 400
-
-
-def test_notifications_endpoint_reads_the_persistent_list(client):
-    from orchestrator.core.db import session_scope
-    from orchestrator.core.models import Notification
-
-    with session_scope() as s:
-        s.add(
-            Notification(
-                trigger="run_completed",
-                event="run_completed",
-                status="delivered",
-                title="T-1 demo — Run completed",
-                body="Outcome: done",
-                dedupe_key="run:1:run_completed",
-                coalesce_key="run:1",
-                details_json={"trigger": "run_completed"},
-            )
-        )
-        s.commit()
-    rows = client.get("/api/notifications").json()
-    assert rows and rows[0]["trigger"] == "run_completed"
-    assert rows[0]["status"] == "delivered"
-    assert client.get("/api/notifications?status=bogus").status_code == 422

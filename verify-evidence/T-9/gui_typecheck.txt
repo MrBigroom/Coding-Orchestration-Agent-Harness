@@ -1,4 +1,0 @@
-HEAD 8f4cddf018287aacf3525a272f631fc16816fa63
-command: tsc -b --force (scratch dir with main checkout node_modules symlinked; worktree web sources)
-
-tsc_exit=0

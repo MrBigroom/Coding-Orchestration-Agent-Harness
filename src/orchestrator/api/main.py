@@ -107,12 +107,14 @@ async def lifespan(app: FastAPI):
 
         background.scheduler = SchedulerRunner()
         background.scheduler.start()
-    from orchestrator.services import chat_service, standalone_service
+    from orchestrator.services import chat_service, notification_service, standalone_service
     from orchestrator.services.sync_runner import sync_runner
 
     with db.session_scope() as session:
         chat_service.recover(session)
         standalone_service.recover(session)
+        # T-9: a timer thread dies with the CLI process; deliver anything it left pending now.
+        notification_service.flush_pending(session)
     # Always run the preference loop so enabling sync in Settings needs no restart.
     sync_loop_task = asyncio.create_task(sync_runner.run_loop())
     yield

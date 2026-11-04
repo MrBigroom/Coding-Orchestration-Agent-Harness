@@ -409,23 +409,21 @@ class BuildLogEntry(SQLModel, table=True):
 class Notification(SQLModel, table=True):
     """Persistent record of every notification decision (T-9 DoD 3).
 
-    A desktop notification is best-effort; this row is the recoverable record. `status`
-    distinguishes a channel that was off (`skipped`) from delivery that was attempted and
-    failed (`failed`), and `dedupe_key` enforces at most one notification per run per trigger.
+    Best-effort delivery, durable record: `skipped` means the channel was off (not attempted),
+    `failed` means delivery was attempted and failed. `dedupe_key` enforces at most one
+    notification per run per trigger.
     """
 
     __tablename__ = "notifications"
     __table_args__ = (Index("ix_notifications_dedupe_key", "dedupe_key", unique=True),)
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    task_id: int | None = Field(default=None, index=True)
-    run_id: int | None = Field(default=None, index=True)
-    trigger: str = Field(sa_column=Column(String(48), nullable=False, index=True))
-    event: str = Field(sa_column=Column(String(64), nullable=False))
-    status: str = Field(
-        default="pending", sa_column=Column(String(16), nullable=False, index=True)
-    )
+    created_at: datetime = Field(default_factory=utcnow)
+    task_id: int | None = None
+    run_id: int | None = None
+    trigger: str = Field(sa_column=Column(String(48), nullable=False))
+    event: str = Field(default="", sa_column=Column(String(64), nullable=False))
+    status: str = Field(default="pending", sa_column=Column(String(16), nullable=False))
     reason: str = ""
     title: str = Field(default="", sa_column=Column(Text, nullable=False))
     body: str = Field(default="", sa_column=Column(Text, nullable=False))
@@ -433,7 +431,6 @@ class Notification(SQLModel, table=True):
     channel: str | None = None
     error: str | None = Field(default=None, sa_column=Column(Text))
     dedupe_key: str = Field(default="")
-    coalesce_key: str = Field(default="", index=True)
     coalesced_into: int | None = None
     details_json: dict[str, Any] = _json({})
 

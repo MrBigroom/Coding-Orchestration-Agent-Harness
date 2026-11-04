@@ -50,13 +50,12 @@ Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `allow_gui_commands`, `allow_interactive_sessions`, `allow_unattended_sessions`,
 `max_review_rounds` (default 3), `max_run_attempts_per_task` (default 6), `theme` (dark), and
 the T-9 notification keys: `notifications_enabled` (master, default **false**) plus one
-`notification_<trigger>` boolean per trigger. The human-must-act triggers
-(`run_completed`, `run_failed`, `run_timeout`, `run_cancelled`, `task_review`, `task_blocked`,
-`escalated`, `merge_candidate`, `merged`, `merge_refused`) default subscribed; the noisy
-machinery triggers (`worktree_created`, `recovery_commit`, `supervisor_verification`,
-`architect_review`, `nits_deferred`, `schedule_fired`) default silent and need an explicit
-opt-in. Turning the master off, or a trigger off, records the notification as `skipped` in the
-persistent list instead of attempting delivery.
+`notification_<trigger>` boolean per trigger. Human-must-act triggers (`run_completed`,
+`run_failed`, `run_timeout`, `run_cancelled`, `task_review`, `task_blocked`, `escalated`,
+`merge_candidate`, `merged`, `merge_refused`) default subscribed; the noisy machinery triggers
+(`worktree_created`, `recovery_commit`, `supervisor_verification`, `architect_review`,
+`nits_deferred`, `schedule_fired`) default silent. A channel that is off is recorded as `skipped`
+in the persistent list instead of attempting delivery.
 
 `max_review_rounds` counts **verified rounds**: runs that reached the gate (including the
 `testing` run being gated). `max_run_attempts_per_task` counts **every adapter attempt**,

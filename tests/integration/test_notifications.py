@@ -7,8 +7,10 @@ import threading
 import time
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlmodel import col, select
 
+from orchestrator.api.main import create_app
 from orchestrator.core.models import Notification, Run
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import (
@@ -61,6 +63,7 @@ def _task(session, project, tags, phase, slug):
 
 
 def _rows(session, task) -> list[Notification]:
+    session.expire_all()
     return list(
         session.exec(
             select(Notification)
@@ -73,7 +76,7 @@ def _rows(session, task) -> list[Notification]:
 def test_completed_mock_run_yields_one_coalesced_notification(session, project, sent, monkeypatch):
     settings_service.update(session, {"notifications_enabled": True})
     monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
-    monkeypatch.setattr(notification_service, "_schedule", lambda key: None)
+    monkeypatch.setattr(notification_service, "_schedule", lambda: None)
     task = _task(session, project, ["mock"], 1, "notify")
     outcome = asyncio.run(run_service.run_task_now(session, task))
     assert outcome["decision"] == "accepted"
@@ -82,11 +85,20 @@ def test_completed_mock_run_yields_one_coalesced_notification(session, project, 
     assert len(sent) == 1
     for trigger in ("task_review", "merge_candidate", "run_completed"):
         assert f"[{trigger}]" in sent[0]["body"]
+    # DoD 9 end-to-end: the live terminal row really carries both windows.
+    assert (
+        "Duration:" in sent[0]["body"]
+        and "compute /" in sent[0]["body"]
+        and "wall" in sent[0]["body"]
+    )
+    assert sent[0]["link"].endswith(f"/tasks/{task.id}")
     active = [r for r in _rows(session, task) if r.status != "skipped"]
     assert [r.trigger for r in active] == ["task_review", "merge_candidate", "run_completed"]
     assert [r.status for r in active] == ["delivered", "coalesced", "coalesced"]
     assert active[0].run_id == outcome["run_id"]
-    assert all(r.reason == "trigger_disabled" for r in _rows(session, task) if r.status == "skipped")
+    assert all(
+        r.reason == "trigger_disabled" for r in _rows(session, task) if r.status == "skipped"
+    )
 
 
 def test_cancelled_run_emits_run_cancelled_once_and_fans_out(session, project, sent, monkeypatch):
@@ -117,3 +129,51 @@ def test_cancelled_run_emits_run_cancelled_once_and_fans_out(session, project, s
     assert [r.trigger for r in active] == ["run_cancelled"]
     assert active[0].status == "delivered"
     assert "cancelled" in sent[0]["body"] and "Next:" in sent[0]["body"]
+
+
+def test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending(initialized, sent):
+    from orchestrator.core.db import session_scope
+
+    with session_scope() as s:
+        s.add(
+            Notification(
+                trigger="run_completed",
+                event="run_completed",
+                status="pending",
+                title="left pending",
+                body="from a dead CLI timer",
+                dedupe_key="recovery:1",
+                details_json={},
+            )
+        )
+        s.commit()
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
+        assert client.get("/api/health").status_code == 200
+    assert sent and sent[0]["title"] == "left pending"
+    with session_scope() as s:
+        assert (
+            s.exec(select(Notification).where(Notification.dedupe_key == "recovery:1")).one().status
+            == "delivered"
+        )
+
+
+def test_notifications_endpoint_serves_the_persistent_list(initialized):
+    from orchestrator.core.db import session_scope
+
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
+        with session_scope() as s:
+            s.add(
+                Notification(
+                    trigger="run_completed",
+                    event="run_completed",
+                    status="delivered",
+                    title="T-1 — Run completed",
+                    body="Outcome: done",
+                    dedupe_key="api:1",
+                    details_json={},
+                )
+            )
+            s.commit()
+        rows = client.get("/api/notifications").json()
+        assert [(r["trigger"], r["status"]) for r in rows] == [("run_completed", "delivered")]
+        assert client.get("/api/notifications?status=bogus").status_code == 422

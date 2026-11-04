@@ -19,10 +19,6 @@ from orchestrator.core.models import Notification
 router = APIRouter(dependencies=AUTH)
 
 
-def dump(obj: Any) -> dict[str, Any]:
-    return json.loads(obj.model_dump_json())
-
-
 @router.get("/notifications")
 def list_notifications(
     limit: int = Query(100, ge=1, le=2000),
@@ -35,4 +31,4 @@ def list_notifications(
         q = q.where(Notification.status == status)
     if task_id is not None:
         q = q.where(Notification.task_id == task_id)
-    return [dump(n) for n in session.exec(q)]
+    return [json.loads(n.model_dump_json()) for n in session.exec(q)]
