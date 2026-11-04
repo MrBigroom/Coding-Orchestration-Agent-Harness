@@ -1,9 +1,14 @@
 # Contract-change request CCR-T9-01 — notification records, `GET /api/notifications`, `run_cancelled`
 
-- **Status:** REQUESTED by T-9, 2026-11-04. T-9's Definition of Done explicitly authorizes both
-  changes: DoD 3 requires "a persistent list that the GUI and an endpoint can read", and DoD 8
-  requires the missing fourth terminal event `run_cancelled`. This file is the request of record;
-  the operator confirms it at the merge gate.
+- **Status:** REQUESTED by T-9, 2026-11-04, **not yet approved, not applied to any contract
+  file**. T-9's Definition of Done does **not** authorize a contract edit: it names the file and
+  requires the *capability* — DoD 3 requires "a persistent list that the GUI and an endpoint can
+  read", and DoD 8 requires the missing fourth terminal event `run_cancelled` — but a mention is
+  not a grant, and the harness's own authorization test reports `authorized=[]` for this task.
+  So the contract-level change is requested **here**, for the operator to approve at the merge
+  gate. `docs/frozen-contracts.md` is left byte-identical to `d966bd8` on this branch; an earlier
+  round edited it and that edit was reverted (commit "revert unauthorized contract edit") because
+  being accurate is not the same as being allowed.
 - **Why a request:** `docs/frozen-contracts.md` freezes the SQLite/SQLModel schema, REST API shapes
   under `/api` (a new route needs its own request), and the build-log event vocabulary, which
   recorded that `run_cancelled` did not exist and was deferred to T-9.
@@ -22,7 +27,7 @@
    `details="<run short id> cancelled (exit <code>)"` and `role="worker"`. The line shape is
    unchanged; no event was renamed or removed.
 
-## Proposed contract text (already applied on this branch)
+## Proposed contract text (NOT applied — for the operator to approve at the merge gate)
 
 > **Notification records.** `notifications` is an additive SQLModel table created by revision
 > `0010_notifications`; `GET /api/notifications` reads it newest first. `status` is one of
@@ -46,5 +51,7 @@
 
 ## Blocking?
 
-No. DoD 3 and DoD 8 authorize the work; this artifact records the frozen-contract surface so it is
-a decision rather than a silent edit.
+No. DoD 3 and DoD 8 require the capability and the code ships it; this artifact records the
+frozen-contract surface so the operator can turn it into a contract decision at the merge gate
+rather than finding a silent edit. Until approved, the table and route are additive
+implementation detail rather than frozen contract, and a later phase could change them.
