@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # T-12 evidence capture: one invocation, one stamped HEAD. Outputs are staged in /tmp and moved
 # into verify-evidence/T-12 only after every command ran, so the dirty-entries stamp is real.
-# Evidence files are marked `-diff` in .gitattributes: they are committed, but the review diff
-# budget is spent on the source and test bodies instead of on pasted logs.
+# These are plain committed UTF-8 text files. They are deliberately NOT hidden from `git diff`
+# (an earlier round added `verify-evidence/T-12/* -diff` to .gitattributes; it was removed in
+# round 4 because hiding evidence from the reviewer - and making text logs classify as binary -
+# is not this task's call to make).
 # Re-run: bash verify-evidence/T-12/capture.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -51,20 +53,9 @@ PY
   echo "DEFAULTS_EXIT=$?"
   echo
 
-  # Type-check this worktree's web/src through a scratch symlink tree: a worktree has no
-  # node_modules, and the link must NOT live inside the worktree or it becomes untracked dirt.
-  rm -rf "$TMPW"
-  mkdir -p "$TMPW"
-  ln -s "$MAIN/web/node_modules" "$TMPW/node_modules"
-  for f in src index.html package.json tsconfig.json vite.config.ts tailwind.config.js postcss.config.js; do
-    ln -s "$WT/web/$f" "$TMPW/$f"
-  done
-  echo "web/src link: $(readlink "$TMPW/src")   # resolves into THIS worktree"
-  echo "# command: cd $TMPW && ./node_modules/.bin/tsc -b --force"
-  (cd "$TMPW" && ./node_modules/.bin/tsc -b --force)
-  echo "TSC_EXIT=$?"
-  (cd "$TMPW" && ./node_modules/.bin/tsc -p tsconfig.json --noEmit --listFiles) |
-    grep -E "$TMPW/src/(api/types|pages/(Tasks|TaskDetail|Settings))\.tsx?$"
+  echo "# GUI half of DoD 2 (Tasks.tsx, TaskDetail.tsx, Settings.tsx, api/types.ts) is proved"
+  echo "# separately by capture_gui_typecheck.sh -> gui_typecheck.txt: a real tsc -b --force"
+  echo "# over this worktree's web/src, plus --listFiles and a deliberate-error control."
 } >"$TMP/checks.txt"
 
 for f in full_suite.txt attempt_cap_tests.txt checks.txt; do
