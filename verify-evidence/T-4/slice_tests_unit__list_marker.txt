@@ -1,0 +1,73 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: tests/unit/test_memory_scopes.py — the assertions themselves, numbered
+# tests: test_injectability_marks_only_the_unreachable, test_role_rows_still_render_by_the_rule_main_used
+# why the reviewer asked for it: DoD 4 the marker, and the #39/#47 counter-examples
+# part 1/1
+
+  773 | def test_injectability_marks_only_the_unreachable(session):
+  774 |     slug = "ai-livestreaming-avatar"
+  775 |     bad = legacy(session, category="global", scope=slug, content="Global orphan.")
+  776 |     ok_global = legacy(session, category="global", scope="environment", content="Env fact.")
+  777 |     bad_project = legacy(
+  778 |         session, category="project", scope=slug, project_slug=slug, content="Project orphan."
+  779 |     )
+  780 |     # The counter-examples from the task: category=role scope=worker IS injectable.
+  781 |     worker = legacy(session, category="role", scope="worker", content="Small commits.")
+  782 |     worker_with_role = legacy(
+  783 |         session, category="role", scope="worker", role="worker", content="Re-test then resubmit."
+  784 |     )
+  785 |     reviewer = legacy(session, category="role", scope="architect", role="reviewer", content="Gate.")
+  786 |     agent = legacy(session, category="role", scope="agent", role="agent", content="Ship one phase.")
+  787 |     supervisor = legacy(session, category="role", scope="supervisor", content="Recommend only.")
+  788 | 
+  789 |     assert not m.is_injectable(bad) and "environment|preferences|patterns" in m.injectability(bad)[1]
+  790 |     assert not m.is_injectable(bad_project)
+  791 |     assert m.is_injectable(ok_global)
+  792 |     assert m.reachable_roles(ok_global) == tuple(r.value for r in Role)
+  793 |     for entry in (worker, worker_with_role, reviewer, agent, supervisor):
+  794 |         assert m.is_injectable(entry), (entry.role, entry.scope)
+  795 |     assert m.reachable_roles(reviewer) == ("architect", "reviewer")
+  796 |     assert m.reachable_roles(agent) == ("worker", "agent")
+  797 | 
+  798 | 
+
+  733 | def test_role_rows_still_render_by_the_rule_main_used(session):
+  734 |     """T-4 changes no rendering and no role-injection semantics (frozen contract).
+  735 | 
+  736 |     A legacy row whose `role` is not a role memory file keeps rendering to its own dead
+  737 |     file — it is REPORTED as uninjectable, not quietly re-homed into the scope's file — and
+  738 |     the rows that always worked keep working.
+  739 |     """
+  740 |     root = m.memory_root()
+  741 |     dead_role = legacy(
+  742 |         session, category="role", scope="worker", role="logbook-writer",
+  743 |         content="Diary of the logbook writer.", approved=True,
+  744 |     )
+  745 |     assert m._file_for(dead_role).name == "logbook-writer.md"
+  746 |     assert (root / "roles" / "logbook-writer.md").exists()
+  747 |     assert "Diary of the logbook writer." not in (root / "roles" / "worker.md").read_text()
+  748 |     assert not m.is_injectable(dead_role)
+  749 |     assert "logbook-writer.md" in m.injectability(dead_role)[1]
+  750 |     # fix-scopes refuses to invent a role, so this row is reported and stays put.
+  751 |     repair = m.fix_scopes(session)
+  752 |     assert [s["id"] for s in repair.skipped] == [dead_role.id]
+  753 |     session.refresh(dead_role)
+  754 |     assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
+  755 | 
+  756 |     # The counter-examples from the task (#39/#47): role=worker scope=worker.
+  757 |     good = legacy(
+  758 |         session, category="role", scope="worker", role="worker", content="Small commits.",
+  759 |         approved=True,
+  760 |     )
+  761 |     assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
+  762 |     assert m.reachable_roles(good) == ("worker", "agent")
+  763 |     assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
+  764 |     # `scope` is the fallback for the file name exactly as it was on main.
+  765 |     scope_only = legacy(session, category="role", scope="supervisor", content="Recommend only.")
+  766 |     assert m._file_for(scope_only).name == "supervisor.md"
+  767 |     assert m.is_injectable(scope_only)
+  768 |     # And the boundary refuses such a row going forward, so it cannot be created again.
+  769 |     with pytest.raises(m.MemoryError_):
+  770 |         m.create(session, MemoryCreate(category="role", scope="logbook-writer", content="x"))
+  771 | 
+  772 | 

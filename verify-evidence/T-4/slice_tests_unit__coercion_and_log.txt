@@ -1,0 +1,83 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: tests/unit/test_memory_scopes.py — the assertions themselves, numbered
+# tests: test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope, test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored, test_coercion_is_written_to_the_build_log_the_operator_reads
+# why the reviewer asked for it: DoD 1 coercion + the substitution record
+# part 1/1
+
+  110 | def test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope(session):
+  111 |     """DoD 1 read literally: the out-of-vocabulary case has ONE answer per category.
+  112 | 
+  113 |     Inferring `decisions` from a scope that merely mentions it would change WHICH ROLES
+  114 |     receive the note (decisions -> Architect+Supervisor, gotchas -> Worker+Supervisor), and
+  115 |     the substring pass used to fire inside unrelated words. Neither is allowed.
+  116 |     """
+  117 |     fallbacks = {
+  118 |         MemoryCategory.project: "gotchas",
+  119 |         MemoryCategory.global_: "environment",
+  120 |     }
+  121 |     for category, expected in fallbacks.items():
+  122 |         for scope in (
+  123 |             "decisions-and-gating",  # a vocabulary TOKEN inside a longer scope
+  124 |             "decisionss",  # a vocabulary word as a raw SUBSTRING
+  125 |             "conventions-notes",
+  126 |             "patterns-of-the-team",
+  127 |             "logbook",
+  128 |         ):
+  129 |             got, note = m.coerce_scope(category, scope)
+  130 |             assert got == expected, (category, scope, got)
+  131 |             assert note and "deterministic fallback" in note, (category, scope, note)
+  132 |     # In-vocabulary scopes are untouched and silent.
+  133 |     assert m.coerce_scope(MemoryCategory.project, "decisions") == ("decisions", "")
+  134 |     assert m.coerce_scope(MemoryCategory.global_, "patterns") == ("patterns", "")
+  135 | 
+  136 | 
+
+  167 | def test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored(session):
+  168 |     out = suggest(
+  169 |         session,
+  170 |         {
+  171 |             "category": "role",
+  172 |             "scope": "ai-livestreaming-avatar-logbook",
+  173 |             "content": "The logbook writer keeps a running diary.",
+  174 |         },
+  175 |     )
+  176 |     assert out.created == []
+  177 |     assert len(out.notes) == 1 and out.notes[0].startswith("dropped ")
+  178 |     assert "architect|worker|supervisor" in out.notes[0]
+  179 |     assert m.list_entries(session, category="role") == []
+  180 | 
+  181 | 
+
+  799 | def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
+  800 |     """DoD 1: the substitution is recorded where the run's log shows it.
+  801 | 
+  802 |     `run_service._store_memory_suggestions` is the seam every handoff path goes through
+  803 |     (clean exit, salvage, agent run); the notes come back with the entries and become
+  804 |     build-log events instead of a silent `continue`.
+  805 |     """
+  806 |     from sqlmodel import select
+  807 | 
+  808 |     from orchestrator.core.models import BuildLogEntry
+  809 |     from orchestrator.services import run_service
+  810 | 
+  811 |     out = run_service._store_memory_suggestions(
+  812 |         session,
+  813 |         [
+  814 |             MemorySuggestion(
+  815 |                 category="project", scope="ai-livestreaming-avatar", content="Reachable host."
+  816 |             ),
+  817 |             MemorySuggestion(category="role", scope="logbook-writer", content="Diary."),
+  818 |         ],
+  819 |         source="handoff:R-3",
+  820 |         project_slug="ai-livestreaming-avatar",
+  821 |         role="worker",
+  822 |     )
+  823 |     assert [e.scope for e in out.created] == ["gotchas"]
+  824 |     events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
+  825 |     assert "memory_scope_substituted" in events
+  826 |     assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
+  827 |     assert "gotchas" in events["memory_scope_substituted"]
+  828 |     assert "memory_suggestion_dropped" in events
+  829 |     assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
+  830 | 
+  831 | 

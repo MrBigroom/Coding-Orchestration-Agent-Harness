@@ -102,7 +102,7 @@ export default function Tasks() {
       </div>
       <div className="card overflow-x-auto">
         <table className="w-full">
-          <thead><tr>{["ID", "Title", "Project", "Status", "Kind", "Risk", "Tags", "Actions"].map((h) => <th key={h} className="th">{h}</th>)}</tr></thead>
+          <thead><tr>{["ID", "Title", "Project", "Status", "Attempts", "Kind", "Risk", "Tags", "Actions"].map((h) => <th key={h} className="th">{h}</th>)}</tr></thead>
           <tbody>
             {tasks?.map((t) => (
               <tr key={t.id} className="hover:bg-panel-2/50">
@@ -111,6 +111,13 @@ export default function Tasks() {
                   {t.branch_name && <div className="mono text-xs text-muted">{t.branch_name}</div>}</td>
                 <td className="td">{projName(t.project_id)}</td>
                 <td className="td"><Badge value={t.status} /></td>
+                <td className="td text-xs">
+                  {t.attempts ? (
+                    <span title={`completed ${t.attempts.completed} · timeout ${t.attempts.timeout} · failed ${t.attempts.failed} · cancelled ${t.attempts.cancelled} · limits ${t.attempts.max_review_rounds} verified rounds / ${t.attempts.max_run_attempts_per_task} attempts`}>
+                      {t.attempts.summary}
+                    </span>
+                  ) : "—"}
+                </td>
                 <td className="td">{t.kind}</td>
                 <td className="td"><Badge value={t.risk} /></td>
                 <td className="td text-xs text-muted">{t.tags.join(", ")}</td>

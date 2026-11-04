@@ -22,8 +22,11 @@ class PromptSection:
 class BuiltPrompt:
     role: str
     sections: list[PromptSection]
+    # Additive: what the builder had to drop to fit its budgets. `review_service` archives this
+    # next to the exact prompt text so a truncated reviewer input can never look complete.
+    truncations: list[dict[str, Any]] = field(default_factory=list)
     # Approved memory demoted by the per-section memory budget (id/bucket/scope/tokens/reason).
-    # Never rendered into the prompt; it is surfaced in prompt preview as a warning.
+    # Never rendered into the prompt; surfaced in prompt preview as a warning.
     memory_exclusions: list[dict[str, Any]] = field(default_factory=list)
     # Warnings raised when a memory section approaches its cap.
     memory_warnings: list[str] = field(default_factory=list)

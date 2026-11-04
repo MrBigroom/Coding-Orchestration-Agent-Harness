@@ -1,0 +1,38 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.update
+# lines 351-383 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 2 update boundary: the throwaway preview the review could not inspect
+# part 1/1
+  351 | def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
+  352 |     """Apply an edit. A scope the caller supplies is checked like at creation; a stored
+  353 |     legacy scope that is out of vocabulary does not freeze the row.
+  354 | 
+  355 |     Validation happens on a throwaway preview BEFORE anything is assigned, so a rejected
+  356 |     PATCH leaves the stored row and its rendered markdown exactly as they were — the
+  357 |     "unchanged" guarantee does not depend on session rollback behaviour.
+  358 |     """
+  359 |     entry = _get(session, entry_id)
+  360 |     new_content = (
+  361 |         redact(data.content.strip()) if data.content is not None else entry.content
+  362 |     )
+  363 |     new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
+  364 |     preview = MemoryEntry(
+  365 |         category=entry.category,
+  366 |         scope=data.scope if data.scope is not None else entry.scope,
+  367 |         project_slug=entry.project_slug,
+  368 |         role=entry.role,
+  369 |         content=new_content,
+  370 |     )
+  371 |     _validate(preview, check_scope=data.scope is not None)
+  372 |     old_file = _file_for(entry)  # before the mutation: the file this row used to render into
+  373 |     entry.content = new_content
+  374 |     entry.tags_json = new_tags
+  375 |     entry.scope = preview.scope  # normalized by _validate when a scope was supplied
+  376 |     entry.role = preview.role
+  377 |     entry.updated_at = utcnow()
+  378 |     session.add(entry)
+  379 |     session.commit()
+  380 |     if entry.approved:
+  381 |         render_file(session, old_file)
+  382 |         render_file(session, _file_for(entry))
+  383 |     return entry

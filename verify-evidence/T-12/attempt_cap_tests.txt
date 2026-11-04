@@ -1,0 +1,32 @@
+# HEAD=78df94210d6259a29e3047cc3c17b9a161d80ed1 (78df942) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:13:26+08:00 tree=0 dirty-entries
+# command: ./scripts/orch_verify.sh test tests/integration/test_attempt_cap.py -vv
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
+orch-verify: pytest target tests/integration/test_attempt_cap.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 11 items
+
+tests/integration/test_attempt_cap.py::test_three_consecutive_timeouts_reach_blocked_on_the_attempt_limit PASSED [  9%]
+tests/integration/test_attempt_cap.py::test_default_attempt_limit_preserves_the_completed_only_flow PASSED [ 18%]
+tests/integration/test_attempt_cap.py::test_mixed_sequence_counts_correctly_against_both_limits PASSED [ 27%]
+tests/integration/test_attempt_cap.py::test_cancelled_run_at_the_attempt_limit_blocks_with_its_submission_status PASSED [ 36%]
+tests/integration/test_attempt_cap.py::test_failed_run_at_the_attempt_limit_blocks_with_its_submission_status PASSED [ 45%]
+tests/integration/test_attempt_cap.py::test_unexpected_exception_at_the_attempt_limit_blocks PASSED [ 54%]
+tests/integration/test_attempt_cap.py::test_provider_error_at_the_attempt_limit_blocks PASSED [ 63%]
+tests/integration/test_attempt_cap.py::test_changes_requested_requeue_names_the_previous_submission PASSED [ 72%]
+tests/integration/test_attempt_cap.py::test_next_prompt_states_an_absent_previous_submission PASSED [ 81%]
+tests/integration/test_attempt_cap.py::test_salvaged_round_is_named_in_the_requeue_and_the_next_prompt PASSED [ 90%]
+tests/integration/test_attempt_cap.py::test_task_api_exposes_attempts_in_the_list_and_detail PASSED [100%]
+
+============================= 11 passed in 13.99s ==============================
+TARGETED_EXIT=0

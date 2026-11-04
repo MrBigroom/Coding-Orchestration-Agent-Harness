@@ -15,6 +15,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from orchestrator.core.config import get_settings
@@ -975,19 +976,48 @@ def schedule_run(schedule: str) -> None:
 
 
 def _memory_table(entries) -> Table:
-    table = Table("id", "category", "scope", "project", "role", "status", "content")
+    from orchestrator.services import memory_service
+
+    table = Table("id", "category", "scope", "project", "role", "status", "inj", "content")
     for e in entries:
         status = "approved" if e.approved else ("rejected" if e.rejected else "pending")
+        # T-4 DoD 4: `inj` marks an entry whose OWN category cannot reach its scope, so the
+        # defect is visible the moment you list memory instead of months later. The full
+        # reason is printed under the table (a Rich column squeezes long text to "UNINJECT…").
+        # Valid role rows (category=role scope=worker, resolved through ROLE_MEMORY_KEY) are
+        # never misflagged.
+        ok, _reason = memory_service.injectability(e)
+        # Everything below is operator data, not markup: a scope or a note containing
+        # brackets would otherwise be eaten by Rich and the row would lie.
         table.add_row(
             str(e.id),
-            e.category,
-            e.scope,
-            e.project_slug or "-",
-            e.role or "-",
+            escape(e.category),
+            escape(e.scope),
+            escape(e.project_slug or "-"),
+            escape(e.role or "-"),
             status,
-            e.content[:80],
+            "ok" if ok else "[red]NO[/red]",
+            escape(e.content[:80]),
         )
     return table
+
+
+def _print_injectability(entries) -> int:
+    """Name every uninjectable row and return how many there were."""
+    from orchestrator.services import memory_service
+
+    bad = [e for e in entries if not memory_service.is_injectable(e)]
+    for e in bad:
+        console.print(
+            f"[red]uninjectable[/red] #{e.id} {escape(e.category)}: "
+            f"{escape(memory_service.injectability(e)[1])}"
+        )
+    if bad:
+        err.print(
+            f"{len(bad)} entr{'y' if len(bad) == 1 else 'ies'} above cannot be injected: "
+            "fix with `orchestrator memory fix-scopes`."
+        )
+    return len(bad)
 
 
 @memory_app.command("list")
@@ -997,18 +1027,21 @@ def memory_list(
     category: str = typer.Option(None),
     project: str = typer.Option(None),
     role: str = typer.Option(None),
+    uninjectable: bool = typer.Option(
+        False, "--uninjectable", help="Show only entries no prompt can read."
+    ),
 ) -> None:
     from orchestrator.services import memory_service
 
     _ensure_ready()
     with _session() as s:
-        console.print(
-            _memory_table(
-                memory_service.list_entries(
-                    s, status=status, category=category, project_slug=project, role=role
-                )
-            )
+        entries = memory_service.list_entries(
+            s, status=status, category=category, project_slug=project, role=role
         )
+        if uninjectable:
+            entries = [e for e in entries if not memory_service.is_injectable(e)]
+    console.print(_memory_table(entries))
+    _print_injectability(entries)
 
 
 @memory_app.command("add")
@@ -1026,6 +1059,13 @@ def memory_add(
     from orchestrator.services import memory_service
 
     _ensure_ready()
+    # `--role` is a plain string here, and MemoryCreate types it as the Role enum, so an
+    # unreadable role would be refused by Pydantic with a message that never names the role
+    # MEMORY FILES (DoD 2 requires the allowed values to be named). Validate it through the
+    # service's own check first; a valid name (including the reviewer/agent aliases) passes
+    # through untouched and is still re-checked by _validate.
+    if role is not None:
+        memory_service.check_role_name(role)
     with _session() as s:
         e = memory_service.create(
             s,
@@ -1072,7 +1112,92 @@ def memory_search(query: str) -> None:
 
     _ensure_ready()
     with _session() as s:
-        console.print(_memory_table(memory_service.search(s, query)))
+        found = memory_service.search(s, query)
+    console.print(_memory_table(found))
+    _print_injectability(found)
+
+
+@memory_app.command("fix-scopes")
+@handled
+def memory_fix_scopes(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report the moves, change nothing."),
+    gc_only: bool = typer.Option(
+        False, "--gc-only", help="Only remove rendered files that no entry owns."
+    ),
+    no_gc: bool = typer.Option(
+        False,
+        "--no-gc",
+        help="Move rows and re-render, but delete no file (the GC list is still reported).",
+    ),
+) -> None:
+    """Repair entries stored with a scope no injector can read (task T-4).
+
+    Rows are moved, never deleted; rejected rows are left alone. Both the old and the new
+    markdown file are re-rendered, and rendered files that no longer have an owning entry
+    are removed so a re-scoped entry cannot leave a title-only ghost behind. Only files
+    `render_file` could have written are collectable — hand-edited markdown in the memory
+    tree is never deleted (see docs/memory.md), and `--no-gc` turns the deletion off.
+    """
+    from orchestrator.services import memory_service as m
+
+    _ensure_ready()
+    with _session() as s:
+        if gc_only:
+            if dry_run:
+                # a preview of what a real run would collect: nothing is deleted, and the
+                # verb printed below is "would remove"
+                repair = m.ScopeRepair(removed_files=m.orphan_files(s), dry_run=True)
+            else:
+                # ONLY what was actually unlinked. `orphan_files()` is a pre-view taken
+                # before the GC, and falling back to it (`removed or listed`) let a real run
+                # print "removed dead scope-file" for files it had left on disk.
+                repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s), dry_run=False)
+        else:
+            repair = m.fix_scopes(s, dry_run=dry_run, gc=not no_gc)
+    verb = "would move" if dry_run else "moved"
+    file_verb = "would re-render" if dry_run else "re-rendered"
+    for mv in repair.moved:
+        console.print(
+            f"{verb} #{mv['id']} {escape(str(mv['category']))}: "
+            f"{escape(repr(mv['from']))} -> {escape(repr(mv['to']))}"
+            + (f"  ({escape(mv['note'])})" if mv.get("note") else "")
+        )
+        console.print(
+            f"  {file_verb} {escape(mv['old_file'])} and {escape(mv['new_file'])}"
+        )
+        # A dry run cannot show this file in the removed list below (the row has not moved
+        # yet, so the file is still owned), so say here what the real run will collect.
+        if dry_run and mv["collect_old_file"]:
+            console.print(f"  would collect dead scope-file {escape(mv['old_file'])}")
+    for sk in repair.skipped:
+        console.print(
+            f"left #{sk['id']} {escape(str(sk['category']))} scope "
+            f"{escape(repr(sk['scope']))} alone: {escape(str(sk.get('why', '')))}"
+        )
+    ghost_verb = "would remove" if dry_run else "removed"
+    for path in repair.removed_files:
+        console.print(f"{ghost_verb} dead scope-file {escape(str(path))}")
+    if repair.ghost_files:
+        console.print(
+            f"gc is off: {len(repair.ghost_files)} dead scope-file(s) left in place "
+            f"({', '.join(escape(str(p)) for p in repair.ghost_files)})"
+        )
+    ids = repair.moved_ids
+    console.print(
+        f"{verb} {len(ids)} entr{'y' if len(ids) == 1 else 'ies'}"
+        + (f" (ids: {', '.join(str(i) for i in ids)})" if ids else "")
+        + f"; {len(repair.skipped)} left alone; "
+        + (
+            f"{len(repair.removed_files)} dead scope-file(s) "
+            + ("to remove" if dry_run else "removed")
+        )
+        + (
+            f"; {len(repair.ghost_files)} more reported with gc off"
+            if repair.ghost_files
+            else ""
+        )
+        + (" (dry run, nothing written)" if dry_run else "")
+    )
 
 
 _ACTION_STYLE = {

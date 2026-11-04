@@ -1,0 +1,100 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# command: ./scripts/orch_verify.sh lint   (ruff check src tests)
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
+orch-verify: lint target  ruff check src tests
+All checks passed!
+LINT_EXIT=0
+
+# Cold, offline demonstration against THIS worktree's code, in a throwaway
+# ORCHESTRATOR_HOME: coercion with the substitution recorded, boundary rejection for
+# all three categories, the repair re-rendering BOTH files and collecting the orphan,
+# the list marker, and the CLI verbatim.
+# command: ORCHESTRATOR_HOME=$TMP/home PYTHONPATH=$WT/src $MAIN/.venv/bin/python <demo>
+vocabularies: {'global': ('environment', 'preferences', 'patterns'), 'project': ('conventions', 'decisions', 'gotchas'), 'role': ('architect', 'worker', 'supervisor'), 'aliases': {'reviewer': 'architect', 'agent': 'worker'}}
+fallbacks   : {<MemoryCategory.global_: 'global'>: 'environment', <MemoryCategory.project: 'project'>: 'gotchas'}
+
+(1) A WORKER HANDOFF'S SUGGESTIONS  (DoD 1: coerce project/global, drop role)
+  stored: [(3, 'project', 'gotchas', 'pending'), (4, 'global', 'environment', 'pending')]
+  recorded notes:
+    - memory suggestion from handoff:R-3: project scope 'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 'gotchas' (deterministic fallback, not inferred from the words)
+    - memory suggestion from handoff:R-3: global scope 'global-environment-verifying-orchestrator-change' is not in environment|preferences|patterns; stored as 'environment' (deterministic fallback, not inferred from the words)
+    - dropped suggestion from handoff:R-3: role memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+
+(2) BOUNDARY REJECTION, EVERY CATEGORY  (DoD 2)
+  rejected: memory scope 'environment-notes' is not injectable; allowed scopes for global: environment|preferences|patterns
+  rejected: memory scope 'logbook' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  rejected: role memory scope 'logbook-writer' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+  accepted, alias resolved through ROLE_MEMORY_KEY: architect
+
+(3) REPAIR OF ROWS STORED BEFORE THE CHECK  (DoD 3)
+  legacy ids: [6, 7, 8]
+  files before   : ['global/environment.md', 'global/global-environment-verifying-orchestrator.md', 'global/patterns.md', 'global/preferences.md', 'projects/ai-livestreaming-avatar/ai-livestreaming-avatar.md', 'roles/architect.md', 'roles/supervisor.md', 'roles/worker.md']
+  orphan files   : []
+  uninjectable   : [6, 7, 8]
+  dry run would move: [(6, 'global-environment-verifying-orchestrator', 'environment', True), (7, 'ai-livestreaming-avatar', 'gotchas', True)]
+  dry run left     : [(6, 'global-environment-verifying-orchestrator'), (7, 'ai-livestreaming-avatar'), (8, 'ai-livestreaming-avatar')]
+  moved ids        : [6, 7]
+    #6 global global-environment-verifying-orchestrator -> environment | old_file global/global-environment-verifying-orchestrator.md | new_file global/environment.md
+    #7 project ai-livestreaming-avatar -> gotchas | old_file projects/ai-livestreaming-avatar/ai-livestreaming-avatar.md | new_file projects/ai-livestreaming-avatar/gotchas.md
+  left alone       : [(8, 'rejected rows are left alone')]
+  collected files  : ['global/global-environment-verifying-orchestrator.md', 'projects/ai-livestreaming-avatar/ai-livestreaming-avatar.md']
+  files after      : ['global/environment.md', 'global/patterns.md', 'global/preferences.md', 'projects/ai-livestreaming-avatar/gotchas.md', 'roles/architect.md', 'roles/supervisor.md', 'roles/worker.md']
+  global/environment.md now holds: ['- Primary dev environment: CachyOS Linux with Hyprland (Wayland).  <!-- mem:1 -->', '- Verification is path-independent.  <!-- mem:6 -->']
+  projects/ai-livestreaming-avatar/gotchas.md now holds: ['- Repo is reachable.  <!-- mem:7 -->']
+  rows now         : [(6, 'global', 'environment', True, False), (7, 'project', 'gotchas', True, False), (8, 'project', 'ai-livestreaming-avatar', False, True)]
+  second run (idempotent): moved [] skipped [8] collected 0
+
+(4) THE LIST MARKER, INCLUDING THE COUNTER-EXAMPLES  (DoD 4)
+  #9 project scope='ai-livestreaming-avatar' role=None -> NO  reachable_by=- memory scope 'ai-livestreaming-avatar' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  #900 role scope='worker' role=None -> ok  reachable_by=worker,agent 
+  #901 role scope='worker' role='worker' -> ok  reachable_by=worker,agent 
+  #902 role scope='architect' role='reviewer' -> ok  reachable_by=architect,reviewer 
+  #903 role scope='agent' role='agent' -> ok  reachable_by=worker,agent 
+  #904 role scope='supervisor' role='supervisor' -> ok  reachable_by=supervisor 
+
+(5) THE CLI, VERBATIM
+$ orchestrator memory list --uninjectable
+┏━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┳━━━━━┳━━━━━━━━━━━━┓
+┃ id ┃ category ┃ scope      ┃ project    ┃ role ┃ status   ┃ inj ┃ content    ┃
+┡━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━╇━━━━━╇━━━━━━━━━━━━┩
+│ 8  │ project  │ ai-livest… │ p2         │ -    │ rejected │ NO  │ Rejected,  │
+│    │          │            │            │      │          │     │ so         │
+│    │          │            │            │      │          │     │ untouched. │
+│ 9  │ project  │ ai-livest… │ ai-livest… │ -    │ approved │ NO  │ Orphan.    │
+└────┴──────────┴────────────┴────────────┴──────┴──────────┴─────┴────────────┘
+uninjectable #8 project: memory scope 'ai-livestreaming-avatar' is not 
+injectable; allowed scopes for project: conventions|decisions|gotchas
+uninjectable #9 project: memory scope 'ai-livestreaming-avatar' is not 
+injectable; allowed scopes for project: conventions|decisions|gotchas
+2 entries above cannot be injected: fix with `orchestrator memory fix-scopes`.
+$ orchestrator memory fix-scopes
+moved #9 project: 'ai-livestreaming-avatar' -> 'gotchas'  (project scope 
+'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 
+'gotchas' (deterministic fallback, not inferred from the words))
+  re-rendered 
+/tmp/t4-evidence.5DyXK9/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+aming-avatar.md and 
+/tmp/t4-evidence.5DyXK9/home/memory/projects/ai-livestreaming-avatar/gotchas.md
+left #8 project scope 'ai-livestreaming-avatar' alone: rejected rows are left 
+alone
+removed dead scope-file 
+/tmp/t4-evidence.5DyXK9/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+aming-avatar.md
+moved 1 entry (ids: 9); 1 left alone; 1 dead scope-file(s) removed
+$ orchestrator memory list --uninjectable
+┏━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┳━━━━━┳━━━━━━━━━━━━━━┓
+┃ id ┃ category ┃ scope       ┃ project ┃ role ┃ status   ┃ inj ┃ content      ┃
+┡━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━━━━╇━━━━━╇━━━━━━━━━━━━━━┩
+│ 8  │ project  │ ai-livestr… │ p2      │ -    │ rejected │ NO  │ Rejected, so │
+│    │          │             │         │      │          │     │ untouched.   │
+└────┴──────────┴─────────────┴─────────┴──────┴──────────┴─────┴──────────────┘
+uninjectable #8 project: memory scope 'ai-livestreaming-avatar' is not 
+injectable; allowed scopes for project: conventions|decisions|gotchas
+1 entry above cannot be injected: fix with `orchestrator memory fix-scopes`.
+DEMO_EXIT=0

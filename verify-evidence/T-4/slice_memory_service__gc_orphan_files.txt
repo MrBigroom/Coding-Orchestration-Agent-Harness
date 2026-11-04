@@ -1,0 +1,25 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.gc_orphan_files
+# lines 537-556 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 3 the orphan collection (the GC the review could not read)
+# part 1/1
+  537 | def gc_orphan_files(session: Session, *, dry_run: bool = False) -> list[Path]:
+  538 |     """Delete dead scope-files so a re-scoped entry cannot leave a title-only ghost behind.
+  539 | 
+  540 |     Only rows are ever left untouched (nothing here deletes a `memory_entries` row, and no
+  541 |     canonical layout file is removed); the files it deletes are derived output that passes
+  542 |     `orphan_files` — unowned, outside the canonical names, and text `render_file` wrote.
+  543 |     Hand-written markdown in the tree is protected by `_renderer_output`.
+  544 |     """
+  545 |     root = memory_root()
+  546 |     removed: list[Path] = []
+  547 |     for path in orphan_files(session):
+  548 |         removed.append(path)
+  549 |         if dry_run:
+  550 |             continue
+  551 |         path.unlink(missing_ok=True)
+  552 |         parent = path.parent
+  553 |         if parent != root and parent.relative_to(root).parts[0] == "projects":
+  554 |             if not any(parent.iterdir()):
+  555 |                 parent.rmdir()
+  556 |     return removed

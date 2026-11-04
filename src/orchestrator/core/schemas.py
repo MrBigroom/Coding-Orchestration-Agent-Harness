@@ -6,8 +6,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from orchestrator.core.memory_vocab import check_role_name
 from orchestrator.core.models import (
     MemoryCategory,
     ProviderKind,
@@ -336,6 +337,15 @@ class AgentRun(BaseModel):
 
 
 class MemoryCreate(BaseModel):
+    """Request body for `POST /api/memory`.
+
+    Two boundary checks matter for the memory vocabularies (T-4 DoD 2). `scope` keeps its
+    shape pattern here and its MEMBERSHIP check in the service (`_validate`), because the
+    allowed set depends on `category`, which a field validator cannot see. `role` is refused
+    here, in `_role_names_the_memory_files`, because the `Role` enum would otherwise answer a
+    bad value with its own list and the service would never be reached.
+    """
+
     category: MemoryCategory
     scope: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     content: str = Field(min_length=1)
@@ -344,6 +354,36 @@ class MemoryCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     source: str = "manual"
     approved: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _role_names_the_memory_files(cls, data: Any) -> Any:
+        """Refuse an unreadable `role` with the role MEMORY FILES, before the enum speaks.
+
+        `role` is the column `for_prompt` selects on, so it decides which prompt reads the
+        row — the more damaging half of a bad row (T-4). Left to Pydantic, `POST /api/memory`
+        with `role="logbook-writer"` is a 422 whose only words are `Input should be
+        'architect', 'supervisor', 'worker', 'reviewer' or 'agent'`: the enum, without the
+        `reviewer -> architect` / `agent -> worker` aliases that make those extra names legal,
+        and without the vocabulary the operator has to fix the row against (a per-value grep
+        for `architect|worker|supervisor` passes on that enum message too, which is exactly why
+        the API test asserts the joined vocabulary and the words only `check_role_name` says).
+        DoD 2 asks for the allowed VALUES at EVERY boundary, so this validator runs
+        `check_role_name` — the same function `_validate`, `import_all` and the CLI's `--role`
+        use — and the 422 detail carries that message.
+
+        The accepted set is UNCHANGED: every value that passed before still passes (the five
+        Role members, aliases included) and every value that failed still fails, so this is an
+        error-TEXT improvement, not a widening of the frozen request shape — `role` stays
+        typed as `Role`, so the OpenAPI enum and the response shape are untouched. `None` and
+        an already-converted `Role` are left for the field validator; a `model_construct`
+        payload (which skips validators) is still refused by `_validate` in the service.
+        """
+        if isinstance(data, dict):
+            raw = data.get("role")
+            if isinstance(raw, str) and not isinstance(raw, Role):
+                check_role_name(raw)
+        return data
 
 
 class MemoryUpdate(BaseModel):

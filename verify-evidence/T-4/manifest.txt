@@ -1,0 +1,32 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# Every file this branch changes, as a COMPLETE per-file diff vs the merge-base.
+# Split per file because the supplied combined diff was truncated mid-function; each
+# diff_*.txt beside this file is self-contained and ends with its own DIFF_COMPLETE
+# trailer. Base: db0011212a775e0ee766ebbee40a4f1cdf26a6e7
+BASE=db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD=fcff05d74326127fd14842cc03cad21dfb234a91
+ README.md                                       |  13 +-
+ docs/decisions.md                               |  78 +++
+ docs/memory.md                                  | 124 +++-
+ src/orchestrator/api/routes/memory.py           |  10 +-
+ src/orchestrator/cli.py                         | 151 ++++-
+ src/orchestrator/core/memory_vocab.py           | 179 +++++
+ src/orchestrator/core/schemas.py                |  42 +-
+ src/orchestrator/services/chat_service.py       |   7 +-
+ src/orchestrator/services/memory_service.py     | 574 ++++++++++++++--
+ src/orchestrator/services/run_service.py        |  51 +-
+ tests/integration/test_memory_scope_boundary.py | 539 +++++++++++++++
+ tests/unit/test_memory_scopes.py                | 843 ++++++++++++++++++++++++
+ 12 files changed, 2517 insertions(+), 94 deletions(-)
+CHANGED_FILES_SHA256_AND_LENGTH
+1ebac003cf6869b9  README.md  lines=255
+51dcc23ad85cc075  docs/decisions.md  lines=302
+91931465098248bb  docs/memory.md  lines=184
+4157b34c59f1a204  src/orchestrator/api/routes/memory.py  lines=99
+254e9ffe4212a51b  src/orchestrator/cli.py  lines=1356
+f5d0f4161c3e6dab  src/orchestrator/core/memory_vocab.py  lines=179
+40b44e60dea3ae2b  src/orchestrator/core/schemas.py  lines=423
+0791e4914eb39083  src/orchestrator/services/chat_service.py  lines=1051
+c8c0c414a0ff32f0  src/orchestrator/services/memory_service.py  lines=849
+640e05415a6bbe4c  src/orchestrator/services/run_service.py  lines=1455
+88deecd17bd85283  tests/integration/test_memory_scope_boundary.py  lines=539
+8d762079aa67e7f9  tests/unit/test_memory_scopes.py  lines=843

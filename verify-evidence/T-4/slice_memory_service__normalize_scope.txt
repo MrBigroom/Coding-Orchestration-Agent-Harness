@@ -1,0 +1,23 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.core.memory_vocab.normalize_scope
+# lines 128-145 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/core/memory_vocab.py
+# why the reviewer asked for it: DoD 2 the shared membership check
+# part 1/1
+  128 | def normalize_scope(category: str, scope: str) -> str:
+  129 |     """The canonical, injectable scope for (category, scope).
+  130 | 
+  131 |     Raises `MemoryError_` naming the allowed values when the scope cannot be reached by
+  132 |     its own category — this is the single boundary check used by create, update, import
+  133 |     and the suggestion path, so the API and the CLI reject the same rows for the same
+  134 |     reason.
+  135 |     """
+  136 |     vocab = scope_vocabulary(category)
+  137 |     if category == MemoryCategory.role:
+  138 |         key = role_memory_file(scope)
+  139 |         if key is None:
+  140 |             raise vocab_error(category, scope or "")
+  141 |         return key
+  142 |     slug = slugify(scope or "")
+  143 |     if slug in vocab:
+  144 |         return slug
+  145 |     raise vocab_error(category, scope or "")

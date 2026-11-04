@@ -1,0 +1,22 @@
+# HEAD=96289d700be8bd45da5e8672778946ed2e73eec0 (96289d7) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:24:40+08:00 tree=0 dirty-entries
+# command: ./scripts/orch_verify.sh all   (whole tests/ tree of THIS worktree, then lint)
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=all|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/tests
+orch-verify: lint target  ruff check src tests
+........................................................................ [ 12%]
+.....................................ssssss............................. [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+........................................................................ [ 64%]
+........................................................................ [ 77%]
+........................................................................ [ 90%]
+........................................................                 [100%]
+554 passed, 6 skipped in 111.24s (0:01:51)
+All checks passed!
+ALL_EXIT=0

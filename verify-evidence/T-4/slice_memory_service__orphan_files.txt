@@ -1,0 +1,23 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.orphan_files
+# lines 517-534 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 3 what counts as dead output
+# part 1/1
+  517 | def orphan_files(session: Session) -> list[Path]:
+  518 |     """Rendered markdown files that are dead output: no owning approved entry, not a name
+  519 |     `ensure_layout` owns, and text that only `render_file` could have produced.
+  520 | 
+  521 |     A hand-authored file fails `_renderer_output`, so it is never listed here.
+  522 |     """
+  523 |     root = memory_root()
+  524 |     if not root.exists():
+  525 |         return []
+  526 |     owned = {_file_for(e) for e in list_entries(session, status="approved")}
+  527 |     return [
+  528 |         p
+  529 |         for p in sorted(root.rglob("*.md"))
+  530 |         if p not in owned
+  531 |         and in_layout_dir(p)
+  532 |         and not canonical_file(p)
+  533 |         and _renderer_output(p)
+  534 |     ]

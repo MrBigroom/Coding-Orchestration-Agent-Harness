@@ -1,0 +1,35 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: src/orchestrator/services/memory_service.py lines 26-56
+# why the reviewer asked for it: ROUND 4: memory_service re-exports every vocabulary name, so memory_service.GLOBAL_SCOPES and friends keep resolving for callers and tests
+# part 1/1
+   26 | # The vocabularies and the pure scope/role resolution live in core (T-4 DoD 2): the API
+   27 | # request model in `core/schemas.py` has to refuse the same shapes with the same words, and
+   28 | # it cannot import THIS module (memory_service imports schemas -> circular import). Every
+   29 | # name is re-imported here so `memory_service.GLOBAL_SCOPES`, `memory_service.coerce_scope`
+   30 | # and the rest keep resolving exactly as they did before the move. Three of the lines below
+   31 | # are marked as intentional RE-EXPORTS: nothing in this module calls them, but
+   32 | # `memory_service.ROLE_SCOPE_ALIASES`, `memory_service.scope_vocabulary` and
+   33 | # `memory_service.substitution_note` belong to the surface tests and callers read, and
+   34 | # removing them would break those imports.
+   35 | from orchestrator.core.memory_vocab import (
+   36 |     FALLBACK_SCOPE,
+   37 |     GLOBAL_SCOPES,
+   38 |     PROJECT_SCOPES,
+   39 |     ROLE_FILES,
+   40 |     ROLE_MEMORY_KEY,
+   41 |     ROLE_PROJECT_SCOPES,
+   42 |     ROLE_SCOPE_ALIASES,  # noqa: F401 - re-export
+   43 |     ROLE_SCOPES,
+   44 |     SCOPE_VOCABULARY,
+   45 |     MemoryError_,
+   46 |     check_role_name,
+   47 |     coerce_scope,
+   48 |     normalize_scope,
+   49 |     role_memory_file,
+   50 |     scope_vocabulary,  # noqa: F401 - re-export
+   51 |     substitution_note,  # noqa: F401 - re-export
+   52 |     vocab_error,
+   53 | )
+   54 | from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, utcnow
+   55 | from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
+   56 | from orchestrator.utils.paths import safe_join

@@ -95,6 +95,21 @@ Roboto Mono or your system's), all bundled locally. Code, diffs and JSON are hig
 VS Code themes (pick a light and a dark one on Settings), with line numbers and a copy
 button.
 
+## Runtime settings
+
+Settings are editable in the GUI or with `PATCH /api/settings`, stored in SQLite, and read
+through `settings_service`. The two loop limits are:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_review_rounds` | `3` | **Verified rounds** before `blocked` (runs that reached the gate) |
+| `max_run_attempts_per_task` | `6` | **All attempts** before `blocked`, including timeout/failed/cancelled runs |
+
+The default 6 is above the default 3 review rounds, so a completed-only flow behaves exactly as
+before while a timeout loop stops after six attempts. The `task_limits_exhausted` build-log event
+names the fired limit and the completed/timeout/failed/cancelled breakdown. All other runtime
+keys are listed in [`docs/configuration.md`](docs/configuration.md).
+
 ## Chat with a harness directly
 
 The **Chat** page is an interactive session with a coding harness: an input box, model
@@ -165,7 +180,18 @@ yourself, run `scripts/harness-bench/bench.sh`.
 
 Memory lives in SQLite (`memory_entries`) and is rendered to markdown under
 `$ORCHESTRATOR_HOME/memory/{global,projects/<slug>,roles}/`. Workers and Architects
-*suggest* entries via `memory_suggestions` in their JSON. Suggestions start **pending**,
+*suggest* entries via `memory_suggestions` in their JSON. A suggestion's scope is checked
+against the closed vocabulary (`environment|preferences|patterns`,
+`conventions|decisions|gotchas`, `architect|worker|supervisor`): a project/global scope
+outside it is coerced to the deterministic fallback (`gotchas`/`environment`, never
+inferred from the words) and the substitution is written to the build log, a role
+suggestion that resolves to no role file is dropped with a warning, and
+`orchestrator memory list` / `memory fix-scopes` mark and repair rows stored before that
+check existed. The create and edit boundaries (POST/PATCH, `memory add`) *reject* an
+out-of-vocabulary value for every category, and for `category=role` they check the `role`
+column too, because that is the column injection reads. Every one of those rejections names
+its own allowed values (`environment|preferences|patterns`, `conventions|decisions|gotchas`,
+`architect|worker|supervisor`), including the API's `422` for an unknown role name. Suggestions start **pending**,
 and only **approved** entries are injected into prompts. Each role gets its own slice:
 the Architect gets decisions + conventions, the Worker conventions + gotchas, the
 Supervisor decisions + gotchas, and every role gets global memory. See

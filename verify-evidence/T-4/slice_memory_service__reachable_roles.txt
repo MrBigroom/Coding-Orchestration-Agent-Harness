@@ -1,0 +1,21 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.reachable_roles
+# lines 137-152 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 4 which prompt roles read a row; role column first, then scope
+# part 1/1
+  137 | def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
+  138 |     """Which prompt roles would actually read this entry's scope, once approved."""
+  139 |     if entry.category == MemoryCategory.global_:
+  140 |         if entry.scope not in GLOBAL_SCOPES:
+  141 |             return ()
+  142 |         return tuple(r.value for r in Role)
+  143 |     if entry.category == MemoryCategory.project:
+  144 |         if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
+  145 |             return ()
+  146 |         return tuple(
+  147 |             r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
+  148 |         )
+  149 |     key = role_file_key(entry)
+  150 |     if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
+  151 |         return ()
+  152 |     return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)

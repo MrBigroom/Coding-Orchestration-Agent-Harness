@@ -1,0 +1,166 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 5/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 849 lines.
++def test_gc_removes_dead_files_and_keeps_the_canonical_layout(session):
++    root = m.memory_root()
++    dead = root / "projects" / "p" / "p.md"
++    dead.parent.mkdir(parents=True, exist_ok=True)
++    dead.write_text("# p\n")  # the title-only ghost left behind by a hand re-scope
++    assert (root / "global" / "patterns.md").exists()  # canonical, empty, from init
++    removed = m.gc_orphan_files(session)
++    assert removed == [dead]
++    assert not dead.exists()
++    assert (root / "global" / "patterns.md").exists()
++    assert not (root / "projects" / "p").exists()  # emptied project directory tidied away
++
++
++def test_gc_only_deletes_files_render_file_could_have_written(session):
++    """Hand-authored markdown is operator input (docs/memory.md, `import --markdown`).
++
++    The GC predicate is `in_layout_dir AND not canonical_file AND not owned AND
++    _renderer_output`, and the last term is what protects a human's file: the first line
++    must be exactly `# <stem>` and every later line must be a `- … <!-- mem:N -->` marker.
++    """
++    root = m.memory_root()
++    proj = root / "projects" / "p"
++    proj.mkdir(parents=True, exist_ok=True)
++    hand = proj / "notes.md"
++    hand.write_text("# Hand-written notes\n\n- a line someone typed by hand\n")
++    hand_title_only = proj / "scratch.md"  # right heading shape, prose body -> kept
++    hand_title_only.write_text("# scratch\n\nremember to check the mount path\n")
++    header = proj / "conventions.md"  # canonical name holding an ensure_layout header
++    header.write_text("# Project p — conventions\n")
++    ghost = proj / "p.md"  # render_file's own output, now with no owning entry
++    ghost.write_text("# p\n")
++    stale = proj / "old-scope.md"  # rendered with a marker whose entry has moved away
++    stale.write_text("# old-scope\n\n- dead line  <!-- mem:999 -->\n")
++    outside = root.parent / "zz-p.md"  # not in a layout directory
++    outside.write_text("# p\n")
++
++    removed = m.gc_orphan_files(session)
++    assert removed == [stale, ghost]  # sorted by path, and only the two renderer-shaped files
++    assert hand.exists() and hand_title_only.exists() and header.exists()
++    assert not ghost.exists() and not stale.exists()
++    assert outside.exists()
++    assert m.orphan_files(session) == []  # idempotent
++
++
++def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
++    row = legacy(
++        session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
++        content="Reachable host.", approved=True,
++    )
++    ghost = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
++    assert ghost.exists()
++    repair = m.fix_scopes(session, gc=False)
++    assert repair.moved_ids == [row.id]
++    assert repair.removed_files == [] and ghost.exists()
++    # `--no-gc` still SHOWS the dead file instead of pretending there is none.
++    assert [str(p) for p in repair.ghost_files] == [str(ghost)]
++    assert f"mem:{row.id}" not in ghost.read_text()  # re-rendered, just not deleted
++    assert f"mem:{row.id}" in (m.memory_root() / "projects" / "p" / "gotchas.md").read_text()
++
++
++def test_import_does_not_duplicate_a_row_that_is_still_awaiting_fix_scopes(session):
++    """The repair must not manufacture a second copy of a fact that is already stored.
++
++    A legacy row keeps its dead scope until `fix-scopes` runs, so the duplicate check takes
++    BOTH spellings into account: the stored scope and the scope it would be repaired to.
++    """
++    legacy(session, category="project", scope="logbook", project_slug="demo",
++           content="Same fact.")
++    payload = json.loads(m.dumps_export(session))
++    assert m.import_all(session, payload) == 0
++    rows = [e for e in m.list_entries(session) if e.content == "Same fact."]
++    assert len(rows) == 1 and rows[0].scope == "logbook"  # untouched, still repairable
++    m.fix_scopes(session)
++    assert m.import_all(session, payload) == 0  # and after the repair, still no duplicate
++    with pytest.raises(m.MemoryError_):
++        m.import_all(session, {"version": 1, "entries": "not a list"})
++
++
++def test_import_repairs_a_legacy_export_instead_of_dropping_it(session):
++    slug = "ai-livestreaming-avatar"
++    payload = {
++        "version": 1,
++        "entries": [
++            {"category": "project", "scope": slug, "project_slug": slug,
++             "content": "Reachable host.", "approved": False},
++            {"category": "role", "scope": "logbook-writer", "content": "Dropped.",
++             "approved": False},
++        ],
++    }
++    assert m.import_all(session, payload) == 1  # the repairable one, not the unplaceable one
++    rows = m.list_entries(session, category="project")
++    assert [r.scope for r in rows if r.source == "import"] == ["gotchas"]
++    assert m.import_all(session, payload) == 0  # idempotent on the repaired values
++
++
++# ------------------------------------------------------------- list marker (DoD 4)
++
++
++def test_role_rows_still_render_by_the_rule_main_used(session):
++    """T-4 changes no rendering and no role-injection semantics (frozen contract).
++
++    A legacy row whose `role` is not a role memory file keeps rendering to its own dead
++    file — it is REPORTED as uninjectable, not quietly re-homed into the scope's file — and
++    the rows that always worked keep working.
++    """
++    root = m.memory_root()
++    dead_role = legacy(
++        session, category="role", scope="worker", role="logbook-writer",
++        content="Diary of the logbook writer.", approved=True,
++    )
++    assert m._file_for(dead_role).name == "logbook-writer.md"
++    assert (root / "roles" / "logbook-writer.md").exists()
++    assert "Diary of the logbook writer." not in (root / "roles" / "worker.md").read_text()
++    assert not m.is_injectable(dead_role)
++    assert "logbook-writer.md" in m.injectability(dead_role)[1]
++    # fix-scopes refuses to invent a role, so this row is reported and stays put.
++    repair = m.fix_scopes(session)
++    assert [s["id"] for s in repair.skipped] == [dead_role.id]
++    session.refresh(dead_role)
++    assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
++
++    # The counter-examples from the task (#39/#47): role=worker scope=worker.
++    good = legacy(
++        session, category="role", scope="worker", role="worker", content="Small commits.",
++        approved=True,
++    )
++    assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
++    assert m.reachable_roles(good) == ("worker", "agent")
++    assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
++    # `scope` is the fallback for the file name exactly as it was on main.
++    scope_only = legacy(session, category="role", scope="supervisor", content="Recommend only.")
++    assert m._file_for(scope_only).name == "supervisor.md"
++    assert m.is_injectable(scope_only)
++    # And the boundary refuses such a row going forward, so it cannot be created again.
++    with pytest.raises(m.MemoryError_):
++        m.create(session, MemoryCreate(category="role", scope="logbook-writer", content="x"))
++
++
++def test_injectability_marks_only_the_unreachable(session):
++    slug = "ai-livestreaming-avatar"
++    bad = legacy(session, category="global", scope=slug, content="Global orphan.")
++    ok_global = legacy(session, category="global", scope="environment", content="Env fact.")
++    bad_project = legacy(
++        session, category="project", scope=slug, project_slug=slug, content="Project orphan."
++    )
++    # The counter-examples from the task: category=role scope=worker IS injectable.
++    worker = legacy(session, category="role", scope="worker", content="Small commits.")
++    worker_with_role = legacy(
++        session, category="role", scope="worker", role="worker", content="Re-test then resubmit."
++    )
++    reviewer = legacy(session, category="role", scope="architect", role="reviewer", content="Gate.")
++    agent = legacy(session, category="role", scope="agent", role="agent", content="Ship one phase.")
++    supervisor = legacy(session, category="role", scope="supervisor", content="Recommend only.")
++
++    assert not m.is_injectable(bad) and "environment|preferences|patterns" in m.injectability(bad)[1]
++    assert not m.is_injectable(bad_project)
++    assert m.is_injectable(ok_global)
++    assert m.reachable_roles(ok_global) == tuple(r.value for r in Role)
++    for entry in (worker, worker_with_role, reviewer, agent, supervisor):
++        assert m.is_injectable(entry), (entry.role, entry.scope)
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 5/6

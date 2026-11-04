@@ -1,0 +1,44 @@
+# HEAD=96289d700be8bd45da5e8672778946ed2e73eec0 (96289d7) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:24:40+08:00 tree=0 dirty-entries
+# command: git diff --name-only (merge-base main..HEAD) and git diff --stat
+docs/build-loop.md
+docs/contract-change-request-T11-review-payload.md
+docs/decisions.md
+docs/roles.md
+src/orchestrator/providers/base.py
+src/orchestrator/providers/mock_provider.py
+src/orchestrator/services/artifact_service.py
+src/orchestrator/services/prompt_builder.py
+src/orchestrator/services/review_audit.py
+src/orchestrator/services/review_service.py
+src/orchestrator/utils/redaction.py
+tests/integration/test_recovery_after_timeout.py
+tests/integration/test_review_payload.py
+tests/unit/test_recovery_markers.py
+tests/unit/test_review_audit.py
+verify-evidence/T-11/README.md
+verify-evidence/T-11/capture.sh
+verify-evidence/T-11/changed_files.txt
+verify-evidence/T-11/suite_and_lint.txt
+verify-evidence/T-11/t11_tests.txt
+--- stat ---
+ docs/build-loop.md                                 |  93 ++-
+ docs/contract-change-request-T11-review-payload.md |  97 +++
+ docs/decisions.md                                  |  36 +
+ docs/roles.md                                      |  10 +
+ src/orchestrator/providers/base.py                 |   3 +
+ src/orchestrator/providers/mock_provider.py        |  29 +-
+ src/orchestrator/services/artifact_service.py      |   3 +
+ src/orchestrator/services/prompt_builder.py        | 409 ++++++++++-
+ src/orchestrator/services/review_audit.py          | 748 +++++++++++++++++++++
+ src/orchestrator/services/review_service.py        | 259 ++++++-
+ src/orchestrator/utils/redaction.py                |  11 +-
+ tests/integration/test_recovery_after_timeout.py   |  15 +-
+ tests/integration/test_review_payload.py           | 173 +++++
+ tests/unit/test_recovery_markers.py                |   8 +-
+ tests/unit/test_review_audit.py                    | 286 ++++++++
+ verify-evidence/T-11/README.md                     |  40 ++
+ verify-evidence/T-11/capture.sh                    |  38 ++
+ verify-evidence/T-11/changed_files.txt             |  42 ++
+ verify-evidence/T-11/suite_and_lint.txt            |  22 +
+ verify-evidence/T-11/t11_tests.txt                 |  41 ++
+ 20 files changed, 2296 insertions(+), 67 deletions(-)

@@ -1,0 +1,162 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: tests/unit/test_memory_scopes.py — the assertions themselves, numbered
+# tests: test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file, test_fix_scopes_with_gc_on_deletes_the_dead_old_file, test_fix_scopes_can_move_rows_without_deleting_a_single_file, test_fix_scopes_leaves_rejected_rows_alone, test_gc_only_deletes_files_render_file_could_have_written
+# why the reviewer asked for it: DoD 3, one outcome per case (R-27 finding 6): CASE A asserts the OLD file's re-rendered text with gc=False, CASE B asserts the deletion with gc on; plus the --no-gc report and the GC predicate
+# part 1/1
+
+  494 | def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(session):
+  495 |     """DoD 3, ONE outcome: the repair re-RENDERS the old file so no stale line survives.
+  496 | 
+  497 |     Run with `gc=False` on purpose. With the collector on (the default) the dead file is
+  498 |     deleted, and an assertion of the form `not orphan.exists() or "mem:N" not in text` passes
+  499 |     on the deletion alone -- it proves nothing about re-rendering (review round 3, finding 6).
+  500 |     Keeping the file on disk turns the assertion into a statement about its CONTENT, compared
+  501 |     exactly rather than by substring. The deletion is a separate case:
+  502 |     `test_fix_scopes_with_gc_on_deletes_the_dead_old_file`.
+  503 |     """
+  504 |     slug = "ai-livestreaming-avatar"
+  505 |     stale = legacy(
+  506 |         session,
+  507 |         category="project",
+  508 |         scope=slug,
+  509 |         project_slug=slug,
+  510 |         content="The repo is reachable directly on this host.",
+  511 |         approved=True,
+  512 |     )
+  513 |     other = m.create(
+  514 |         session,
+  515 |         MemoryCreate(
+  516 |             category="project", scope="gotchas", project_slug=slug, approved=True,
+  517 |             content="Keep this line.",
+  518 |         ),
+  519 |     )
+  520 |     root = m.memory_root()
+  521 |     orphan = root / "projects" / slug / f"{slug}.md"
+  522 |     home = root / "projects" / slug / "gotchas.md"
+  523 |     # Before the repair the orphan file really does hold the row's line, under a name no
+  524 |     # injector reads -- which is the defect the measured entry #5 left in the live memory tree.
+  525 |     assert orphan.read_text() == (
+  526 |         f"# {slug}\n\n- The repo is reachable directly on this host."
+  527 |         f"  <!-- mem:{stale.id} -->\n"
+  528 |     )
+  529 | 
+  530 |     repair = m.fix_scopes(session, gc=False)
+  531 |     assert repair.moved_ids == [stale.id]
+  532 |     assert repair.moved[0]["from"] == slug and repair.moved[0]["to"] == "gotchas"
+  533 |     assert repair.removed_files == []  # gc=False deleted nothing at all
+  534 |     session.refresh(stale)
+  535 |     assert stale.scope == "gotchas"
+  536 |     assert repair.ghost_files == [orphan]  # ...and the dead file is still REPORTED, not hidden
+  537 |     # THE OLD FILE: on disk, re-rendered to exactly what `render_file` writes when no approved
+  538 |     # entry maps to it any more. Exact text, so a stale line cannot slip past.
+  539 |     assert orphan.exists()
+  540 |     assert orphan.read_text() == f"# {slug}\n"
+  541 |     # THE NEW FILE: both lines, in id order, which is `render_file`'s documented order.
+  542 |     assert home.read_text() == (
+  543 |         "# gotchas\n\n"
+  544 |         f"- The repo is reachable directly on this host.  <!-- mem:{stale.id} -->\n"
+  545 |         f"- Keep this line.  <!-- mem:{other.id} -->\n"
+  546 |     )
+  547 |     assert m.is_injectable(stale)
+  548 |     # Idempotent: a second run moves nothing.
+  549 |     again = m.fix_scopes(session, gc=False)
+  550 |     assert again.moved == [] and again.skipped == []
+  551 | 
+  552 | 
+
+  553 | def test_fix_scopes_with_gc_on_deletes_the_dead_old_file(session):
+  554 |     """DoD 3, the OTHER outcome: with the collector on, the dead scope-file is removed.
+  555 | 
+  556 |     One outcome per case. Here the file the row moved away from must be GONE, and its
+  557 |     contents are not asserted (it cannot be read); the re-rendered content of that same file
+  558 |     is the subject of `test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_
+  559 |     file`. The surviving line is asserted in the NEW file by exact text.
+  560 |     """
+  561 |     slug = "ai-livestreaming-avatar"
+  562 |     stale = legacy(
+  563 |         session,
+  564 |         category="project",
+  565 |         scope=slug,
+  566 |         project_slug=slug,
+  567 |         content="The /sessions/<id>/mnt mount in briefs does not exist.",
+  568 |         approved=True,
+  569 |     )
+  570 |     orphan = m.memory_root() / "projects" / slug / f"{slug}.md"
+  571 |     home = m.memory_root() / "projects" / slug / "gotchas.md"
+  572 |     assert orphan.exists()
+  573 | 
+  574 |     repair = m.fix_scopes(session)  # gc defaults to True: this is the CLI's normal run
+  575 |     assert repair.moved_ids == [stale.id]
+  576 |     assert repair.removed_files == [orphan]  # exactly this file, nothing else
+  577 |     assert not orphan.exists()
+  578 |     assert repair.ghost_files == []
+  579 |     assert home.read_text() == (
+  580 |         "# gotchas\n\n"
+  581 |         "- The /sessions/<id>/mnt mount in briefs does not exist."
+  582 |         f"  <!-- mem:{stale.id} -->\n"
+  583 |     )
+  584 | 
+  585 | 
+
+  679 | def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
+  680 |     row = legacy(
+  681 |         session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
+  682 |         content="Reachable host.", approved=True,
+  683 |     )
+  684 |     ghost = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
+  685 |     assert ghost.exists()
+  686 |     repair = m.fix_scopes(session, gc=False)
+  687 |     assert repair.moved_ids == [row.id]
+  688 |     assert repair.removed_files == [] and ghost.exists()
+  689 |     # `--no-gc` still SHOWS the dead file instead of pretending there is none.
+  690 |     assert [str(p) for p in repair.ghost_files] == [str(ghost)]
+  691 |     assert f"mem:{row.id}" not in ghost.read_text()  # re-rendered, just not deleted
+  692 |     assert f"mem:{row.id}" in (m.memory_root() / "projects" / "p" / "gotchas.md").read_text()
+  693 | 
+  694 | 
+
+  586 | def test_fix_scopes_leaves_rejected_rows_alone(session):
+  587 |     row = legacy(
+  588 |         session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
+  589 |         content="Nope.", rejected=True,
+  590 |     )
+  591 |     repair = m.fix_scopes(session)
+  592 |     assert repair.moved == []
+  593 |     assert [s["id"] for s in repair.skipped] == [row.id]
+  594 |     assert "rejected" in repair.skipped[0]["why"]
+  595 |     session.refresh(row)
+  596 |     assert row.scope == "ai-livestreaming-avatar" and row.rejected
+  597 | 
+  598 | 
+
+  648 | def test_gc_only_deletes_files_render_file_could_have_written(session):
+  649 |     """Hand-authored markdown is operator input (docs/memory.md, `import --markdown`).
+  650 | 
+  651 |     The GC predicate is `in_layout_dir AND not canonical_file AND not owned AND
+  652 |     _renderer_output`, and the last term is what protects a human's file: the first line
+  653 |     must be exactly `# <stem>` and every later line must be a `- … <!-- mem:N -->` marker.
+  654 |     """
+  655 |     root = m.memory_root()
+  656 |     proj = root / "projects" / "p"
+  657 |     proj.mkdir(parents=True, exist_ok=True)
+  658 |     hand = proj / "notes.md"
+  659 |     hand.write_text("# Hand-written notes\n\n- a line someone typed by hand\n")
+  660 |     hand_title_only = proj / "scratch.md"  # right heading shape, prose body -> kept
+  661 |     hand_title_only.write_text("# scratch\n\nremember to check the mount path\n")
+  662 |     header = proj / "conventions.md"  # canonical name holding an ensure_layout header
+  663 |     header.write_text("# Project p — conventions\n")
+  664 |     ghost = proj / "p.md"  # render_file's own output, now with no owning entry
+  665 |     ghost.write_text("# p\n")
+  666 |     stale = proj / "old-scope.md"  # rendered with a marker whose entry has moved away
+  667 |     stale.write_text("# old-scope\n\n- dead line  <!-- mem:999 -->\n")
+  668 |     outside = root.parent / "zz-p.md"  # not in a layout directory
+  669 |     outside.write_text("# p\n")
+  670 | 
+  671 |     removed = m.gc_orphan_files(session)
+  672 |     assert removed == [stale, ghost]  # sorted by path, and only the two renderer-shaped files
+  673 |     assert hand.exists() and hand_title_only.exists() and header.exists()
+  674 |     assert not ghost.exists() and not stale.exists()
+  675 |     assert outside.exists()
+  676 |     assert m.orphan_files(session) == []  # idempotent
+  677 | 
+  678 | 

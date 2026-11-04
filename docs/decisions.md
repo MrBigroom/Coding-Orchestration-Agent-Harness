@@ -222,6 +222,119 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   those chunks. Tokens carry both theme colors, so switching light and dark needs no
   re-highlighting. Blocks over 150k characters or 3,000 lines stay plain. The Chat Changes
   panel now returns the diff itself, untracked files included.
+
+- **2026-11-04 — Memory scopes are a closed vocabulary, checked at every boundary (T-4).**
+  Suggestions used to store whatever scope a Worker proposed, so entries #5, #22 and #24
+  were approved or pending with scopes like `ai-livestreaming-avatar` and
+  `global-environment-verifying-orchestrator-change` that no injector can read: `for_prompt`
+  filters project memory through `ROLE_PROJECT_SCOPES` and role memory through `ROLE_FILES`,
+  and there was no `ROLE_SCOPES` to check the role category against at all. We chose to keep
+  the fact instead of the label: a `project`/`global` suggestion is coerced to the
+  deterministic fallback for its category (`gotchas` / `environment`) and `role`
+  suggestions that resolve to no role file are dropped with a warning, because guessing a
+  role would file a note under the wrong agent. Nothing is inferred from the words inside a
+  proposed scope — an earlier draft matched vocabulary tokens and substrings, which silently
+  re-routes a note to different roles (`decisions` → Architect+Supervisor vs `gotchas` →
+  Worker+Supervisor) and fires inside unrelated words. Every substitution and drop is a
+  build-log event, never a silent `continue`. `create`/`update` — the API's POST and PATCH and
+  the CLI — now reject an out-of-vocabulary scope for all three categories, naming the allowed
+  values; PATCH validates a throwaway preview before assigning anything, so a refused edit
+  leaves the row and its markdown unchanged without depending on a rollback.
+  Repair is part of the fix and moves rows, never deletes them: `orchestrator memory
+  fix-scopes` re-renders both the old and the new file and collects rendered files with no
+  owning entry, since a hand re-scope had left a title-only
+  `memory/projects/<slug>/<slug>.md` ghost in the tree. The collector only deletes text
+  `render_file` could have written (title line `# <stem>` plus `<!-- mem:N -->` markers, in a
+  layout directory, not a canonical name, no owning entry), because hand-edited markdown in
+  this tree is operator input indexed by `memory import --markdown`; `--no-gc` opts out. CLI
+  repair output is Rich-escaped and a `--dry-run` only ever says "would", so an interpolated
+  scope or reason with brackets in it is seen instead of parsed as a style tag and dropped.
+  `orchestrator memory list` marks the
+  defect (an entry's own category can never reach its scope) so the next occurrence is
+  visible the day it lands rather than months later. Role rendering and role injection
+  semantics are untouched: `_file_for` still keys off `role`, else `scope`, through
+  `ROLE_MEMORY_KEY`, so a legacy `role='logbook-writer'` row keeps its (dead) file and is
+  reported rather than re-homed.
+- **2026-11-04 — T-4 round 3: the role COLUMN is a boundary too, and a repair report claims
+  only what it did.** The review of the round above was right that `category=role` was still
+  half-guarded *in the evidence*: `scope` was visibly checked, but injectability keys off
+  `role` first, and no test showed create, PATCH or `memory add` refusing
+  `role='logbook-writer' scope='worker'`. Two things were actually broken behind that: a raw
+  role string reaching `memory_service.create()` died on `AttributeError: 'str' object has no
+  attribute 'value'` instead of being refused (only reachable via `import`/`model_construct`,
+  since `MemoryCreate.role` is a `Role` enum and Pydantic answers an HTTP caller with a 422),
+  and `memory add --role` reported Pydantic's list of role *values*, which never names the
+  role *files* the DoD requires. We chose to expose `check_role_name()` in `memory_service`
+  as the single message, call it from `_validate` (so create/update/import refuse the shape
+  for one reason) and from the CLI before `MemoryCreate` is built, rather than widening
+  `MemoryCreate.role` to `str` — that would change the frozen request shape for a message
+  string. Second: `memory fix-scopes --gc-only` printed `removed dead scope-file` for files it
+  had not deleted, because the report fell back to the pre-GC listing (`removed or listed`);
+  it now carries exactly what `gc_orphan_files` unlinked, so a repair run can never claim a
+  deletion the disk contradicts — the same "never narrate unverified success" rule the harness
+  holds Workers to, applied to its own CLI.
+- **2026-11-04 — T-4 round 4: one vocabulary source, and an error is only proven by its TEXT.**
+  The round-3 review was right that `POST /api/memory` still refused an unknown `role` with
+  Pydantic's enum message and no shown assertion covered the words. The message is the
+  contract here: a status code alone tells the operator that something was wrong, while DoD 2
+  asks for the boundary to say *what is allowed*. `MemoryCreate` now runs `check_role_name` in
+  a `model_validator(mode="before")`, which fires before the enum coerces, so the 422 detail
+  carries `allowed role memory files: architect|worker|supervisor` and the
+  `reviewer -> architect` / `agent -> worker` aliases. Round 3 had rejected this as "widening
+  `MemoryCreate.role` to `str` for a message string" — but the field is still typed `Role`,
+  all five members still validate, and nothing that was accepted is refused now: only the
+  rejection text changed, so the frozen request shape is intact. A before-validator is the
+  only place that can beat an enum coercion. Second: the vocabularies and the pure
+  scope/role resolution moved to `core/memory_vocab.py`, because `schemas` must refuse the
+  same shapes with the same words and cannot import the service (`memory_service` imports
+  `schemas`). `memory_service` re-exports every name and a test asserts they are the SAME
+  objects, so callers and `memory_service.GLOBAL_SCOPES`-style test imports are unaffected.
+  Third, an assertion-hygiene rule the reviewer had to repeat three tasks running: assert one
+  outcome per case. The repair test's `not orphan.exists() or "mem:N" not in text` passed
+  whether the old file had been re-rendered or merely deleted, i.e. it proved nothing about
+  re-rendering. It is now two named cases — `gc=False` compares the OLD file's exact text
+  (`"# <slug>\n"`, still on disk, stale line gone, the other entry's line intact in the new
+  file), and the default run asserts `removed_files == [<old file>]` and that it is gone. Both
+  were mutation-checked: dropping the old-file `render_file` call fails only the first, and
+  disabling the collector fails only the second. The same trap applies to the role message —
+  the enum text contains each word `architect`, `worker`, `supervisor`, so a per-value loop
+  passes on it; only the joined vocabulary and the "allowed role memory files" phrasing
+  distinguish the two, and those are the assertions the test is built on.
+- **2026-11-04 — T-11: archive the reviewer input, and give absence claims a provenance.** A \
+  reviewer finding that says evidence is missing is prose written by the party the harness is \
+  asking to judge prose, so it now gets the same treatment as a contract authorization: a \
+  mechanical check before the claim can move the loop. Resolution: `review_payload.md` archives \
+  `static_text() + dynamic_text()` exactly as sent plus a truncation manifest produced by the \
+  same code that cuts (`prompt_builder.TruncationRecorder`); diffs get an explicit per-file \
+  budget with a named included/omitted file list instead of one silent middle cut; harness-detected and reviewer-asserted missing artifacts are separate payload sections, with each \
+  concrete claim marked confirmed/refuted/unchecked (`review_absence_refuted`). A refuted claim \
+  can only soften a CHANGES_REQUESTED verdict that rests solely on it — it never turns a \
+  substantive finding into an approval. The new run file name is a PROPOSED layout addition in \
+  `docs/contract-change-request-T11-review-payload.md`, not an edit to `frozen-contracts.md`; \
+  `review.json` keeps its frozen shape and records provenance in its existing `notes` and \
+  `missing_artifacts` arrays. DoD 7 closes the `.gitattributes` escape hatch: `git diff \
+  --numstat` is compared with the supplied patch, `git check-attr -a` is run for `-diff` / \
+  `export-ignore`, an attribute introduced by this task is a harness finding \
+  (`review_diff_incomplete`), and one that predates the merge-base is labelled pre-existing so \
+  it cannot fail an unrelated run.
+- **2026-11-04 — T-11 round 2: a refuted claim never becomes an approval, and existence does
+  not refute visibility.** Two defects in the first cut of the reviewer audit. (1) When every
+  remaining finding was a refuted absence claim, the gate softened `CHANGES_REQUESTED` to
+  `APPROVED` — a heuristic existence check deciding who may accept a task, i.e. fail-open, on
+  top of changing a frozen verdict semantic. Resolution: the verdict is set to `NEEDS_HUMAN` with
+  a "review verdict" finding, which routes to `blocked`; the round is still not requeued for a
+  refuted claim, but nothing is accepted on one either. (2) The check treated "X was not supplied
+  / is truncated in the diff" as an existence claim, so a file that existed on disk refuted a
+  reviewer who was right that its hunks never reached them. Resolution: claims are split into
+  existence claims (worktree) and visibility claims (supplied patch + archived truncation
+  manifest), and an undecidable one is `unchecked`, never `refuted`; `review_audit.
+  supplied_evidence` derives the supplied set from the same recorder that performed the cuts.
+  Two smaller holes closed on the same pass: the sensitive-file strip now records the paths it
+  withholds (they disappeared between `patch.diff` and the prompt), and a partially rendered file
+  carries an inline `[review diff: N of M hunks shown ...]` marker and is named in a
+  `partially included` list instead of being reported as simply included; the diff is ordered
+  source-first with a per-file floor so code is funded before evidence, and the budget is not
+  widened.
 - **2026-11-04 — Memory budgets are enforced in `memory_service.select_for_prompt`, not in
   `prompt_builder.enforce_budget`.** Memory is a static section, and `enforce_budget`
   shrinks only dynamic sections (`room = limit - static_tokens`), so a cap applied there

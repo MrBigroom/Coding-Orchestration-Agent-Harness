@@ -1,0 +1,40 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.run_service._store_memory_suggestions
+# lines 448-482 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/run_service.py
+# why the reviewer asked for it: DoD 1 'the substitution is recorded where the operator can see it': the build-log writes (memory_scope_substituted / memory_suggestion_dropped)
+# part 1/1
+  448 | def _store_memory_suggestions(
+  449 |     session: Session,
+  450 |     suggestions: list[MemorySuggestion],
+  451 |     *,
+  452 |     source: str,
+  453 |     project_slug: str | None,
+  454 |     role: str,
+  455 |     task: Task | None = None,
+  456 |     run: Run | None = None,
+  457 | ) -> memory_service.SuggestionOutcome:
+  458 |     """Store a run's memory suggestions, and put every scope the harness rewrote in the log.
+  459 | 
+  460 |     T-4 DoD 1: a suggestion is never stored with a scope no injector can read, and a
+  461 |     coercion or a drop is an operator-visible event, not a silent `continue`. The notes go
+  462 |     to the build log as `memory_scope_substituted` / `memory_suggestion_dropped`, one line
+  463 |     per affected suggestion, so the run's log tells the truth about what was filed where.
+  464 |     """
+  465 |     outcome = memory_service.suggest_from_handoff_report(
+  466 |         session, suggestions, source=source, project_slug=project_slug, role=role
+  467 |     )
+  468 |     for note in outcome.notes:
+  469 |         event = (
+  470 |             "memory_suggestion_dropped"
+  471 |             if note.startswith("dropped ")
+  472 |             else "memory_scope_substituted"
+  473 |         )
+  474 |         log_service.log_event(
+  475 |             session,
+  476 |             event,
+  477 |             note,
+  478 |             role="system",
+  479 |             task_id=task.id if task else None,
+  480 |             run_id=run.id if run else None,
+  481 |         )
+  482 |     return outcome

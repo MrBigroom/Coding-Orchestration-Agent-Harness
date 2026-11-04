@@ -2,7 +2,9 @@
 
 Behaviour is driven by `metadata["purpose"]` and task tags:
   - review:  APPROVED; `mock-reject` -> CHANGES_REQUESTED; `mock-ambiguous` -> unparseable text;
-             `mock-needs-human` -> NEEDS_HUMAN
+             `mock-needs-human` -> NEEDS_HUMAN; `mock-refute` -> a missing-file claim the worktree
+             refutes; `mock-visibility` -> a claim that a changed file was truncated in the
+             supplied diff
   - plan:    a two-phase plan
   - supervise: a recommendation-only JSON note
   - agent / worker: a READY_FOR_REVIEW handoff (or BLOCKED with `mock-blocked`)
@@ -112,7 +114,32 @@ class MockProvider(BaseProvider):
                     "violates": "DoD item 1",
                 }
             ]
+        if "mock-refute" in tags:
+            # T-11: a claim about the REPOSITORY. README.md is present in the task worktree, so the
+            # harness must mark this finding refuted instead of requeueing. It must not accept the
+            # task on a refuted claim either — the round routes to NEEDS_HUMAN.
+            findings = [
+                {
+                    "file_or_area": "README.md",
+                    "issue": "README.md is missing from the branch",
+                    "violates": "DoD item 1",
+                }
+            ]
+            verdict = "CHANGES_REQUESTED"
+        if "mock-visibility" in tags:
+            # T-11: a claim about the SUPPLIED artifacts. Whether MOCK_CHANGE.md exists on disk is
+            # irrelevant; only the truncation manifest and the supplied patch can decide it.
+            findings = [
+                {
+                    "file_or_area": "MOCK_CHANGE.md",
+                    "issue": "MOCK_CHANGE.md is not visible in the supplied diff (truncated)",
+                    "violates": "DoD item 1",
+                }
+            ]
+            verdict = "CHANGES_REQUESTED"
         missing = list(meta.get("missing_artifacts") or [])
+        if "mock-assert-missing-artifact" in tags:
+            missing.append("docs/not-in-repo.md")
         return json.dumps(
             {
                 "verdict": verdict,

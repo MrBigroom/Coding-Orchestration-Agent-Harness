@@ -1,0 +1,166 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 4/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 849 lines.
++def test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from(session):
++    """`role` wins and `scope` follows, so a row cannot name a file it will not be read in.
++
++    category=role + role='reviewer' + scope='worker': `for_prompt` selects on the `role`
++    column (reviewer -> the architect file), so the scope normalizes to 'architect'.
++    """
++    entry = m.create(
++        session,
++        MemoryCreate(category="role", scope="worker", role="reviewer", content="Gate."),
++    )
++    assert entry.role == "reviewer" and entry.scope == "architect"
++    assert m._file_for(entry).name == "architect.md"
++    assert m.is_injectable(entry)
++    assert m.reachable_roles(entry) == ("architect", "reviewer")
++
++
++# ---------------------------------------------------------------- repair (DoD 3)
++
++
++def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(session):
++    """DoD 3, ONE outcome: the repair re-RENDERS the old file so no stale line survives.
++
++    Run with `gc=False` on purpose. With the collector on (the default) the dead file is
++    deleted, and an assertion of the form `not orphan.exists() or "mem:N" not in text` passes
++    on the deletion alone -- it proves nothing about re-rendering (review round 3, finding 6).
++    Keeping the file on disk turns the assertion into a statement about its CONTENT, compared
++    exactly rather than by substring. The deletion is a separate case:
++    `test_fix_scopes_with_gc_on_deletes_the_dead_old_file`.
++    """
++    slug = "ai-livestreaming-avatar"
++    stale = legacy(
++        session,
++        category="project",
++        scope=slug,
++        project_slug=slug,
++        content="The repo is reachable directly on this host.",
++        approved=True,
++    )
++    other = m.create(
++        session,
++        MemoryCreate(
++            category="project", scope="gotchas", project_slug=slug, approved=True,
++            content="Keep this line.",
++        ),
++    )
++    root = m.memory_root()
++    orphan = root / "projects" / slug / f"{slug}.md"
++    home = root / "projects" / slug / "gotchas.md"
++    # Before the repair the orphan file really does hold the row's line, under a name no
++    # injector reads -- which is the defect the measured entry #5 left in the live memory tree.
++    assert orphan.read_text() == (
++        f"# {slug}\n\n- The repo is reachable directly on this host."
++        f"  <!-- mem:{stale.id} -->\n"
++    )
++
++    repair = m.fix_scopes(session, gc=False)
++    assert repair.moved_ids == [stale.id]
++    assert repair.moved[0]["from"] == slug and repair.moved[0]["to"] == "gotchas"
++    assert repair.removed_files == []  # gc=False deleted nothing at all
++    session.refresh(stale)
++    assert stale.scope == "gotchas"
++    assert repair.ghost_files == [orphan]  # ...and the dead file is still REPORTED, not hidden
++    # THE OLD FILE: on disk, re-rendered to exactly what `render_file` writes when no approved
++    # entry maps to it any more. Exact text, so a stale line cannot slip past.
++    assert orphan.exists()
++    assert orphan.read_text() == f"# {slug}\n"
++    # THE NEW FILE: both lines, in id order, which is `render_file`'s documented order.
++    assert home.read_text() == (
++        "# gotchas\n\n"
++        f"- The repo is reachable directly on this host.  <!-- mem:{stale.id} -->\n"
++        f"- Keep this line.  <!-- mem:{other.id} -->\n"
++    )
++    assert m.is_injectable(stale)
++    # Idempotent: a second run moves nothing.
++    again = m.fix_scopes(session, gc=False)
++    assert again.moved == [] and again.skipped == []
++
++
++def test_fix_scopes_with_gc_on_deletes_the_dead_old_file(session):
++    """DoD 3, the OTHER outcome: with the collector on, the dead scope-file is removed.
++
++    One outcome per case. Here the file the row moved away from must be GONE, and its
++    contents are not asserted (it cannot be read); the re-rendered content of that same file
++    is the subject of `test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_
++    file`. The surviving line is asserted in the NEW file by exact text.
++    """
++    slug = "ai-livestreaming-avatar"
++    stale = legacy(
++        session,
++        category="project",
++        scope=slug,
++        project_slug=slug,
++        content="The /sessions/<id>/mnt mount in briefs does not exist.",
++        approved=True,
++    )
++    orphan = m.memory_root() / "projects" / slug / f"{slug}.md"
++    home = m.memory_root() / "projects" / slug / "gotchas.md"
++    assert orphan.exists()
++
++    repair = m.fix_scopes(session)  # gc defaults to True: this is the CLI's normal run
++    assert repair.moved_ids == [stale.id]
++    assert repair.removed_files == [orphan]  # exactly this file, nothing else
++    assert not orphan.exists()
++    assert repair.ghost_files == []
++    assert home.read_text() == (
++        "# gotchas\n\n"
++        "- The /sessions/<id>/mnt mount in briefs does not exist."
++        f"  <!-- mem:{stale.id} -->\n"
++    )
++
++
++def test_fix_scopes_leaves_rejected_rows_alone(session):
++    row = legacy(
++        session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
++        content="Nope.", rejected=True,
++    )
++    repair = m.fix_scopes(session)
++    assert repair.moved == []
++    assert [s["id"] for s in repair.skipped] == [row.id]
++    assert "rejected" in repair.skipped[0]["why"]
++    session.refresh(row)
++    assert row.scope == "ai-livestreaming-avatar" and row.rejected
++
++
++def test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row(session):
++    row = legacy(session, category="role", scope="logbook-writer", content="Who?")
++    repair = m.fix_scopes(session)
++    assert repair.moved == []
++    assert [s["id"] for s in repair.skipped] == [row.id]
++    assert "role" in repair.skipped[0]["why"]
++    assert m.list_entries(session, category="role")  # never deleted, just reported
++
++
++def test_fix_scopes_reports_a_canonical_scope_that_is_still_unreachable(session):
++    row = legacy(session, category="project", scope="gotchas", content="No project.")
++    repair = m.fix_scopes(session)
++    assert repair.moved == []
++    assert [s["id"] for s in repair.skipped] == [row.id]
++    assert "project_slug" in repair.skipped[0]["why"]
++
++
++def test_fix_scopes_dry_run_writes_nothing(session):
++    row = legacy(
++        session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
++        content="X", approved=True,
++    )
++    orphan = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
++    root = m.memory_root()
++    repair = m.fix_scopes(session, dry_run=True)
++    assert repair.moved_ids == [row.id] and repair.dry_run
++    session.refresh(row)
++    assert row.scope == "ai-livestreaming-avatar"
++    assert orphan.exists()
++    # A dry run still says what it would do to the rendered files.
++    assert repair.moved[0]["old_file"] == str(orphan)
++    assert repair.moved[0]["collect_old_file"] is True
++    assert repair.moved[0]["new_file"] == str(root / "projects" / "p" / "gotchas.md")
++    assert not repair.removed_files and orphan.exists()
++
++
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 4/6

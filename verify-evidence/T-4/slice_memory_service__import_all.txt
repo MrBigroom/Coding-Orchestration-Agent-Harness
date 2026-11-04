@@ -1,0 +1,58 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.import_all
+# lines 742-794 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 3 the other repair path (repairs scopes, never stores a dead role)
+# part 1/1
+  742 | def import_all(session: Session, payload: dict[str, Any]) -> int:
+  743 |     """Import entries; skips duplicates (same category/scope/project/role/content).
+  744 | 
+  745 |     T-4: an export written before scope validation existed carries free-form scopes, so the
+  746 |     scope is repaired on the way in rather than dropping a good fact over a vocabulary
+  747 |     mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
+  748 |     importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
+  749 |     nor re-adds anything on a second pass.
+  750 |     """
+  751 |     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+  752 |         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
+  753 |     existing: set[tuple[Any, ...]] = set()
+  754 |     for e in list_entries(session):
+  755 |         existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
+  756 |     count = 0
+  757 |     touched: set[Path] = set()
+  758 |     for raw in payload["entries"]:
+  759 |         content = redact(str(raw.get("content", "")).strip())
+  760 |         category = raw.get("category")
+  761 |         if not content or category not in {c.value for c in MemoryCategory}:
+  762 |             continue
+  763 |         entry = MemoryEntry(
+  764 |             category=category,
+  765 |             scope=slugify(str(raw.get("scope") or "")),
+  766 |             project_slug=raw.get("project_slug"),
+  767 |             role=raw.get("role"),
+  768 |             content=content,
+  769 |             source=raw.get("source", "import"),
+  770 |             tags_json=list(raw.get("tags_json") or []),
+  771 |             approved=bool(raw.get("approved")),
+  772 |             rejected=bool(raw.get("rejected")),
+  773 |         )
+  774 |         raw_keys = _import_keys(
+  775 |             category, entry.scope, entry.project_slug, entry.role, content
+  776 |         )
+  777 |         if raw_keys & existing:
+  778 |             continue
+  779 |         try:
+  780 |             if entry.category in FALLBACK_SCOPE:
+  781 |                 entry.scope, _ = coerce_scope(entry.category, entry.scope)
+  782 |             _validate(entry)
+  783 |         except MemoryError_:
+  784 |             continue
+  785 |         key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
+  786 |         existing |= raw_keys | {key}
+  787 |         session.add(entry)
+  788 |         count += 1
+  789 |         if entry.approved:
+  790 |             touched.add(_file_for(entry))
+  791 |     session.commit()
+  792 |     for path in touched:
+  793 |         render_file(session, path)
+  794 |     return count

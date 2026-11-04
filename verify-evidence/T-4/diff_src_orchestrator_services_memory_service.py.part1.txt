@@ -1,0 +1,166 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 1/5
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 701 lines.
+diff --git a/src/orchestrator/services/memory_service.py b/src/orchestrator/services/memory_service.py
+index 4289f85..e7647a2 100644
+--- a/src/orchestrator/services/memory_service.py
++++ b/src/orchestrator/services/memory_service.py
+@@ -15,36 +15,82 @@ from __future__ import annotations
+ 
+ import json
+ import re
++from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any
+ 
+ from sqlmodel import Session, col, or_, select
+ 
+ from orchestrator.core.config import get_settings
++
++# The vocabularies and the pure scope/role resolution live in core (T-4 DoD 2): the API
++# request model in `core/schemas.py` has to refuse the same shapes with the same words, and
++# it cannot import THIS module (memory_service imports schemas -> circular import). Every
++# name is re-imported here so `memory_service.GLOBAL_SCOPES`, `memory_service.coerce_scope`
++# and the rest keep resolving exactly as they did before the move. Three of the lines below
++# are marked as intentional RE-EXPORTS: nothing in this module calls them, but
++# `memory_service.ROLE_SCOPE_ALIASES`, `memory_service.scope_vocabulary` and
++# `memory_service.substitution_note` belong to the surface tests and callers read, and
++# removing them would break those imports.
++from orchestrator.core.memory_vocab import (
++    FALLBACK_SCOPE,
++    GLOBAL_SCOPES,
++    PROJECT_SCOPES,
++    ROLE_FILES,
++    ROLE_MEMORY_KEY,
++    ROLE_PROJECT_SCOPES,
++    ROLE_SCOPE_ALIASES,  # noqa: F401 - re-export
++    ROLE_SCOPES,
++    SCOPE_VOCABULARY,
++    MemoryError_,
++    check_role_name,
++    coerce_scope,
++    normalize_scope,
++    role_memory_file,
++    scope_vocabulary,  # noqa: F401 - re-export
++    substitution_note,  # noqa: F401 - re-export
++    vocab_error,
++)
+ from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, utcnow
+ from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
+ from orchestrator.utils.paths import safe_join
+ from orchestrator.utils.redaction import redact
+ from orchestrator.utils.slug import slugify
+ 
+-GLOBAL_SCOPES = ("environment", "preferences", "patterns")
+-PROJECT_SCOPES = ("conventions", "decisions", "gotchas")
+-ROLE_FILES = ("architect", "worker", "supervisor")
+ 
+-# Which project scopes each role receives.
+-ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
+-    Role.architect: ("decisions", "conventions"),
+-    Role.reviewer: ("decisions", "conventions"),
+-    Role.worker: ("conventions", "gotchas"),
+-    Role.agent: ("conventions", "gotchas"),
+-    Role.supervisor: ("decisions", "gotchas"),
+-}
+-# Role memory file used for each role (reviewer shares the architect file).
+-ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
++@dataclass
++class SuggestionOutcome:
++    """What the suggestion path stored, and what it refused to store.
++
++    `notes` carries every substitution and every drop in submission order; the caller
++    writes them to the build log / chat stream so the operator sees a scope that was
++    quietly rewritten instead of an entry that silently never reaches a prompt.
++    """
++
++    created: list[MemoryEntry] = field(default_factory=list)
++    notes: list[str] = field(default_factory=list)
++
++    @property
++    def moved(self) -> list[str]:
++        """Just the substitution notes (drops start with 'dropped ')."""
++        return [n for n in self.notes if not n.startswith("dropped ")]
++
+ 
++@dataclass
++class ScopeRepair:
++    """Result of `fix_scopes`: rows moved, rows left alone, dead files removed."""
+ 
+-class MemoryError_(ValueError):
+-    pass
++    moved: list[dict[str, Any]] = field(default_factory=list)
++    skipped: list[dict[str, Any]] = field(default_factory=list)
++    removed_files: list[Path] = field(default_factory=list)
++    # Dead rendered files that were only REPORTED because gc was off (`--no-gc`). A dry run
++    # fills `removed_files` with what it would remove, never `ghost_files`.
++    ghost_files: list[Path] = field(default_factory=list)
++    dry_run: bool = False
++
++    @property
++    def moved_ids(self) -> list[int]:
++        return [int(m["id"]) for m in self.moved]
+ 
+ 
+ def memory_root() -> Path:
+@@ -73,6 +119,67 @@ def _touch(path: Path, header: str) -> None:
+         path.write_text(header)
+ 
+ 
++def role_file_key(entry: MemoryEntry) -> str | None:
++    """The role-memory file a row maps to, by the rule `for_prompt` and `_file_for` use.
++
++    Identical to the pre-T-4 resolution — `role`, falling back to `scope`, through
++    `ROLE_MEMORY_KEY` — and deliberately NOT checked against `ROLE_FILES`: a legacy row
++    with a non-file role and a valid scope must keep rendering to (and being judged by) the
++    same file it always did. Task T-4 changes no role-injection semantics; membership is
++    tested by the caller so an uninjectable row is reported instead of re-homed.
++    """
++    name = entry.role or entry.scope
++    if not name:
++        return None
++    return ROLE_MEMORY_KEY.get(name, name)
++
++
++def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
++    """Which prompt roles would actually read this entry's scope, once approved."""
++    if entry.category == MemoryCategory.global_:
++        if entry.scope not in GLOBAL_SCOPES:
++            return ()
++        return tuple(r.value for r in Role)
++    if entry.category == MemoryCategory.project:
++        if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
++            return ()
++        return tuple(
++            r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
++        )
++    key = role_file_key(entry)
++    if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
++        return ()
++    return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)
++
++
++def injectability(entry: MemoryEntry) -> tuple[bool, str]:
++    """(ok, reason). reason names the vocabulary that the entry failed."""
++    if entry.category not in SCOPE_VOCABULARY:
++        return False, f"unknown category {entry.category!r}"
++    if entry.category == MemoryCategory.project and not entry.project_slug:
++        return False, "project memory requires project_slug"
++    if reachable_roles(entry):
++        return True, ""
++    if entry.category == MemoryCategory.role:
++        name = entry.role or entry.scope
++        allowed = "|".join(ROLE_SCOPES)
++        if not name:
++            return False, f"role memory needs a role or a scope resolving to one of {allowed}"
++        # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
++        # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
++        # vocabulary it has to resolve into.
++        return False, (
++            f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
++            f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
++            f"(reviewer -> architect, agent -> worker)"
++        )
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 1/5

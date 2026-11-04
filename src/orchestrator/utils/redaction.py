@@ -9,9 +9,18 @@ from collections.abc import Iterable
 REDACTED = "[REDACTED]"
 
 _PATTERNS: list[re.Pattern[str]] = [
-    # Provider keys
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{10,}"),
-    re.compile(r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
+    # Provider keys. The lookbehind anchor is load-bearing (T-8 DoD 10): without it these patterns
+    # match INSIDE ordinary words that end in "sk" followed by a hyphen, so branch/task/phase
+    # names were destroyed by redact() — "task-8-recovery-commits..." lost its value while a
+    # findings_json payload still parsed, i.e. a machine consumer silently read a WRONG branch
+    # name. A real key starts where no letter/digit precedes it (start of text, after whitespace,
+    # `=`, `:`, a quote, `_` or `-`) and still redacts; "task-", "risk-", "mask-" no longer match,
+    # because the preceding letter blocks the lookbehind. `\b` was NOT used: `_` is a word
+    # character, so `\bsk-` would miss `TOKEN_sk-proj-…` and `API_KEY_sk-ant-…` — shapes secrets
+    # really do appear in — which the DoD forbids ("keep every existing credential pattern
+    # redacting exactly as before"). This anchor is `\b` plus that case, never narrower.
+    re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_\-]{10,}"),
+    re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
@@ -90,8 +99,13 @@ def is_sensitive_path(path: str) -> bool:
     return any(r.search(p) for r in SENSITIVE_FILE_PATTERNS)
 
 
-def strip_sensitive_files_from_diff(diff: str) -> str:
-    """Drop hunks for sensitive files (.env, keys) from a unified diff before sending to LLMs."""
+def strip_sensitive_files_from_diff(diff: str, dropped: list[str] | None = None) -> str:
+    """Drop hunks for sensitive files (.env, keys) from a unified diff before sending to LLMs.
+
+    `dropped` (optional) collects the path of every file whose content was withheld, so the caller
+    can record it as a truncation instead of letting the file disappear between the patch and the
+    prompt (T-11 DoD 4). The path itself is still shown — only the body is withheld.
+    """
     out: list[str] = []
     skip = False
     for line in diff.splitlines(keepends=True):
@@ -100,6 +114,8 @@ def strip_sensitive_files_from_diff(diff: str) -> str:
             path = parts[-1][2:] if len(parts) >= 4 else ""
             skip = is_sensitive_path(path)
             if skip:
+                if dropped is not None:
+                    dropped.append(path)
                 out.append(f"diff --git {parts[-2]} {parts[-1]}\n# [sensitive file omitted]\n")
                 continue
         if not skip:

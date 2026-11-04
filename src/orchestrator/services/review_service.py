@@ -7,19 +7,38 @@ Parsing policy (fail closed):
   - anything else -> CHANGES_REQUESTED with an "ambiguous review output" finding, raw kept.
 Deterministically-detected missing artifacts are always findings; an APPROVED verdict with
 missing artifacts is downgraded to CHANGES_REQUESTED.
+
+T-11: the exact prompt sent to the reviewer is archived as `review_payload.md` with a truncation
+manifest, harness-detected and model-asserted missing artifacts are kept in separate sections,
+and an absence finding is checked as either an existence claim (refuted by the worktree) or a
+visibility claim (checked against the supplied patch and the truncation manifest) before it can
+requeue a round. A review whose every remaining finding was a refuted claim is routed to
+NEEDS_HUMAN: the harness never upgrades a reviewer's verdict to APPROVED, because "the model was
+wrong about one absence" is not evidence that the code is correct and accepting a task is not
+the harness's call to make (T-11 round-2 reviewer finding 1).
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from sqlmodel import Session
 
 from orchestrator.core.models import Project, Review, ReviewVerdict, Role, Run, Task
 from orchestrator.core.schemas import ReviewFinding, ReviewResult
 from orchestrator.providers.base import ProviderError
-from orchestrator.services import artifact_service, log_service, prompt_builder, provider_service
+from orchestrator.services import (
+    artifact_service,
+    git_service,
+    log_service,
+    project_service,
+    prompt_builder,
+    provider_service,
+    review_audit,
+)
 from orchestrator.services.prompt_builder import DynamicState
+from orchestrator.utils import structured_log
 from orchestrator.utils.json_output import JSONExtractionError, extract_json
 
 _VERDICT = re.compile(r"(?im)^\s*VERDICT:\s*(APPROVED|CHANGES_REQUESTED|NEEDS_HUMAN)\s*$")
@@ -84,6 +103,133 @@ def missing_artifacts(run_dir_files: set[str], handoff_synthesized: bool) -> lis
     return missing
 
 
+def recovery_section(session: Session, task: Task, run: Run) -> str:
+    """The reviewer-payload section for harness-created recovery commits."""
+    commits = project_service.recovery_commits_for(session, task, run)
+    if not commits:
+        return (
+            "none — every commit on this branch was authored by a Worker\n"
+            "A recovery commit is never by itself a reason to reject, and never a reason to "
+            "approve either: it marks content whose author never checked it."
+        )
+    return (
+        f"{len(commits)} commit(s) on this branch were created by the ORCHESTRATOR, not by the "
+        "Worker. Their content was NEVER self-checked by the Worker: it was committed by the "
+        "harness after a turn aborted (timeout/failure/cancel) with edits still uncommitted, and "
+        "may contain undefined names, half-finished edits, scratch files or contract-file edits. "
+        "Judge it as unreviewed third-party code and hold it to the same bar as Worker code.\n\n"
+        + git_service.format_recovery_commit_list(commits)
+    )
+
+
+def harness_findings_section(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project | None,
+    diff_issues: list[review_audit.DiffIssue] | None = None,
+) -> str:
+    """Deterministic findings the harness computed; a story cannot contradict them."""
+    cwd = Path(run.worktree_path) if run.worktree_path else None
+    findings = project_service.contract_findings(task, project, cwd)
+    commits = project_service.recovery_commits_for(session, task, run)
+    lines = [
+        f"recovery commits on this branch (harness-created, never self-checked): {len(commits)}",
+        f"contract files watched: {', '.join(project_service.contract_files())}",
+        f"contract files changed by this run: {', '.join(findings['changed']) or 'none'}",
+        "authorized by an explicit grant in this task's stored Definition of Done / acceptance "
+        f"criteria / frozen contracts: {', '.join(findings['authorized']) or 'none'}",
+    ]
+    if findings["unauthorized"]:
+        lines.append(
+            "UNAUTHORIZED contract file change(s), detected by the harness: "
+            + ", ".join(findings["unauthorized"])
+            + ". A phase may change a contract file only when its own DoD/acceptance criteria "
+            "explicitly GRANT it (docs/build-loop.md, \"Unauthorized contract edits\") — naming "
+            "the file in prose, or forbidding touching it, is not a grant. The Worker's own "
+            "assertion of authorization does not count."
+        )
+    lines.append(review_audit.render_diff_completeness(diff_issues or []))
+    return "\n".join(lines)
+
+
+def delivery_evidence_section(session: Session, task: Task, run: Run) -> str:
+    """The reviewer-payload section for handoff provenance and claims-vs-commits (T-10 DoD 7).
+
+    Rendered from the archived `run.json`, i.e. the same numbers the run artifacts carry, so a
+    reviewer who wants to check them has the commit SHAs and the porcelain output in front of them
+    instead of the Worker's summary of them.
+    """
+    text = artifact_service.render_delivery_evidence_md(
+        artifact_service.handoff_delivery_evidence(run.id),
+        artifact_service.handoff_arrival(run.id),
+    )
+    if text:
+        return text
+    return (
+        "no delivery evidence was archived for this run (a run created before T-10, or an agent "
+        "task with no worktree): read the handoff's claims as unverified."
+    )
+
+
+def render_review_payload(
+    *,
+    input_text: str,
+    truncations: list[dict],
+    harness_missing: list[str],
+    reviewer_missing: list[str],
+    absence_checks: list[review_audit.AbsenceCheck],
+    diff_issues: list[review_audit.DiffIssue],
+    supplied: review_audit.SuppliedEvidence,
+) -> str:
+    """The archived reviewer input plus the provenance of every absence/truncation claim.
+
+    `input_text` is written verbatim: it is `static_text() + dynamic_text()` exactly as the
+    provider received it. The post-review sections exist because an absence claim needs a
+    provenance label, and a truncation needs to be named next to the text it removed.
+    """
+    harness_list = "\n".join(f"- {m}" for m in harness_missing) or "- none"
+    reviewer_list = "\n".join(f"- {m}" for m in reviewer_missing) or "- none"
+    diff_text = review_audit.render_diff_completeness(diff_issues)
+    return f"""# Review payload
+
+## Exact reviewer input (static_text() + dynamic_text())
+
+<!-- Written verbatim from BuiltPrompt; no re-rendering and no silent edits. -->
+
+{input_text}
+
+## Truncation manifest
+
+{prompt_builder.render_truncation_manifest(truncations)}
+
+## What the reviewer was actually given
+
+{review_audit.render_supplied_summary(supplied)}
+
+## Harness-detected missing artifacts
+
+Computed by the orchestrator from the run directory; a model did not assert these.
+
+{harness_list}
+
+## Reviewer-asserted missing artifacts
+
+Supplied by the reviewing model in its own output. Checked mechanically below before they can
+cost a round.
+
+{reviewer_list}
+
+## Absence checks (existence claims vs visibility claims)
+
+{review_audit.render_absence_checks(absence_checks)}
+
+## Diff completeness (git diffstat vs the supplied patch)
+
+{diff_text}
+"""
+
+
 async def architect_review(
     session: Session,
     task: Task,
@@ -94,16 +240,30 @@ async def architect_review(
     assert run.id is not None and task.id is not None
     files = {a["name"] for a in artifact_service.list_artifacts(run.id)}
     missing = missing_artifacts(files, handoff_synthesized)
+    cwd = Path(run.worktree_path) if run.worktree_path else None
+    base_branch = project.base_branch if project else None
+    patch_text = artifact_service.read_text(run.id, "patch.diff") or ""
+    diff_issues = review_audit.diff_completeness(cwd, base_branch, patch_text)
     state = DynamicState(
         handoff=(artifact_service.read_text(run.id, "handoff.md") or "")
         + "\n\nhandoff.json:\n"
         + (artifact_service.read_text(run.id, "handoff.json") or "MISSING"),
         test_summary=artifact_service.read_text(run.id, "test_summary.txt"),
         verification=artifact_service.read_text(run.id, "verification.md"),
-        diff=artifact_service.read_text(run.id, "patch.diff"),
-        extra={"Missing artifacts detected by orchestrator": "\n".join(missing) or "none"},
+        diff=patch_text,
+        recovery=recovery_section(session, task, run),
+        harness_findings=harness_findings_section(session, task, run, project, diff_issues),
+        delivery_evidence=delivery_evidence_section(session, task, run),
+        extra={
+            "Harness-detected missing artifacts (computed by the orchestrator, not asserted by "
+            "a model)": "\n".join(missing) or "none",
+        },
     )
     prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)
+    # T-11 DoD 1: archive the exact bytes the reviewer received, plus what the builder dropped.
+    # The artifact name is declared as PROPOSED in
+    # docs/contract-change-request-T11-review-payload.md; docs/frozen-contracts.md is unchanged.
+    input_text = prompt.static_text() + "\n\n" + prompt.dynamic_text()
     choice = provider_service.choose_profile(session, task, Role.architect)
     raw = ""
     try:
@@ -136,9 +296,88 @@ async def architect_review(
 
     if ambiguous:
         artifact_service.write_text(run.id, "review.raw.txt", raw)
-    for m in missing:
-        if m not in result.missing_artifacts:
-            result.missing_artifacts.append(m)
+
+    model_missing = list(result.missing_artifacts)
+    # What the reviewer was actually given, derived from the same recorder that performed every
+    # cut. Visibility claims are checked against this, never against file existence.
+    supplied = review_audit.supplied_evidence(
+        patch_text,
+        prompt.truncations,
+        review_audit.changed_paths(cwd, base_branch),
+    )
+    absence_checks = review_audit.check_findings(
+        result.findings, cwd, supplied
+    ) + review_audit.check_missing_artifacts(model_missing, cwd, supplied)
+    kept: list[ReviewFinding] = []
+    refuted: list[ReviewFinding] = []
+    for i, finding in enumerate(result.findings):
+        status = review_audit.finding_status(absence_checks, i)
+        if status == "refuted":
+            refuted.append(finding)
+        else:
+            kept.append(finding)
+        if status != "unchecked":
+            result.notes.append(
+                f"absence finding [{status}] {finding.file_or_area}: {finding.issue}"
+            )
+    result.findings = kept
+    for check in absence_checks:
+        result.notes.append(
+            f"absence check [{check.status}] {check.claim}: {check.detail} (source: {check.source})"
+        )
+    for finding in refuted:
+        result.notes.append(
+            "refuted absence finding removed before it could cost a round: "
+            f"{finding.file_or_area} — {finding.issue}"
+        )
+
+    # Reviewer-asserted missing artifacts are separated from the harness list, and only survive
+    # when the worktree does not mechanically refute them.
+    result.missing_artifacts = [f"harness-detected: {m}" for m in missing]
+    for i, item in enumerate(model_missing):
+        checks = [
+            c for c in absence_checks if c.source == "missing_artifact" and c.finding_index == i
+        ]
+        if checks and all(c.status == "refuted" for c in checks):
+            result.notes.append(
+                f"refuted reviewer-asserted missing artifact: {item} (present in the worktree)"
+            )
+            continue
+        result.missing_artifacts.append(f"reviewer-asserted: {item}")
+
+    # T-11 DoD 7: a repository attribute or a missing patch section is a harness finding, so a
+    # Worker cannot hide evidence by configuring `.gitattributes`. Pre-existing attributes are
+    # reported (informational) but never become a finding against this run.
+    for issue in diff_issues:
+        if issue.blocks:
+            result.findings.append(
+                ReviewFinding(
+                    file_or_area=issue.path,
+                    issue="harness-detected diff completeness: " + issue.detail,
+                    violates="T-11 DoD 7 (review input completeness)",
+                )
+            )
+    if diff_issues:
+        result.notes.append(
+            "harness-detected diff completeness: "
+            + review_audit.render_diff_completeness(diff_issues).replace("\n", " | ")
+        )
+        log_service.log_event(
+            session,
+            "review_diff_incomplete",
+            structured_log.attach(
+                "the supplied diff does not show every changed file",
+                {
+                    "task_id": task.id,
+                    "run_id": run.id,
+                    "issues": [issue.as_dict() for issue in diff_issues],
+                },
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+
     if missing and result.verdict == ReviewVerdict.APPROVED:
         result.verdict = ReviewVerdict.CHANGES_REQUESTED
         result.findings.append(
@@ -148,6 +387,69 @@ async def architect_review(
                 violates="handoff completeness (Architect check 7)",
             )
         )
+
+    # A round is only requeued on a finding a human/model can act on. If every remaining
+    # CHANGES_REQUESTED finding was an absence claim the harness refuted, do NOT requeue — but do
+    # NOT accept either. Refuting a claim proves the reviewer was wrong about the evidence, not
+    # that the code is correct, and changing a verdict to APPROVED would let a heuristic decide
+    # who may accept a task (T-11 round-2 reviewer finding 1: that was a fail-open gate). The
+    # verdict stays a reviewer verdict; the harness records what it could not resolve and routes
+    # to a human. `NEEDS_HUMAN` -> `blocked`, so no Worker round is consumed either.
+    if (
+        result.verdict == ReviewVerdict.CHANGES_REQUESTED
+        and refuted
+        and not result.findings
+        and not result.missing_artifacts
+        and not ambiguous
+    ):
+        result.verdict = ReviewVerdict.NEEDS_HUMAN
+        result.findings.append(
+            ReviewFinding(
+                file_or_area="review verdict",
+                issue=(
+                    "the reviewer requested changes, but every remaining finding was an absence "
+                    "claim the harness mechanically refuted; the harness neither requeues a "
+                    "round for a refuted claim nor accepts a task on one — a human must decide"
+                ),
+                violates="T-11 DoD 3 (refuted findings must not consume a round, and never accept)",
+            )
+        )
+        result.notes.append(
+            "verdict held at NEEDS_HUMAN (never upgraded): the only remaining findings were "
+            "absence claims the repository or the archived input mechanically refuted"
+        )
+    if refuted:
+        log_service.log_event(
+            session,
+            "review_absence_refuted",
+            structured_log.attach(
+                "the reviewer asserted missing evidence that the repository disproves",
+                {
+                    "task_id": task.id,
+                    "run_id": run.id,
+                    "refuted": [f.model_dump() for f in refuted],
+                    "checks": [c.as_dict() for c in absence_checks if c.status == "refuted"],
+                    "verdict": result.verdict.value,
+                },
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+
+    # DoD 2: review.json must say which findings the harness can confirm mechanically. Absence
+    # provenance is recorded above; this is the one-line summary an auditor reads first.
+    by_status = {"confirmed": 0, "refuted": 0, "unchecked": 0}
+    for check in absence_checks:
+        by_status[check.status] = by_status.get(check.status, 0) + 1
+    if absence_checks:
+        result.notes.append(
+            "mechanical absence checks: "
+            f"{by_status['confirmed']} confirmed, {by_status['refuted']} refuted, "
+            f"{by_status['unchecked']} unchecked (of {len(result.findings)} finding(s) kept, "
+            f"{len(refuted)} refuted finding(s) removed)"
+        )
+
     if _EXEC_CLAIM.search(raw):
         result.notes.append(
             "Reviewer claimed to have executed something; the Architect has no "
@@ -158,6 +460,20 @@ async def architect_review(
     artifact_service.write_json(run.id, "review.json", result.model_dump(mode="json"))
     artifact_service.write_text(
         run.id, "review.md", artifact_service.render_review_md(result, reviewer)
+    )
+    artifact_service.write_text(
+        run.id,
+        "review_payload.md",
+        render_review_payload(
+            input_text=input_text,
+            truncations=prompt.truncations,
+            harness_missing=missing,
+            reviewer_missing=model_missing,
+            absence_checks=absence_checks,
+            diff_issues=diff_issues,
+            supplied=supplied,
+        ),
+        redact_content=False,
     )
     review = Review(
         task_id=task.id,

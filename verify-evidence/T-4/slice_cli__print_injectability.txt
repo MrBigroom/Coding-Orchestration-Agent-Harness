@@ -1,0 +1,21 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.cli._print_injectability
+# lines 1007-1022 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/cli.py
+# why the reviewer asked for it: DoD 4 the reason line under the table
+# part 1/1
+ 1007 | def _print_injectability(entries) -> int:
+ 1008 |     """Name every uninjectable row and return how many there were."""
+ 1009 |     from orchestrator.services import memory_service
+ 1010 | 
+ 1011 |     bad = [e for e in entries if not memory_service.is_injectable(e)]
+ 1012 |     for e in bad:
+ 1013 |         console.print(
+ 1014 |             f"[red]uninjectable[/red] #{e.id} {escape(e.category)}: "
+ 1015 |             f"{escape(memory_service.injectability(e)[1])}"
+ 1016 |         )
+ 1017 |     if bad:
+ 1018 |         err.print(
+ 1019 |             f"{len(bad)} entr{'y' if len(bad) == 1 else 'ies'} above cannot be injected: "
+ 1020 |             "fix with `orchestrator memory fix-scopes`."
+ 1021 |         )
+ 1022 |     return len(bad)

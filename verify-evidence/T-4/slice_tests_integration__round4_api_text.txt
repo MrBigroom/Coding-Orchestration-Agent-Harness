@@ -1,0 +1,103 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: tests/integration/test_memory_scope_boundary.py — the assertions themselves, numbered
+# tests: test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files, test_api_create_still_accepts_every_role_name_the_enum_allows, test_api_rejects_every_category_with_its_own_named_vocabulary
+# why the reviewer asked for it: R-27 finding 5, at the HTTP boundary, asserted on the ERROR TEXT: the 422 names architect|worker|supervisor + 'allowed role memory files' + both aliases, each category names its own vocabulary, and the accepted set of role names is unchanged
+# part 1/1
+
+  132 | def test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files(client):
+  133 |     """DoD 2 at the POST boundary, asserted on the ERROR TEXT and not on the status code.
+  134 | 
+  135 |     The `role` COLUMN is what `for_prompt` selects on, so `role="logbook-writer"` is the
+  136 |     damaging shape. `MemoryCreate.role` is the `Role` enum, so Pydantic used to answer with
+  137 |     `Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'` — role VALUES
+  138 |     with no mention of the role memory FILES, and no mention of the `reviewer -> architect` /
+  139 |     `agent -> worker` aliases that make those extra values legal. `MemoryCreate` now runs the
+  140 |     service's own `check_role_name` in a `model_validator(mode="before")`, which fires before
+  141 |     the enum coercion, so the body carries the same words the CLI and the service use. The
+  142 |     status code stays 422 (the value never reaches the service, so nothing can be half-stored)
+  143 |     and the body keeps the frozen {error, detail} shape. `role` stays typed as `Role`: the
+  144 |     request shape and the accepted set are untouched, only the rejection TEXT changed.
+  145 |     """
+  146 |     r = client.post(
+  147 |         "/api/memory",
+  148 |         json={"category": "role", "scope": "worker", "role": "logbook-writer",
+  149 |               "content": "Diary."},
+  150 |     )
+  151 |     assert r.status_code == 422, r.text
+  152 |     body = r.json()
+  153 |     assert set(body) == {"error", "detail"}  # the frozen error shape
+  154 |     # `detail` is a list of error dicts; read the whole body as whitespace-normalized prose so
+  155 |     # the assertions are about the WORDS, not the JSON layout or the line wrapping.
+  156 |     text = flat(" ".join(str(x) for x in body["detail"]) + " " + str(body["error"]))
+  157 |     # The load-bearing assertions are these three, and they are what Pydantic's own enum
+  158 |     # message does NOT satisfy: it lists the role VALUES (`'architect', 'supervisor',
+  159 |     # 'worker', 'reviewer' or 'agent'`), which would pass a per-value loop while still naming
+  160 |     # no vocabulary and no alias. Verified by mutation: with the `MemoryCreate` validator
+  161 |     # neutered, only these three fail (see verify-evidence/T-4/README.md, R4-D2).
+  162 |     assert "architect|worker|supervisor" in text  # the vocabulary, as one string
+  163 |     assert "allowed role memory files" in text  # FILES, not enum values
+  164 |     assert "reviewer -> architect" in text and "agent -> worker" in text
+  165 |     assert "logbook-writer" in text  # and the refused value itself
+  166 |     # Each allowed file appears, checked as the joined vocabulary rather than as loose words.
+  167 |     assert "|".join(m.ROLE_SCOPES) in text
+  168 |     # Nothing was stored, and no dead file was created.
+  169 |     with session_scope() as s:
+  170 |         assert [e for e in m.list_entries(s, category="role")
+  171 |                 if e.role == "logbook-writer"] == []
+  172 |     assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
+  173 | 
+  174 | 
+
+  175 | def test_api_create_still_accepts_every_role_name_the_enum_allows(client):
+  176 |     """The message got sharper; the ACCEPTED SET did not change (frozen request shape).
+  177 | 
+  178 |     All five `Role` members are still valid at POST, the aliases included, and each lands in
+  179 |     the role memory file its prompt actually reads — `reviewer`/`agent` resolve through
+  180 |     `ROLE_MEMORY_KEY`, so a row is never stored under a file no injector opens.
+  181 |     """
+  182 |     expected = {
+  183 |         "architect": "architect", "reviewer": "architect",
+  184 |         "worker": "worker", "agent": "worker", "supervisor": "supervisor",
+  185 |     }
+  186 |     for name, home in expected.items():
+  187 |         r = client.post(
+  188 |             "/api/memory",
+  189 |             json={"category": "role", "scope": name, "role": name, "content": f"R-{name}."},
+  190 |         )
+  191 |         assert r.status_code == 201, (name, r.text)
+  192 |         assert r.json()["scope"] == home, name
+  193 |         assert r.json()["role"] == name, name
+  194 |         assert (m.memory_root() / "roles" / f"{home}.md").exists()
+  195 |     # and the one value the enum has never accepted is the one refused by name, above
+  196 |     assert client.post(
+  197 |         "/api/memory",
+  198 |         json={"category": "role", "scope": "worker", "role": "logbook-writer",
+  199 |               "content": "Diary."},
+  200 |     ).status_code == 422
+  201 | 
+  202 | 
+
+  203 | def test_api_rejects_every_category_with_its_own_named_vocabulary(client):
+  204 |     """DoD 2 as ONE table: each category's rejection names exactly its own allowed values.
+  205 | 
+  206 |     The three vocabularies are asserted from the constants the tests import, so a vocabulary
+  207 |     that silently loses a member fails here instead of in the prose of a handoff.
+  208 |     """
+  209 |     cases = [
+  210 |         ({"category": "global", "scope": "global-environment-verifying", "content": "x"},
+  211 |          m.GLOBAL_SCOPES),
+  212 |         ({"category": "project", "scope": "ai-livestreaming-avatar-logbook",
+  213 |           "project_slug": "demo", "content": "x"}, m.PROJECT_SCOPES),
+  214 |         ({"category": "role", "scope": "logbook-writer", "content": "x"}, m.ROLE_SCOPES),
+  215 |     ]
+  216 |     for body, vocab in cases:
+  217 |         r = client.post("/api/memory", json=body)
+  218 |         assert r.status_code == 400, (body, r.text)
+  219 |         err = r.json()["error"]
+  220 |         assert "|".join(vocab) in err, (vocab, err)
+  221 |         for value in vocab:
+  222 |             assert value in err, value
+  223 |         assert body["scope"] in err  # names the offending value too
+  224 |         assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
+  225 | 
+  226 | 

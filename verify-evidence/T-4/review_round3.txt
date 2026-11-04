@@ -1,0 +1,56 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# REVIEW ROUND 3 — the R-26 findings, each demonstrated on THIS worktree's code
+# in a throwaway ORCHESTRATOR_HOME. No network, no API keys, no live home touched.
+# command: ORCHESTRATOR_HOME=$TMP/home3 PYTHONPATH=$WT/src $MAIN/.venv/bin/python <demo>
+R3-FINDING 1 - category=role is guarded on the ROLE COLUMN, not only on `scope`
+  (DoD 2: 'category=role stops being only half-guarded by memory_service._validate')
+    _validate refuses the role column before the scope  (orchestrator.services.memory_service._validate, lines 197-224):
+      :214:         if entry.role:
+      :215:             check_role_name(entry.role)
+      :221:             entry.role = entry.scope
+    create() no longer dies on a raw role string  (orchestrator.services.memory_service.create, lines 241-262):
+      :250:         role=getattr(data.role, "value", data.role) or None,
+  (1) service create(): role='logbook-writer' scope='worker' (a VALID scope)
+    refused: role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+    rows added: 0 | roles/logbook-writer.md created: False
+  (2) PATCH / memory_service.update(): the row is ALREADY stored in that shape
+    stored row: 3 role='logbook-writer' scope='worker' -> roles/logbook-writer.md injectable: False
+    refused: role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+    row after: 'logbook-writer' 'worker' | file byte-identical: True
+    content-only edit still possible: 'Reworded.'
+  (3) CLI `memory add --role`: the error names the role FILES and their aliases
+    $ orchestrator memory add Diary. --category role --scope worker --role logbook-writer
+    exit 1 :: error: role name 'logbook-writer' cannot be injected; allowed role memory files: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
+    $ orchestrator memory add Gate. --category role --scope reviewer --role reviewer
+    exit 0 :: added memory #4 (pending)
+    stored: [('reviewer', 'architect', 'roles/architect.md', True)] | reachable_by: ('architect', 'reviewer')
+  (4) HTTP POST /api/memory: the enum is a layer IN FRONT (422, frozen error shape)
+    POST status 422 keys ['detail', 'error'] | error: validation error
+    detail names the offending value: True
+    (the PATCH boundary against a row ALREADY stored in that shape is shown in
+     step (2) and asserted over HTTP by test_memory_scope_boundary.py::test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope)
+  (5) `memory import`: a dead role name is never stored, even from a payload
+    imported: 0 | role rows with that content: 0
+  (6) the counter-examples that must STAY injectable (#39/#47 shape)
+    role='worker' scope='worker' -> roles/worker.md injectable: True reachable_by: ('worker', 'agent')
+      check_role_name('reviewer') -> reviewer files: architect
+      check_role_name('agent') -> agent files: worker
+
+R3-FINDING 2 - `fix-scopes --gc-only` reports only the deletions it actually did
+  (DoD 3: the repair output said 'removed dead scope-file' for files that were still
+   on disk whenever gc_orphan_files() returned [], because of `removed or listed')
+    the gc-only branch  (orchestrator.cli.memory_fix_scopes, lines 1122-1202):
+      :1151:                 repair = m.ScopeRepair(removed_files=m.orphan_files(s), dry_run=True)
+      :1153:                 # ONLY what was actually unlinked. `orphan_files()` is a pre-view taken
+      :1156:                 repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s), dry_run=False)
+  orphan_files(): ['projects/demo/demo.md']
+  (a) GC returns [] while the listing is non-empty:
+      exit 0 | 'removed dead scope-file' appears? False
+      summary tail: moved 0 entries; 0 left alone; 0 dead scope-file(s) removed
+      file still on disk: True <- report and disk agree
+  (b) --gc-only --dry-run still shows what a real run would collect:
+      'would remove dead scope-file' named: True | '1 dead scope-file(s) to remove': True | 'removed dead scope-file': False | still present: True
+  (c) the real run, unpatched, deletes and then says so:
+      'removed dead scope-file' named: True | file gone: True
+  ASSERTIONS HELD: the report never claimed a deletion the disk contradicted.
+ROUND3_EXIT=0

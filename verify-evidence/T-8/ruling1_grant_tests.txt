@@ -1,0 +1,226 @@
+T-8 ruling 1 — contract authorization is a grant, not a mention
+HEAD=bd9239f0990751259fa2e924ce33c27c2b5a9882 (bd9239f)  branch=task-8-recovery-commits-after-a-timeout-commit-half-fin
+2026-11-04T02:18:33+08:00
+
+== implementation (src/orchestrator/services/project_service.py) ==
+-- the watched list: l.29-45
+29:CONTRACT_FILES: tuple[str, ...] = (
+30:    "docs/plan.md",
+31:    "docs/product-spec.md",
+32:    "docs/architecture.md",
+33:    "docs/workflow.md",
+34:    "docs/frozen-contracts.md",
+35:)
+36:
+37:
+38:def contract_files() -> list[str]:
+39:    """Relative paths of the contract documents the harness watches."""
+40:    return list(CONTRACT_FILES)
+41:
+42:
+43:def _normalized(path: str) -> str:
+44:    return path.strip().removeprefix("./").removeprefix("/")
+45:
+-- grant matcher: l.48-82
+48:    """Contract files touched by a run (in any commit it produced, recovery commits included)."""
+49:    hits = {_normalized(p) for p in changed}
+50:    return sorted(p for p in CONTRACT_FILES if p in hits)
+51:
+52:
+53:# A grant names what the phase is allowed to do to the file. Mere mention is not enough: T-8's own
+54:# DoD 8 lists all five contract files while describing the detector, and a mention-based rule would
+55:# have "authorized" exactly the edits it was written to catch (reviewer ruling, T-8 round 5).
+56:_GRANT_RE = re.compile(
+57:    r"""(?xi)
+58:    (?:
+59:        authoriz(?:e|es|ed|ing|ation)|permit(?:s|ted)?|allow(?:s|ed)?|grant(?:s|ed)?|sanction(?:s|ed)?
+60:      | (?:may|can|should)\s+(?:be\s+)?
+61:    )
+62:    \b(?:[^.;\n]{0,40}?)\b
+63:    (?:amend(?:s|ing)?|edit(?:s|ing)?|chang(?:e|es|ing)|updat(?:e|s|ing)|modif(?:y|ies|ying)
+64:      | add(?:s|ing)?|extend(?:s|ing)?|widen(?:s|ing)?|rewrit(?:e|es|ing)|replac(?:e|es|ing)
+65:      | write)
+66:    """
+67:)
+68:# A prohibition naming the file must NEVER read as authorization, even in a sentence that also
+69:# contains a grant verb ("not authorized to change docs/plan.md"). Fails closed.
+70:_PROHIBIT_RE = re.compile(
+71:    r"""(?xi)
+72:    \b(?:do|does|did)\s+not\b | \bdon'?t\b | \bmust\s+not\b | \bmay\s+not\b | \bshall\s+not\b
+73:  | \bcan'?not\b | \bunauthoriz(?:e|ed|es|ation)\b | \bdisallow(?:s|ed)?\b | \bprohibit(?:s|ed)?\b
+74:  | \bforbid(?:s|den)?\b | \bnever\b | \bbanned\b | \bout\s+of\s+scope\b | \bnot\s+permitted\b
+75:  | \bnot\s+allowed\b | \bforbids?\b
+76:  | \bnot\s+(?:be\s+)?(?:authoriz|permit|allow|grant|sanction)\w*
+77:  | \b(?:isn'?t|wasn'?t)\s+(?:authoriz|permit|allow|grant)\w*
+78:    """
+79:)
+80:# Sentence-ish splits for the per-mention test. `\.\s` is safe for paths: the dot in
+81:# "frozen-contracts.md" is followed by a letter, not whitespace.
+82:_CLAUSE_SPLIT = re.compile(r"[\n;]+|\.\s")
+-- clause/mention helpers: l.83-105
+83:
+84:
+85:def _grant_clauses(texts: list[str]) -> list[str]:
+86:    """Clauses that both grant something and are not prohibitions."""
+87:    out: list[str] = []
+88:    for text in texts:
+89:        for clause in _CLAUSE_SPLIT.split(text or ""):
+90:            if not clause.strip():
+91:                continue
+92:            if _PROHIBIT_RE.search(clause) or not _GRANT_RE.search(clause):
+93:                continue
+94:            out.append(clause.lower())
+95:    return out
+96:
+97:
+98:def _mentioned(clause: str, path: str) -> bool:
+99:    """Does this clause name the contract file as a path, not as prose?
+100:
+101:    A bare basename only counts inside a path-like context (``docs/frozen-contracts.md`` or
+102:    ``frozen-contracts.md``); the full path is always checked first.
+103:    """
+104:    return path.lower() in clause or path.rsplit("/", 1)[-1].lower() in clause
+105:
+-- authorized_contract_files (reads ONLY the three stored fields): l.106-132
+106:
+107:def authorized_contract_files(task: Task) -> set[str]:
+108:    """Contract files this task explicitly authorizes changes to.
+109:
+110:    Authorization means a *grant*, not a mention: a Definition of Done item, acceptance criterion
+111:    or frozen-contracts entry must (a) name the file and (b) grant a change to it — "authorized to
+112:    amend docs/frozen-contracts.md to add the ORCH_VERIFY field names". Three things are
+113:    deliberately NOT authorization, each with a test:
+114:
+115:    - a **mere mention**, e.g. "intersect the changed-file set with docs/frozen-contracts.md";
+116:    - a **prohibition**, e.g. "Do NOT modify docs/frozen-contracts.md";
+117:    - anything in the task **description**, a commit message or a diffstat — only the three stored
+118:      authorization fields above are read.
+119:
+120:    Failing closed is the point: a control that authorizes the edit it was written to detect is
+121:    worse than no control, because it reads as a check that passed.
+122:    """
+123:    texts = [
+124:        *(task.definition_of_done or []),
+125:        *(task.acceptance_criteria or []),
+126:        *(task.frozen_contracts or []),
+127:    ]
+128:    clauses = _grant_clauses(texts)
+129:    if not clauses:
+130:        return set()
+131:    return {p for p in CONTRACT_FILES if any(_mentioned(c, p) for c in clauses)}
+132:
+-- unauthorized_contract_changes + contract_findings: l.133, 143-177
+133:
+134:def unauthorized_contract_changes(task: Task, changed: list[str]) -> list[str]:
+135:    """Contract files changed by the run that the task does not authorize. Deterministic."""
+136:    allowed = authorized_contract_files(task)
+137:    return [p for p in contract_changes(task, changed) if p not in allowed]
+138:
+139:
+140:def _touched_paths(cwd: Path, base_branch: str) -> list[str]:
+141:    """Committed diff plus whatever is still uncommitted in the worktree.
+142:
+143:    A contract file edited and NOT committed is still an edit; a detector that only looked at
+144:    commits would call that branch contract-clean (T-8 DoD 8).
+145:    """
+146:    from orchestrator.services import git_service
+147:
+148:    paths = set(git_service.changed_files(cwd, base_branch))
+149:    split = git_service.status_split(cwd)
+150:    paths.update(split.tracked_modified)
+151:    paths.update(split.untracked_added)
+152:    return sorted(paths)
+153:
+154:
+155:def contract_findings(
+156:    task: Task, project: Project | None, cwd: Path | None
+157:) -> dict[str, list[str]]:
+158:    """Contract files this run touched, split into authorized vs. unauthorized by the task's
+159:    stored DoD. Empty lists when there is no project worktree to read.
+160:
+161:    Lives here because the Supervisor (which must fail the check) and the reviewer payload (which
+162:    must show it) have to agree on the same numbers, computed one way."""
+163:    from orchestrator.services import git_service
+164:
+165:    if not cwd or not project or not cwd.is_dir() or not git_service.is_repo(cwd):
+166:        return {"changed": [], "authorized": [], "unauthorized": []}
+167:    hits = contract_changes(task, _touched_paths(cwd, project.base_branch))
+168:    allowed = authorized_contract_files(task)
+169:    return {
+170:        "changed": hits,
+171:        "authorized": sorted(p for p in hits if p in allowed),
+172:        "unauthorized": sorted(p for p in hits if p not in allowed),
+173:    }
+174:
+175:
+176:def recovery_commits_for(session: Session, task: Task, run: Run | None = None) -> list:
+177:    """Harness-created recovery commits on this task's branch.
+
+== gate + reviewer wiring ==
+-- supervisor_service.py: the check name and the fail path
+46:CONTRACT_CHECK = "contract files unchanged"
+213:        findings = project_service.contract_findings(task, project, cwd)
+218:                    name=CONTRACT_CHECK,
+237:                "contract_change_detected",
+260:                    name=CONTRACT_CHECK,
+353:def contract_change_hold(
+362:    The question is recorded on the surfaces that already exist — `review_status=NEEDS_HUMAN`,
+363:    the `verdict_recorded`/`contract_change_detected` build-log events, the verification
+369:    unauthorized = project_service.contract_findings(task, project, cwd)["unauthorized"]
+379:    task.review_status = ReviewVerdict.NEEDS_HUMAN
+385:        f"NEEDS_HUMAN {question} (run {run.short_id})",
+414:    held = contract_change_hold(session, task, run, project)
+430:        if review.verdict == ReviewVerdict.NEEDS_HUMAN:
+435:                "architect verdict NEEDS_HUMAN",
+-- review_service.py: the harness-computed section in the reviewer payload
+114:def harness_findings_section(
+119:    findings = project_service.contract_findings(task, project, cwd)
+123:        f"contract files watched: {', '.join(project_service.contract_files())}",
+124:        f"contract files changed by this run: {', '.join(findings['changed']) or 'none'}",
+158:        harness_findings=harness_findings_section(session, task, run, project),
+-- log_service.py: details are redacted before they are stored
+13:from orchestrator.utils.redaction import redact
+28:    details = redact(details)
+
+== per-case tests (tests/unit/test_recovery_markers.py) ==
+154:def test_unauthorized_contract_change_is_computed_not_asserted(session, initialized, tmp_path):
+232:CONTRACT_CHANGED = ["docs/frozen-contracts.md"]
+235:def test_contract_authorization_a_prohibition_is_not_a_grant(session, initialized, tmp_path):
+278:def test_contract_authorization_an_explicit_grant_suppresses_the_finding(session, initialized, tmp_path):
+324:def test_contract_authorization_commit_message_and_diffstat_grant_nothing(session, initialized, tmp_path):
+353:def test_contract_authorization_a_bare_mention_grants_nothing(session, initialized, tmp_path):
+367:def test_reviewer_prompt_sections_are_rendered_without_new_run_artifacts(session, initialized, tmp_path):
+
+== targeted -v run (one line per proof) ==
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+tests/unit/test_recovery_markers.py::test_unauthorized_contract_change_is_computed_not_asserted PASSED [ 16%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_a_prohibition_is_not_a_grant PASSED [ 33%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_an_explicit_grant_suppresses_the_finding PASSED [ 50%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_commit_message_and_diffstat_grant_nothing PASSED [ 66%]
+tests/unit/test_recovery_markers.py::test_contract_authorization_a_bare_mention_grants_nothing PASSED [ 83%]
+tests/unit/test_recovery_markers.py::test_reviewer_prompt_sections_are_rendered_without_new_run_artifacts PASSED [100%]
+TARGETED_EXIT=0
+
+== integration proof: a recovery commit carrying docs/frozen-contracts.md ==
+365:def test_unauthorized_contract_edit_from_recovery_waits_for_a_human(session, tmp_path):
+385:    assert checks[supervisor_service.CONTRACT_CHECK]["status"] == "fail"
+386:    assert "frozen-contracts.md" in checks[supervisor_service.CONTRACT_CHECK]["notes"]
+387:    assert "recovery commit" in checks[supervisor_service.CONTRACT_CHECK]["notes"]
+390:    assert outcome["decision"] == TaskStatus.blocked
+392:    assert task.status == TaskStatus.blocked
+393:    assert task.review_status == "NEEDS_HUMAN"
+396:    # the question reaches the surfaces that exist: build log + blocked reason
+398:    assert len(verdicts) == 1 and "NEEDS_HUMAN" in verdicts[0].details
+400:    blocks = [e for e in _events(session, task, "task_status") if "-> blocked" in e.details]
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8
+5 passed in 9.70s
+INTEGRATION_EXIT=0
+
+== the same control applied to THIS task (T-8) ==
+T-8's own stored authorization fields are the DoD text quoted above: DoD 8 names all five
+contract files to describe the detector, and DoD 10 plus this task's brief name
+ docs/frozen-contracts.md only to forbid editing it. Under the grant rule that authorizes
+nothing, so the branch must — and does — leave the file untouched. A mention rule would have
+made T-8 self-authorizing, which is the fail-open shape ruling 1 removed.
+frozen-contracts.md commits touched: 0
+frozen-contracts.md dirty: 0

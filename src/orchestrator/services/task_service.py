@@ -128,6 +128,41 @@ def update(session: Session, task: Task, data: TaskUpdate) -> Task:
     return task
 
 
+# Lifecycle fields that describe the CURRENT handoff round. A new round must not inherit them:
+# `in_progress` next to the previous run's `RUN_TIMEOUT` handoff marker mislabels the GUI header
+# and invites a reader to treat a live run as a failed one (T-8 DoD 7). They are cleared where a
+# run starts (run_service._execute) — a requeue keeps them, because `queued` +
+# `CHANGES_REQUESTED` is honest information the Worker acts on. Documented in docs/build-loop.md,
+# "What a new round resets".
+ROUND_FIELDS: tuple[str, ...] = (
+    "handoff_status",
+    "review_status",
+    "verification_status",
+    "merge_status",
+)
+
+
+def clear_round_fields(session: Session, task: Task, reason: str = "") -> list[str]:
+    """Reset the per-round status columns; returns the field names that actually held a value."""
+    cleared = [f for f in ROUND_FIELDS if getattr(task, f) not in (None, "")]
+    if not cleared:
+        return []
+    for f in cleared:
+        setattr(task, f, None)
+    task.updated_at = utcnow()
+    session.add(task)
+    session.commit()
+    log_service.log_event(
+        session,
+        "retry_fields_reset",
+        f"cleared {', '.join(cleared)}" + (f": {reason}" if reason else ""),
+        role="supervisor",
+        task_id=task.id,
+        phase=phase_label(task),
+    )
+    return cleared
+
+
 def transition(
     session: Session, task: Task, dst: str, reason: str = "", role: str = "system"
 ) -> Task:
@@ -145,6 +180,9 @@ def transition(
         task_id=task.id,
         phase=phase_label(task),
     )
+    # A requeue keeps the previous round's verdicts visible: `queued` + `CHANGES_REQUESTED` is the
+    # truth the Worker will act on, and the reset belongs at the moment a new round actually
+    # starts (run_service._execute), not here (T-8 DoD 7).
     return task
 
 

@@ -1,0 +1,64 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# REVIEW ROUND 2 — the R-25 findings, each demonstrated on THIS worktree's code
+# in a throwaway ORCHESTRATOR_HOME. No network, no API keys.
+# command: ORCHESTRATOR_HOME=$TMP/home2 PYTHONPATH=$WT/src $MAIN/.venv/bin/python <demo>
+FINDING 1 - coercion is the literal fallback, never an inference from the words
+  project/'decisions-and-gating' -> 'gotchas'   note: project scope 'decisions-and-gating' is not in conventions|decisions|gotchas; stored as 'gotchas' (deterministic fallback, not inferred from the words)
+  project/'decisionss' -> 'gotchas'   note: project scope 'decisionss' is not in conventions|decisions|gotchas; stored as 'gotchas' (deterministic fallback, not inferred from the words)
+  project/'conventions-notes' -> 'gotchas'   note: project scope 'conventions-notes' is not in conventions|decisions|gotchas; stored as 'gotchas' (deterministic fallback, not inferred from the words)
+  global/'patterns-of-the-team' -> 'environment'   note: global scope 'patterns-of-the-team' is not in environment|preferences|patterns; stored as 'environment' (deterministic fallback, not inferred from the words)
+  in vocabulary stays put and is silent: ('decisions', '')
+  stored scope='gotchas' reachable_by=('worker', 'agent', 'supervisor') (an inference would have said 'decisions' -> architect,supervisor)
+
+FINDING 2 - Rich markup in the repair output (brackets were eaten; now escaped)
+left #1 project scope '' alone 
+  what the OLD bracketed line printed: "left #1 project scope '' alone"
+  the CLI now prints: ["left #4 project scope '[stale]' alone: rejected rows are left alone"]
+
+FINDING 3 - --dry-run promises, it does not report; each ghost is named once
+  dry: 'would re-render' x1, 'would collect dead scope-file' x1, 'would remove dead scope-file' x1
+  dry: says 're-rendered'? False | 'moved #'? False
+  run: 'removed dead scope-file' x2 (one line each), 'collected' x0
+  ghost gone? True | already-dead gone? True
+  row after the move (re-read): [(5, 'environment')]
+
+FINDING 5 - the GC deletes ONLY text render_file could have written
+  predicate: in_layout_dir AND not canonical_file AND not owned AND _renderer_output
+    projects/demo/notes.md     layout=True  canonical=False owned=False renderer_output=False
+    projects/demo/scratch.md   layout=True  canonical=False owned=False renderer_output=False
+    projects/demo/conventions.md layout=True  canonical=True  owned=False renderer_output=False
+    projects/demo/demo.md      layout=True  canonical=False owned=False renderer_output=True 
+    projects/demo/old-scope.md layout=True  canonical=False owned=False renderer_output=True 
+  orphan_files: ['projects/demo/demo.md', 'projects/demo/old-scope.md']
+  gc deleted: ['projects/demo/demo.md', 'projects/demo/old-scope.md']
+  hand-written survived: True True True
+  dead renderer output deleted: True True
+
+FINDING 6 - a refused PATCH changes nothing (no rollback needed)
+  rejected: memory scope 'housekeeping' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  row after: scope='gotchas' content='Watch out.'
+  file byte-identical: True | session dirty/new: False False
+
+FINDING 7 - role rendering is STILL main's rule: role, else scope, ROLE_MEMORY_KEY
+  #7 role='logbook-writer' scope='worker' -> file roles/logbook-writer.md injectable=False reachable_by=-
+     reason: role memory renders to logbook-writer.md, which no role prompt reads: role='logbook-writer' scope='worker' must resolve to one of architect|worker|supervisor (reviewer -> architect, agent -> worker)
+  #8 role='worker' scope='worker' -> file roles/worker.md injectable=True reachable_by=('worker', 'agent')
+     reason: -
+  worker.md last line: - Small commits.  <!-- mem:8 -->
+  fix-scopes moved: [] | left alone: [(4, 'rejected rows are left alone'), (7, 'role memory has no fallback file: an unresolvable role wou')]
+
+FINDING 8 - rejecting vs repairing, side by side at the CLI
+  $ orchestrator memory add x --category project --scope logbook --project demo
+    error: memory scope 'logbook' is not injectable; allowed scopes for project: conventions|decisions|gotchas
+  $ orchestrator memory import mem.json   (REPAIRS the legacy export scope)
+    imported 0 entries
+  project rows now: [(3, 'gotchas', 'Gate the merge.'), (4, '[stale]', 'Bracketed.'), (6, 'gotchas', 'Watch out.'), (9, 'logbook', 'Legacy fact.')]
+  $ orchestrator memory import mem.json   (again: idempotent)
+    imported 0 entries
+  IMPORT NEVER MANUFACTURES A SECOND COPY of a fact that is already stored, even
+  while that row still carries its dead scope (the dedupe checks both spellings).
+    re-import the live export itself: 0 new rows (rows stored: 9 -> 9 )
+  A fact the home does NOT have yet is still repaired, not dropped:
+    imported 1 entry
+    stored as: [('gotchas', 'other', 'A fact only this export has.')] | role rows: 2
+ROUND2_EXIT=0

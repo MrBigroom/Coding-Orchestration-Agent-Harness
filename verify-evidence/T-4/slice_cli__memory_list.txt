@@ -1,0 +1,27 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.cli.memory_list
+# lines 1025-1046 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/cli.py
+# why the reviewer asked for it: DoD 4 the list marker command
+# part 1/1
+ 1025 | @memory_app.command("list")
+ 1026 | @handled
+ 1027 | def memory_list(
+ 1028 |     status: str = typer.Option(None, help="approved|pending|rejected"),
+ 1029 |     category: str = typer.Option(None),
+ 1030 |     project: str = typer.Option(None),
+ 1031 |     role: str = typer.Option(None),
+ 1032 |     uninjectable: bool = typer.Option(
+ 1033 |         False, "--uninjectable", help="Show only entries no prompt can read."
+ 1034 |     ),
+ 1035 | ) -> None:
+ 1036 |     from orchestrator.services import memory_service
+ 1037 | 
+ 1038 |     _ensure_ready()
+ 1039 |     with _session() as s:
+ 1040 |         entries = memory_service.list_entries(
+ 1041 |             s, status=status, category=category, project_slug=project, role=role
+ 1042 |         )
+ 1043 |         if uninjectable:
+ 1044 |             entries = [e for e in entries if not memory_service.is_injectable(e)]
+ 1045 |     console.print(_memory_table(entries))
+ 1046 |     _print_injectability(entries)

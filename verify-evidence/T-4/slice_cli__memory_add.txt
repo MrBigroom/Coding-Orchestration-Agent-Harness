@@ -1,0 +1,42 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.cli.memory_add
+# lines 1049-1085 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/cli.py
+# why the reviewer asked for it: DoD 2 the CLI create boundary, including this round's --role pre-check
+# part 1/1
+ 1049 | @memory_app.command("add")
+ 1050 | @handled
+ 1051 | def memory_add(
+ 1052 |     content: str,
+ 1053 |     category: str = typer.Option("global"),
+ 1054 |     scope: str = typer.Option("preferences"),
+ 1055 |     project: str = typer.Option(None),
+ 1056 |     role: str = typer.Option(None),
+ 1057 |     tag: list[str] = typer.Option([], "--tag"),
+ 1058 |     approve: bool = typer.Option(False, help="Approve immediately."),
+ 1059 | ) -> None:
+ 1060 |     from orchestrator.core.schemas import MemoryCreate
+ 1061 |     from orchestrator.services import memory_service
+ 1062 | 
+ 1063 |     _ensure_ready()
+ 1064 |     # `--role` is a plain string here, and MemoryCreate types it as the Role enum, so an
+ 1065 |     # unreadable role would be refused by Pydantic with a message that never names the role
+ 1066 |     # MEMORY FILES (DoD 2 requires the allowed values to be named). Validate it through the
+ 1067 |     # service's own check first; a valid name (including the reviewer/agent aliases) passes
+ 1068 |     # through untouched and is still re-checked by _validate.
+ 1069 |     if role is not None:
+ 1070 |         memory_service.check_role_name(role)
+ 1071 |     with _session() as s:
+ 1072 |         e = memory_service.create(
+ 1073 |             s,
+ 1074 |             MemoryCreate(
+ 1075 |                 category=category,
+ 1076 |                 scope=scope,
+ 1077 |                 content=content,
+ 1078 |                 project_slug=project,
+ 1079 |                 role=role,
+ 1080 |                 tags=tag,
+ 1081 |                 approved=approve,
+ 1082 |                 source="cli",
+ 1083 |             ),
+ 1084 |         )
+ 1085 |         console.print(f"added memory #{e.id} ({'approved' if e.approved else 'pending'})")

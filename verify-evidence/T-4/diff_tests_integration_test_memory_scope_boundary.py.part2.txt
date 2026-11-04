@@ -1,0 +1,166 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 2/4
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 545 lines.
++    # the assertions are about the WORDS, not the JSON layout or the line wrapping.
++    text = flat(" ".join(str(x) for x in body["detail"]) + " " + str(body["error"]))
++    # The load-bearing assertions are these three, and they are what Pydantic's own enum
++    # message does NOT satisfy: it lists the role VALUES (`'architect', 'supervisor',
++    # 'worker', 'reviewer' or 'agent'`), which would pass a per-value loop while still naming
++    # no vocabulary and no alias. Verified by mutation: with the `MemoryCreate` validator
++    # neutered, only these three fail (see verify-evidence/T-4/README.md, R4-D2).
++    assert "architect|worker|supervisor" in text  # the vocabulary, as one string
++    assert "allowed role memory files" in text  # FILES, not enum values
++    assert "reviewer -> architect" in text and "agent -> worker" in text
++    assert "logbook-writer" in text  # and the refused value itself
++    # Each allowed file appears, checked as the joined vocabulary rather than as loose words.
++    assert "|".join(m.ROLE_SCOPES) in text
++    # Nothing was stored, and no dead file was created.
++    with session_scope() as s:
++        assert [e for e in m.list_entries(s, category="role")
++                if e.role == "logbook-writer"] == []
++    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
++
++
++def test_api_create_still_accepts_every_role_name_the_enum_allows(client):
++    """The message got sharper; the ACCEPTED SET did not change (frozen request shape).
++
++    All five `Role` members are still valid at POST, the aliases included, and each lands in
++    the role memory file its prompt actually reads — `reviewer`/`agent` resolve through
++    `ROLE_MEMORY_KEY`, so a row is never stored under a file no injector opens.
++    """
++    expected = {
++        "architect": "architect", "reviewer": "architect",
++        "worker": "worker", "agent": "worker", "supervisor": "supervisor",
++    }
++    for name, home in expected.items():
++        r = client.post(
++            "/api/memory",
++            json={"category": "role", "scope": name, "role": name, "content": f"R-{name}."},
++        )
++        assert r.status_code == 201, (name, r.text)
++        assert r.json()["scope"] == home, name
++        assert r.json()["role"] == name, name
++        assert (m.memory_root() / "roles" / f"{home}.md").exists()
++    # and the one value the enum has never accepted is the one refused by name, above
++    assert client.post(
++        "/api/memory",
++        json={"category": "role", "scope": "worker", "role": "logbook-writer",
++              "content": "Diary."},
++    ).status_code == 422
++
++
++def test_api_rejects_every_category_with_its_own_named_vocabulary(client):
++    """DoD 2 as ONE table: each category's rejection names exactly its own allowed values.
++
++    The three vocabularies are asserted from the constants the tests import, so a vocabulary
++    that silently loses a member fails here instead of in the prose of a handoff.
++    """
++    cases = [
++        ({"category": "global", "scope": "global-environment-verifying", "content": "x"},
++         m.GLOBAL_SCOPES),
++        ({"category": "project", "scope": "ai-livestreaming-avatar-logbook",
++          "project_slug": "demo", "content": "x"}, m.PROJECT_SCOPES),
++        ({"category": "role", "scope": "logbook-writer", "content": "x"}, m.ROLE_SCOPES),
++    ]
++    for body, vocab in cases:
++        r = client.post("/api/memory", json=body)
++        assert r.status_code == 400, (body, r.text)
++        err = r.json()["error"]
++        assert "|".join(vocab) in err, (vocab, err)
++        for value in vocab:
++            assert value in err, value
++        assert body["scope"] in err  # names the offending value too
++        assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
++
++
++def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope(client):
++    """DoD 2 at the PATCH boundary for a row already stored in the dead shape.
++
++    scope='worker' is in the vocabulary; the STORED role is what no prompt can select, and
++    `for_prompt`/`_file_for` key off the role column first -- so the PATCH is refused and the
++    row, its rendered file and its content-only editability are all untouched.
++    """
++    with session_scope() as s:
++        row = legacy(s, category="role", scope="worker", role="logbook-writer",
++                     content="Diary.", approved=True)
++        row_id, home = row.id, m._file_for(row)
++    before = home.read_text()
++    r = client.patch(f"/api/memory/{row_id}", json={"scope": "worker"})
++    assert r.status_code == 400, r.json()
++    assert "architect|worker|supervisor" in r.json()["error"]
++    assert "logbook-writer" in r.json()["error"]
++    got = [e for e in client.get("/api/memory").json() if e["id"] == row_id][0]
++    assert got["role"] == "logbook-writer" and got["scope"] == "worker"
++    assert home.read_text() == before
++    # ...and the operator is not locked out of the row: a content edit still goes through.
++    ok = client.patch(f"/api/memory/{row_id}", json={"content": "Reworded."})
++    assert ok.status_code == 200 and ok.json()["content"] == "Reworded."
++
++
++# ------------------------------------------------------------------ CLI boundary
++
++
++def test_cli_add_rejects_and_names_the_allowed_values(initialized):
++    for args, expected in (
++        (["memory", "add", "x", "--category", "global", "--scope", "environment-notes"],
++         "environment|preferences|patterns"),
++        (["memory", "add", "x", "--category", "project", "--scope", "logbook",
++          "--project", "demo"], "conventions|decisions|gotchas"),
++        (["memory", "add", "x", "--category", "role", "--scope", "logbook-writer"],
++         "architect|worker|supervisor"),
++    ):
++        r = runner.invoke(app, args)
++        assert r.exit_code == 1, (args, r.output)
++        assert "error:" in r.output and expected in r.output
++    from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
++
++    with session_scope() as s:
++        # Nothing was half-stored: only the memory `init` seeds is present.
++        assert len(m.list_entries(s)) == len(DEFAULT_GLOBAL_MEMORY)
++
++
++def test_cli_add_refuses_a_role_name_no_prompt_can_read(initialized):
++    """`memory add --role` is a plain string, so its error must name the role FILES.
++
++    Without the pre-check Pydantic answers with `Input should be 'architect', 'supervisor',
++    'worker', 'reviewer' or 'agent'` -- the enum, not the memory vocabulary with the
++    reviewer -> architect / agent -> worker aliases resolved (DoD 2).
++    """
++    from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
++
++    with session_scope() as s:
++        before = len(m.list_entries(s))
++        assert before == len(DEFAULT_GLOBAL_MEMORY)
++    bad = runner.invoke(
++        app,
++        ["memory", "add", "Diary.", "--category", "role", "--scope", "worker",
++         "--role", "logbook-writer"],
++        env=WIDE,
++    )
++    assert bad.exit_code == 1, bad.output
++    assert "error:" in bad.output
++    assert "architect|worker|supervisor" in flat(bad.output)
++    assert "logbook-writer" in flat(bad.output)
++    assert "reviewer -> architect" in flat(bad.output)  # the aliases are spelled out
++    with session_scope() as s:
++        assert len(m.list_entries(s)) == before  # nothing half-stored
++    # A real role name (including an alias) is still accepted, and lands in the file it is
++    # read from -- role='reviewer' resolves to the architect file.
++    ok = runner.invoke(
++        app,
++        ["memory", "add", "Gate the merge.", "--category", "role", "--scope", "reviewer",
++         "--role", "reviewer"],
++        env=WIDE,
++    )
++    assert ok.exit_code == 0, ok.output
++    with session_scope() as s:
++        row = [e for e in m.list_entries(s, category="role") if e.content == "Gate the merge."]
++        assert len(row) == 1 and row[0].scope == "architect" and row[0].role == "reviewer"
++        assert m.is_injectable(row[0])
++    assert "Gate the merge." not in (
++        m.memory_root() / "roles" / "worker.md").read_text()
++
++
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 2/4

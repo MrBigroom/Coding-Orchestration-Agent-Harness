@@ -1,0 +1,67 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 5/5
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 701 lines.
++        if not content or category not in {c.value for c in MemoryCategory}:
+             continue
+         entry = MemoryEntry(
+-            category=key[0],
+-            scope=key[1],
+-            project_slug=key[2],
+-            role=key[3],
+-            content=key[4],
++            category=category,
++            scope=slugify(str(raw.get("scope") or "")),
++            project_slug=raw.get("project_slug"),
++            role=raw.get("role"),
++            content=content,
+             source=raw.get("source", "import"),
+             tags_json=list(raw.get("tags_json") or []),
+             approved=bool(raw.get("approved")),
+             rejected=bool(raw.get("rejected")),
+         )
+-        if entry.category not in {c.value for c in MemoryCategory}:
++        raw_keys = _import_keys(
++            category, entry.scope, entry.project_slug, entry.role, content
++        )
++        if raw_keys & existing:
+             continue
+         try:
++            if entry.category in FALLBACK_SCOPE:
++                entry.scope, _ = coerce_scope(entry.category, entry.scope)
+             _validate(entry)
+         except MemoryError_:
+             continue
++        key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
++        existing |= raw_keys | {key}
+         session.add(entry)
+-        existing.add(key)
+         count += 1
+         if entry.approved:
+             touched.add(_file_for(entry))
+@@ -383,16 +810,21 @@ def import_markdown_tree(session: Session) -> int:
+                 continue
+             content = m.group("content")
+             if rel[0] == "global":
++                # A dead scope-file (an orphan named after something other than a
++                # vocabulary scope) is repaired on the way in, never indexed as another
++                # entry no injector can reach.
++                scope, _ = coerce_scope(MemoryCategory.global_, slugify(path.stem))
+                 data = MemoryCreate(
+                     category=MemoryCategory.global_,
+-                    scope=slugify(path.stem),
++                    scope=scope,
+                     content=content,
+                     source="markdown",
+                 )
+             elif rel[0] == "projects" and len(rel) == 3:
++                scope, _ = coerce_scope(MemoryCategory.project, slugify(path.stem))
+                 data = MemoryCreate(
+                     category=MemoryCategory.project,
+-                    scope=slugify(path.stem),
++                    scope=scope,
+                     project_slug=rel[1],
+                     content=content,
+                     source="markdown",
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 5/5

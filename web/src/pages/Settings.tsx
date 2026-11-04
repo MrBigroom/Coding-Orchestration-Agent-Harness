@@ -41,7 +41,8 @@ const BOOLS: [string, string][] = [
 const NUMS: [string, string][] = [
   ["max_parallel_runs", "Max parallel runs"],
   ["max_parallel_runs_per_project", "Max parallel runs per project"],
-  ["max_review_rounds", "Max review rounds before NEEDS_HUMAN"],
+  ["max_review_rounds", "Max verified review rounds before NEEDS_HUMAN"],
+  ["max_run_attempts_per_task", "Max run attempts per task (timeouts and failures included)"],
   ["max_memory_tokens_global", "Cap on the injected global memory section (tokens, 0 = no cap)"],
   ["max_memory_tokens_role", "Cap on the injected role memory section (tokens, 0 = no cap)"],
   ["max_memory_tokens_project", "Cap on the injected project memory section (tokens, 0 = no cap)"],

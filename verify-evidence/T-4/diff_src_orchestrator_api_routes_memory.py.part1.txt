@@ -1,0 +1,34 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/api/routes/memory.py   PART 1/1
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 28 lines.
+diff --git a/src/orchestrator/api/routes/memory.py b/src/orchestrator/api/routes/memory.py
+index c6a9c55..2b88bb6 100644
+--- a/src/orchestrator/api/routes/memory.py
++++ b/src/orchestrator/api/routes/memory.py
+@@ -43,6 +43,9 @@ def list_memory(
+ 
+ @router.post("/memory", status_code=201)
+ def create_memory(body: MemoryCreate, session: Session = SessionDep) -> dict[str, Any]:
++    # Out-of-vocabulary scopes are refused here for EVERY category (T-4 DoD 2); the message
++    # names the allowed values. The entry shape stays exactly as frozen — the marker for an
++    # unreachable scope is shown by `orchestrator memory list`, not by a new response field.
+     try:
+         return dump(memory_service.create(session, body))
+     except memory_service.MemoryError_ as e:
+@@ -78,7 +81,12 @@ async def import_memory(request: Request, session: Session = SessionDep) -> dict
+ def update_memory(
+     entry_id: int, body: MemoryUpdate, session: Session = SessionDep
+ ) -> dict[str, Any]:
+-    return dump(memory_service.update(session, entry_id, body))
++    # A PATCH that would move an entry to a scope no injector can read is a 400, not a
++    # silently unreachable row.
++    try:
++        return dump(memory_service.update(session, entry_id, body))
++    except memory_service.MemoryError_ as e:
++        raise HTTPException(400, str(e)) from e
+ 
+ 
+ @router.post("/memory/{entry_id}/approve")
+DIFF_PART_COMPLETE=src/orchestrator/api/routes/memory.py part 1/1

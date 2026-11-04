@@ -23,6 +23,8 @@ EDITABLE: dict[str, type] = {
     "supabase_sync_enabled": bool,
     "supabase_sync_interval_seconds": int,
     "max_review_rounds": int,
+    # T-12: separate cap on every adapter attempt, not just runs that reach the gate.
+    "max_run_attempts_per_task": int,
     # Memory injection budgets (tokens, ~4 chars each). Memory is a static prompt section,
     # so it can never be trimmed by the prompt budget; these caps are enforced in
     # memory_service.select_for_prompt. 0 disables the cap for that section.
@@ -59,6 +61,7 @@ def defaults() -> dict[str, Any]:
         "supabase_sync_enabled": s.supabase_sync_enabled,
         "supabase_sync_interval_seconds": s.supabase_sync_interval_seconds,
         "max_review_rounds": 3,
+        "max_run_attempts_per_task": 6,
         "memory_budget_enabled": s.memory_budget_enabled,
         "max_memory_tokens_global": s.max_memory_tokens_global,
         "max_memory_tokens_role": s.max_memory_tokens_role,

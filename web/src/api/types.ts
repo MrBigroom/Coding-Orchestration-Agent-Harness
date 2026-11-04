@@ -1,3 +1,15 @@
+export interface AttemptSummary {
+  attempts: number;
+  verified_rounds: number;
+  completed: number;
+  timeout: number;
+  failed: number;
+  cancelled: number;
+  max_review_rounds: number;
+  max_run_attempts_per_task: number;
+  summary: string;
+}
+
 export interface Task {
   id: number;
   short_id: string;
@@ -27,6 +39,8 @@ export interface Task {
   agent_id: number | null;
   created_at: string;
   updated_at: string;
+  /** T-12 derived counter from the runs table; never stored on the task row. */
+  attempts?: AttemptSummary;
 }
 
 export interface Run {
@@ -82,12 +96,24 @@ export interface MemoryEntry {
   updated_at: string;
 }
 
+export interface RecoveryCommit {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  recovery: boolean;
+  recovery_run: string | null;
+  files: { status: string; path: string }[];
+}
+
 export interface TaskDetail extends Task {
   runs: Run[];
   reviews: Review[];
   verifications: Verification[];
   memory_suggestions: MemoryEntry[];
   merge_command?: string;
+  /** Harness-created `chore(orchestrator-recovery)` commits: never self-checked by a Worker. */
+  recovery_commits?: RecoveryCommit[];
 }
 
 export interface Project {

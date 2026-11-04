@@ -1,0 +1,116 @@
+{
+  "phase": "T-11",
+  "branch": "task-11-the-reviewer-prompt-and-payload-are-never-archiv",
+  "status": "CHANGES_APPLIED",
+  "summary": "Round 2: five reviewer findings fixed on the same branch. (1) A review whose every remaining finding was a refuted absence claim is no longer upgraded to APPROVED \u2014 it becomes NEEDS_HUMAN with a 'review verdict' finding and routes to blocked, so a refuted claim neither requeues a round nor accepts a task. (2) Absence checks now split existence claims (checked against the worktree) from visibility claims ('not supplied / truncated', checked against the supplied patch and the archived truncation manifest; undecidable -> unchecked, never refuted). (3) The sensitive-file strip records the paths it withholds, so they appear in the manifest and in the reviewer-visible omission marker instead of vanishing. (4) A partially supplied file carries an inline '[review diff: N of M hunks shown ...]' marker naming the omitted hunk headers, and is listed as 'partially included' rather than 'included'. (5) The diff is ordered source-first and prefers whole files, so with this branch's own diff all source files except review_service.py are complete and that one is 7 of 9 hunks with the two omitted hunk headers named inline; max_diff_tokens is unchanged. Round-1 work (archived review_payload.md with truncation manifest, PROPOSED CCR-T11-01, harness vs model absence sections, diff-completeness / .gitattributes findings) is intact.",
+  "files_changed": [
+    "docs/build-loop.md",
+    "docs/contract-change-request-T11-review-payload.md",
+    "docs/decisions.md",
+    "docs/roles.md",
+    "src/orchestrator/providers/base.py",
+    "src/orchestrator/providers/mock_provider.py",
+    "src/orchestrator/services/artifact_service.py",
+    "src/orchestrator/services/prompt_builder.py",
+    "src/orchestrator/services/review_audit.py",
+    "src/orchestrator/services/review_service.py",
+    "src/orchestrator/utils/redaction.py",
+    "tests/integration/test_recovery_after_timeout.py",
+    "tests/integration/test_review_payload.py",
+    "tests/unit/test_recovery_markers.py",
+    "tests/unit/test_review_audit.py",
+    "verify-evidence/T-11/README.md",
+    "verify-evidence/T-11/capture.sh",
+    "verify-evidence/T-11/changed_files.txt",
+    "verify-evidence/T-11/handoff_round2.json",
+    "verify-evidence/T-11/handoff_round2.md",
+    "verify-evidence/T-11/suite_and_lint.txt",
+    "verify-evidence/T-11/t11_tests.txt"
+  ],
+  "tests": {
+    "command": "./scripts/orch_verify.sh all",
+    "passed": 554,
+    "failed": 0,
+    "skipped": 6,
+    "log_path": "verify-evidence/T-11/suite_and_lint.txt"
+  },
+  "dod_self_check": [
+    {
+      "item": "1. Archive the reviewer input per run (review_payload.md = static_text()+dynamic_text()) plus a truncation manifest naming item, bytes available, bytes included and budget; file a PROPOSED docs/contract-change-request-T11-*.md and do NOT edit docs/frozen-contracts.md.",
+      "met": true,
+      "evidence": "review_service.py:175 render_review_payload + :466 writes review_payload.md; prompt_builder.py:63 TruncationRecorder, :219 render_diff_budget, :300 render_truncation_manifest, :508 sensitive-file records, :580 enforce_budget record. docs/contract-change-request-T11-review-payload.md status PROPOSED; changed_files.txt shows docs/frozen-contracts.md is not in the diff. Test: test_review_payload_is_archived_and_names_what_truncation_dropped."
+    },
+    {
+      "item": "2. Split harness-detected from reviewer-asserted missing artifacts into separately labelled payload sections, and record in review.json which findings the harness can confirm mechanically.",
+      "met": true,
+      "evidence": "review_service.py:175-241 payload sections ('Harness-detected missing artifacts' / 'Reviewer-asserted missing artifacts' / 'What the reviewer was actually given'); review.json notes carry 'absence check [status] claim: detail (source: finding|missing_artifact)' and ':447' 'mechanical absence checks: N confirmed, N refuted, N unchecked'. Tests: test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections, test_visibility_claim_is_refuted_by_the_supplied_patch_not_by_the_file_existing (asserts the count line)."
+    },
+    {
+      "item": "3. Pre-check reviewer absence claims (file/test/line) before a requeue; mark confirmed/refuted/unchecked; a refuted finding must not consume a round and must log an additive build-log event.",
+      "met": true,
+      "evidence": "review_audit.py:158 supplied_evidence, :194 _check_visibility, :498 check_findings, :516 check_missing_artifacts; review_service.py:397-421 removes refuted findings, routes the verdict to NEEDS_HUMAN (never APPROVED), :424 emits review_absence_refuted. Tests: test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval (asserts NEEDS_HUMAN, blocked, no retry, no task_accepted, one review_absence_refuted event), test_existing_file_refutes_a_missing_file_claim, test_existing_test_name_refutes_a_missing_test_claim."
+    },
+    {
+      "item": "4. Make truncation impossible to hide: per-file budget with a file list plus targeted hunks; handoff block and patch.diff inclusion report what was left out in the archived payload.",
+      "met": true,
+      "evidence": "prompt_builder.py:158 diff_priority (source-first), :166 _chunk_head (inline marker + omitted @@ headers), :219 render_diff_budget (included-in-full / partially-included / omitted, whole files preferred), :434/:508 records handoff, diff and sensitive-file cuts; manifest archived by review_service.py:466. Tests: test_diff_budget_names_every_omitted_file_and_records_the_manifest, test_a_partially_supplied_file_says_so_in_the_text_the_reviewer_reads, test_an_omitted_file_is_listed_and_recorded, test_sensitive_files_withheld_from_the_diff_are_recorded_and_named, test_review_payload_is_archived_and_names_what_truncation_dropped."
+    },
+    {
+      "item": "5. Offline tests with the mock harness only, no network: (a) artifact+manifest for a completed run; (b) a missing-file claim that actually exists is refuted and does not trigger a requeue; (c) harness-detected and model-asserted missing artifacts in different sections; (d) the manifest names dropped files when a budget forces a cut; (e) existing review verdict semantics and the run artifacts tests already read are unchanged.",
+      "met": true,
+      "evidence": "verify-evidence/T-11/t11_tests.txt: 20 passed with every test named (5 integration + 15 unit) at HEAD 96289d7, all offline (mock provider/harness + local temp git). (a) test_review_payload_is_archived_and_names_what_truncation_dropped; (b) test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval; (c) test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections; (d) test_manifest_names_the_files_a_diff_budget_dropped; (e) the suite is green with the pre-existing review/run-artifact tests unmodified except the two T-8 assertions that now expect the T-11 artifact (tests/integration/test_recovery_after_timeout.py, tests/unit/test_recovery_markers.py)."
+    },
+    {
+      "item": "6. Docs: update docs/build-loop.md (artifact layout plus a review-auditability section) and review-related guidance; state plainly that a reviewer claim about absent evidence is machine-checked before it can cost a round.",
+      "met": true,
+      "evidence": "docs/build-loop.md gate step 4 (verdict now NEEDS_HUMAN, existence vs visibility, refuted never upgraded) and 'Review input auditability' (exact input, per-file budget with whole-file preference + inline markers, two labelled sections, existence-is-not-visibility, diff completeness); docs/roles.md reviewer note; docs/decisions.md round-2 entry; docs/contract-change-request-T11-review-payload.md updated (no verdict value or acceptance rule changes)."
+    },
+    {
+      "item": "7. Hidden evidence is a harness-detected finding: diffstat vs supplied patch hunk check, binary/no-hunk under evidence/source, git check-attr for -diff/export-ignore with the offending attribute quoted; pre-existing attributes do not fail the run; additive only.",
+      "met": true,
+      "evidence": "review_audit.py:625 diff_completeness (git diff --numstat vs split_diff_files, binary/no_hunk, check-attr --source=merge-base with pre_existing -> blocks=False), :731 render_diff_completeness quotes the attribute; wired in review_service.py:367 (review_diff_incomplete). Tests: test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task, test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block, test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body."
+    }
+  ],
+  "new_dependencies": [],
+  "assumptions": [
+    "The evidence files are stamped at 96289d7 with tree=0 dirty-entries; the commit that carries this index (4eb490d) changes only verify-evidence/T-11/**, never source or tests, so 554 passed / 6 skipped / lint clean are the counts for the code under review.",
+    "After the stamped capture (HEAD 96289d7), ./scripts/orch_verify.sh all was re-run on a clean worktree at ba27534 \u2014 the tip at that moment \u2014 and reported 554 passed / 0 failed / 6 skipped, 'All checks passed!'. Every commit after ba27534 changes only files under verify-evidence/T-11/, never source or tests.",
+    "T-11 DoD 1 explicitly grants the review_payload.md archive and orders a PROPOSED CCR; the name stays PROPOSED and docs/frozen-contracts.md is not edited.",
+    "review.json keeps its frozen shape: absence provenance lives in the existing notes and missing_artifacts arrays with harness-detected:/reviewer-asserted: labels, plus prose notes; no new key and no new verdict value.",
+    "A refuted claim routes to the existing NEEDS_HUMAN (-> blocked). That is a routing decision inside the allowed verdict vocabulary, not a change to who may accept a task: nothing is accepted on a refuted claim any more, and no finding is silently dropped without being recorded.",
+    "Whether a claim is an existence claim or a visibility claim is decided from its wording ('missing' vs 'not supplied/truncated/not visible'); a composite claim such as 'missing from the supplied artifacts and the worktree' is treated as a visibility claim, which can only be unchecked, never refuted \u2014 fail closed.",
+    "Per-file expectations come from git diff --numstat --no-renames base...HEAD (not from parsing the archived --stat text, which abbreviates long paths): the same comparison, unabbreviated.",
+    "An attribute already set at the merge-base is reported as pre-existing and informational (blocks=False), so an older repository setting cannot fail an unrelated run.",
+    "Diff budget is not widened: max_diff_tokens is unchanged; files are ordered source-first and whole files are preferred so the wiring is supplied complete where the budget allows."
+  ],
+  "questions": [
+    "Operator decision requested: approve CCR-T11-01 to add runs/<run_id>/review_payload.md to the frozen artifact layout, or leave it unfrozen as on this branch.",
+    "With max_diff_tokens=12000 and ~22k tokens of changes on this branch, review_service.py is still supplied as 7 of 9 hunks (the two omitted hunk headers are named inline and the file is fully present in the repo). If the operator wants whole-file review for diffs this size, max_diff_tokens has to be raised \u2014 that is a harness setting change, not something this DoD authorises."
+  ],
+  "blockers": [],
+  "contracts_touched": [
+    "PROPOSED: runs/<run_id>/review_payload.md (CCR-T11-01, docs/contract-change-request-T11-review-payload.md); docs/frozen-contracts.md NOT modified"
+  ],
+  "memory_suggestions": [
+    {
+      "category": "role",
+      "scope": "worker",
+      "content": "A deterministic gate that 'refutes' a claim must know which sense of absence is being claimed: existence on disk is not visibility to the reviewer. Treat existence checks as refutation only for repository claims; a claim about supplied artifacts has to be checked against the supplied bytes (patch + archive manifest) and be marked unchecked when that is impossible. And never let a refuted claim upgrade a verdict \u2014 route to a human instead, because refuting an accusation is not verification.",
+      "tags": [
+        "review-gate",
+        "fail-closed",
+        "absence-claims"
+      ]
+    },
+    {
+      "category": "project",
+      "scope": "gotchas",
+      "content": "coding-orchestrator review prompts have two independent budgets: max_diff_tokens (~12k) for the diff section and max_prompt_context_tokens (~60k) for the whole prompt; enforce_budget can additionally middle-cut the already-budgeted dynamic_state section, which is why review_audit.supplied_evidence marks per-file visibility 'unchecked' whenever a context_budget truncation hit dynamic_state. Measured on T-11: a branch diff of ~22k tokens cannot be fully supplied at 12k, so prompt_builder orders files source-first and prefers whole files (one silent middle cut mid-file is what made a reviewer call the wiring unverifiable).",
+      "tags": [
+        "prompt-budget",
+        "review-input",
+        "truncation"
+      ]
+    }
+  ]
+}

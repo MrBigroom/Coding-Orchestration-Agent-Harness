@@ -1,0 +1,27 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.create
+# lines 241-262 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 2 create boundary; raw role strings are refused, not crashed on
+# part 1/1
+  241 | def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+  242 |     entry = MemoryEntry(
+  243 |         category=data.category.value,
+  244 |         scope=data.scope,
+  245 |         project_slug=slugify(data.project_slug) if data.project_slug else None,
+  246 |         # `getattr(..., "value", ...)`: MemoryCreate types `role` as the Role enum, so an
+  247 |         # HTTP caller cannot send an unknown one — but the service boundary must still refuse
+  248 |         # that shape (an unvalidated object, an import payload, a future caller) with the
+  249 |         # vocabulary error rather than crashing on `.value`.
+  250 |         role=getattr(data.role, "value", data.role) or None,
+  251 |         content=redact(data.content.strip()),
+  252 |         source=data.source,
+  253 |         tags_json=sorted(set(data.tags)),
+  254 |         approved=data.approved,
+  255 |     )
+  256 |     _validate(entry)
+  257 |     session.add(entry)
+  258 |     session.commit()
+  259 |     session.refresh(entry)
+  260 |     if entry.approved:
+  261 |         render_file(session, _file_for(entry))
+  262 |     return entry

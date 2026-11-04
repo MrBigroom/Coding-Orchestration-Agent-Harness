@@ -1,0 +1,166 @@
+# HEAD=fcff05d74326127fd14842cc03cad21dfb234a91 (fcff05d) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T14:53:47+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 1/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 849 lines.
+diff --git a/tests/unit/test_memory_scopes.py b/tests/unit/test_memory_scopes.py
+new file mode 100644
+index 0000000..0c5da3e
+--- /dev/null
++++ b/tests/unit/test_memory_scopes.py
+@@ -0,0 +1,843 @@
++"""T-4: the scope vocabularies — coercion, boundary rejection, repair, list marker.
++
++Everything here is offline: an isolated ORCHESTRATOR_HOME (the `session` fixture) and no
++network, no API keys.
++"""
++
++from __future__ import annotations
++
++import json
++
++import pytest
++
++from orchestrator.core.models import MemoryCategory, MemoryEntry, Role
++from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
++from orchestrator.services import memory_service as m
++
++
++def legacy(session, *, category, scope, content, project_slug=None, role=None, approved=False,
++           rejected=False, source="handoff:R-3"):
++    """Insert a row straight into the table, exactly the way the unvalidated suggestion
++    path did before T-4, so the broken data under repair is real broken data."""
++    entry = MemoryEntry(
++        category=category,
++        scope=scope,
++        project_slug=project_slug,
++        role=role,
++        content=content,
++        source=source,
++        approved=approved,
++        rejected=rejected,
++    )
++    session.add(entry)
++    session.commit()
++    session.refresh(entry)
++    if entry.approved:
++        m.render_file(session, m._file_for(entry))
++    return entry
++
++
++def suggest(session, *items, project_slug="ai-livestreaming-avatar", role="worker"):
++    return m.suggest_from_handoff_report(
++        session, [MemorySuggestion(**i) for i in items], "handoff:R-3", project_slug, role=role
++    )
++
++
++# ------------------------------------------------------------------ vocabularies
++
++
++def test_the_three_vocabularies_are_importable_named_constants():
++    assert m.GLOBAL_SCOPES == ("environment", "preferences", "patterns")
++    assert m.PROJECT_SCOPES == ("conventions", "decisions", "gotchas")
++    # The missing constant this task had to add: role scopes are the role memory FILES.
++    assert m.ROLE_SCOPES == m.ROLE_FILES == ("architect", "worker", "supervisor")
++    assert m.ROLE_SCOPE_ALIASES == {"reviewer": "architect", "agent": "worker"}
++    assert m.SCOPE_VOCABULARY == {
++        MemoryCategory.global_: m.GLOBAL_SCOPES,
++        MemoryCategory.project: m.PROJECT_SCOPES,
++        MemoryCategory.role: m.ROLE_SCOPES,
++    }
++
++
++def test_normalize_scope_applies_the_role_aliases():
++    assert m.normalize_scope(MemoryCategory.role, "worker") == "worker"
++    assert m.normalize_scope(MemoryCategory.role, "reviewer") == "architect"
++    assert m.normalize_scope(MemoryCategory.role, "agent") == "worker"
++    assert m.normalize_scope(MemoryCategory.project, "gotchas") == "gotchas"
++    with pytest.raises(m.MemoryError_):
++        m.normalize_scope(MemoryCategory.project, "logbook")
++
++
++# ------------------------------------------------------------------ coercion (DoD 1)
++
++
++def test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded(session):
++    out = suggest(
++        session,
++        {
++            "category": "project",
++            "scope": "ai-livestreaming-avatar",
++            "content": "The repo is reachable directly on this host.",
++        },
++    )
++    assert len(out.created) == 1
++    entry = out.created[0]
++    assert entry.scope == "gotchas"  # the deterministic fallback
++    assert not entry.approved
++    # The substitution is recorded for the operator, in words that name both halves.
++    assert len(out.notes) == 1
++    assert "ai-livestreaming-avatar" in out.notes[0] and "gotchas" in out.notes[0]
++    assert out.moved == out.notes and not out.notes[0].startswith("dropped ")
++    assert m.is_injectable(entry)
++    assert "worker" in m.reachable_roles(entry)
++
++
++def test_global_suggestion_with_a_scope_that_hints_a_vocabulary_word_falls_back(session):
++    """The hint is not followed: `environment` here is the FALLBACK, not an inference."""
++    out = suggest(
++        session,
++        {
++            "category": "global",
++            "scope": "global-environment-verifying-orchestrator-change",
++            "content": "Verification must run in the worktree.",
++        },
++        project_slug=None,
++    )
++    assert [e.scope for e in out.created] == [m.FALLBACK_SCOPE[MemoryCategory.global_]]
++    assert "deterministic fallback" in out.notes[0]
++
++
++def test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope(session):
++    """DoD 1 read literally: the out-of-vocabulary case has ONE answer per category.
++
++    Inferring `decisions` from a scope that merely mentions it would change WHICH ROLES
++    receive the note (decisions -> Architect+Supervisor, gotchas -> Worker+Supervisor), and
++    the substring pass used to fire inside unrelated words. Neither is allowed.
++    """
++    fallbacks = {
++        MemoryCategory.project: "gotchas",
++        MemoryCategory.global_: "environment",
++    }
++    for category, expected in fallbacks.items():
++        for scope in (
++            "decisions-and-gating",  # a vocabulary TOKEN inside a longer scope
++            "decisionss",  # a vocabulary word as a raw SUBSTRING
++            "conventions-notes",
++            "patterns-of-the-team",
++            "logbook",
++        ):
++            got, note = m.coerce_scope(category, scope)
++            assert got == expected, (category, scope, got)
++            assert note and "deterministic fallback" in note, (category, scope, note)
++    # In-vocabulary scopes are untouched and silent.
++    assert m.coerce_scope(MemoryCategory.project, "decisions") == ("decisions", "")
++    assert m.coerce_scope(MemoryCategory.global_, "patterns") == ("patterns", "")
++
++
++def test_a_scope_mentioning_decisions_does_not_route_the_note_to_the_architect(session):
++    out = suggest(
++        session,
++        {
++            "category": "project",
++            "scope": "decisions-about-the-gate",
++            "content": "Parse reviews fail closed.",
++        },
++    )
++    entry = out.created[0]
++    assert entry.scope == "gotchas"
++    assert "worker" in m.reachable_roles(entry)
++    assert "architect" not in m.reachable_roles(entry)
++
++
++def test_suggestions_with_no_hint_fall_back_deterministically(session):
++    first = suggest(
++        session,
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 1/6
