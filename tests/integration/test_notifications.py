@@ -14,6 +14,7 @@ from orchestrator.api.main import create_app
 from orchestrator.core.models import Notification, Run
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import (
+    artifact_service,
     log_service,
     notification_service,
     project_service,
@@ -85,11 +86,12 @@ def test_completed_mock_run_yields_one_coalesced_notification(session, project, 
     assert len(sent) == 1
     for trigger in ("task_review", "merge_candidate", "run_completed"):
         assert f"[{trigger}]" in sent[0]["body"]
-    # DoD 9 end-to-end: the live terminal row really carries both windows.
+    # DoD 9 end-to-end: the live terminal row carries both windows, and the compute figure is
+    # the archived one the deadline actually used (run.json is written BEFORE the terminal event,
+    # so it is available at fan-out time).
+    compute_ms = artifact_service.read_json(outcome["run_id"], "run.json")["process_ms"]
     assert (
-        "Duration:" in sent[0]["body"]
-        and "compute /" in sent[0]["body"]
-        and "wall" in sent[0]["body"]
+        f"Duration: {notification_service._human(compute_ms)} compute / " in sent[0]["body"]
     )
     assert sent[0]["link"].endswith(f"/tasks/{task.id}")
     active = [r for r in _rows(session, task) if r.status != "skipped"]
@@ -177,3 +179,18 @@ def test_notifications_endpoint_serves_the_persistent_list(initialized):
         rows = client.get("/api/notifications").json()
         assert [(r["trigger"], r["status"]) for r in rows] == [("run_completed", "delivered")]
         assert client.get("/api/notifications?status=bogus").status_code == 422
+
+
+def test_the_task_link_is_a_real_target_when_web_dist_is_absent(initialized, monkeypatch):
+    """DoD 2 / review finding 4: the notification links to /tasks/<id>, the React route. With no
+    web/dist that URL is served by the fallback UI, which must route it to the task view rather
+    than silently showing the dashboard."""
+    from orchestrator.api import main as api_main
+
+    monkeypatch.setattr(api_main, "frontend_dist_dir", lambda: None)
+    with TestClient(api_main.create_app(), base_url="http://127.0.0.1:8321") as client:
+        res = client.get("/tasks/7")
+        assert res.status_code == 200
+        assert "React build not found" in res.text  # the fallback UI, not the React bundle
+        assert 'const name = view === "tasks" && arg ? "task" : view;' in res.text
+        assert 'location.pathname.replace(' in res.text

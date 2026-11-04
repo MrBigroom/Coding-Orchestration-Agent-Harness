@@ -33,6 +33,9 @@ PENDING, DELIVERED, FAILED, SKIPPED, COALESCED = (
 )
 _timer: threading.Timer | None = None
 _lock = threading.Lock()
+# Serialises delivery so two flushes (a timer thread and an inline sync-path flush) can never
+# select the same pending row and deliver it twice.
+_deliver_lock = threading.Lock()
 
 
 def _human(ms: int | float | None) -> str | None:
@@ -186,7 +189,7 @@ def deliver(title: str, body: str, link: str = "") -> tuple[str | None, str | No
     return None, "no freedesktop notification client on PATH (notify-send/gdbus)"
 
 
-def _deliver_pending(session: Session) -> int:
+def _deliver_pending_locked(session: Session) -> int:
     """Deliver every pending row as one notification, recording each row's outcome."""
     rows = list(session.exec(
         select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))
@@ -215,6 +218,12 @@ def _deliver_pending(session: Session) -> int:
     return first.id or 0
 
 
+def _deliver_pending(session: Session) -> int:
+    """One delivery at a time: a second flush re-selects only what is still pending."""
+    with _deliver_lock:
+        return _deliver_pending_locked(session)
+
+
 def _flush_thread() -> None:
     global _timer
     with _lock:
@@ -236,13 +245,32 @@ def _schedule() -> None:
 
 
 def flush_pending(session: Session | None = None) -> int:
-    """Deliver all pending rows now (timer, API startup recovery, tests)."""
-    with (nullcontext(session) if session is not None else session_scope()) as s:
-        return _deliver_pending(s)
+    """Deliver all pending rows now (timer, API startup recovery, tests).
+
+    Never raises and never leaves a caller-supplied session poisoned: startup recovery runs
+    inside the API lifespan, where an exception would abort the whole server.
+    """
+    try:
+        with (nullcontext(session) if session is not None else session_scope()) as s:
+            return _deliver_pending(s)
+    except Exception as e:  # noqa: BLE001 - delivery is best-effort by contract
+        try:
+            if session is not None:
+                session.rollback()
+        except Exception:  # noqa: BLE001, S110 - rollback of an already-dead session
+            pass
+        log.warning("notification flush failed: %s", redact(str(e)))
+        return 0
 
 
-def _record_failure(event: str, task_id: int | None, run_id: int | None, error: Exception) -> None:
-    """A fan-out bug still leaves one durable, deduped failed row; never raises."""
+def record_failure(
+    event: str, task_id: int | None, run_id: int | None, error: Exception
+) -> None:
+    """A fan-out bug still leaves one durable, deduped failed row; never raises.
+
+    Public because `log_service.log_event` also calls it when the fan-out raises outside
+    `notify_event`: the dedupe key makes the failure recorded at most once either way.
+    """
     try:
         with session_scope() as s:
             key = f"fanout-error:{event}:{run_id}:{task_id}"
@@ -309,5 +337,5 @@ def notify_event(
                     _schedule()
             return row
     except Exception as e:  # noqa: BLE001 - notification is best-effort by contract
-        _record_failure(event, task_id, run_id, e)
+        record_failure(event, task_id, run_id, e)
         return None

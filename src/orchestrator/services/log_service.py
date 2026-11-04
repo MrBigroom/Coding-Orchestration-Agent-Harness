@@ -71,14 +71,22 @@ def log_event(
             event=event, details=details, task_id=task_id, run_id=run_id
         )
     except Exception as e:  # noqa: BLE001 - notification is best-effort by contract
-        # The fan-out uses its own session, but a failure here must still leave the caller's
-        # session usable: roll back only if SQLAlchemy already marked it failed.
+        # The fan-out opens its own session, so this normally cannot fail here at all. If it
+        # does, the caller's session may have been left mid-transaction (SQLAlchemy then
+        # raises PendingRollbackError on the next statement, taking the run loop with it), so
+        # roll back unconditionally, record the failure durably, and keep the build-log line
+        # that was committed above.
         try:
-            if not session.is_active:
-                session.rollback()
-        except Exception:  # noqa: BLE001, S110
+            session.rollback()
+        except Exception:  # noqa: BLE001, S110 - a session that is already gone
             pass
         log.warning("notification fan-out failed for %s: %s", event, redact(str(e)))
+        try:
+            from orchestrator.services import notification_service
+
+            notification_service.record_failure(event, task_id, run_id, e)
+        except Exception:  # noqa: BLE001, S110 - recording must not become a second failure
+            pass
     return entry
 
 

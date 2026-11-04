@@ -508,9 +508,12 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 
 ### Terminal run events
 
-A run's terminal status is `completed | failed | timeout | cancelled`. T-8 named the success
-event (`run_completed`), and T-9 added `run_cancelled`, so all four now have a named event.
-Before those names existed, `cancelled` was only a `task_status` line reading `run cancelled`. (`run_error` exists but is not a terminal *status*: it labels
+A run's terminal status is `completed | failed | timeout | cancelled`. Two of the four had a
+named event (`run_failed`, `run_timeout`); `cancelled` showed up only as a `task_status` line
+reading `run cancelled`, and a run that finished normally had none — there was no
+`run_cancelled` event name either. T-8 added `run_completed` and T-9 added `run_cancelled`
+(requested in `contract-change-request-T9-01-notifications.md`), so all four have one now.
+(`run_error` exists but is not a terminal *status*: it labels
 an unexpected exception inside the harness, after which the run still ends as `failed`.) A green
 run was therefore observable only as a `task_status` transition, so any consumer had to *derive*
 the single most important trigger indirectly. `run_completed` is that missing event.
@@ -522,10 +525,13 @@ were: emitted from `_execute` immediately after the `_set_run` call that sets th
 because at that point `_execute` still holds the run-level error context (`run.error`, the exit
 code, the timeout reason) that their `details` carry, and `_set_run` does not. Moving them into
 `_set_run` would also fire them on the unexpected-exception path, which has its own `run_error`
-line. The shared chokepoint is the **status transition** (`_set_run` is the only writer), and
-`run_cancelled` is emitted from the cancel branch of `_execute` after the terminal status commits
-and before handoff salvage. It is **additive** — no existing event name and no line-shape key
-changed — and `docs/frozen-contracts.md` now records all four (CCR-T9-01).
+line. The shared chokepoint is the **status transition** (`_set_run` is the only writer), not the
+`log_event` call site. T-9 emits `run_cancelled` from the cancel branch of `_execute`, after that
+status commits and before handoff salvage. It is **additive** — no existing event name and no
+line-shape key changed. The contract wording for all four is *requested* in
+`contract-change-request-T9-01-notifications.md` and applied by the operator at the merge gate;
+this branch does not edit `docs/frozen-contracts.md` (a task DoD names files, it does not grant
+edits).
 
 Today no in-repo consumer infers run success from a task-status transition (the Build Log page
 renders events as they arrive; the Dashboard counts `task.status`, which is a task verdict, not

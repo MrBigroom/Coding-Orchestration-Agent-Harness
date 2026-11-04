@@ -255,3 +255,89 @@ def test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded(sessi
     _log(session, "run_completed", task, run)
     assert _rows(session)[-1].status == "failed"
     assert "no freedesktop notification client" in (_rows(session)[-1].error or "")
+
+
+def test_a_failing_fanout_rolls_back_a_poisoned_caller_session(session, monkeypatch):
+    """DoD 5 / review finding 1: an exception after the caller's session was used must not
+    leave it in 'needs rollback' state (the run loop's next statement would die on it)."""
+    task, run = _task_run(session)
+    status_before = task.status
+    settings_service.update(session, {MASTER_SETTING: True})
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 0.0)
+
+    def fanout_that_poisons_the_caller_session(*, event, details="", task_id=None, run_id=None):
+        # Exactly the shape of the bug: a write into the CALLER's transaction that fails on
+        # flush (NOT NULL), which leaves the session requiring rollback, then a raise.
+        session.add(BuildLogEntry(event=None, details="half-written"))
+        session.flush()
+        raise RuntimeError("never reached")
+
+    monkeypatch.setattr(
+        notification_service, "notify_event", fanout_that_poisons_the_caller_session
+    )
+    entry = log_service.log_event(session, "run_completed", "done", task_id=task.id, run_id=run.id)
+    assert session.is_active  # mutation check: without session.rollback() this is False
+    assert session.get(BuildLogEntry, entry.id) is not None  # the build-log line survived
+    session.add(BuildLogEntry(event="after_poison", details="still writable"))
+    session.commit()
+    session.refresh(task)
+    assert task.status == status_before  # a notification failure never touches task state
+    # Recorded, not swallowed: exactly one durable failed row naming the fan-out error.
+    failures = [r for r in _rows(session) if r.reason == "fanout_error"]
+    assert len(failures) == 1
+    assert "server_default_UUID" not in (failures[0].error or "")  # no stale-state noise
+    assert "NOT NULL constraint failed" in (failures[0].error or "")
+
+
+def test_an_event_arriving_mid_flush_rearms_the_timer(session, monkeypatch):
+    """Review finding 2: the coalescing timer must be cleared BEFORE delivery, so an event
+    that lands while a notification is being delivered is never left pending forever."""
+    task, run = _task_run(session)
+    task2, run2 = _task_run(session, "second", "R-2")
+
+    class FakeTimer:
+        instances: list[FakeTimer] = []
+
+        def __init__(self, interval, fn):
+            self.interval, self.fn, self.daemon, self.started = interval, fn, False, False
+            FakeTimer.instances.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
+    monkeypatch.setattr(notification_service.threading, "Timer", FakeTimer)
+    settings_service.update(session, {MASTER_SETTING: True})
+    _log(session, "run_completed", task, run)
+    assert [t.started for t in FakeTimer.instances] == [True]
+    timer_while_delivering = {}
+
+    def deliver_and_race(title, body, link=""):
+        # A parallel run finishes while this delivery is in flight.
+        timer_while_delivering["timer"] = notification_service._timer
+        _log(session, "run_completed", task2, run2)
+        return "test-channel", None
+
+    monkeypatch.setattr(notification_service, "deliver", deliver_and_race)
+    notification_service._flush_thread()
+    assert timer_while_delivering["timer"] is None  # cleared before delivery
+    assert len(FakeTimer.instances) == 2  # the mid-flush event re-armed the timer
+    assert [r.status for r in _rows(session)] == ["delivered", "pending"]
+
+
+def test_flush_never_raises_and_never_poisons_a_caller_session(session, monkeypatch):
+    """DoD 5: startup recovery runs inside the API lifespan; a dead channel must not abort it."""
+    task, run = _task_run(session)
+    settings_service.update(session, {MASTER_SETTING: True})
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
+    monkeypatch.setattr(notification_service, "_schedule", lambda: None)
+    _log(session, "run_completed", task, run)
+
+    def commit_boom(*_a, **_k):
+        session.add(BuildLogEntry(event=None, details="flush failure inside delivery"))
+        session.flush()
+
+    monkeypatch.setattr(notification_service, "_deliver_pending_locked", commit_boom)
+    assert notification_service.flush_pending(session) == 0  # swallowed, not propagated
+    assert session.is_active
+    session.commit()

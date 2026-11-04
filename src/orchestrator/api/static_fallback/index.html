@@ -192,10 +192,15 @@ const views = {
 
 function route() {
   clearTimeout(timer);
-  const [view, arg] = (location.hash.slice(1) || "dashboard").split("/");
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view || (view === "task" && a.dataset.view === "tasks")));
+  // Deep links from notifications use the React path form (/tasks/<id>) because that is the GUI's
+  // route. Without web/dist this page is what serves that URL, so map the path form onto the
+  // equivalent hash view instead of silently showing the dashboard.
+  const fromPath = location.pathname.replace(/^\/+|\/+$/g, "");
+  const [view, arg] = (location.hash.slice(1) || fromPath || "dashboard").split("/");
+  const name = view === "tasks" && arg ? "task" : view;
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === name || (name === "task" && a.dataset.view === "tasks")));
   show('<span class="muted">loading…</span>');
-  guard(() => (views[view] || views.dashboard)(arg));
+  guard(() => (views[name] || views.dashboard)(arg));
 }
 document.querySelectorAll("nav a").forEach((a) => a.onclick = () => { location.hash = a.dataset.view; });
 window.addEventListener("hashchange", route);
