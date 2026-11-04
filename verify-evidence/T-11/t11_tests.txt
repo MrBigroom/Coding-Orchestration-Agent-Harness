@@ -1,0 +1,30 @@
+# HEAD=58605975bb933028233a284d7b3487b632528e4e command: ./scripts/orch_verify.sh test tests/unit/test_review_audit.py tests/integration/test_review_payload.py -vv
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
+orch-verify: pytest target tests/unit/test_review_audit.py tests/integration/test_review_payload.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 11 items
+
+tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim PASSED [  9%]
+tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim PASSED [ 18%]
+tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked PASSED [ 27%]
+tests/unit/test_review_audit.py::test_reviewer_missing_artifact_claim_is_checked_the_same_way PASSED [ 36%]
+tests/unit/test_review_audit.py::test_diff_budget_names_every_omitted_file_and_records_the_manifest PASSED [ 45%]
+tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task PASSED [ 54%]
+tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block PASSED [ 63%]
+tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body PASSED [ 72%]
+tests/integration/test_review_payload.py::test_review_payload_is_archived_and_names_what_truncation_dropped PASSED [ 81%]
+tests/integration/test_review_payload.py::test_refuted_absence_finding_is_recorded_and_does_not_requeue PASSED [ 90%]
+tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections PASSED [100%]
+
+============================== 11 passed in 1.95s ==============================

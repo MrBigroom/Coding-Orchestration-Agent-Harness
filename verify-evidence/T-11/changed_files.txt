@@ -1,0 +1,18 @@
+# HEAD=58605975bb933028233a284d7b3487b632528e4e
+# git diff --name-only b174b8c..HEAD (code + docs + tests)
+docs/build-loop.md
+docs/contract-change-request-T11-review-payload.md
+docs/decisions.md
+docs/roles.md
+src/orchestrator/providers/base.py
+src/orchestrator/providers/mock_provider.py
+src/orchestrator/services/artifact_service.py
+src/orchestrator/services/prompt_builder.py
+src/orchestrator/services/review_audit.py
+src/orchestrator/services/review_service.py
+tests/integration/test_recovery_after_timeout.py
+tests/integration/test_review_payload.py
+tests/unit/test_recovery_markers.py
+tests/unit/test_review_audit.py
+
+# docs/frozen-contracts.md changed in this diff? (must be empty)
