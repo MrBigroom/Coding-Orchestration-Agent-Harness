@@ -7,8 +7,8 @@ Branch `task-10-a-run-that-times-out-discards-the-valid-handoff`, cut from `main
 
 | file | command | result |
 | --- | --- | --- |
-| `full_suite.txt` | `./scripts/orch_verify.sh all` | see final counts in the file (pytest + ruff) |
-| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -q` | all selected tests green |
+| `full_suite.txt` | `./scripts/orch_verify.sh all` | `457 passed, 6 skipped` (0 failed) + `All checks passed!` (ruff) |
+| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -vv` | `31 passed, 432 deselected` |
 | `zz_code_map.txt` | `python3 verify-evidence/T-10/collect_code_map.py` | commit list, recovery-commit stat, diffstat, cited function bodies/anchors with `file:line` from this checkout |
 | `changed_existing_tests.txt` | `git diff <merge-base>..HEAD -- tests/integration/test_mock_run.py` | the one pre-existing test whose assertions changed |
 
