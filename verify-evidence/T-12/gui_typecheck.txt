@@ -1,0 +1,93 @@
+# T-12 GUI type-check evidence (DoD 2, frontend half)
+# generated: 2026-11-04T11:12:48+08:00
+# worktree: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
+# HEAD=b60bd66c2e1f3870fcdb9ae52f9dfd0ceb9700f2
+# dirty-entries(-uall, excludes this file, written to /tmp first)=0
+# web/ unchanged since c4f0ae9? yes
+
+## Scratch tree (recipe from approved project memory: never inside the worktree)
+$ rm -rf /tmp/t12-gui-typecheck; mkdir -p /tmp/t12-gui-typecheck
+$ ln -s /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules /tmp/t12-gui-typecheck/node_modules
+$ ln -s /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/{src,index.html,package.json,tsconfig.json,vite.config.ts,tailwind.config.js,postcss.config.js} /tmp/t12-gui-typecheck/
+
+$ ls -l /tmp/t12-gui-typecheck
+lrwxrwxrwx 1 mrbigroom mrbigroom    96 Nov  4 11:12 index.html -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/index.html
+-rw-r--r-- 1 mrbigroom mrbigroom 34775 Nov  4 11:12 listFiles.txt
+lrwxrwxrwx 1 mrbigroom mrbigroom    91 Nov  4 11:12 node_modules -> /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules
+lrwxrwxrwx 1 mrbigroom mrbigroom    98 Nov  4 11:12 package.json -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/package.json
+lrwxrwxrwx 1 mrbigroom mrbigroom   103 Nov  4 11:12 postcss.config.js -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/postcss.config.js
+lrwxrwxrwx 1 mrbigroom mrbigroom    89 Nov  4 11:12 src -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src
+lrwxrwxrwx 1 mrbigroom mrbigroom   104 Nov  4 11:12 tailwind.config.js -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/tailwind.config.js
+lrwxrwxrwx 1 mrbigroom mrbigroom    99 Nov  4 11:12 tsconfig.json -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/tsconfig.json
+-rw-r--r-- 1 mrbigroom mrbigroom 22507 Nov  4 11:12 tsconfig.tsbuildinfo
+lrwxrwxrwx 1 mrbigroom mrbigroom   100 Nov  4 11:12 vite.config.ts -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/vite.config.ts
+
+## Tool
+$ cd /tmp/t12-gui-typecheck && ./node_modules/.bin/tsc --version
+Version 7.0.2
+
+## Build: tsc -b --force (exit 0 = clean)
+$ cd /tmp/t12-gui-typecheck && ./node_modules/.bin/tsc -b --force
+exit=0
+
+## Proof of what was read: tsc -p tsconfig.json --noEmit --listFiles
+$ cd /tmp/t12-gui-typecheck && ./node_modules/.bin/tsc -p tsconfig.json --noEmit --listFiles
+exit=0
+files listed: 278
+
+-- every branch source file tsc read (T-12 GUI files in [brackets]) --
+  src/api/client.ts
+  src/theme.ts
+  src/components/ui.tsx
+  src/components/Layout.tsx
+  src/[api/types.ts]
+  src/hooks/useApi.ts
+  src/pages/Adapters.tsx
+  src/pages/Agents.tsx
+  src/pages/BuildLog.tsx
+  src/highlight.ts
+  src/components/Code.tsx
+  src/hooks/useChatSession.ts
+  src/pages/Chat.tsx
+  src/pages/Dashboard.tsx
+  src/pages/Memory.tsx
+  src/pages/Models.tsx
+  src/pages/Projects.tsx
+  src/pages/PromptPreview.tsx
+  src/pages/Schedules.tsx
+  src/fonts.ts
+  src/[pages/Settings.tsx]
+  src/hooks/useRunLogs.ts
+  src/[pages/TaskDetail.tsx]
+  src/[pages/Tasks.tsx]
+  src/pages/Usage.tsx
+  src/App.tsx
+  src/main.tsx
+  vite.config.ts
+
+-- every listed path resolves into THIS worktree (symlink targets) --
+  src/pages/Tasks.tsx      -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src/pages/Tasks.tsx
+  src/pages/TaskDetail.tsx -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src/pages/TaskDetail.tsx
+  src/pages/Settings.tsx   -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src/pages/Settings.tsx
+  src/api/types.ts         -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src/api/types.ts
+  entries under $MAIN/web/node_modules (resolved through the symlink): 249
+  entries under $S, i.e. this worktree's branch sources + vite.config.ts: 29
+  total listed: 278
+
+-- T-12 marker lines, read back from the resolved real path --
+web/src/pages/Tasks.tsx:117:                      {t.attempts.summary}
+web/src/pages/TaskDetail.tsx:144:                    {task.attempts.summary}
+1:export interface AttemptSummary {
+43:  attempts?: AttemptSummary;
+
+## Negative control: the same checker MUST fail on a deliberate type error
+# copy of the worktree's web/src with one injected error, so a green run cannot be a
+# no-op (proves tsc type-checks these sources instead of only parsing paths)
+$ cp -r /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src /tmp/t12-gui-typecheck-control/src && echo 'const __t12_control: number = "not a number";' >> /tmp/t12-gui-typecheck-control/src/api/types.ts
+$ cd /tmp/t12-gui-typecheck-control && ./node_modules/.bin/tsc -b --force
+src/api/types.ts(371,7): error TS2322: Type 'string' is not assignable to type 'number'.
+src/api/types.ts(371,7): error TS6133: '__t12_control' is declared but its value is never read.
+exit=1 (expected non-zero)
+
+# RESULT: real type-check of web/src/pages/{Tasks,TaskDetail,Settings}.tsx and
+# web/src/api/types.ts at this HEAD: tsc -b --force exit 0; control exit 1.

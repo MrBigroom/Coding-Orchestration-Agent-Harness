@@ -2,14 +2,16 @@
 
 Branch `task-12-the-review-round-cap-counts-only-completed-runs`. Every file here was produced by
 one invocation of `capture.sh`; each log starts with the captured `HEAD=<sha>` and
-`tree=0 dirty-entries` stamp. Generated logs are marked `-diff` in `.gitattributes` so they stay
-committed without consuming the reviewer's 12k-token diff budget.
+`tree=0 dirty-entries` stamp. They are plain committed text: the `.gitattributes` that used to
+suppress their hunks (`-diff`) was removed in round 4 because it hid this directory from review and
+made UTF-8 logs classify as binary. Readable, large, visible-to-the-reviewer beats hidden.
 
 | Evidence | Command | Expected result |
 |---|---|---|
 | `full_suite.txt` | `./scripts/orch_verify.sh test` | `471 passed, 6 skipped` |
 | `attempt_cap_tests.txt` | `./scripts/orch_verify.sh test tests/integration/test_attempt_cap.py -vv` | every test named, `11 passed` |
-| `checks.txt` | lint, cold `settings_service.defaults()`, `tsc -b --force` on `web/src` | lint clean, `max_run_attempts_per_task=6`, `TSC_EXIT=0` |
+| `checks.txt` | lint + cold `settings_service.defaults()` | `All checks passed`, `max_run_attempts_per_task=6` |
+| `gui_typecheck.txt` | `tsc -b --force` in a `/tmp` scratch tree symlinking this worktree's `web/*` and the main repo's `web/node_modules`, plus `--listFiles` and a deliberate-error control | `exit=0`, all 29 branch sources listed at their worktree paths, control `exit=1` |
 
 `full_suite.txt` also carries the `ORCH_VERIFY|…|worktree_root=<this worktree>` marker, so the
 tests ran against this branch, not the main checkout.
