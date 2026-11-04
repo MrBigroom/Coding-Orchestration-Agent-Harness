@@ -1,7 +1,9 @@
-# HEAD=d65150b merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
+# HEAD=4e93717 merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
 # command: python3 verify-evidence/T-10/collect_code_map.py
 
 ## Commits on the branch since the merge-base
+4e93717 test(T-10): record round-5 evidence at c0a4954
+c0a4954 feat(T-10): scope delivery evidence to this run's baseline
 d65150b docs(T-10): state the measured counts in the evidence index
 f2a9fca test(T-10): regenerate evidence at 0b05f6e for the round-3 fixes
 0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
@@ -30,24 +32,25 @@ d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
  10 files changed, 1575 insertions(+), 83 deletions(-)
 
 ## Diffstat since the merge-base
- docs/build-loop.md                              | 117 ++++-
- src/orchestrator/adapters/mock_harness.py       | 228 ++++++---
+ docs/build-loop.md                              | 123 ++++-
+ src/orchestrator/adapters/mock_harness.py       | 231 ++++++--
  src/orchestrator/core/config.py                 |  10 +
- src/orchestrator/services/artifact_service.py   | 150 ++++++
+ src/orchestrator/services/artifact_service.py   | 182 +++++++
  src/orchestrator/services/prompt_builder.py     |   8 +
  src/orchestrator/services/review_service.py     |  20 +
- src/orchestrator/services/run_service.py        | 623 +++++++++++++++++++++++-
+ src/orchestrator/services/run_service.py        | 682 +++++++++++++++++++++++-
  src/orchestrator/services/supervisor_service.py |  70 +++
- tests/integration/test_handoff_salvage.py       | 618 +++++++++++++++++++++++
+ tests/integration/test_handoff_salvage.py       | 670 +++++++++++++++++++++++
  tests/integration/test_mock_run.py              |  10 +-
- tests/unit/test_handoff_salvage.py              | 275 +++++++++++
- verify-evidence/T-10/README.md                  | 150 ++++++
+ tests/unit/test_handoff_salvage.py              | 345 ++++++++++++
+ verify-evidence/T-10/README.md                  | 176 ++++++
  verify-evidence/T-10/changed_existing_tests.txt |  23 +
- verify-evidence/T-10/collect_code_map.py        | 151 ++++++
- verify-evidence/T-10/full_suite.txt             |  20 +
- verify-evidence/T-10/handoff_salvage_tests.txt  |  51 ++
- verify-evidence/T-10/zz_code_map.txt            | 461 ++++++++++++++++++
- 17 files changed, 2896 insertions(+), 89 deletions(-)
+ verify-evidence/T-10/collect_code_map.py        | 157 ++++++
+ verify-evidence/T-10/full_suite.txt             |  18 +
+ verify-evidence/T-10/handoff_salvage_tests.txt  |  54 ++
+ verify-evidence/T-10/lint.txt                   |  11 +
+ verify-evidence/T-10/zz_code_map.txt            | 562 +++++++++++++++++++
+ 18 files changed, 3262 insertions(+), 90 deletions(-)
 
 ## Cited functions (bodies truncated per function, file:line from THIS checkout)
 --- DoD 3 fingerprint: src/orchestrator/services/run_service.py handoff_snapshot
@@ -549,6 +552,8 @@ tests/unit/test_handoff_salvage.py:197:def test_commits_created_after_the_baseli
 tests/integration/test_handoff_salvage.py:605:def test_a_zero_commit_retry_cannot_claim_an_earlier_rounds_files_as_this_runs_delivery(
 
 ## Commits since the merge-base (repeated at the tail for truncated diffs)
+4e93717 test(T-10): record round-5 evidence at c0a4954
+c0a4954 feat(T-10): scope delivery evidence to this run's baseline
 d65150b docs(T-10): state the measured counts in the evidence index
 f2a9fca test(T-10): regenerate evidence at 0b05f6e for the round-3 fixes
 0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
