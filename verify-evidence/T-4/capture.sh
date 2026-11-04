@@ -454,6 +454,18 @@ with db.session_scope() as s:
     before = len(m.list_entries(s))
     print("   ", "re-import the live export itself:", m.import_all(s, json.loads(m.dumps_export(s))),
           "new rows (rows stored:", before, "->", len(m.list_entries(s)), ")")
+print("  A fact the home does NOT have yet is still repaired, not dropped:")
+fresh = HOME / "mem3.json"
+fresh.write_text(json.dumps({"version": 1, "entries": [
+    {"category": "project", "scope": "logbook", "project_slug": "other",
+     "content": "A fact only this export has.", "approved": False},
+    {"category": "role", "scope": "logbook-writer", "content": "Unplaceable."},
+]}))
+print("   ", flat(runner.invoke(app, ["memory", "import", str(fresh)]).output))
+with db.session_scope() as s:
+    print("   ", "stored as:", [(e.scope, e.project_slug, e.content) for e in
+                                  m.list_entries(s, category="project") if e.project_slug == "other"],
+          "| role rows:", len(m.list_entries(s, category="role")))
 PY2
   echo "ROUND2_EXIT=$?"
 } >"$TMP/review_round2.txt"

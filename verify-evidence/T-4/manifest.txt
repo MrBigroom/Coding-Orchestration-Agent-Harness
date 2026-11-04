@@ -1,0 +1,28 @@
+# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# Every file this branch changes, as a COMPLETE per-file diff vs the merge-base.
+# Split per file because the supplied combined diff was truncated mid-function; each
+# diff_*.txt beside this file is self-contained and ends with its own DIFF_COMPLETE
+# trailer. Base: db0011212a775e0ee766ebbee40a4f1cdf26a6e7
+BASE=db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd
+ README.md                                       |   9 +-
+ docs/decisions.md                               |  33 ++
+ docs/memory.md                                  | 101 +++-
+ src/orchestrator/api/routes/memory.py           |  10 +-
+ src/orchestrator/cli.py                         | 138 ++++-
+ src/orchestrator/services/chat_service.py       |   7 +-
+ src/orchestrator/services/memory_service.py     | 646 +++++++++++++++++++++---
+ src/orchestrator/services/run_service.py        |  51 +-
+ tests/integration/test_memory_scope_boundary.py | 344 +++++++++++++
+ tests/unit/test_memory_scopes.py                | 640 +++++++++++++++++++++++
+ 10 files changed, 1899 insertions(+), 80 deletions(-)
+CHANGED_FILES_SHA256_AND_LENGTH
+2ef86c6166a6fc42  README.md  lines=251
+944588d576d42390  docs/decisions.md  lines=257
+2e396c1142416bd7  docs/memory.md  lines=161
+4157b34c59f1a204  src/orchestrator/api/routes/memory.py  lines=99
+4dabe6f4c1c9fe70  src/orchestrator/cli.py  lines=1343
+0791e4914eb39083  src/orchestrator/services/chat_service.py  lines=1051
+c1ea7ff602c1773c  src/orchestrator/services/memory_service.py  lines=947
+640e05415a6bbe4c  src/orchestrator/services/run_service.py  lines=1455
+2c094e900367a688  tests/integration/test_memory_scope_boundary.py  lines=344
+0b82a9f49356a75e  tests/unit/test_memory_scopes.py  lines=640

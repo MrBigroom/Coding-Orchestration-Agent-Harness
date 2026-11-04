@@ -1,4 +1,4 @@
-# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # command: ./scripts/orch_verify.sh test   (whole tests/ tree of THIS worktree)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -11,10 +11,10 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 13%]
 .....................................ssssss............................. [ 27%]
 ........................................................................ [ 41%]
-........................................................................ [ 55%]
-........................................................................ [ 69%]
-........................................................................ [ 83%]
-........................................................................ [ 97%]
-...........                                                              [100%]
-509 passed, 6 skipped in 101.34s (0:01:41)
+........................................................................ [ 54%]
+........................................................................ [ 68%]
+........................................................................ [ 82%]
+........................................................................ [ 95%]
+......................                                                   [100%]
+520 passed, 6 skipped in 102.08s (0:01:42)
 SUITE_EXIT=0

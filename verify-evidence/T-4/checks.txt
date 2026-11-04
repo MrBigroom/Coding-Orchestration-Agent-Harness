@@ -1,4 +1,4 @@
-# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # command: ./scripts/orch_verify.sh lint   (ruff check src tests)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -22,8 +22,8 @@ fallbacks   : {<MemoryCategory.global_: 'global'>: 'environment', <MemoryCategor
 (1) A WORKER HANDOFF'S SUGGESTIONS  (DoD 1: coerce project/global, drop role)
   stored: [(3, 'project', 'gotchas', 'pending'), (4, 'global', 'environment', 'pending')]
   recorded notes:
-    - memory suggestion from handoff:R-3: project scope 'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 'gotchas' (fallback)
-    - memory suggestion from handoff:R-3: global scope 'global-environment-verifying-orchestrator-change' is not in environment|preferences|patterns; stored as 'environment' (inferred)
+    - memory suggestion from handoff:R-3: project scope 'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 'gotchas' (deterministic fallback, not inferred from the words)
+    - memory suggestion from handoff:R-3: global scope 'global-environment-verifying-orchestrator-change' is not in environment|preferences|patterns; stored as 'environment' (deterministic fallback, not inferred from the words)
     - dropped suggestion from handoff:R-3: role memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)
 
 (2) BOUNDARY REJECTION, EVERY CATEGORY  (DoD 2)
@@ -76,19 +76,17 @@ injectable; allowed scopes for project: conventions|decisions|gotchas
 $ orchestrator memory fix-scopes
 moved #9 project: 'ai-livestreaming-avatar' -> 'gotchas'  (project scope 
 'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 
-'gotchas' (fallback))
+'gotchas' (deterministic fallback, not inferred from the words))
   re-rendered 
-/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+/tmp/t4-evidence.y0Z2rD/home/memory/projects/ai-livestreaming-avatar/ai-livestre
 aming-avatar.md and 
-/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/gotchas.md
-  collected dead scope-file 
-/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+/tmp/t4-evidence.y0Z2rD/home/memory/projects/ai-livestreaming-avatar/gotchas.md
+left #8 project scope 'ai-livestreaming-avatar' alone: rejected rows are left 
+alone
+removed dead scope-file 
+/tmp/t4-evidence.y0Z2rD/home/memory/projects/ai-livestreaming-avatar/ai-livestre
 aming-avatar.md
-left #8 project scope 'ai-livestreaming-avatar' alone 
-removed orphan memory file 
-/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
-aming-avatar.md
-moved 1 entry (ids: 9); 1 left alone; 1 orphan file(s)
+moved 1 entry (ids: 9); 1 left alone; 1 dead scope-file(s) removed
 $ orchestrator memory list --uninjectable
 ┏━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┳━━━━━┳━━━━━━━━━━━━━━┓
 ┃ id ┃ category ┃ scope       ┃ project ┃ role ┃ status   ┃ inj ┃ content      ┃

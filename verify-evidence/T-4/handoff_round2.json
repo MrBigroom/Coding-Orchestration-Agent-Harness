@@ -1,0 +1,113 @@
+{
+  "phase": "T-4",
+  "branch": "task-4-memory-suggestions-accept-unvalidated-scopes-cre",
+  "status": "CHANGES_APPLIED",
+  "summary": "Review round applied on the same branch: all eight R-25 findings fixed at the source and covered by tests, plus one extra guard found while proving them. (1) coerce_scope no longer infers a scope from the words inside it - an out-of-vocabulary scope goes only to its category's deterministic fallback (project -> gotchas, global -> environment), because the scope decides which roles receive the note. (2) The repair CLI now rich.markup.escape()s every interpolated scope/note/reason/path and prints the skipped-row reason after a colon instead of in [brackets], which Rich parsed as a style tag and dropped. (3) --dry-run only ever says 'would move / would re-render / would collect / would remove' and names each dead file once; --no-gc moves rows and re-renders but deletes nothing. (4) The GC predicate is now four-part and visible (in_layout_dir AND not canonical_file AND unowned AND _renderer_output), so hand-authored markdown indexed via 'memory import --markdown' is never deleted. (5) update() validates a throwaway preview BEFORE assigning, so a refused PATCH leaves the row and its rendered file unchanged without relying on a rollback. (6) _file_for is reverted to main's body and reachable_roles resolves through the same rule (role, else scope, through ROLE_MEMORY_KEY): a legacy role='logbook-writer' row keeps its own dead file and is REPORTED as uninjectable instead of re-homed - no role-injection or rendering semantics changed. (7) docs/memory.md now separates the rejecting boundaries (POST, PATCH, 'memory add') from the repairing ones (import JSON, import --markdown, fix-scopes) and the coercing/dropping one (a Worker suggestion). (8) Evidence is split into per-file COMPLETE diffs with a DIFF_COMPLETE trailer plus a sha256 manifest, because the combined diff supplied last round was truncated inside memory_service.update(). While writing test 8 a real gap surfaced: importing an export whose legacy row is still stored under its dead scope added a SECOND copy under the fallback scope (and rendered the line twice); the duplicate check now takes both spellings (_import_keys). Counts: make test 520 passed / 6 skipped / 0 failed, make lint clean, 49 T-4 tests pass, all offline, no API keys, no network.",
+  "files_changed": [
+    "src/orchestrator/services/memory_service.py",
+    "src/orchestrator/cli.py",
+    "src/orchestrator/services/run_service.py",
+    "src/orchestrator/services/chat_service.py",
+    "src/orchestrator/api/routes/memory.py",
+    "tests/unit/test_memory_scopes.py",
+    "tests/integration/test_memory_scope_boundary.py",
+    "docs/memory.md",
+    "docs/decisions.md",
+    "README.md",
+    "verify-evidence/T-4/README.md",
+    "verify-evidence/T-4/capture.sh",
+    "verify-evidence/T-4/review_round2.txt",
+    "verify-evidence/T-4/manifest.txt",
+    "verify-evidence/T-4/full_suite.txt",
+    "verify-evidence/T-4/memory_scope_tests.txt",
+    "verify-evidence/T-4/checks.txt",
+    "verify-evidence/T-4/live_home_readonly.txt",
+    "verify-evidence/T-4/diff_README.md.txt",
+    "verify-evidence/T-4/diff_docs_decisions.md.txt",
+    "verify-evidence/T-4/diff_docs_memory.md.txt",
+    "verify-evidence/T-4/diff_src_orchestrator_api_routes_memory.py.txt",
+    "verify-evidence/T-4/diff_src_orchestrator_cli.py.txt",
+    "verify-evidence/T-4/diff_src_orchestrator_services_chat_service.py.txt",
+    "verify-evidence/T-4/diff_src_orchestrator_services_memory_service.py.txt",
+    "verify-evidence/T-4/diff_src_orchestrator_services_run_service.py.txt",
+    "verify-evidence/T-4/diff_tests_integration_test_memory_scope_boundary.py.txt",
+    "verify-evidence/T-4/diff_tests_unit_test_memory_scopes.py.txt"
+  ],
+  "tests": {
+    "command": "make test  (== ./scripts/orch_verify.sh test; make lint == ./scripts/orch_verify.sh lint)",
+    "passed": 520,
+    "failed": 0,
+    "skipped": 6,
+    "log_path": "verify-evidence/T-4/full_suite.txt"
+  },
+  "dod_self_check": [
+    {
+      "item": "1. Project suggestions whose scope is not conventions|decisions|gotchas are coerced to a deterministic fallback (gotchas) and the substitution is recorded where the operator can see it; role suggestions outside ROLE_FILES are dropped with a warning rather than stored.",
+      "met": true,
+      "evidence": "src/orchestrator/services/memory_service.py:193 coerce_scope is fallback-only (no token match, no substring match; FALLBACK_SCOPE :53); suggestion path :376 stores under the fallback and returns SuggestionOutcome.notes; the drop for role is :407-413. Recorded where the operator sees it: run_service.py:448 _store_memory_suggestions writes build-log events memory_scope_substituted / memory_suggestion_dropped from the three handoff paths (:565 salvage, :1212 clean exit, :1327 agent run) and chat_service.py:567 emits each note. Tests test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope, test_a_scope_mentioning_decisions_does_not_route_the_note_to_the_architect, test_coercion_is_written_to_the_build_log_the_operator_reads. Proof run: verify-evidence/T-4/memory_scope_tests.txt (49 passed), review_round2.txt FINDING 1 (project/'decisions-and-gating' -> 'gotchas', project/'decisionss' -> 'gotchas')."
+    },
+    {
+      "item": "2. The API and CLI create/update boundaries reject an out-of-vocabulary scope for EVERY category, with an error naming the allowed values (global, project and role after ROLE_MEMORY_KEY); the three vocabularies are named constants including the new ROLE_SCOPES.",
+      "met": true,
+      "evidence": "memory_service.py:35/:36/:37/:43 (GLOBAL_SCOPES, PROJECT_SCOPES, ROLE_FILES, ROLE_SCOPES), :45 SCOPE_VOCABULARY, :53 FALLBACK_SCOPE, :67 ROLE_MEMORY_KEY, :69 ROLE_SCOPE_ALIASES, :147 role_memory_file, :173 normalize_scope, :302 _validate. POST /api/memory -> 400 (api/routes/memory.py:45) and PATCH /api/memory/{id} -> 400 (:81) with the frozen {\"error\",\"detail\"} body; CLI 'memory add' exits 1 with the same message (cli.py:1051 via handled :60). update() (:449) validates a preview before assigning, so a refusal changes nothing: test_update_rejects_without_touching_the_row_or_the_rendered_file asserts row, file bytes and session.dirty/session.new with NO rollback call. Tests: test_create_rejects_out_of_vocabulary_scope_for_every_category, test_api_*_rejects_*, test_cli_add_rejects_and_names_the_allowed_values. Proof: checks.txt section (2), review_round2.txt FINDING 6."
+    },
+    {
+      "item": "3. A repair path migrates entries already stored with invalid scopes: it re-renders BOTH the old and the new markdown file so no orphan file keeps a stale line, prints the ids it moved, and leaves rejected rows alone.",
+      "met": true,
+      "evidence": "memory_service.py:657 fix_scopes (ScopeRepair :95) moves rows and never deletes them, re-renders old_file then the new file (:744-749), and reports moved/skipped/removed_files/ghost_files; rejected rows are skipped with a printed reason; role rows are reported, never guessed. cli.py:1117 'orchestrator memory fix-scopes' prints 'moved N entries (ids: ...)', escapes every interpolated value (from rich.markup import escape, cli.py:18), uses would-move/would-re-render/would-collect/would-remove wording only under --dry-run, names each dead file once, and offers --no-gc. Collector predicate: :574 in_layout_dir, :553 canonical_file, :592 _renderer_output (first line exactly '# <stem>', later lines only blank or '- ...  <!-- mem:N -->'), so hand-authored markdown survives. Tests: test_fix_scopes_moves_legacy_rows_and_re_renders_both_files, test_gc_only_deletes_files_render_file_could_have_written, test_fix_scopes_can_move_rows_without_deleting_a_single_file, test_cli_fix_scopes_reports_lines_the_operator_can_actually_read, test_cli_fix_scopes_no_gc_moves_rows_and_deletes_nothing, test_import_does_not_duplicate_a_row_that_is_still_awaiting_fix_scopes. Proof: checks.txt section (3) and review_round2.txt FINDINGS 2, 3, 5, 8."
+    },
+    {
+      "item": "4. orchestrator memory list marks any entry whose scope cannot be reached by its OWN category as uninjectable, and valid role entries such as category=role scope=worker are never misflagged.",
+      "met": true,
+      "evidence": "memory_service.py:242 reachable_roles (global -> GLOBAL_SCOPES read by every role; project -> ROLE_PROJECT_SCOPES; role -> :227 role_file_key, i.e. main's 'role, else scope, through ROLE_MEMORY_KEY', and the key must be in ROLE_FILES), :260 injectability, :284 is_injectable. cli.py:980 _memory_table renders the 'inj' column and :1007 _print_injectability names each bad row and its reason; used by 'memory list' (:1027, plus --uninjectable :1032) and 'memory search' (:1105). Rendering is unchanged: :288 _file_for is main's body verbatim. Tests: test_injectability_marks_only_the_unreachable, test_role_rows_still_render_by_the_rule_main_used, test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt, test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone, test_cli_list_prints_an_uninjectable_scope_literally. Proof: checks.txt section (4) (all five role shapes ok, only the invented project scope NO), live_home_readonly.txt (9 live category=role scope=worker rows NOT flagged), review_round2.txt FINDING 7 (role='logbook-writer' still renders to roles/logbook-writer.md and is reported, not re-homed)."
+    },
+    {
+      "item": "5. New offline unit tests cover coercion, boundary rejection, the repair path re-rendering both files, and the list marker; make test and make lint both pass with no network access and no API keys.",
+      "met": true,
+      "evidence": "tests/unit/test_memory_scopes.py (31 test functions) + tests/integration/test_memory_scope_boundary.py (11 test functions) = 49 collected cases, all named in verify-evidence/T-4/memory_scope_tests.txt ('49 passed', TARGETED_EXIT=0). make test == ./scripts/orch_verify.sh test: '520 passed, 6 skipped in 102.33s', exit 0 (verify-evidence/T-4/full_suite.txt, SUITE_EXIT=0, stamped HEAD 5c678f9 with tree=0 dirty entries outside verify-evidence/T-4; make test and make lint were then re-run against the final source tree with the same 520/6/0 result). make lint == ./scripts/orch_verify.sh lint: 'All checks passed!' (checks.txt, LINT_EXIT=0). Every test uses an isolated /tmp ORCHESTRATOR_HOME, in-process TestClient and CliRunner; no adapter is invoked, no key is read (tests/conftest.py deletes the six secret env vars), and no test touches the network."
+    }
+  ],
+  "new_dependencies": [],
+  "contracts_touched": [
+    "Memory entry schema (memory_entries + MemoryCreate/MemorySuggestion): columns and JSON fields unchanged; only validation, coercion and reporting were added. No migration.",
+    "REST API shapes under /api: POST /api/memory and PATCH /api/memory/{id} now return the already-frozen {\"error\", \"detail\"} 400 body for an out-of-vocabulary scope. No field added, removed or renamed; no new route.",
+    "Build-log events: added the event names memory_scope_substituted and memory_suggestion_dropped (additive per the contract; no rename or removal). The line shape is unchanged.",
+    "CLI command surface: added 'orchestrator memory fix-scopes' (authorised by DoD 3) and the additive options --dry-run/--gc-only/--no-gc on it and --uninjectable on 'memory list'. Existing commands keep their arguments and exit codes.",
+    "Artifact/rendering contract 'approved entries render to $ORCHESTRATOR_HOME/memory/**.md with one \"- <content>  <!-- mem:ID -->\" line each': _file_for and render_file are main's code, so rendering is unchanged. fix-scopes rewrites the `scope` column only, re-renders both files, and collects a rendered ghost that has no owning entry (authorised by DoD 3) under a predicate that cannot match hand-authored markdown. 'Existing memory_entries rows must not be deleted; scope repair is idempotent' holds: fix_scopes never deletes a row and a second run moves nothing (test_fix_scopes_moves_legacy_rows_and_re_renders_both_files).",
+    "Path-independent verification commands: consumed, not modified. make test / make lint still route through scripts/orch_verify.sh and every evidence log carries its ORCH_VERIFY| marker line.",
+    "Out of scope and untouched: which scopes each role receives (ROLE_PROJECT_SCOPES), for_prompt, ROLE_MEMORY_KEY, the GUI Memory page, docs/frozen-contracts.md, core/models.py, core/schemas.py, core/state.py, and every migration."
+  ],
+  "assumptions": [
+    "DoD 1 names only the project fallback (gotchas). Global suggestions are handled symmetrically with the constant FALLBACK_SCOPE[global] = 'environment'; role suggestions have no fallback and are dropped, as DoD 1 requires. Both are asserted by tests and stated in docs/memory.md.",
+    "DoD 4 says role entries are resolved 'through _file_for/ROLE_MEMORY_KEY', so the inj marker judges a role row by the file it renders into. A legacy row with an EMPTY role column and a valid scope therefore reads 'ok' even though for_prompt selects role memory on the role column and would not inject it. That asymmetry is main's, is documented in docs/memory.md ('Role-aware injection'), cannot be created by any boundary any more (_validate fills role from scope), and is deliberately NOT auto-repaired because DoD 3 covers invalid SCOPES and MemoryUpdate has no role field (adding one would change the frozen MemoryCreate/MemorySuggestion/PATCH shape). It is reported in the fix-scopes skip reason so an operator sees it.",
+    "The repair path is idempotent per the frozen task contract, so importing an export twice never duplicates a fact; this round also made the FIRST import safe against the still-unrepaired row (memory_service._import_keys :821), which was the only behaviour change I added beyond the reviewer's findings.",
+    "Evidence counts are stamped at HEAD 5c678f9 with tree=0 dirty entries outside verify-evidence/T-4. After that capture only verify-evidence/T-4/{README.md,capture.sh} changed (evidence text, not code), and make test / make lint were re-run afterwards with the identical 520 passed / 6 skipped / 0 failed result.",
+    "R-25 provenance (finding 9) is explained, not papered over: runs/25/run.json records exit_code=0, timed_out=False, cancelled=False, status=completed, handoff_arrival=clean_exit and no error, so the trailing 'harness reported an error while exiting 0' is a mislabel produced by run_service.exit_state_text (:390-405, unchanged since the merge-base db00112), whose final else fires for any zero exit. Nothing on this branch writes or reads that wording."
+  ],
+  "questions": [
+    "Should the exit_state_text catch-all (run_service.py:397-405, on main) become its own follow-up task? It is one line ('else \"harness reported an error while exiting 0\"' with no result.error condition), but the string is already archived inside historical run.json artifacts, so a fix changes operator-facing wording of past runs. Left alone here as out of T-4 scope.",
+    "DoD 3 says 'orchestrator memory fix-scopes, or repair during import'. Both are implemented. If the reviewer prefers exactly one repair surface, say which and I will drop the other (import_all's coercion, or the CLI command).",
+    "The GUI Memory page still shows no uninjectable indicator; the task calls that a follow-up. Confirm it should be a separate task rather than folded in."
+  ],
+  "blockers": [],
+  "memory_suggestions": [
+    {
+      "category": "project",
+      "scope": "gotchas",
+      "content": "coding-orchestrator memory scopes are a CLOSED vocabulary checked by membership, not shape: memory_service.GLOBAL_SCOPES (environment|preferences|patterns), PROJECT_SCOPES (conventions|decisions|gotchas), ROLE_SCOPES (== ROLE_FILES: architect|worker|supervisor, after ROLE_MEMORY_KEY aliases reviewer->architect, agent->worker). A row stored outside its own category's vocabulary is rendered to a file no injector ever reads. Out-of-vocabulary scopes are coerced to the deterministic fallback (project->gotchas, global->environment) and NEVER inferred from words inside the scope, because the scope decides which roles receive the note. Repair with `orchestrator memory fix-scopes [--dry-run|--no-gc|--gc-only]`; audit with `orchestrator memory list --uninjectable`.",
+      "tags": ["memory", "T-4", "validation"]
+    },
+    {
+      "category": "project",
+      "scope": "gotchas",
+      "content": "In this repo any Rich console.print that interpolates operator data (a scope, a branch name, a reason string) MUST pass it through rich.markup.escape first. `console.print(f\"... [{why}]\")` silently DELETED the whole reason from `memory fix-scopes` output in R-25: Rich parsed the brackets as a style tag and the operator got a line with the explanation missing. Escape the data, keep markup only in the literal part of the string, and write a test that puts a bracketed value through the CLI.",
+      "tags": ["rich", "cli", "output"]
+    },
+    {
+      "category": "project",
+      "scope": "conventions",
+      "content": "Anything that deletes files under $ORCHESTRATOR_HOME/memory must use a renderer-shaped predicate, not 'unowned means dead': docs/memory.md tells operators to hand-write lines there and index them with `memory import --markdown`. The rule shipped in T-4 is in_layout_dir AND not canonical_file AND unowned AND _renderer_output (first line exactly '# <stem>', every other non-blank line '- ...  <!-- mem:N -->').",
+      "tags": ["memory", "gc", "docs"]
+    }
+  ]
+}

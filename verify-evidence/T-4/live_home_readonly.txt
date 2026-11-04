@@ -1,11 +1,11 @@
-# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # READ-ONLY audit of the operator's LIVE ORCHESTRATOR_HOME with this branch's rule.
 # Nothing here writes: no CLI call (a CLI command runs _ensure_ready -> db.upgrade() on
 # the live DB with branch code, which this phase must not do), no fix_scopes, no
 # render_file. The DB is opened with sqlite3 mode=ro and the rows are judged by the
 # pure injectability() helper on duck-typed values.
-live rows: 64  by status: (38, 12, 14) (approved, rejected, pending)
-by source: [('cli', 13), ('handoff:R-15', 7), ('handoff:R-12', 5), ('chat:3', 5), ('chat:2', 5), ('handoff:R-9', 4), ('handoff:R-6', 3), ('init', 2), ('handoff:R-3', 2), ('handoff:R-24', 2), ('handoff:R-22', 2), ('handoff:R-21', 2), ('handoff:R-19', 2), ('handoff:R-18', 2), ('handoff:R-17', 2), ('handoff:R-14', 2), ('handoff:R-1', 2), ('handoff:R-23', 1), ('handoff:R-20', 1)]
+live rows: 67  by status: (38, 12, 17) (approved, rejected, pending)
+by source: [('cli', 13), ('handoff:R-15', 7), ('handoff:R-12', 5), ('chat:3', 5), ('chat:2', 5), ('handoff:R-9', 4), ('handoff:R-6', 3), ('handoff:R-25', 3), ('init', 2), ('handoff:R-3', 2), ('handoff:R-24', 2), ('handoff:R-22', 2), ('handoff:R-21', 2), ('handoff:R-19', 2), ('handoff:R-18', 2), ('handoff:R-17', 2), ('handoff:R-14', 2), ('handoff:R-1', 2), ('handoff:R-23', 1), ('handoff:R-20', 1)]
 uninjectable under this branch's rule: 1
   #6 project scope='ai-livestreaming-avatar-logbook' source=handoff:R-3 status=rejected :: memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for project: conventions|decisions|gotchas
 counter-examples that must NOT be flagged:
