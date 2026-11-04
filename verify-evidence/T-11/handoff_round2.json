@@ -22,6 +22,8 @@
     "verify-evidence/T-11/README.md",
     "verify-evidence/T-11/capture.sh",
     "verify-evidence/T-11/changed_files.txt",
+    "verify-evidence/T-11/handoff_round2.json",
+    "verify-evidence/T-11/handoff_round2.md",
     "verify-evidence/T-11/suite_and_lint.txt",
     "verify-evidence/T-11/t11_tests.txt"
   ],

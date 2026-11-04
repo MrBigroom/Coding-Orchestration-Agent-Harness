@@ -35,7 +35,7 @@ sections, `.gitattributes` / diff-completeness findings) is intact.
    one silent cut landed mid-file and made the wiring unverifiable. `max_diff_tokens` is
    **unchanged**.
 
-## Files changed (20, `git diff --name-only $(git merge-base main HEAD)..HEAD`)
+## Files changed (22, `git diff --name-only $(git merge-base main HEAD)..HEAD`)
 
 - docs/build-loop.md
 - docs/contract-change-request-T11-review-payload.md
@@ -56,6 +56,8 @@ sections, `.gitattributes` / diff-completeness findings) is intact.
 - verify-evidence/T-11/capture.sh
 - verify-evidence/T-11/changed_files.txt
 - verify-evidence/T-11/suite_and_lint.txt
+- verify-evidence/T-11/handoff_round2.md
+- verify-evidence/T-11/handoff_round2.json
 - verify-evidence/T-11/t11_tests.txt
 
 ## Tests
