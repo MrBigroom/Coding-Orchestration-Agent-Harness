@@ -342,8 +342,13 @@ def archive_handoff_artifacts(run: Run, handoff: Handoff) -> None:
     artifact_service.write_text(run.id, "handoff.md", artifact_service.render_handoff_md(handoff))
 
 
-def exit_state_text(run: Run, result: AdapterResult) -> str:
-    """The run's exit state in one line, for the salvage event and the reviewer payload."""
+def exit_state_text(run: Run, result: AdapterResult, status: str | None = None) -> str:
+    """The run's exit state in one line, for the salvage event and the reviewer payload.
+
+    `status` overrides `run.status` for the clean-exit path, which archives this text before the
+    run is moved to its terminal state: recording `status=running` there would describe the row
+    mid-transition rather than the exit that produced the submission.
+    """
     why = (
         "timed out (adapter timeout killed the process)"
         if result.timed_out
@@ -354,7 +359,7 @@ def exit_state_text(run: Run, result: AdapterResult) -> str:
         else "harness reported an error while exiting 0"
     )
     return (
-        f"run {run.short_id} status={run.status} exit_code={result.exit_code} "
+        f"run {run.short_id} status={status or run.status} exit_code={result.exit_code} "
         f"timed_out={result.timed_out} cancelled={result.cancelled} "
         f"error={_one_line(result.error or '') or 'none'} -> {why}"
     )
@@ -526,8 +531,9 @@ def archive_before_round_start(
     if handoff is not None and prev is not None and prev.id is not None:
         archived = artifact_service.read_json(prev.id, "handoff.json")
         if archived == handoff.model_dump(mode="json"):
-            # Already archived byte-for-byte in that run's artifacts: nothing to copy, and the
-            # unlink is safe. Not an event — no submission was at risk.
+            # SALVAGE_MODE_ALREADY_ARCHIVED: already archived byte-for-byte in that run's
+            # artifacts, so nothing is at risk and nothing is copied. Deliberately not an event —
+            # an event here would fire on every ordinary retry and mean nothing.
             return True
     key = (
         f"{project.slug}-{task.short_id}-"
@@ -956,7 +962,7 @@ async def _execute(
             project.base_branch,
             handoff,
             arrival=arrival,
-            exit_state=exit_state_text(run, result),
+            exit_state=exit_state_text(run, result, status=RunStatus.completed),
             uncommitted_before_sweep=dirt_before_sweep,
         ),
     )
