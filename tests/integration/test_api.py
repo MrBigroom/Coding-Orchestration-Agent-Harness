@@ -16,7 +16,7 @@ def client(initialized):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert r.json()["db_revision"] == "0009_chat_continue"
+    assert r.json()["db_revision"] == "0010_notifications"
 
 
 def test_startup_upgrades_existing_database(initialized):
@@ -28,7 +28,7 @@ def test_startup_upgrades_existing_database(initialized):
     assert db.current_revision() == "0001_baseline"
 
     with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
-        assert c.get("/api/health").json()["db_revision"] == "0009_chat_continue"
+        assert c.get("/api/health").json()["db_revision"] == "0010_notifications"
         assert c.get("/api/dashboard").status_code == 200
 
 
@@ -182,6 +182,14 @@ def test_providers_never_expose_secrets(client, monkeypatch):
 
 def test_settings_merge_gate_defaults_and_validation(client):
     s = client.get("/api/settings").json()
+    # T-9: notifications are off on a new install, but the human-must-act triggers are
+    # subscribed so enabling the master does useful work; noisy machinery stays silent.
+    assert s["notifications_enabled"] is False
+    assert s["notification_run_completed"] is True
+    assert s["notification_worktree_created"] is False
+    assert client.patch(
+        "/api/settings", json={"values": {"notifications_enabled": True}}
+    ).json()["notifications_enabled"] is True
     assert s["merge_enabled"] is False and s["auto_merge_enabled"] is False
     assert s["supervisor_microfixes_enabled"] is False
     assert (
@@ -380,3 +388,27 @@ def test_one_time_schedule_api(client):
     past = {**body, "run_at": "2020-01-02T09:00"}
     assert client.post("/api/schedules/validate", json=past).json()["valid"] is False
     assert client.post("/api/schedules", json={"name": "past", **past}).status_code == 400
+
+
+def test_notifications_endpoint_reads_the_persistent_list(client):
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.models import Notification
+
+    with session_scope() as s:
+        s.add(
+            Notification(
+                trigger="run_completed",
+                event="run_completed",
+                status="delivered",
+                title="T-1 demo — Run completed",
+                body="Outcome: done",
+                dedupe_key="run:1:run_completed",
+                coalesce_key="run:1",
+                details_json={"trigger": "run_completed"},
+            )
+        )
+        s.commit()
+    rows = client.get("/api/notifications").json()
+    assert rows and rows[0]["trigger"] == "run_completed"
+    assert rows[0]["status"] == "delivered"
+    assert client.get("/api/notifications?status=bogus").status_code == 422

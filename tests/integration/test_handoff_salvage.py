@@ -250,8 +250,11 @@ def test_cancel_with_a_valid_handoff_is_salvaged(session, project):
     assert len(session.exec(select(Review)).all()) == 1
     payload = structured_log.parse(_events(session, task, "handoff_salvaged")[0].details)
     assert payload["cancelled"] is True and payload["run_status"] == "cancelled"
-    # the frozen vocabulary is untouched: T-9 owns `run_cancelled`, this task adds it to nothing
-    assert "run_cancelled" not in [e.event for e in log_service.recent(session, limit=400)]
+    # T-9 (DoD 8) added the fourth terminal event; a cancelled run now names itself once.
+    cancelled_events = [
+        e for e in log_service.recent(session, limit=400) if e.event == "run_cancelled"
+    ]
+    assert len(cancelled_events) == 1
 
 
 def test_non_zero_exit_with_a_valid_handoff_is_salvaged(session, project):
