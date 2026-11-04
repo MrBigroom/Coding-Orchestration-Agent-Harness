@@ -29,6 +29,11 @@ from orchestrator.adapters.base import AdapterSpec, BaseHarnessAdapter, RunConte
 
 MOCK_TIMEOUT_SECONDS = 2
 
+# `<root>/src`: the src root of the checkout whose `mock_harness.py` is executing right now.
+# The child process must import THIS module tree, not whichever checkout the interpreter's
+# editable install points at (see `run()`).
+PACKAGE_SRC = Path(__file__).resolve().parents[2]
+
 # Tags this adapter understands (everything else starting with `mock-` is a routing tag).
 KNOWN_TAGS = {
     "mock-fail",
@@ -84,7 +89,22 @@ class MockHarnessAdapter(BaseHarnessAdapter):
     async def run(self, ctx: RunContext, runner):
         if any(t in HANG_TAGS for t in ctx.tags):
             ctx.timeout_seconds = min(ctx.timeout_seconds, MOCK_TIMEOUT_SECONDS)
-        return await super().run(ctx, runner)
+
+        # Pin PYTHONPATH to the src root of the checkout under test. `process_service` builds the
+        # child environment from an allowlist that deliberately excludes PYTHONPATH, and this
+        # repo's venv is an EDITABLE install pointing at the main checkout: without the pin,
+        # `python -m orchestrator.adapters.mock_harness` in a task worktree silently executes the
+        # MAIN checkout's copy of this file. Measured while fixing T-10: tests that drove
+        # `mock-timeout-handoff` got a clean exit and a `completed` run, because the stale copy
+        # did not know the tag and fell through to the success path. Tests must exercise the
+        # branch under review, not whatever `import orchestrator` happens to resolve to.
+        async def pinned_runner(**kwargs):
+            extra = dict(kwargs.get("extra_env") or {})
+            extra["PYTHONPATH"] = str(PACKAGE_SRC)
+            kwargs["extra_env"] = extra
+            return await runner(**kwargs)
+
+        return await super().run(ctx, pinned_runner)
 
     def detect(self) -> bool:
         return True
@@ -139,6 +159,17 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     cwd = Path(a.cwd)
     tags = set(a.tag)
+    unknown = sorted(t for t in tags if t.startswith("mock-") and t not in KNOWN_TAGS)
+    if unknown:
+        # Loud, not silent: an unrecognised behaviour tag used to fall through to the plain
+        # success path, which made a test that asked for a timeout look green against a mock that
+        # completed the run. A mock that cannot do what was asked must fail the run instead.
+        print(
+            f"[mock-harness] unknown behaviour tag(s) {unknown}; known: {sorted(KNOWN_TAGS)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
     phase = a.branch
     prompt = Path(a.prompt_file).read_text()
     print(f"[mock-harness] run {a.run_id} on {a.branch}; prompt {len(prompt)} chars", flush=True)
