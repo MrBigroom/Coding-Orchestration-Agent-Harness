@@ -129,6 +129,51 @@ def test_api_patch_still_edits_the_content_of_a_legacy_row(client):
                         json={"scope": "housekeeping"}).status_code == 400
 
 
+def test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape(client):
+    """The POST boundary cannot be fed an unreadable role, and says so in the frozen shape.
+
+    `MemoryCreate.role` is the Role enum, so Pydantic stops 'logbook-writer' before the
+    service is entered (422, not 400). The service boundary under it refuses the same shape
+    with the role vocabulary named -- see
+    `test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid`.
+    """
+    r = client.post(
+        "/api/memory",
+        json={"category": "role", "scope": "worker", "role": "logbook-writer",
+              "content": "Diary."},
+    )
+    assert r.status_code == 422, r.json()
+    assert set(r.json()) == {"error", "detail"}  # the frozen error shape
+    with session_scope() as s:
+        assert [e for e in m.list_entries(s, category="role")
+                if e.role == "logbook-writer"] == []
+    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
+
+
+def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope(client):
+    """DoD 2 at the PATCH boundary for a row already stored in the dead shape.
+
+    scope='worker' is in the vocabulary; the STORED role is what no prompt can select, and
+    `for_prompt`/`_file_for` key off the role column first -- so the PATCH is refused and the
+    row, its rendered file and its content-only editability are all untouched.
+    """
+    with session_scope() as s:
+        row = legacy(s, category="role", scope="worker", role="logbook-writer",
+                     content="Diary.", approved=True)
+        row_id, home = row.id, m._file_for(row)
+    before = home.read_text()
+    r = client.patch(f"/api/memory/{row_id}", json={"scope": "worker"})
+    assert r.status_code == 400, r.json()
+    assert "architect|worker|supervisor" in r.json()["error"]
+    assert "logbook-writer" in r.json()["error"]
+    got = [e for e in client.get("/api/memory").json() if e["id"] == row_id][0]
+    assert got["role"] == "logbook-writer" and got["scope"] == "worker"
+    assert home.read_text() == before
+    # ...and the operator is not locked out of the row: a content edit still goes through.
+    ok = client.patch(f"/api/memory/{row_id}", json={"content": "Reworded."})
+    assert ok.status_code == 200 and ok.json()["content"] == "Reworded."
+
+
 # ------------------------------------------------------------------ CLI boundary
 
 
@@ -149,6 +194,48 @@ def test_cli_add_rejects_and_names_the_allowed_values(initialized):
     with session_scope() as s:
         # Nothing was half-stored: only the memory `init` seeds is present.
         assert len(m.list_entries(s)) == len(DEFAULT_GLOBAL_MEMORY)
+
+
+def test_cli_add_refuses_a_role_name_no_prompt_can_read(initialized):
+    """`memory add --role` is a plain string, so its error must name the role FILES.
+
+    Without the pre-check Pydantic answers with `Input should be 'architect', 'supervisor',
+    'worker', 'reviewer' or 'agent'` -- the enum, not the memory vocabulary with the
+    reviewer -> architect / agent -> worker aliases resolved (DoD 2).
+    """
+    from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
+
+    with session_scope() as s:
+        before = len(m.list_entries(s))
+        assert before == len(DEFAULT_GLOBAL_MEMORY)
+    bad = runner.invoke(
+        app,
+        ["memory", "add", "Diary.", "--category", "role", "--scope", "worker",
+         "--role", "logbook-writer"],
+        env=WIDE,
+    )
+    assert bad.exit_code == 1, bad.output
+    assert "error:" in bad.output
+    assert "architect|worker|supervisor" in flat(bad.output)
+    assert "logbook-writer" in flat(bad.output)
+    assert "reviewer -> architect" in flat(bad.output)  # the aliases are spelled out
+    with session_scope() as s:
+        assert len(m.list_entries(s)) == before  # nothing half-stored
+    # A real role name (including an alias) is still accepted, and lands in the file it is
+    # read from -- role='reviewer' resolves to the architect file.
+    ok = runner.invoke(
+        app,
+        ["memory", "add", "Gate the merge.", "--category", "role", "--scope", "reviewer",
+         "--role", "reviewer"],
+        env=WIDE,
+    )
+    assert ok.exit_code == 0, ok.output
+    with session_scope() as s:
+        row = [e for e in m.list_entries(s, category="role") if e.content == "Gate the merge."]
+        assert len(row) == 1 and row[0].scope == "architect" and row[0].role == "reviewer"
+        assert m.is_injectable(row[0])
+    assert "Gate the merge." not in (
+        m.memory_root() / "roles" / "worker.md").read_text()
 
 
 def test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone(initialized):
@@ -289,6 +376,40 @@ def test_cli_fix_scopes_no_gc_moves_rows_and_deletes_nothing(initialized):
     assert "mem:" not in (root / "global" / "logbook.md").read_text()
     with session_scope() as s:
         assert [e.scope for e in m.list_entries(s) if e.id == row_id] == ["environment"]
+
+
+def test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted(initialized, monkeypatch):
+    """DoD 3: a repair report may claim nothing that did not happen on disk.
+
+    The `--gc-only` branch used to fall back to the pre-GC listing
+    (`removed_files=removed or listed`), so whenever the collector returned an empty list the
+    CLI still printed `removed dead scope-file <path>` for a file that was sitting right there.
+    The report now carries exactly what `gc_orphan_files` unlinked, and nothing else.
+    """
+    root = m.memory_root()
+    ghost = root / "projects" / "demo" / "demo.md"
+    ghost.parent.mkdir(parents=True, exist_ok=True)
+    ghost.write_text("# demo\n")  # the measured orphan shape: title line only
+    with session_scope() as s:
+        assert ghost in m.orphan_files(s)
+
+    # Simulate a GC that deletes nothing (a file re-claimed by another row, a failed unlink
+    # swallowed upstream): the listing is non-empty, the deletions are not.
+    monkeypatch.setattr(m, "gc_orphan_files", lambda *a, **k: [])
+    out = runner.invoke(app, ["memory", "fix-scopes", "--gc-only"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    d = flat(out.output)
+    assert "removed dead scope-file" not in d  # the false claim, gone
+    assert "0 dead scope-file(s) removed" in d
+    assert ghost.exists()  # and the disk agrees with the report
+
+    # A --gc-only --dry-run still shows the operator what a real run would collect.
+    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
+                             env=WIDE).output)
+    assert f"would remove dead scope-file {ghost}" in dry
+    assert "1 dead scope-file(s) to remove" in dry
+    assert "removed dead scope-file" not in dry
+    assert ghost.exists()
 
 
 def test_cli_list_prints_an_uninjectable_scope_literally(initialized):

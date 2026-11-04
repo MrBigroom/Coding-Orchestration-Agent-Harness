@@ -156,6 +156,27 @@ def role_memory_file(name: str | None) -> str | None:
     return key if key in ROLE_SCOPES else None
 
 
+def check_role_name(name: str) -> str:
+    """Validate a ROLE NAME, or raise an error naming the role vocabulary.
+
+    The `role` column — not `scope` — is what `for_prompt` selects on and what `_file_for`
+    keys the filename off first, so an out-of-vocabulary role is the *more* damaging of the
+    two: `role='logbook-writer' scope='worker'` renders to `roles/logbook-writer.md`, which
+    no prompt reads, while looking injectable to a naive scope-only check. This is the single
+    message used by `_validate` (so create, update and import all refuse the same shape for
+    the same reason) and by the CLI's `--role`, which is a plain string and would otherwise
+    be refused by Pydantic's enum with a message that never names the role FILES.
+    """
+    if role_memory_file(name) is None:
+        aliases = ", ".join(f"{k} -> {v}" for k, v in sorted(ROLE_SCOPE_ALIASES.items()))
+        raise MemoryError_(
+            f"role name {name!r} cannot be injected; allowed role memory files: "
+            f"{'|'.join(ROLE_SCOPES)} (role names {aliases} are accepted and resolve to "
+            f"their file)"
+        )
+    return name
+
+
 def _vocab_error(category: str, scope: str) -> MemoryError_:
     vocab = SCOPE_VOCABULARY.get(category, ())
     allowed = "|".join(vocab)
@@ -313,8 +334,11 @@ def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
     if not check_scope:
         return
     if entry.category == MemoryCategory.role:
-        if entry.role and role_memory_file(entry.role) is None:
-            raise _vocab_error(entry.category, entry.role)
+        # The column that decides which prompt reads the row is checked BEFORE the scope, so
+        # `role='logbook-writer' scope='worker'` is refused instead of rendering to a file no
+        # injector opens. Same refusal from create(), update() and import_all().
+        if entry.role:
+            check_role_name(entry.role)
         key = role_memory_file(entry.role) or role_memory_file(entry.scope)
         if key is None:
             raise _vocab_error(entry.category, entry.scope or entry.role or "")
@@ -345,7 +369,11 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
         category=data.category.value,
         scope=data.scope,
         project_slug=slugify(data.project_slug) if data.project_slug else None,
-        role=data.role.value if data.role else None,
+        # `getattr(..., "value", ...)`: MemoryCreate types `role` as the Role enum, so an
+        # HTTP caller cannot send an unknown one — but the service boundary must still refuse
+        # that shape (an unvalidated object, an import payload, a future caller) with the
+        # vocabulary error rather than crashing on `.value`.
+        role=getattr(data.role, "value", data.role) or None,
         content=redact(data.content.strip()),
         source=data.source,
         tags_json=sorted(set(data.tags)),

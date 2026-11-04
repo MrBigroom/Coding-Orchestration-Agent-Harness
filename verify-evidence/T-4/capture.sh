@@ -472,6 +472,194 @@ PY2
 
 {
   echo "$STAMP"
+  echo "# REVIEW ROUND 3 — the R-26 findings, each demonstrated on THIS worktree's code"
+  echo "# in a throwaway ORCHESTRATOR_HOME. No network, no API keys, no live home touched."
+  echo "# command: ORCHESTRATOR_HOME=\$TMP/home3 PYTHONPATH=\$WT/src \$MAIN/.venv/bin/python <demo>"
+  env -u VIRTUAL_ENV -u ORCHESTRATOR_ENABLE_WORKER -u ORCHESTRATOR_ENABLE_SCHEDULER \
+    ORCHESTRATOR_HOME="$TMP/home3" PYTHONPATH="$WT/src" COLUMNS=400 \
+    "$MAIN/.venv/bin/python" - <<'PY3'
+import os
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from orchestrator.cli import app
+from orchestrator.core import db
+from orchestrator.core.models import MemoryCategory, MemoryEntry
+from orchestrator.core.schemas import MemoryCreate, MemoryUpdate
+from orchestrator.services import bootstrap
+from orchestrator.services import memory_service as m
+
+HOME = Path(os.environ["ORCHESTRATOR_HOME"])
+runner = CliRunner()
+WIDE = {"COLUMNS": "400"}
+
+
+def flat(s: str) -> str:
+    return " ".join(s.split())
+
+
+def rel(p) -> str:
+    return str(Path(str(p)).relative_to(HOME / "memory"))
+
+
+def cited(fn, needles: tuple, label: str) -> None:
+    """Print the exact lines that do the checking, at the HEAD this log was captured at."""
+    import inspect
+
+    src, start = inspect.getsourcelines(fn)
+    print(f"    {label}  ({fn.__module__}.{fn.__name__}, lines {start}-"
+          f"{start + len(src) - 1}):")
+    for i, line in enumerate(src, start):
+        if any(n in line for n in needles):
+            print(f"      :{i}: {line.rstrip()}")
+
+
+bootstrap.init()
+print("R3-FINDING 1 - category=role is guarded on the ROLE COLUMN, not only on `scope`")
+print("  (DoD 2: 'category=role stops being only half-guarded by memory_service._validate')")
+cited(m._validate, ("check_role_name(entry.role)", "if entry.role:", "entry.role = entry.scope"),
+      "_validate refuses the role column before the scope")
+cited(m.create, ("getattr(data.role",), "create() no longer dies on a raw role string")
+print("  (1) service create(): role='logbook-writer' scope='worker' (a VALID scope)")
+with db.session_scope() as s:
+    body = MemoryCreate.model_construct(
+        category=MemoryCategory.role, scope="worker", content="Diary.",
+        role="logbook-writer", approved=False, tags=[], source="handoff:R-27",
+        project_slug=None)
+    before = len(m.list_entries(s))
+    try:
+        e = m.create(s, body)
+        print("    NOT REJECTED ->", e.id, e.role, e.scope)
+    except m.MemoryError_ as err:
+        print("    refused:", err)
+    print("    rows added:", len(m.list_entries(s)) - before,
+          "| roles/logbook-writer.md created:",
+          (HOME / "memory" / "roles" / "logbook-writer.md").exists())
+
+print("  (2) PATCH / memory_service.update(): the row is ALREADY stored in that shape")
+with db.session_scope() as s:
+    dead = MemoryEntry(category="role", scope="worker", role="logbook-writer",
+                       content="Diary.", source="handoff:R-27", approved=True)
+    s.add(dead)
+    s.commit()
+    s.refresh(dead)
+    m.render_file(s, m._file_for(dead))
+    rid, home = dead.id, m._file_for(dead)
+    before = home.read_text()
+    print("    stored row:", rid, "role='logbook-writer' scope='worker' ->",
+          rel(home), "injectable:", m.is_injectable(s.get(MemoryEntry, rid)))
+    try:
+        m.update(s, rid, MemoryUpdate(scope="worker"))  # the CALLER's scope is in vocabulary
+        print("    NOT REJECTED")
+    except m.MemoryError_ as err:
+        print("    refused:", err)
+    fresh = s.get(MemoryEntry, rid)
+    print("    row after:", repr(fresh.role), repr(fresh.scope),
+          "| file byte-identical:", home.read_text() == before)
+    print("    content-only edit still possible:",
+          repr(m.update(s, rid, MemoryUpdate(content="Reworded.")).content))
+
+print("  (3) CLI `memory add --role`: the error names the role FILES and their aliases")
+r = runner.invoke(app, ["memory", "add", "Diary.", "--category", "role", "--scope", "worker",
+                        "--role", "logbook-writer"], env=WIDE)
+print("    $ orchestrator memory add Diary. --category role --scope worker "
+      "--role logbook-writer")
+print("    exit", r.exit_code, "::", flat(r.output)[:250])
+r = runner.invoke(app, ["memory", "add", "Gate the merge.", "--category", "role",
+                        "--scope", "reviewer", "--role", "reviewer"], env=WIDE)
+print("    $ orchestrator memory add Gate. --category role --scope reviewer --role reviewer")
+print("    exit", r.exit_code, "::", flat(r.output)[:120])
+with db.session_scope() as s:
+    row = [e for e in m.list_entries(s, category="role") if e.content == "Gate the merge."]
+    print("    stored:", [(e.role, e.scope, rel(m._file_for(e)), m.is_injectable(e))
+                          for e in row],
+          "| reachable_by:", m.reachable_roles(row[0]) if row else None)
+
+print("  (4) HTTP POST /api/memory: the enum is a layer IN FRONT (422, frozen error shape)")
+from fastapi.testclient import TestClient  # in-process ASGI, no socket, no network
+
+from orchestrator.api.main import create_app
+
+with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
+    resp = client.post("/api/memory", json={"category": "role", "scope": "worker",
+                                            "role": "logbook-writer", "content": "Diary."})
+    print("    POST status", resp.status_code, "keys", sorted(resp.json()),
+          "| error:", resp.json()["error"])
+    print("    detail names the offending value:",
+          any("logbook-writer" in str(x) for x in resp.json()["detail"]))
+    print("    (the PATCH boundary against a row ALREADY stored in that shape is shown in")
+    print("     step (2) and asserted over HTTP by "
+          "test_memory_scope_boundary.py::"
+          "test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope)")
+
+print("  (5) `memory import`: a dead role name is never stored, even from a payload")
+with db.session_scope() as s:
+    n = m.import_all(s, {"version": 1, "entries": [
+        {"category": "role", "scope": "worker", "role": "logbook-writer",
+         "content": "Diary.", "approved": True}]})
+    print("    imported:", n, "| role rows with that content:",
+          len([e for e in m.list_entries(s, category="role")
+               if e.content == "Diary."]))
+
+print("  (6) the counter-examples that must STAY injectable (#39/#47 shape)")
+with db.session_scope() as s:
+    good = MemoryEntry(category="role", scope="worker", role="worker",
+                       content="Small commits.", source="handoff:R-27", approved=True)
+    s.add(good)
+    s.commit()
+    s.refresh(good)
+    m.render_file(s, m._file_for(good))
+    print("    role='worker' scope='worker' ->", rel(m._file_for(good)),
+          "injectable:", m.is_injectable(good), "reachable_by:", m.reachable_roles(good))
+    for name in ("reviewer", "agent"):
+        print("      check_role_name(%r) ->" % name, m.check_role_name(name),
+              "files:", m.role_memory_file(name))
+
+print("\nR3-FINDING 2 - `fix-scopes --gc-only` reports only the deletions it actually did")
+print("  (DoD 3: the repair output said 'removed dead scope-file' for files that were still")
+print("   on disk whenever gc_orphan_files() returned [], because of `removed or listed')")
+cited(__import__("orchestrator.cli", fromlist=["x"]).memory_fix_scopes,
+      ("repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s)",
+       "removed_files=m.orphan_files(s), dry_run=True)", "ONLY what was actually unlinked"),
+      "the gc-only branch")
+root = m.memory_root()
+ghost = root / "projects" / "demo" / "demo.md"
+ghost.parent.mkdir(parents=True, exist_ok=True)
+ghost.write_text("# demo\n")  # the measured orphan: title line only
+with db.session_scope() as s:
+    print("  orphan_files():", [rel(p) for p in m.orphan_files(s)])
+real_gc = m.gc_orphan_files
+m.gc_orphan_files = lambda *a, **k: []  # a GC that unlinks nothing
+out = runner.invoke(app, ["memory", "fix-scopes", "--gc-only"], env=WIDE)
+m.gc_orphan_files = real_gc
+d = flat(out.output)
+print("  (a) GC returns [] while the listing is non-empty:")
+print("      exit", out.exit_code, "| 'removed dead scope-file' appears?",
+      "removed dead scope-file" in d)
+print("      summary tail:", d[-70:])
+print("      file still on disk:", ghost.exists(), "<- report and disk agree")
+print("  (b) --gc-only --dry-run still shows what a real run would collect:")
+dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
+                         env=WIDE).output)
+print("      'would remove dead scope-file' named:",
+      f"would remove dead scope-file {ghost}" in dry,
+      "| '1 dead scope-file(s) to remove':", "1 dead scope-file(s) to remove" in dry,
+      "| 'removed dead scope-file':", "removed dead scope-file" in dry,
+      "| still present:", ghost.exists())
+print("  (c) the real run, unpatched, deletes and then says so:")
+run = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only"], env=WIDE).output)
+print("      'removed dead scope-file' named:", f"removed dead scope-file {ghost}" in run,
+      "| file gone:", not ghost.exists())
+assert "removed dead scope-file" not in d, "the false deletion claim is back"
+assert f"removed dead scope-file {ghost}" in run and not ghost.exists()
+print("  ASSERTIONS HELD: the report never claimed a deletion the disk contradicted.")
+PY3
+  echo "ROUND3_EXIT=$?"
+} >"$TMP/review_round3.txt"
+
+{
+  echo "$STAMP"
   echo "# Every file this branch changes, as a COMPLETE per-file diff vs the merge-base."
   echo "# Split per file because the supplied combined diff was truncated mid-function; each"
   echo "# diff_*.txt beside this file is self-contained and ends with its own DIFF_COMPLETE"
@@ -487,23 +675,209 @@ PY2
 
 BASE=$(git merge-base main HEAD)
 for f in $(git diff --name-only "$BASE" HEAD -- . ':(exclude)verify-evidence'); do
-  {
-    echo "$STAMP"
-    echo "# git diff $BASE HEAD -- $f  (COMPLETE: $(git diff "$BASE" HEAD -- "$f" | wc -l) diff lines)"
-    git diff "$BASE" HEAD -- "$f"
-    echo "DIFF_COMPLETE=$f"
-  } >"$TMP/diff_$(echo "$f" | tr '/' '_').txt"
+  name="diff_$(echo "$f" | tr '/' '_')"
+  git diff "$BASE" HEAD -- "$f" >"$TMP/.raw.$name"
+  total=$(wc -l <"$TMP/.raw.$name")
+  parts=$(( (total + 159) / 160 ))
+  [ "$parts" -lt 1 ] && parts=1
+  split -l 160 -d "$TMP/.raw.$name" "$TMP/.part.$name."
+  i=0
+  for p in "$TMP"/.part.$name.*; do
+    i=$((i + 1))
+    {
+      echo "$STAMP"
+      echo "# git diff $BASE HEAD -- $f   PART $i/$parts"
+      echo "# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a"
+      echo "# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff"
+      echo "# line appears in exactly one part, in order. Raw diff = $total lines."
+      cat "$p"
+      echo "DIFF_PART_COMPLETE=$f part $i/$parts"
+    } >"$TMP/${name}.part${i}.txt"
+  done
+  rm -f "$TMP"/.part.$name.* "$TMP/.raw.$name"
 done
 
-for f in full_suite.txt memory_scope_tests.txt checks.txt live_home_readonly.txt \
-         review_round2.txt manifest.txt; do
-  mv "$TMP/$f" "verify-evidence/T-4/$f"
-done
-for f in "$TMP"/diff_*.txt; do mv "$f" "verify-evidence/T-4/"; done
+{
+  echo "$STAMP"
+  echo "# FINAL SOURCE of the exact code the R-25/R-26 review could not inspect in a diff,"
+  echo "# printed with line numbers AT THIS HEAD (a slice of the file as it now stands, not a"
+  echo "# patch), split into <=180-line parts. Each file names the module and the line range."
+  echo "# Areas: _validate/check_role_name/create/update (boundary rejection), fix_scopes +"
+  echo "# gc_orphan_files/orphan_files (repair + GC), run_service._store_memory_suggestions"
+  echo "# (the build-log substitution writes), cli.memory_add/cli.memory_fix_scopes (the CLI"
+  echo "# boundaries + the repair report), and the round-3 test assertions."
+  STAMP="$STAMP" OUTDIR="$TMP" PYTHONPATH="$WT/src" "$MAIN/.venv/bin/python" - <<'PY4'
+import inspect
+import os
+import re
+from pathlib import Path
 
-grep -E "^(#|[0-9]+ (passed|failed|skipped)|All checks|SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT|ROUND2_EXIT)" \
-  verify-evidence/T-4/full_suite.txt \
-  verify-evidence/T-4/memory_scope_tests.txt \
-  verify-evidence/T-4/checks.txt \
-  verify-evidence/T-4/live_home_readonly.txt \
-  verify-evidence/T-4/review_round2.txt
+OUT = Path(os.environ["OUTDIR"])
+STAMP = os.environ["STAMP"]
+PART_MAX = 180
+
+from orchestrator import cli
+from orchestrator.services import memory_service as m
+from orchestrator.services import run_service
+
+WT = Path.cwd()
+
+
+def emit(base, header, lines):
+    """Write one final-source slice, chunked so no view limit ever cuts a function off."""
+    n = max(1, -(-len(lines) // PART_MAX))
+    for i in range(n):
+        chunk = lines[i * PART_MAX:(i + 1) * PART_MAX]
+        name = f"{base}.part{i + 1}of{n}.txt" if n > 1 else f"{base}.txt"
+        path = OUT / name
+        path.write_text("\n".join([STAMP] + header + [f"# part {i + 1}/{n}"] + chunk) + "\n")
+        print(f"  wrote {name} ({len(chunk)} lines)")
+
+
+def dump_fn(base, fn, note):
+    src, start = inspect.getsourcelines(fn)
+    lines = [f"{i:>5} | {ln.rstrip()}" for i, ln in enumerate(src, start)]
+    emit(base, [
+        f"# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): "
+        f"{fn.__module__}.{fn.__qualname__}",
+        f"# lines {start}-{start + len(src) - 1} of {inspect.getsourcefile(fn)}",
+        f"# why the reviewer asked for it: {note}",
+    ], lines)
+
+
+def dump_lines(base, path, first, last, note):
+    text = Path(path).read_text().splitlines()
+    lines = [f"{i:>5} | {text[i - 1]}" for i in range(first, min(last, len(text)) + 1)]
+    emit(base, [
+        f"# FINAL SOURCE at this HEAD: {path} lines {first}-{min(last, len(text))}",
+        f"# why the reviewer asked for it: {note}",
+    ], lines)
+
+
+def test_span(path, name):
+    """The full text of one test function, numbered, from `def name(` to the next top-level def."""
+    text = Path(path).read_text().splitlines()
+    start = next(i for i, ln in enumerate(text, 1) if ln.startswith(f"def {name}("))
+    end = len(text)
+    for i in range(start, end):
+        if i + 1 > start and re.match(r"^(def |# ---)", text[i]):
+            end = i
+            break
+    return text[start - 1:end], start, end
+
+
+def dump_tests(base, path, names, note):
+    lines = []
+    for name in names:
+        body, start, _ = test_span(path, name)
+        lines += [f""] + [f"{i:>5} | {ln}" for i, ln in enumerate(body, start)]
+    emit(base, [
+        f"# FINAL SOURCE at this HEAD: {path} — the assertions themselves, numbered",
+        f"# tests: {', '.join(names)}",
+        f"# why the reviewer asked for it: {note}",
+    ], lines)
+
+
+print("# final-source slices")
+SVC = "src/orchestrator/services/memory_service.py"
+TESTS = "tests"
+dump_fn("slice_memory_service__validate", m._validate,
+        "DoD 2 'the API and CLI create/update boundaries reject an out-of-vocabulary scope "
+        "for EVERY category' — and, this round, the ROLE COLUMN before the scope")
+dump_fn("slice_memory_service__check_role_name", m.check_role_name,
+        "DoD 2 round-3 finding: the single message that names the role FILES and their aliases")
+dump_fn("slice_memory_service__role_memory_file", m.role_memory_file,
+        "the alias resolution (reviewer -> architect, agent -> worker)")
+dump_fn("slice_memory_service__normalize_scope", m.normalize_scope,
+        "DoD 2 the shared membership check")
+dump_fn("slice_memory_service__coerce_scope", m.coerce_scope,
+        "DoD 1 deterministic fallback, never an inference")
+dump_fn("slice_memory_service__create", m.create,
+        "DoD 2 create boundary; raw role strings are refused, not crashed on")
+dump_fn("slice_memory_service__update", m.update,
+        "DoD 2 update boundary: the throwaway preview the review could not inspect")
+dump_fn("slice_memory_service__fix_scopes", m.fix_scopes,
+        "DoD 3 the repair: re-render BOTH files, print ids, leave rejected rows alone")
+dump_fn("slice_memory_service__gc_orphan_files", m.gc_orphan_files,
+        "DoD 3 the orphan collection (the GC the review could not read)")
+dump_fn("slice_memory_service__orphan_files", m.orphan_files,
+        "DoD 3 what counts as dead output")
+dump_fn("slice_memory_service___renderer_output", m._renderer_output,
+        "DoD 3 the hand-edited-markdown protection predicate")
+dump_fn("slice_memory_service__injectability", m.injectability,
+        "DoD 4 the per-category reachability judgement")
+dump_fn("slice_memory_service__reachable_roles", m.reachable_roles,
+        "DoD 4 which prompt roles read a row; role column first, then scope")
+dump_fn("slice_memory_service__import_all", m.import_all,
+        "DoD 3 the other repair path (repairs scopes, never stores a dead role)")
+dump_fn("slice_run_service__store_memory_suggestions", run_service._store_memory_suggestions,
+        "DoD 1 'the substitution is recorded where the operator can see it': the build-log "
+        "writes (memory_scope_substituted / memory_suggestion_dropped)")
+dump_fn("slice_cli__memory_add", cli.memory_add,
+        "DoD 2 the CLI create boundary, including this round's --role pre-check")
+dump_fn("slice_cli__memory_fix_scopes", cli.memory_fix_scopes,
+        "DoD 3 the repair report, including this round's gc-only honesty fix")
+dump_fn("slice_cli__memory_list", cli.memory_list, "DoD 4 the list marker command")
+dump_fn("slice_cli__print_injectability", cli._print_injectability,
+        "DoD 4 the reason line under the table")
+
+dump_lines("slice_memory_service__vocabularies", SVC, 29, 78,
+           "the three named constants + FALLBACK_SCOPE + ROLE_PROJECT_SCOPES + ROLE_MEMORY_KEY")
+dump_lines("slice_cli__gc_only_branch", "src/orchestrator/cli.py",
+           next(i for i, ln in enumerate(
+               Path("src/orchestrator/cli.py").read_text().splitlines(), 1)
+               if "if gc_only:" in ln),
+           next(i for i, ln in enumerate(
+               Path("src/orchestrator/cli.py").read_text().splitlines(), 1)
+               if "repair = m.fix_scopes(" in ln),
+           "DoD 3 round-2 finding: `removed_files=removed or listed` claimed deletions")
+
+UT = f"{TESTS}/unit/test_memory_scopes.py"
+IT = f"{TESTS}/integration/test_memory_scope_boundary.py"
+dump_tests("slice_tests_unit__role_column_boundary", UT, [
+    "test_check_role_name_names_the_role_vocabulary",
+    "test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid",
+    "test_update_refuses_a_legacy_role_column_that_no_prompt_reads",
+    "test_import_refuses_an_unreadable_role_column_without_storing_it",
+    "test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from",
+], "DoD 2, the R-26 finding 1: the role column at create/PATCH/CLI/import")
+dump_tests("slice_tests_unit__coercion_and_log", UT, [
+    "test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope",
+    "test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored",
+    "test_coercion_is_written_to_the_build_log_the_operator_reads",
+], "DoD 1 coercion + the substitution record")
+dump_tests("slice_tests_unit__repair_and_gc", UT, [
+    "test_fix_scopes_moves_legacy_rows_and_re_renders_both_files",
+    "test_fix_scopes_leaves_rejected_rows_alone",
+    "test_gc_only_deletes_files_render_file_could_have_written",
+], "DoD 3 re-rendering both files, and the GC predicate")
+dump_tests("slice_tests_unit__list_marker", UT, [
+    "test_injectability_marks_only_the_unreachable",
+    "test_role_rows_still_render_by_the_rule_main_used",
+], "DoD 4 the marker, and the #39/#47 counter-examples")
+dump_tests("slice_tests_integration__gc_only_honesty", IT, [
+    "test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted",
+    "test_cli_add_refuses_a_role_name_no_prompt_can_read",
+    "test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope",
+], "the two R-26 findings, at the real CLI/HTTP boundaries")
+PY4
+} >"$TMP/slices_index.txt"
+
+# ------------------------------------------------------------------ stage everything
+# Replace this directory's captured outputs wholesale: the per-file diffs are named
+# differently now (.partN), and a stale file from an earlier round left beside them would
+# be read as if it were current.
+rm -f verify-evidence/T-4/diff_*.txt verify-evidence/T-4/slice_*.txt
+mv "$TMP"/*.txt "verify-evidence/T-4/"
+
+echo
+echo "== captured files =="
+ls -1 verify-evidence/T-4
+echo
+echo "== exits =="
+grep -H -E "^(SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT|ROUND2_EXIT|ROUND3_EXIT)=" \
+  verify-evidence/T-4/*.txt
+echo
+echo "== counts =="
+grep -H -E "^[0-9]+ (passed|failed)|All checks passed" verify-evidence/T-4/full_suite.txt \
+  verify-evidence/T-4/memory_scope_tests.txt verify-evidence/T-4/checks.txt

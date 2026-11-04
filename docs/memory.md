@@ -35,6 +35,16 @@ frozen `{"error", "detail"}` shape. `PATCH` validates a throwaway preview **befo
 assigning anything, so a refused edit leaves the stored row and its markdown byte-for-byte
 unchanged rather than relying on a rollback.
 
+For `category=role` the check covers **both** columns, not just `scope`. Injectability keys
+off `role` first (`for_prompt` selects on it, `_file_for` names the file from it), so
+`memory_service.check_role_name()` validates the role name against `ROLE_SCOPES` after
+applying `ROLE_MEMORY_KEY`, and `create`, `update` and `import_all` all refuse
+`role='logbook-writer' scope='worker'` — a row that looks fine to a scope-only check and is
+read by nothing. `orchestrator memory add --role` takes a plain string, so it runs that same
+check before Pydantic's enum can answer with a list of role *values* that never names the
+role *files*; over HTTP the enum is an extra layer in front (a 422 in the frozen shape, so
+an unknown role name is refused before the service is even entered).
+
 Two paths *repair* instead of refusing, because refusing would lose facts that already
 exist and cannot be re-typed by the caller:
 
@@ -90,7 +100,9 @@ orchestrator memory fix-scopes --gc-only  # only collect dead files
 
 A dry run only ever says "would": it prints `would move` / `would re-render` / `would
 collect dead scope-file` / `would remove dead scope-file` and writes nothing, including
-the file list.
+the file list. A real run reports **only the deletions it performed** — `--gc-only` lists
+what `gc_orphan_files` unlinked rather than falling back to the pre-GC listing, so the
+report cannot claim a file was removed while it is still on disk.
 
 `fix-scopes` migrates rows stored before validation existed (entries #5/#22/#24 shipped
 with free-form scopes that no injector could read). It **moves rows and never deletes

@@ -185,7 +185,9 @@ outside it is coerced to the deterministic fallback (`gotchas`/`environment`, ne
 inferred from the words) and the substitution is written to the build log, a role
 suggestion that resolves to no role file is dropped with a warning, and
 `orchestrator memory list` / `memory fix-scopes` mark and repair rows stored before that
-check existed. Suggestions start **pending**,
+check existed. The create and edit boundaries (POST/PATCH, `memory add`) *reject* an
+out-of-vocabulary value for every category, and for `category=role` they check the `role`
+column too, because that is the column injection reads. Suggestions start **pending**,
 and only **approved** entries are injected into prompts. Each role gets its own slice:
 the Architect gets decisions + conventions, the Worker conventions + gotchas, the
 Supervisor decisions + gotchas, and every role gets global memory. See

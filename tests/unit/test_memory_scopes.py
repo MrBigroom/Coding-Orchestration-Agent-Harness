@@ -338,6 +338,103 @@ def test_update_of_a_legacy_row_edits_content_without_freezing_on_its_bad_scope(
         m.update(session, bad.id, MemoryUpdate(scope="housekeeping"))
 
 
+# ------------------------------------------ boundary: the ROLE column, not just the scope
+
+
+def test_check_role_name_names_the_role_vocabulary():
+    """The role vocabulary is `ROLE_SCOPES` after `ROLE_MEMORY_KEY`, and it is importable."""
+    assert m.check_role_name("worker") == "worker"
+    assert m.check_role_name("supervisor") == "supervisor"
+    assert m.check_role_name("reviewer") == "reviewer"  # a role NAME, not a scope
+    assert m.role_memory_file("reviewer") == "architect"  # ...which resolves to this file
+    assert m.role_memory_file("agent") == "worker"
+    for bad in ("logbook-writer", "ai-livestreaming-avatar", ""):
+        with pytest.raises(m.MemoryError_) as exc:
+            m.check_role_name(bad)
+        msg = str(exc.value)
+        assert "architect|worker|supervisor" in msg, bad
+        assert repr(bad) in msg, bad
+
+
+def test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid(session):
+    """DoD 2 at the create boundary: `role` is what decides which prompt reads the row.
+
+    `MemoryCreate.role` is typed as the Role enum, so an HTTP caller cannot send
+    'logbook-writer' at all (see the API test in test_memory_scope_boundary.py). The schema
+    object is built here WITHOUT validation to exercise the service boundary that `import`
+    and any non-HTTP caller reach with a raw string -- the exact shape of the logbook-writer
+    row that started T-4: a valid `scope` hiding a role no injector can select. Before this
+    round that shape died on `AttributeError: 'str' object has no attribute 'value'` inside
+    `create()` instead of being refused with the vocabulary.
+    """
+    body = MemoryCreate.model_construct(
+        category=MemoryCategory.role,
+        scope="worker",
+        content="Diary.",
+        role="logbook-writer",
+        approved=False,
+        tags=[],
+        source="handoff:R-3",
+        project_slug=None,
+    )
+    before = len(m.list_entries(session))
+    with pytest.raises(m.MemoryError_) as exc:
+        m.create(session, body)
+    assert "architect|worker|supervisor" in str(exc.value)
+    assert "logbook-writer" in str(exc.value)
+    assert len(m.list_entries(session)) == before  # nothing half-stored
+    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
+
+
+def test_update_refuses_a_legacy_role_column_that_no_prompt_reads(session):
+    """DoD 2 at the update boundary: an in-vocabulary scope does not launder a dead role."""
+    dead = legacy(session, category="role", scope="worker", role="logbook-writer",
+                  content="Diary.", approved=True)
+    home = m._file_for(dead)
+    before = home.read_text()
+    with pytest.raises(m.MemoryError_) as exc:
+        m.update(session, dead.id, MemoryUpdate(scope="worker"))
+    assert "architect|worker|supervisor" in str(exc.value)
+    session.refresh(dead)
+    assert dead.role == "logbook-writer" and dead.scope == "worker"
+    assert home.read_text() == before  # the refused PATCH wrote nothing; no rollback needed
+    assert not session.dirty and not session.new
+    # A content-only edit stays possible, so the row is not frozen out of the API.
+    m.update(session, dead.id, MemoryUpdate(content="Reworded."))
+    session.refresh(dead)
+    assert dead.content == "Reworded."
+
+
+def test_import_refuses_an_unreadable_role_column_without_storing_it(session):
+    """The repair path repairs SCOPES; it never stores a role no injector can select."""
+    payload = {
+        "version": 1,
+        "entries": [
+            {"category": "role", "scope": "worker", "role": "logbook-writer",
+             "content": "Diary.", "approved": True},
+        ],
+    }
+    assert m.import_all(session, payload) == 0
+    assert m.list_entries(session, category="role") == []
+    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
+
+
+def test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from(session):
+    """`role` wins and `scope` follows, so a row cannot name a file it will not be read in.
+
+    category=role + role='reviewer' + scope='worker': `for_prompt` selects on the `role`
+    column (reviewer -> the architect file), so the scope normalizes to 'architect'.
+    """
+    entry = m.create(
+        session,
+        MemoryCreate(category="role", scope="worker", role="reviewer", content="Gate."),
+    )
+    assert entry.role == "reviewer" and entry.scope == "architect"
+    assert m._file_for(entry).name == "architect.md"
+    assert m.is_injectable(entry)
+    assert m.reachable_roles(entry) == ("architect", "reviewer")
+
+
 # ---------------------------------------------------------------- repair (DoD 3)
 
 

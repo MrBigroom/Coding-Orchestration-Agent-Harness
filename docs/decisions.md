@@ -255,3 +255,21 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   semantics are untouched: `_file_for` still keys off `role`, else `scope`, through
   `ROLE_MEMORY_KEY`, so a legacy `role='logbook-writer'` row keeps its (dead) file and is
   reported rather than re-homed.
+- **2026-11-04 — T-4 round 3: the role COLUMN is a boundary too, and a repair report claims
+  only what it did.** The review of the round above was right that `category=role` was still
+  half-guarded *in the evidence*: `scope` was visibly checked, but injectability keys off
+  `role` first, and no test showed create, PATCH or `memory add` refusing
+  `role='logbook-writer' scope='worker'`. Two things were actually broken behind that: a raw
+  role string reaching `memory_service.create()` died on `AttributeError: 'str' object has no
+  attribute 'value'` instead of being refused (only reachable via `import`/`model_construct`,
+  since `MemoryCreate.role` is a `Role` enum and Pydantic answers an HTTP caller with a 422),
+  and `memory add --role` reported Pydantic's list of role *values*, which never names the
+  role *files* the DoD requires. We chose to expose `check_role_name()` in `memory_service`
+  as the single message, call it from `_validate` (so create/update/import refuse the shape
+  for one reason) and from the CLI before `MemoryCreate` is built, rather than widening
+  `MemoryCreate.role` to `str` — that would change the frozen request shape for a message
+  string. Second: `memory fix-scopes --gc-only` printed `removed dead scope-file` for files it
+  had not deleted, because the report fell back to the pre-GC listing (`removed or listed`);
+  it now carries exactly what `gc_orphan_files` unlinked, so a repair run can never claim a
+  deletion the disk contradicts — the same "never narrate unverified success" rule the harness
+  holds Workers to, applied to its own CLI.

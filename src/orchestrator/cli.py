@@ -1061,6 +1061,13 @@ def memory_add(
     from orchestrator.services import memory_service
 
     _ensure_ready()
+    # `--role` is a plain string here, and MemoryCreate types it as the Role enum, so an
+    # unreadable role would be refused by Pydantic with a message that never names the role
+    # MEMORY FILES (DoD 2 requires the allowed values to be named). Validate it through the
+    # service's own check first; a valid name (including the reviewer/agent aliases) passes
+    # through untouched and is still re-checked by _validate.
+    if role is not None:
+        memory_service.check_role_name(role)
     with _session() as s:
         e = memory_service.create(
             s,
@@ -1138,9 +1145,15 @@ def memory_fix_scopes(
     _ensure_ready()
     with _session() as s:
         if gc_only:
-            listed = m.orphan_files(s)
-            removed = [] if dry_run else m.gc_orphan_files(s)
-            repair = m.ScopeRepair(removed_files=removed or listed, dry_run=dry_run)
+            if dry_run:
+                # a preview of what a real run would collect: nothing is deleted, and the
+                # verb printed below is "would remove"
+                repair = m.ScopeRepair(removed_files=m.orphan_files(s), dry_run=True)
+            else:
+                # ONLY what was actually unlinked. `orphan_files()` is a pre-view taken
+                # before the GC, and falling back to it (`removed or listed`) let a real run
+                # print "removed dead scope-file" for files it had left on disk.
+                repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s), dry_run=False)
         else:
             repair = m.fix_scopes(s, dry_run=dry_run, gc=not no_gc)
     verb = "would move" if dry_run else "moved"
