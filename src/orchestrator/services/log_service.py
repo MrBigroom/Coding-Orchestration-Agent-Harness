@@ -58,6 +58,21 @@ def log_event(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(record.model_dump_json() + "\n")
+    # T-9: the single chokepoint every emitter already goes through. Called AFTER the row is
+    # committed and the JSONL line is written, and wrapped so a notification problem (missing
+    # D-Bus, raising notifier, no desktop) can never lose the build-log line or touch a status.
+    try:
+        from orchestrator.services import notification_service
+
+        notification_service.notify_event(
+            session,
+            event=event,
+            details=details,
+            task_id=task_id,
+            run_id=run_id,
+        )
+    except Exception:  # noqa: BLE001, S110 - notification is best-effort by contract
+        pass
     return entry
 
 

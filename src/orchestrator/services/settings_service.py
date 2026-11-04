@@ -8,6 +8,7 @@ from sqlmodel import Session
 
 from orchestrator.core.config import get_settings
 from orchestrator.core.models import Setting, utcnow
+from orchestrator.core.notification_vocab import MASTER_SETTING, TRIGGERS, setting_default
 
 EDITABLE: dict[str, type] = {
     "merge_enabled": bool,
@@ -34,6 +35,11 @@ EDITABLE: dict[str, type] = {
     "max_memory_tokens_project": int,
     "memory_budget_warn_fraction": float,
     "theme": str,
+    # T-9 notification fan-out: master switch plus one subscription per trigger. The master
+    # defaults to OFF on a new install; the human-must-act triggers default subscribed, the
+    # noisy machinery triggers default silent (docs/configuration.md).
+    MASTER_SETTING: bool,
+    **{trigger.setting: bool for trigger in TRIGGERS.values()},
     # {"<model-name prefix or profile name>": ["<adapter>", ...]}; merged over the code
     # defaults in adapter_service.DEFAULT_HARNESS_ROUTES.
     "harness_routing": dict,
@@ -69,6 +75,11 @@ def defaults() -> dict[str, Any]:
         "max_memory_tokens_project": s.max_memory_tokens_project,
         "memory_budget_warn_fraction": s.memory_budget_warn_fraction,
         "theme": "dark",
+        MASTER_SETTING: False,
+        **{
+            trigger.setting: setting_default(trigger)
+            for trigger in TRIGGERS.values()
+        },
         "harness_routing": {},
     }
 

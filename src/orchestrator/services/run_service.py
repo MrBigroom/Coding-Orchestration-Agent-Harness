@@ -1082,6 +1082,19 @@ async def _execute(
             duration_ms=duration,
             commit_sha=sha,
         )
+        # T-9 DoD 8: the fourth terminal status gets its named event here, in the cancel branch,
+        # immediately after the status is committed and before handoff ingestion. Additive only:
+        # no existing event name changed. A consumer (the T-9 fan-out) no longer has to infer a
+        # cancellation from a task_status line.
+        log_service.log_event(
+            session,
+            "run_cancelled",
+            f"{run.short_id} cancelled (exit {result.exit_code})",
+            role="worker",
+            task_id=task.id,
+            run_id=run.id,
+            commit_sha=sha,
+        )
         salvaged = try_salvage_handoff(
             session,
             task,

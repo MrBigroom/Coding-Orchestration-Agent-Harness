@@ -180,6 +180,7 @@ def create_app() -> FastAPI:
         chat,
         core,
         memory,
+        notifications,
         providers,
         schedules,
         sync,
@@ -187,7 +188,18 @@ def create_app() -> FastAPI:
         ws,
     )
 
-    for module in (core, tasks, artifacts, providers, schedules, memory, agents, sync, chat):
+    for module in (
+        core,
+        tasks,
+        artifacts,
+        providers,
+        schedules,
+        memory,
+        notifications,
+        agents,
+        sync,
+        chat,
+    ):
         app.include_router(module.router, prefix="/api")
     app.include_router(ws.router)
 
