@@ -42,8 +42,12 @@ applying `ROLE_MEMORY_KEY`, and `create`, `update` and `import_all` all refuse
 `role='logbook-writer' scope='worker'` — a row that looks fine to a scope-only check and is
 read by nothing. `orchestrator memory add --role` takes a plain string, so it runs that same
 check before Pydantic's enum can answer with a list of role *values* that never names the
-role *files*; over HTTP the enum is an extra layer in front (a 422 in the frozen shape, so
-an unknown role name is refused before the service is even entered).
+role *files*. `POST /api/memory` gets the same words from `MemoryCreate` itself: a
+`model_validator(mode="before")` runs `check_role_name` before the enum coerces, so the 422
+detail says `allowed role memory files: architect|worker|supervisor` plus the two aliases
+instead of `Input should be 'architect', 'supervisor', 'worker', 'reviewer' or 'agent'`. The
+accepted set is unchanged — `role` is still typed as `Role`, so the request shape and its
+OpenAPI enum are untouched and this is an error-text fix, not a contract change.
 
 Two paths *repair* instead of refusing, because refusing would lose facts that already
 exist and cannot be re-typed by the caller:
@@ -57,9 +61,16 @@ exist and cannot be re-typed by the caller:
 | `memory fix-scopes` | **moves** the row | the repair path for rows already stored |
 
 `memory_service.GLOBAL_SCOPES`, `PROJECT_SCOPES`, `ROLE_SCOPES` (the role *files*,
-`ROLE_FILES` after applying `ROLE_MEMORY_KEY`), `ROLE_SCOPE_ALIASES` and
-`SCOPE_VOCABULARY` are importable constants; before T-4 there was no `ROLE_SCOPES`, so no
-check could be written for the role category.
+`ROLE_FILES` after applying `ROLE_MEMORY_KEY`), `ROLE_SCOPE_ALIASES` and `SCOPE_VOCABULARY`
+are importable constants; before T-4 there was no `ROLE_SCOPES`, so no vocabulary check could
+be written for the role category. They live in `core/memory_vocab.py` and `memory_service`
+re-exports every one of them: `core/schemas.py` has to refuse the same shapes with the same
+words, and it cannot import the service (`memory_service` imports `schemas`, so the reverse
+import would be circular). The three rejection messages are produced there too —
+`vocab_error(category, scope)` for a scope and `check_role_name(role)` for a role — so a
+global rejection names `environment|preferences|patterns`, a project rejection
+`conventions|decisions|gotchas` and a role rejection `architect|worker|supervisor`, at the
+CLI, the service, the request model and the HTTP route alike.
 
 ### What happens to a Worker suggestion with a made-up scope
 

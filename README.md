@@ -187,7 +187,9 @@ suggestion that resolves to no role file is dropped with a warning, and
 `orchestrator memory list` / `memory fix-scopes` mark and repair rows stored before that
 check existed. The create and edit boundaries (POST/PATCH, `memory add`) *reject* an
 out-of-vocabulary value for every category, and for `category=role` they check the `role`
-column too, because that is the column injection reads. Suggestions start **pending**,
+column too, because that is the column injection reads. Every one of those rejections names
+its own allowed values (`environment|preferences|patterns`, `conventions|decisions|gotchas`,
+`architect|worker|supervisor`), including the API's `422` for an unknown role name. Suggestions start **pending**,
 and only **approved** entries are injected into prompts. Each role gets its own slice:
 the Architect gets decisions + conventions, the Worker conventions + gotchas, the
 Supervisor decisions + gotchas, and every role gets global memory. See

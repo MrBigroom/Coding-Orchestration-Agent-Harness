@@ -273,3 +273,30 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   it now carries exactly what `gc_orphan_files` unlinked, so a repair run can never claim a
   deletion the disk contradicts — the same "never narrate unverified success" rule the harness
   holds Workers to, applied to its own CLI.
+- **2026-11-04 — T-4 round 4: one vocabulary source, and an error is only proven by its TEXT.**
+  The round-3 review was right that `POST /api/memory` still refused an unknown `role` with
+  Pydantic's enum message and no shown assertion covered the words. The message is the
+  contract here: a status code alone tells the operator that something was wrong, while DoD 2
+  asks for the boundary to say *what is allowed*. `MemoryCreate` now runs `check_role_name` in
+  a `model_validator(mode="before")`, which fires before the enum coerces, so the 422 detail
+  carries `allowed role memory files: architect|worker|supervisor` and the
+  `reviewer -> architect` / `agent -> worker` aliases. Round 3 had rejected this as "widening
+  `MemoryCreate.role` to `str` for a message string" — but the field is still typed `Role`,
+  all five members still validate, and nothing that was accepted is refused now: only the
+  rejection text changed, so the frozen request shape is intact. A before-validator is the
+  only place that can beat an enum coercion. Second: the vocabularies and the pure
+  scope/role resolution moved to `core/memory_vocab.py`, because `schemas` must refuse the
+  same shapes with the same words and cannot import the service (`memory_service` imports
+  `schemas`). `memory_service` re-exports every name and a test asserts they are the SAME
+  objects, so callers and `memory_service.GLOBAL_SCOPES`-style test imports are unaffected.
+  Third, an assertion-hygiene rule the reviewer had to repeat three tasks running: assert one
+  outcome per case. The repair test's `not orphan.exists() or "mem:N" not in text` passed
+  whether the old file had been re-rendered or merely deleted, i.e. it proved nothing about
+  re-rendering. It is now two named cases — `gc=False` compares the OLD file's exact text
+  (`"# <slug>\n"`, still on disk, stale line gone, the other entry's line intact in the new
+  file), and the default run asserts `removed_files == [<old file>]` and that it is gone. Both
+  were mutation-checked: dropping the old-file `render_file` call fails only the first, and
+  disabling the collector fails only the second. The same trap applies to the role message —
+  the enum text contains each word `architect`, `worker`, `supervisor`, so a per-value loop
+  passes on it; only the joined vocabulary and the "allowed role memory files" phrasing
+  distinguish the two, and those are the assertions the test is built on.
