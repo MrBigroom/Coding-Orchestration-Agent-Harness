@@ -1,7 +1,9 @@
-# HEAD=0b05f6e merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
+# HEAD=d65150b merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
 # command: python3 verify-evidence/T-10/collect_code_map.py
 
 ## Commits on the branch since the merge-base
+d65150b docs(T-10): state the measured counts in the evidence index
+f2a9fca test(T-10): regenerate evidence at 0b05f6e for the round-3 fixes
 0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
 b2f5372 test(T-10): regenerate reviewer-reachable evidence for the round-2 fixes
 7a8215b fix(T-10): attach provenance without gating, refuse stale leftovers, de-race cancel
@@ -43,9 +45,9 @@ d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
  verify-evidence/T-10/changed_existing_tests.txt |  23 +
  verify-evidence/T-10/collect_code_map.py        | 151 ++++++
  verify-evidence/T-10/full_suite.txt             |  20 +
- verify-evidence/T-10/handoff_salvage_tests.txt  |  50 ++
- verify-evidence/T-10/zz_code_map.txt            | 449 +++++++++++++++++
- 17 files changed, 2883 insertions(+), 89 deletions(-)
+ verify-evidence/T-10/handoff_salvage_tests.txt  |  51 ++
+ verify-evidence/T-10/zz_code_map.txt            | 461 ++++++++++++++++++
+ 17 files changed, 2896 insertions(+), 89 deletions(-)
 
 ## Cited functions (bodies truncated per function, file:line from THIS checkout)
 --- DoD 3 fingerprint: src/orchestrator/services/run_service.py handoff_snapshot
@@ -89,7 +91,7 @@ def read_handoff_file(path: Path) -> tuple[Handoff | None, str | None]:
     if not raw.strip():
 
 --- DoD 7 evidence: src/orchestrator/services/run_service.py delivery_evidence
---- src/orchestrator/services/run_service.py:257 def delivery_evidence (first 24 lines)
+--- src/orchestrator/services/run_service.py:257 def delivery_evidence (first 75 lines)
 def delivery_evidence(
     wt: Path,
     base_branch: str,
@@ -98,6 +100,7 @@ def delivery_evidence(
     arrival: str,
     exit_state: str,
     uncommitted_before_sweep: list[str] | None = None,
+    baseline_sha: str | None = None,
 ) -> dict[str, Any]:
     """What git says about a handoff's claims, computed at ingestion time (T-10 DoD 7).
 
@@ -107,16 +110,91 @@ def delivery_evidence(
     worktree had no tracked modifications — and the old "claimed files exist on disk" check passed,
     because the files did exist as uncommitted scratch.
 
+    Claims are scoped to THIS run, not to the whole phase branch. `baseline_sha` is the branch head
+    when the run started (the previous run's `commit_sha`, or the merge-base on a first run):
+    commits after it were created by this run, commits before it belong to earlier rounds. A retry
+    that creates zero commits but claims files an earlier round touched is exactly the laundering
+    path this split closes — it is classified `prior_run_commit`, never `worker_commit`.
+
     Each claim is classified as exactly one of `artifact_service.CLAIM_STATUSES`, first match
-    wins: `worker_commit` (delivered by a Worker-authored commit on this branch),
-    `recovery_commit_only` (on the branch, but only inside a harness recovery commit that no
-    Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
-    branch), `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
-    one-line answer a reviewer can act on.
+    wins: `worker_commit` (delivered by a Worker-authored commit created by this run),
+    `recovery_commit_only` (on the branch, but only inside a harness recovery commit this run that
+    no Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
+    branch), `prior_run_commit` (on the branch, but created by an earlier round), `absent`
+    (nowhere). The structured flag `claims_all_backed_by_this_run_commits` is the one-line answer
+    a reviewer can act on.
     """
+    commits = git_service.commits_against_base(wt, base_branch)
+    run_commits = (
+        git_service.commits_against_base(wt, baseline_sha) if baseline_sha else list(commits)
+    )
+    run_shas = {c.sha for c in run_commits}
+    prior_commits = [c for c in commits if c.sha not in run_shas]
+    worker_paths: set[str] = set()
+    recovery_paths: set[str] = set()
+    for c in run_commits:
+        paths = {_normalize_rel(f["path"]) for f in c.files}
+        (recovery_paths if c.recovery else worker_paths).update(paths)
+    prior_paths: set[str] = set()
+    for c in prior_commits:
+        prior_paths.update(_normalize_rel(f["path"]) for f in c.files)
+    split = git_service.status_split(wt)
+    uncommitted = {_normalize_rel(p) for p in (*split.tracked_modified, *split.untracked_added)}
+    claims = [_normalize_rel(f) for f in (handoff.files_changed if handoff else [])]
+    status: dict[str, str] = {}
+    for claim in claims:
+        if claim in worker_paths:
+            status[claim] = artifact_service.CLAIM_WORKER_COMMIT
+        elif claim in recovery_paths:
+            status[claim] = artifact_service.CLAIM_RECOVERY_COMMIT
+        elif claim in uncommitted:
+            status[claim] = artifact_service.CLAIM_UNCOMMITTED
+        elif claim in prior_paths:
+            status[claim] = artifact_service.CLAIM_PRIOR_RUN
+        else:
+            status[claim] = artifact_service.CLAIM_ABSENT
+    counts: dict[str, int] = {}
+    for s in status.values():
+        counts[s] = counts.get(s, 0) + 1
+    _, diffstat = git_service.diff_against_base(wt, base_branch)
+    return {
+        "arrival": arrival,
+        "exit_state": exit_state,
+        "base_branch": base_branch,
+        "baseline_sha": baseline_sha,
+        "commits": [c.as_dict() for c in commits],
+        "commit_count": len(commits),
+        "run_commits": [c.as_dict() for c in run_commits],
+        "run_commit_count": len(run_commits),
+        "prior_run_commits": [c.as_dict() for c in prior_commits],
+
+--- DoD 7 baseline: src/orchestrator/services/run_service.py _run_baseline_sha
+--- src/orchestrator/services/run_service.py:566 def _run_baseline_sha (first 22 lines)
+def _run_baseline_sha(
+    session: Session, task: Task, run: Run, wt: Path, base_branch: str
+) -> str | None:
+    """The branch head this run started from, used to scope claims to THIS run (T-10 DoD 7).
+
+    The previous run's `commit_sha` is already on the runs table and is the honest baseline: it is
+    where the last round stopped, so `baseline..HEAD` is what this round created. A first run falls
+    back to the merge-base with the base branch (the same scope `git log base..HEAD` has always
+    used). A stale or unrelated sha is ignored and the merge-base is used instead, so a force-moved
+    branch cannot make old work look new.
+    """
+    for r in task_service.runs_for(session, task):
+        if r.id == run.id or not r.commit_sha:
+            continue
+        ancestor = run_git(
+            ["merge-base", "--is-ancestor", r.commit_sha, "HEAD"], wt, check=False
+        )
+        if ancestor.code == 0:
+            return r.commit_sha
+    merged = run_git(["merge-base", base_branch, "HEAD"], wt, check=False)
+    return merged.stdout.strip() if merged.code == 0 and merged.stdout.strip() else None
+
 
 --- DoD 1/2 salvage: src/orchestrator/services/run_service.py try_salvage_handoff
---- src/orchestrator/services/run_service.py:423 def try_salvage_handoff (first 55 lines)
+--- src/orchestrator/services/run_service.py:448 def try_salvage_handoff (first 55 lines)
 def try_salvage_handoff(
     session: Session,
     task: Task,
@@ -128,6 +206,7 @@ def try_salvage_handoff(
     result: AdapterResult,
     uncommitted_before_sweep: list[str],
     stale_snapshot: dict[str, Any] | None = None,
+    baseline_sha: str | None = None,
 ) -> Handoff | None:
     """Ingest a handoff the killed Worker already wrote (T-10 DoD 1 + 2).
 
@@ -171,10 +250,9 @@ def try_salvage_handoff(
                 | {"reason": error},
             ),
             role="supervisor",
-            task_id=task.id,
 
 --- DoD 3 archive: src/orchestrator/services/run_service.py archive_before_round_start
---- src/orchestrator/services/run_service.py:539 def archive_before_round_start (first 18 lines)
+--- src/orchestrator/services/run_service.py:589 def archive_before_round_start (first 18 lines)
 def archive_before_round_start(
     session: Session,
     task: Task,
@@ -195,7 +273,7 @@ def archive_before_round_start(
         return True
 
 --- DoD 1/4 gate: src/orchestrator/services/run_service.py _gate_salvaged
---- src/orchestrator/services/run_service.py:636 def _gate_salvaged (first 20 lines)
+--- src/orchestrator/services/run_service.py:686 def _gate_salvaged (first 20 lines)
 async def _gate_salvaged(
     session: Session, task: Task, run: Run, project: Project, handoff: Handoff
 ) -> dict[str, Any]:
@@ -239,7 +317,7 @@ async def after_run(
 
 
 --- DoD 3/7 render: src/orchestrator/services/artifact_service.py render_delivery_evidence_md
---- src/orchestrator/services/artifact_service.py:224 def render_delivery_evidence_md (first 24 lines)
+--- src/orchestrator/services/artifact_service.py:231 def render_delivery_evidence_md (first 24 lines)
 def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = None) -> str:
     """The reviewer-payload rendering of `run.json.handoff_delivery_evidence` (T-10 DoD 7).
 
@@ -250,6 +328,11 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     if not evidence:
         return ""
     commits = evidence.get("commits") or []
+    run_commits = evidence.get("run_commits")
+    if run_commits is None:
+        # Older archived evidence (before the baseline split) only had the whole-branch list.
+        run_commits = commits
+    prior_commits = evidence.get("prior_run_commits") or []
     status = evidence.get("claim_status") or {}
     counts = evidence.get("claim_counts") or {}
     lines = [f"handoff arrival: {arrival or evidence.get('arrival') or 'unknown'}"]
@@ -258,96 +341,91 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     lines.append(
         f"commits on this branch since {evidence.get('base_branch', 'the base branch')}: "
         f"{evidence.get('commit_count', len(commits))} "
-        f"(worker-authored {evidence.get('worker_commit_count', 0)}, "
-        f"harness recovery {evidence.get('recovery_commit_count', 0)})"
-    )
-    for c in commits[:MAX_COMMITS_IN_EVIDENCE]:
-        kind = "harness recovery commit, NEVER self-checked" if c.get("recovery") else "commit"
-        paths = ", ".join(f"{f['status']} {f['path']}" for f in (c.get("files") or [])[:12])
+        f"(created by this run {evidence.get('run_commit_count', len(run_commits))}: "
 
 ## Cited anchors
 --- DoD 1 cancel call: src/orchestrator/services/run_service.py matching 'salvaged = try_salvage_handoff'
-929-            finished_at=finished,
-930-            duration_ms=duration,
-931-            commit_sha=sha,
-932-        )
-933:        salvaged = try_salvage_handoff(
-934-            session,
-935-            task,
-936-            run,
-937-            project,
+983-            finished_at=finished,
+984-            duration_ms=duration,
+985-            commit_sha=sha,
+986-        )
+987:        salvaged = try_salvage_handoff(
+988-            session,
+989-            task,
+990-            run,
+991-            project,
 --
-962-        )
-963-        log_service.log_event(
-964-            session, f"run_{status}", run.error or "", role="worker", task_id=task.id, run_id=run.id
-965-        )
-966:        salvaged = try_salvage_handoff(
-967-            session,
-968-            task,
-969-            run,
-970-            project,
+1017-        )
+1018-        log_service.log_event(
+1019-            session, f"run_{status}", run.error or "", role="worker", task_id=task.id, run_id=run.id
+1020-        )
+1021:        salvaged = try_salvage_handoff(
+1022-            session,
+1023-            task,
+1024-            run,
+1025-            project,
 
 --- DoD 2 event emit: src/orchestrator/services/run_service.py matching '"handoff_salvaged",'
-507-        )
-508-    log_service.log_event(
-509-        session,
-510:        "handoff_salvaged",
-511-        structured_log.attach(
-512-            f"{run.short_id} was killed ({run.status}) after the Worker had already written a "
-513-            f"valid handoff.json to the worktree, out of band: the adapter never returned it on a "
+534-        )
+535-    log_service.log_event(
+536-        session,
+537:        "handoff_salvaged",
+538-        structured_log.attach(
+539-            f"{run.short_id} was killed ({run.status}) after the Worker had already written a "
+540-            f"valid handoff.json to the worktree, out of band: the adapter never returned it on a "
 --
-607-        return False
-608-    log_service.log_event(
-609-        session,
-610:        "handoff_salvaged",
-611-        structured_log.attach(
-612-            f"a handoff.json from the previous round was still in the worktree at the start of "
-613-            f"{run.short_id}; archived to {dest} before the round-start unlink "
+657-        return False
+658-    log_service.log_event(
+659-        session,
+660:        "handoff_salvaged",
+661-        structured_log.attach(
+662-            f"a handoff.json from the previous round was still in the worktree at the start of "
+663-            f"{run.short_id}; archived to {dest} before the round-start unlink "
 
 --- DoD 2 payload: src/orchestrator/services/run_service.py matching 'def _salvage_log_payload'
-387-    )
-388-
-389-
-390:def _salvage_log_payload(
-391-    task: Task,
-392-    run: Run,
-393-    result: AdapterResult,
+410-    )
+411-
+412-
+413:def _salvage_log_payload(
+414-    task: Task,
+415-    run: Run,
+416-    result: AdapterResult,
 
 --- DoD 3 clean-exit stale: src/orchestrator/services/run_service.py matching 'stale_unchanged ='
-974-            result,
-975-            dirt_before_sweep,
-976-            stale_snapshot=stale_handoff,
-977-        )
-978-        if salvaged is None:
-979-            task.handoff_status = "RUN_" + status.upper()
-980-            task_service.transition(
-981-                session, task, TaskStatus.planned, f"run {status}", role="supervisor"
-982-            )
-983-            return {"run_id": run.id, "status": run.status, "error": run.error}
-984-        return await _gate_salvaged(session, task, run, project, salvaged)
-985-
-986:    stale_unchanged = stale_handoff is not None and handoff_snapshot(handoff_path) == stale_handoff
-987-    if stale_unchanged:
-988-        # A clean exit that never replaced the leftover: do not read the previous round's handoff
-989-        # as this round's work. Synthesize from observed evidence instead. (The archive failure
-990-        # that left the file in place is already logged; this records why it was not ingested.)
-991-        log_service.log_event(
-992-            session,
-993-            "handoff_salvage_failed",
-994-            structured_log.attach(
-995-                f"{run.short_id} exited cleanly but the handoff.json in the worktree is "
-996-                "byte-for-byte unchanged since the round started; it is a previous round's "
-997-                "leftover, not this round's submission, so it is not ingested",
-998-                {
+1030-            dirt_before_sweep,
+1031-            stale_snapshot=stale_handoff,
+1032-            baseline_sha=baseline_sha,
+1033-        )
+1034-        if salvaged is None:
+1035-            task.handoff_status = "RUN_" + status.upper()
+1036-            task_service.transition(
+1037-                session, task, TaskStatus.planned, f"run {status}", role="supervisor"
+1038-            )
+1039-            return {"run_id": run.id, "status": run.status, "error": run.error}
+1040-        return await _gate_salvaged(session, task, run, project, salvaged)
+1041-
+1042:    stale_unchanged = stale_handoff is not None and handoff_snapshot(handoff_path) == stale_handoff
+1043-    if stale_unchanged:
+1044-        # A clean exit that never replaced the leftover: do not read the previous round's handoff
+1045-        # as this round's work. Synthesize from observed evidence instead. (The archive failure
+1046-        # that left the file in place is already logged; this records why it was not ingested.)
+1047-        log_service.log_event(
+1048-            session,
+1049-            "handoff_salvage_failed",
+1050-            structured_log.attach(
+1051-                f"{run.short_id} exited cleanly but the handoff.json in the worktree is "
+1052-                "byte-for-byte unchanged since the round started; it is a previous round's "
+1053-                "leftover, not this round's submission, so it is not ingested",
+1054-                {
 
 --- DoD 3 round-start snapshot: src/orchestrator/services/run_service.py matching 'stale_handoff = handoff_snapshot'
-817-    # Only survives that attempt when the archive failed. Remember the exact leftover: if it is
-818-    # still identical when the run ends, it is the previous round's file and must never be read as
-819-    # this round's submission (DoD 3 + DoD 6).
-820:    stale_handoff = handoff_snapshot(handoff_path)
-821-
-822-    # A branch that carries harness wreckage must not pass it on silently: the Worker is told
-823-    # which commits are recovery commits and is required to re-verify before handing off.
+871-    # Only survives that attempt when the archive failed. Remember the exact leftover: if it is
+872-    # still identical when the run ends, it is the previous round's file and must never be read as
+873-    # this round's submission (DoD 3 + DoD 6).
+874:    stale_handoff = handoff_snapshot(handoff_path)
+875-
+876-    # A branch that carries harness wreckage must not pass it on silently: the Worker is told
+877-    # which commits are recovery commits and is required to re-verify before handing off.
 
 --- DoD 4 status const: src/orchestrator/services/artifact_service.py matching 'HANDOFF_STATUS_SALVAGED ='
 49-# from a Worker's own status string, from SYNTHESIZED (orchestrator-authored) and from the
@@ -371,9 +449,9 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
 193-`handoff_status`, claim/commit counts, and for the pre-round archive the `source_run`,
 
 --- DoD 2 docs event list: docs/build-loop.md matching '`handoff_salvaged`,'
-437-`standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
-438:`retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
-439-`handoff_salvage_failed`, `run_error`. The GUI Build Log page and
+443-`standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
+444:`retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
+445-`handoff_salvage_failed`, `run_error`. The GUI Build Log page and
 
 --- DoD 7 review wiring: src/orchestrator/services/review_service.py matching 'delivery_evidence_section'
 136-        )
@@ -416,6 +494,24 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
 154-    if state.handoff:
 155-        parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))
 
+--- DoD 7 baseline call: src/orchestrator/services/run_service.py matching 'baseline_sha = _run_baseline_sha'
+843-    # Scope delivery evidence to what THIS run creates, not to the whole phase branch. Measure it
+844-    # before the pre-run recovery sweep so this run's own sweep is not attributed to an earlier
+845-    # round (a retry that creates zero commits must not inherit the previous round's delivery).
+846:    baseline_sha = _run_baseline_sha(session, task, run, wt.path, project.base_branch)
+847-    # Supervisor duty: check git status BEFORE (re)trying; recover dirty trees safely. The
+848-    # trailer names the aborted run whose work is being swept, not the run that finds it.
+849-    leftover_of = _last_aborted_run(session, task, run.id)
+
+--- DoD 7 claim prior run: src/orchestrator/services/run_service.py matching 'elif claim in prior_paths'
+311-            status[claim] = artifact_service.CLAIM_RECOVERY_COMMIT
+312-        elif claim in uncommitted:
+313-            status[claim] = artifact_service.CLAIM_UNCOMMITTED
+314:        elif claim in prior_paths:
+315-            status[claim] = artifact_service.CLAIM_PRIOR_RUN
+316-        else:
+317-            status[claim] = artifact_service.CLAIM_ABSENT
+
 --- DoD 6 no claims gate: src/orchestrator/services/supervisor_service.py matching 'is deliberately NOT a verification check'
 126-        )
 127-
@@ -448,8 +544,13 @@ tests/integration/test_handoff_salvage.py:389:def test_a_stale_leftover_is_not_s
 tests/integration/test_handoff_salvage.py:442:def test_a_clean_exit_does_not_ingest_a_stale_leftover_and_synthesizes(
 tests/integration/test_handoff_salvage.py:502:def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate(
 tests/integration/test_handoff_salvage.py:549:def test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence(
+tests/unit/test_handoff_salvage.py:161:def test_a_zero_commit_retry_reports_prior_round_files_as_not_this_runs_delivery(home, tmp_path):
+tests/unit/test_handoff_salvage.py:197:def test_commits_created_after_the_baseline_are_the_ones_that_can_back_a_claim(home, tmp_path):
+tests/integration/test_handoff_salvage.py:605:def test_a_zero_commit_retry_cannot_claim_an_earlier_rounds_files_as_this_runs_delivery(
 
 ## Commits since the merge-base (repeated at the tail for truncated diffs)
+d65150b docs(T-10): state the measured counts in the evidence index
+f2a9fca test(T-10): regenerate evidence at 0b05f6e for the round-3 fixes
 0b05f6e fix(T-10): label recovery commits as committed, not wreckage; shrink evidence
 b2f5372 test(T-10): regenerate reviewer-reachable evidence for the round-2 fixes
 7a8215b fix(T-10): attach provenance without gating, refuse stale leftovers, de-race cancel

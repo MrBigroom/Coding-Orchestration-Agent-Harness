@@ -13,7 +13,7 @@ import pytest
 
 from orchestrator.core.schemas import Handoff
 from orchestrator.services import artifact_service, git_service, run_service
-from orchestrator.utils.git import run_git
+from orchestrator.utils.git import head_sha, run_git
 from tests.conftest import make_repo, requires_git
 
 pytestmark = requires_git
@@ -118,7 +118,7 @@ def test_claims_are_classified_against_commits_dirt_and_absence(home, tmp_path):
         "notes/scratch.txt": artifact_service.CLAIM_UNCOMMITTED,
         "never-existed.md": artifact_service.CLAIM_ABSENT,
     }
-    assert evidence["claims_all_backed_by_worker_commits"] is False
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
     assert evidence["worker_commit_count"] == 1 and evidence["recovery_commit_count"] == 1
     assert evidence["commit_count"] == 2
     assert evidence["claim_counts"] == {
@@ -147,7 +147,7 @@ def test_a_path_only_a_worker_commit_touched_still_counts_when_the_harness_sweep
 
     evidence = _evidence(wt, ["README.md"])
     assert evidence["claim_status"] == {"README.md": artifact_service.CLAIM_WORKER_COMMIT}
-    assert evidence["claims_all_backed_by_worker_commits"] is True
+    assert evidence["claims_all_backed_by_this_run_commits"] is True
 
 
 def test_normalised_prefixes_do_not_hide_a_claim(home, tmp_path):
@@ -155,7 +155,77 @@ def test_normalised_prefixes_do_not_hide_a_claim(home, tmp_path):
     wt = git_service.ensure_worktree(repo, "repo", 3, "phase-1-p1", "main").path
     (wt / "app.py").write_text("x = 2\n")
     _commit(wt, "fix: app", "app.py")
-    assert _evidence(wt, ["./app.py", " /app.py"])["claims_all_backed_by_worker_commits"] is True
+    assert _evidence(wt, ["./app.py", " /app.py"])["claims_all_backed_by_this_run_commits"] is True
+
+
+def test_a_zero_commit_retry_reports_prior_round_files_as_not_this_runs_delivery(home, tmp_path):
+    """The run-13 laundering case, scoped to the run rather than to the whole branch.
+
+    A retry starts at the previous run's `commit_sha` and creates no commit of its own. If its
+    handoff claims a file the earlier round committed, that is prior-round work: it must never
+    light the all-backed flag, and it must read as `prior_run_commit` in the evidence.
+    """
+    repo = _repo(tmp_path)
+    wt = git_service.ensure_worktree(repo, "repo", 7, "phase-1-p1", "main").path
+    (wt / "earlier.py").write_text("x = 3\n")
+    _commit(wt, "feat: earlier round", "earlier.py")
+    baseline = head_sha(wt)
+    assert baseline
+
+    handoff = Handoff.model_validate({**VALID, "files_changed": ["earlier.py"]})
+    evidence = run_service.delivery_evidence(
+        wt,
+        "main",
+        handoff,
+        arrival="salvaged",
+        exit_state="run R-2 status=timeout",
+        baseline_sha=baseline,
+    )
+
+    assert evidence["run_commits"] == [] and evidence["run_commit_count"] == 0
+    assert evidence["prior_run_commit_count"] == 1
+    assert evidence["worker_commit_count"] == 0 and evidence["recovery_commit_count"] == 0
+    assert evidence["claim_status"] == {"earlier.py": artifact_service.CLAIM_PRIOR_RUN}
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
+    text = artifact_service.render_delivery_evidence_md(evidence, "salvaged")
+    assert "earlier.py -> prior_run_commit" in text
+    assert "claims_all_backed_by_this_run_commits=false" in text
+    assert "earlier commits on this branch, NOT created by this run (1)" in text
+    assert "prior_run_commit` is on the branch but was created by an earlier round" in text
+
+
+def test_commits_created_after_the_baseline_are_the_ones_that_can_back_a_claim(home, tmp_path):
+    """The same retry that DOES commit is classified per claim, not promoted wholesale."""
+    repo = _repo(tmp_path)
+    wt = git_service.ensure_worktree(repo, "repo", 8, "phase-1-p1", "main").path
+    (wt / "earlier.py").write_text("x = 3\n")
+    _commit(wt, "feat: earlier round", "earlier.py")
+    baseline = head_sha(wt)
+    assert baseline
+    (wt / "this_run.py").write_text("y = 4\n")
+    _commit(wt, "feat: this run", "this_run.py")
+
+    handoff = Handoff.model_validate(
+        {**VALID, "files_changed": ["this_run.py", "earlier.py"]}
+    )
+    evidence = run_service.delivery_evidence(
+        wt,
+        "main",
+        handoff,
+        arrival="clean_exit",
+        exit_state="run R-3 status=completed",
+        baseline_sha=baseline,
+    )
+
+    assert evidence["claim_status"] == {
+        "this_run.py": artifact_service.CLAIM_WORKER_COMMIT,
+        "earlier.py": artifact_service.CLAIM_PRIOR_RUN,
+    }
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
+    assert evidence["run_commit_count"] == 1 and evidence["worker_commit_count"] == 1
+    assert evidence["prior_run_commit_count"] == 1
+    assert evidence["run_commits"][0]["subject"] == "feat: this run"
+    assert evidence["commits"][0]["subject"] == "feat: earlier round"
 
 
 def test_a_handoff_with_no_claims_is_not_reported_as_delivered(home, tmp_path):
@@ -163,7 +233,7 @@ def test_a_handoff_with_no_claims_is_not_reported_as_delivered(home, tmp_path):
     wt = git_service.ensure_worktree(repo, "repo", 4, "phase-1-p1", "main").path
     evidence = _evidence(wt, [])
     assert evidence["claimed_count"] == 0
-    assert evidence["claims_all_backed_by_worker_commits"] is False
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
 
 
 def test_no_handoff_at_all_yields_an_empty_claim_set(home, tmp_path):
@@ -194,7 +264,7 @@ def test_render_carries_the_provenance_and_the_flag(home, tmp_path):
     assert "handoff arrival: salvaged" in text
     assert "run exit state: run R-1 status=timeout" in text
     assert "promise.md -> uncommitted_only" in text
-    assert "claims_all_backed_by_worker_commits=false" in text
+    assert "claims_all_backed_by_this_run_commits=false" in text
     assert "uncommitted when the run ended (before the harness recovery sweep): promise.md" in text
     # provenance wording, not a verdict: the uncommitted claim is not on the branch, while a
     # recovery-commit claim IS on the branch and only lacks a self-check.

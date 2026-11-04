@@ -220,7 +220,7 @@ def test_timeout_with_a_valid_handoff_is_salvaged_and_reaches_the_gate(session, 
     assert payload["mode"] == "non_clean_exit"
     assert payload["run_status"] == "timeout" and payload["timed_out"] is True
     assert payload["salvaged"] is True and payload["handoff_status"] == "READY_FOR_REVIEW"
-    assert payload["claims_all_backed_by_worker_commits"] is True
+    assert payload["claims_all_backed_by_this_run_commits"] is True
     summary = structured_log.summary_of(events[0].details)
     assert "out of band" in summary and "run.status stays timeout" in summary
     assert _events(session, task, "handoff_salvage_failed") == []
@@ -521,7 +521,7 @@ def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gat
 
     evidence = artifact_service.handoff_delivery_evidence(run.id)
     assert artifact_service.handoff_arrival(run.id) == "salvaged"
-    assert evidence["claims_all_backed_by_worker_commits"] is False
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
     assert evidence["claim_status"] == {"PROMISE_ONLY.md": "recovery_commit_only"}
     # the DoD 7 payload: commit list, diffstat, porcelain at ingestion, and the pre-sweep dirt that
     # proves the claim existed only in the worktree
@@ -534,7 +534,7 @@ def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gat
     text = artifact_service.render_delivery_evidence_md(evidence, "salvaged")
     assert "handoff arrival: salvaged" in text
     assert "PROMISE_ONLY.md -> recovery_commit_only" in text
-    assert "claims_all_backed_by_worker_commits=false" in text
+    assert "claims_all_backed_by_this_run_commits=false" in text
     assert "git status --porcelain -uall at ingestion: clean" in text
 
     # The promise is visible, and the round still cannot auto-complete: a salvaged submission is
@@ -573,7 +573,7 @@ def test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence(
     assert "handoff arrival: salvaged" in text
     assert "MOCK_CHANGE.md -> worker_commit" in text
     assert f"run {run.short_id} status=timeout" in text
-    assert "structured flag: claims_all_backed_by_worker_commits=true" in text
+    assert "structured flag: claims_all_backed_by_this_run_commits=true" in text
     assert "git status --porcelain -uall at ingestion" in text
 
 
@@ -585,7 +585,7 @@ def test_the_clean_exit_path_carries_the_same_evidence(session, project):
     assert artifact_service.handoff_arrival(run.id) == "clean_exit"
     assert task.handoff_status == "READY_FOR_REVIEW" and task.status == TaskStatus.accepted
     evidence = artifact_service.handoff_delivery_evidence(run.id)
-    assert evidence["claims_all_backed_by_worker_commits"] is True
+    assert evidence["claims_all_backed_by_this_run_commits"] is True
     assert evidence["claim_status"] == {"MOCK_CHANGE.md": "worker_commit"}
     assert evidence["worker_commit_count"] == 1 and evidence["recovery_commit_count"] == 0
     assert evidence["exit_state"].startswith(f"run {run.short_id} status=completed")
@@ -600,6 +600,58 @@ def test_the_clean_exit_path_carries_the_same_evidence(session, project):
     assert "diffstat vs merge-base" in section
     rendered = prompt_builder._dynamic(prompt_builder.DynamicState(delivery_evidence=section))
     assert "### Handoff provenance and delivery evidence" in rendered
+
+
+def test_a_zero_commit_retry_cannot_claim_an_earlier_rounds_files_as_this_runs_delivery(
+    session, project, monkeypatch
+):
+    """reviews.11 finding 1, end to end: scope the claim to the RUN, not the phase branch.
+
+    Round 1 commits MOCK_CHANGE.md. The retry creates zero commits but writes a handoff naming
+    the same file. Classifying against the merge-base would call that a Worker commit of this
+    round and light `claims_all_backed_by_this_run_commits`; the run baseline (round 1's
+    `commit_sha`) must instead report `prior_run_commit` and leave the flag false.
+    """
+    task = _task(session, project, ["mock-timeout-handoff"], 15)
+    first = _run(session, task)
+    run1 = session.get(Run, first["run_id"])
+    assert first["status"] == "timeout" and run1.commit_sha
+    assert task.status == TaskStatus.blocked
+
+    task_service.queue(session, task)
+    handoff = {
+        "phase": task_service.phase_label(task),
+        "branch": task.branch_name,
+        "status": "READY_FOR_REVIEW",
+        "summary": "claims MOCK_CHANGE.md, but this retry committed nothing",
+        "files_changed": ["MOCK_CHANGE.md"],
+        "dod_self_check": [{"item": "MOCK_CHANGE.md updated", "met": True, "evidence": ""}],
+    }
+
+    async def timeout_without_commits(self, ctx, runner):
+        ctx.handoff_path.write_text(json.dumps(handoff, indent=2))
+        return AdapterResult(exit_code=None, timed_out=True, error="timed out after 2s")
+
+    monkeypatch.setattr(MockHarnessAdapter, "run", timeout_without_commits)
+    second = _run(session, task)
+    run2 = session.get(Run, second["run_id"])
+
+    assert second["status"] == "timeout" and second.get("salvaged") is True, second
+    evidence = artifact_service.handoff_delivery_evidence(run2.id)
+    assert evidence["baseline_sha"] == run1.commit_sha
+    assert evidence["run_commits"] == [] and evidence["run_commit_count"] == 0
+    assert evidence["prior_run_commit_count"] == 1
+    assert evidence["claim_status"] == {"MOCK_CHANGE.md": "prior_run_commit"}
+    assert evidence["claims_all_backed_by_this_run_commits"] is False
+    text = artifact_service.render_delivery_evidence_md(evidence, "salvaged")
+    assert "MOCK_CHANGE.md -> prior_run_commit" in text
+    assert "claims_all_backed_by_this_run_commits=false" in text
+    assert "earlier commits on this branch, NOT created by this run (1)" in text
+    events = [e for e in _events(session, task, "handoff_salvaged") if e.run_id == run2.id]
+    assert len(events) == 1, [e.details for e in events]
+    payload = structured_log.parse(events[0].details)
+    assert payload["claims_all_backed_by_this_run_commits"] is False
+    assert payload["prior_run_commit_count"] == 1
 
 
 def test_a_run_with_no_archived_evidence_says_so(session, project):

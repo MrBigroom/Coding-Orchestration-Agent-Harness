@@ -7,8 +7,8 @@ Branch `task-10-a-run-that-times-out-discards-the-valid-handoff`, cut from `main
 
 | file | command | result |
 | --- | --- | --- |
-| `full_suite.txt` | `./scripts/orch_verify.sh all` | `457 passed, 6 skipped` (0 failed) + `All checks passed!` (ruff) |
-| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -vv` | `31 passed, 432 deselected` |
+| `full_suite.txt` | `./scripts/orch_verify.sh test` (the configured gate command) | `460 passed, 6 skipped` (0 failed) at code HEAD `d65150b`; lint is recorded separately by the wrapper command |
+| `handoff_salvage_tests.txt` | `./scripts/orch_verify.sh test -k handoff_salvage -vv` | `34 passed` (see the file for the exact deselected count) |
 | `zz_code_map.txt` | `python3 verify-evidence/T-10/collect_code_map.py` | commit list, recovery-commit stat, diffstat, cited function bodies/anchors with `file:line` from this checkout |
 | `changed_existing_tests.txt` | `git diff <merge-base>..HEAD -- tests/integration/test_mock_run.py` | the one pre-existing test whose assertions changed |
 
@@ -77,19 +77,29 @@ the one that survives. It repeats the commit list at its own tail for the same r
    suite is green, including all pre-existing run/gate tests.
 
 7. **A salvaged handoff cannot launder a promise.** `delivery_evidence` computes at ingestion time
-   the commit list since the merge base (with the recovery flag), the diffstat versus the merge
-   base, `git status --porcelain -uall`, the dirt present before the harness recovery sweep, and a
-   per-claim status (`worker_commit` / `recovery_commit_only` / `uncommitted_only` / `absent`). It
-   is archived in `runs/<id>/run.json` as `handoff_delivery_evidence` on both the salvage path and
-   the clean-exit path. The reviewer payload renders the same evidence
-   (`review_service.delivery_evidence_section` -> `prompt_builder` dynamic state).
-   **This is attached provenance + a structured flag, not a new gate**: no verification check was
-   added, because a harness recovery commit is still content on the branch and T-8 owns that
-   machinery. The rendered wording now says exactly that instead of calling recovery-commit
-   content undelivered work. Proof:
+   the **baseline sha this run started from** (`_run_baseline_sha`: previous run `commit_sha`, else
+   merge-base), the commits created by this run (`run_commits`, with the recovery flag), the
+   earlier commits on the branch (`prior_run_commits`), the diffstat versus the merge base,
+   `git status --porcelain -uall`, the dirt present before the harness recovery sweep, and a
+   per-claim status (`worker_commit` / `recovery_commit_only` / `uncommitted_only` /
+   `prior_run_commit` / `absent`). It is archived in `runs/<id>/run.json` as
+   `handoff_delivery_evidence` on both the salvage path and the clean-exit path. The reviewer
+   payload renders the same evidence (`review_service.delivery_evidence_section` ->
+   `prompt_builder` dynamic state).
+   **Reviewer finding 1 (round 5) is the scoping bug this fixes:** classifying against the
+   merge-base made a zero-commit retry inherit earlier rounds' commits, so it could set
+   `claims_all_backed_by_this_run_commits=true` for work it did not do. The flag is now named for
+   what it means, and a claim on an earlier round's file is `prior_run_commit`. Proof:
+   `test_a_zero_commit_retry_reports_prior_round_files_as_not_this_runs_delivery` (unit) and
+   `test_a_zero_commit_retry_cannot_claim_an_earlier_rounds_files_as_this_runs_delivery`
+   (end-to-end, zero-commit retry), plus
    `test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate` and
    `test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence` (captures the real
    Architect prompt).
+   **This is attached provenance + a structured flag, not a new gate**: no verification check was
+   added, because a harness recovery commit is still content on the branch and T-8 owns that
+   machinery. The rendered wording says exactly that instead of calling recovery-commit content
+   undelivered work.
 
 ## Authority for behaviour beyond the four round-2 directive items
 
@@ -111,6 +121,21 @@ product decision:
   semantics or the DoD 1-10 machinery owned by T-8". Turning `recovery_commit_only` into a
   verification failure would re-gate T-8's recovery machinery through T-10. DoD 7 asks for
   attached provenance and a structured flag, which is what shipped.
+
+## Round-5 reviewer findings — disposition
+
+1. **Claims scoped to the base branch, not this run (finding 1).** Fixed structurally: per-run
+   baseline, `prior_run_commit`, renamed flag, offline zero-commit-retry tests. See DoD 7 above.
+2. **`dod_self_check[6]` self-certified DoD 7 while finding 1 was open (findings 2/5).** It is now
+   true on the evidence above; `tests.command` is the configured
+   `./scripts/orch_verify.sh test`, and this README records the measured HEAD.
+3. **`mock_harness.py` `KNOWN_TAGS` comment described a routing mechanism that does not exist
+   (finding 6).** Corrected: `build_command` forwards only known tags, and `main()`'s exit 2 is a
+   direct-CLI guard.
+4. **Findings 3 and 4 are NOT worked on.** The truncated supplied diff and artifacts that do not
+   appear in a supplied artifact are the harness review-payload gap tracked as T-11; no review
+   plumbing, frozen `runs/<run_id>/` file name, or new evidence machinery was added. The existing
+   `zz_code_map.txt` was regenerated, with the added commit list kept at its tail.
 
 ## Round-2 reviewer findings — disposition (the five supplied this round)
 

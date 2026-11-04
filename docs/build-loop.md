@@ -210,22 +210,28 @@ weaker evidence than a clean-exit handoff, because an early handoff is partly a 
 fixes while the branch had no new commits and the worktree had no tracked modifications.
 
 So every ingestion path — clean exit **and** salvage — archives delivery evidence in
-`runs/<id>/run.json` (`handoff_delivery_evidence`): the commit list since the merge base (with the
-recovery flag), the diffstat, `git status --porcelain -uall` at ingestion time, and the dirt that
-existed *before* the harness recovery sweep. Each claimed path is classified `worker_commit`,
-`recovery_commit_only`, `uncommitted_only` or `absent`, and
-`claims_all_backed_by_worker_commits` is the one-line answer. The reviewer prompt renders the same
-evidence, so a reviewer sees a promise labelled as a promise rather than reading it as delivered
-work.
+`runs/<id>/run.json` (`handoff_delivery_evidence`): the **baseline sha this run started from**, the
+commits created by this run (`git log baseline..HEAD`, with the recovery flag), the earlier
+commits on the branch that predate this run, the diffstat vs the merge-base,
+`git status --porcelain -uall` at ingestion time, and the dirt that existed *before* the harness
+recovery sweep. The baseline is the previous run's `commit_sha` for the same task, falling back to
+the merge-base on a first run — so a retry that creates **zero** commits cannot inherit the
+previous round's commits as its own delivery. Each claimed path is classified `worker_commit`
+(this run, Worker-authored), `recovery_commit_only` (this run, only inside a harness recovery
+commit), `uncommitted_only` (worktree state, not on the branch), `prior_run_commit` (on the
+branch, but created by an earlier round) or `absent`, and
+`claims_all_backed_by_this_run_commits` is the one-line answer. The reviewer prompt renders the
+same evidence, so a reviewer sees a promise labelled as a promise rather than reading it as
+delivered work.
 
 This is **attached provenance, not a new gate**. T-10 does not add a verification check for
-claims, and deliberately does not make `recovery_commit_only` or `uncommitted_only` fail
-automatically: a harness recovery commit is still content on the branch, and how recovery
-commits are treated is T-8's machinery (`recovery commits (harness-created)`), which T-10 must
-not widen. The reviewer and the operator read the flag — a salvaged round already routes to
-`NEEDS_HUMAN` — and the older "claimed files exist on disk" check is unchanged. Turning the flag
-into a gate failure would have made every round that needed a recovery sweep reject its own
-committed work, which is the opposite of recoverable.
+claims, and deliberately does not make `recovery_commit_only`, `uncommitted_only` or
+`prior_run_commit` fail automatically: a harness recovery commit is still content on the branch,
+and how recovery commits are treated is T-8's machinery (`recovery commits (harness-created)`),
+which T-10 must not widen. The reviewer and the operator read the flag — a salvaged round already
+routes to `NEEDS_HUMAN` — and the older "claimed files exist on disk" check is unchanged. Turning
+the flag into a gate failure would have made every round that needed a recovery sweep reject its
+own committed work, which is the opposite of recoverable.
 
 ## What a new round resets
 

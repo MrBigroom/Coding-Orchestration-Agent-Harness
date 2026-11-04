@@ -21,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 FUNCTIONS = [
     ("DoD 3 fingerprint", "src/orchestrator/services/run_service.py", "handoff_snapshot", 20),
     ("DoD 1/5 read", "src/orchestrator/services/run_service.py", "read_handoff_file", 14),
-    ("DoD 7 evidence", "src/orchestrator/services/run_service.py", "delivery_evidence", 24),
+    ("DoD 7 evidence", "src/orchestrator/services/run_service.py", "delivery_evidence", 75),
+    ("DoD 7 baseline", "src/orchestrator/services/run_service.py", "_run_baseline_sha", 22),
     ("DoD 1/2 salvage", "src/orchestrator/services/run_service.py", "try_salvage_handoff", 55),
     (
         "DoD 3 archive",
@@ -52,6 +53,8 @@ ANCHORS = [
     ("DoD 2 docs event list", "docs/build-loop.md", "`handoff_salvaged`,", 1),
     ("DoD 7 review wiring", "src/orchestrator/services/review_service.py", "delivery_evidence_section", 4),
     ("DoD 7 prompt wiring", "src/orchestrator/services/prompt_builder.py", "delivery_evidence", 3),
+    ("DoD 7 baseline call", "src/orchestrator/services/run_service.py", "baseline_sha = _run_baseline_sha", 3),
+    ("DoD 7 claim prior run", "src/orchestrator/services/run_service.py", "elif claim in prior_paths", 3),
     ("DoD 6 no claims gate", "src/orchestrator/services/supervisor_service.py", "is deliberately NOT a verification check", 2),
     ("Scope no recovery gate", "src/orchestrator/services/supervisor_service.py", "T-8 owns the", 2),
 ]
@@ -68,6 +71,9 @@ TESTS = [
     "test_a_clean_exit_does_not_ingest_a_stale_leftover_and_synthesizes",
     "test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate",
     "test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence",
+    "test_a_zero_commit_retry_reports_prior_round_files_as_not_this_runs_delivery",
+    "test_commits_created_after_the_baseline_are_the_ones_that_can_back_a_claim",
+    "test_a_zero_commit_retry_cannot_claim_an_earlier_rounds_files_as_this_runs_delivery",
 ]
 
 

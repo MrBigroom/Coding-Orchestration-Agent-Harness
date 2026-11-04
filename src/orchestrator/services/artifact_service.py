@@ -54,8 +54,15 @@ HANDOFF_STATUS_SALVAGED = "SALVAGED"
 CLAIM_WORKER_COMMIT = "worker_commit"
 CLAIM_RECOVERY_COMMIT = "recovery_commit_only"
 CLAIM_UNCOMMITTED = "uncommitted_only"
+CLAIM_PRIOR_RUN = "prior_run_commit"
 CLAIM_ABSENT = "absent"
-CLAIM_STATUSES = (CLAIM_WORKER_COMMIT, CLAIM_RECOVERY_COMMIT, CLAIM_UNCOMMITTED, CLAIM_ABSENT)
+CLAIM_STATUSES = (
+    CLAIM_WORKER_COMMIT,
+    CLAIM_RECOVERY_COMMIT,
+    CLAIM_UNCOMMITTED,
+    CLAIM_PRIOR_RUN,
+    CLAIM_ABSENT,
+)
 
 
 def artifact_root() -> Path:
@@ -231,6 +238,11 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     if not evidence:
         return ""
     commits = evidence.get("commits") or []
+    run_commits = evidence.get("run_commits")
+    if run_commits is None:
+        # Older archived evidence (before the baseline split) only had the whole-branch list.
+        run_commits = commits
+    prior_commits = evidence.get("prior_run_commits") or []
     status = evidence.get("claim_status") or {}
     counts = evidence.get("claim_counts") or {}
     lines = [f"handoff arrival: {arrival or evidence.get('arrival') or 'unknown'}"]
@@ -239,15 +251,33 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     lines.append(
         f"commits on this branch since {evidence.get('base_branch', 'the base branch')}: "
         f"{evidence.get('commit_count', len(commits))} "
-        f"(worker-authored {evidence.get('worker_commit_count', 0)}, "
-        f"harness recovery {evidence.get('recovery_commit_count', 0)})"
+        f"(created by this run {evidence.get('run_commit_count', len(run_commits))}: "
+        f"worker-authored {evidence.get('worker_commit_count', 0)}, harness recovery "
+        f"{evidence.get('recovery_commit_count', 0)}; earlier rounds "
+        f"{evidence.get('prior_run_commit_count', len(prior_commits))})"
     )
-    for c in commits[:MAX_COMMITS_IN_EVIDENCE]:
+    lines.append(
+        "run baseline: "
+        + (
+            evidence.get("baseline_sha")
+            or f"merge-base with {evidence.get('base_branch', 'the base branch')} "
+            "(no earlier run recorded)"
+        )
+    )
+    for c in run_commits[:MAX_COMMITS_IN_EVIDENCE]:
         kind = "harness recovery commit, NEVER self-checked" if c.get("recovery") else "commit"
         paths = ", ".join(f"{f['status']} {f['path']}" for f in (c.get("files") or [])[:12])
         lines.append(f"  - {c.get('short')} [{kind}] {c.get('subject')} ({paths or 'no files'})")
-    if len(commits) > MAX_COMMITS_IN_EVIDENCE:
-        lines.append(f"  - (+{len(commits) - MAX_COMMITS_IN_EVIDENCE} more commits)")
+    if len(run_commits) > MAX_COMMITS_IN_EVIDENCE:
+        lines.append(f"  - (+{len(run_commits) - MAX_COMMITS_IN_EVIDENCE} more commits)")
+    if prior_commits:
+        lines.append(
+            f"earlier commits on this branch, NOT created by this run ({len(prior_commits)}):"
+        )
+        for c in prior_commits[:MAX_COMMITS_IN_EVIDENCE]:
+            lines.append(f"  - {c.get('short')} {c.get('subject')}")
+        if len(prior_commits) > MAX_COMMITS_IN_EVIDENCE:
+            lines.append(f"  - (+{len(prior_commits) - MAX_COMMITS_IN_EVIDENCE} more commits)")
     lines.append(f"diffstat vs merge-base:\n{evidence.get('diffstat') or '  (empty diff)'}")
     dirt = evidence.get("porcelain_at_ingestion") or []
     lines.append(
@@ -267,19 +297,21 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     for path, st in sorted(status.items()):
         lines.append(f"  - {path} -> {st}")
     lines.append(
-        "structured flag: claims_all_backed_by_worker_commits="
-        f"{str(evidence.get('claims_all_backed_by_worker_commits')).lower()}"
+        "structured flag: claims_all_backed_by_this_run_commits="
+        f"{str(evidence.get('claims_all_backed_by_this_run_commits')).lower()}"
     )
     # Provenance, not a gate. Wording matters here: `recovery_commit_only` is already on the
     # branch (T-8's recovery machinery committed it), so calling it undelivered work would
     # contradict docs/build-loop.md and invite an LLM reviewer to reject a round for a sweep it
-    # did not cause. Only `worker_commit` carries a Worker self-check behind it.
+    # did not cause. Only `worker_commit` carries a self-check by THIS round behind it.
     lines.append(
-        "provenance only, not a gate: `worker_commit` is a commit on this branch authored by the "
-        "Worker (a self-checked claim); `recovery_commit_only` IS on the branch but only inside a "
-        "harness recovery commit no Worker self-checked, so judge it by re-verification like any "
-        "other unreviewed commit; `uncommitted_only` exists only as worktree state and is NOT on "
-        "the branch; `absent` was not found. Only `worker_commit` has a self-check behind it."
+        "provenance only, not a gate: `worker_commit` is a commit this run created and the "
+        "Worker authored (a self-checked claim); `recovery_commit_only` IS on the branch but only "
+        "inside a harness recovery commit no Worker self-checked, so judge it by re-verification "
+        "like any other unreviewed commit; `uncommitted_only` exists only as worktree state and "
+        "is NOT on the branch; `prior_run_commit` is on the branch but was created by an earlier "
+        "round, so it is not this round's delivery; `absent` was not found. Only `worker_commit` "
+        "has a self-check by this run behind it."
     )
     return "\n".join(lines)
 

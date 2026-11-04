@@ -49,7 +49,7 @@ from orchestrator.services import (
 )
 from orchestrator.services.prompt_builder import DynamicState
 from orchestrator.utils import structured_log
-from orchestrator.utils.git import head_sha, status_porcelain
+from orchestrator.utils.git import head_sha, run_git, status_porcelain
 from orchestrator.utils.redaction import redact
 
 # T-10: a run that was killed (timeout, non-zero exit, cancel) may already hold a complete,
@@ -262,6 +262,7 @@ def delivery_evidence(
     arrival: str,
     exit_state: str,
     uncommitted_before_sweep: list[str] | None = None,
+    baseline_sha: str | None = None,
 ) -> dict[str, Any]:
     """What git says about a handoff's claims, computed at ingestion time (T-10 DoD 7).
 
@@ -271,19 +272,34 @@ def delivery_evidence(
     worktree had no tracked modifications — and the old "claimed files exist on disk" check passed,
     because the files did exist as uncommitted scratch.
 
+    Claims are scoped to THIS run, not to the whole phase branch. `baseline_sha` is the branch head
+    when the run started (the previous run's `commit_sha`, or the merge-base on a first run):
+    commits after it were created by this run, commits before it belong to earlier rounds. A retry
+    that creates zero commits but claims files an earlier round touched is exactly the laundering
+    path this split closes — it is classified `prior_run_commit`, never `worker_commit`.
+
     Each claim is classified as exactly one of `artifact_service.CLAIM_STATUSES`, first match
-    wins: `worker_commit` (delivered by a Worker-authored commit on this branch),
-    `recovery_commit_only` (on the branch, but only inside a harness recovery commit that no
-    Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
-    branch), `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
-    one-line answer a reviewer can act on.
+    wins: `worker_commit` (delivered by a Worker-authored commit created by this run),
+    `recovery_commit_only` (on the branch, but only inside a harness recovery commit this run that
+    no Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
+    branch), `prior_run_commit` (on the branch, but created by an earlier round), `absent`
+    (nowhere). The structured flag `claims_all_backed_by_this_run_commits` is the one-line answer
+    a reviewer can act on.
     """
     commits = git_service.commits_against_base(wt, base_branch)
+    run_commits = (
+        git_service.commits_against_base(wt, baseline_sha) if baseline_sha else list(commits)
+    )
+    run_shas = {c.sha for c in run_commits}
+    prior_commits = [c for c in commits if c.sha not in run_shas]
     worker_paths: set[str] = set()
     recovery_paths: set[str] = set()
-    for c in commits:
+    for c in run_commits:
         paths = {_normalize_rel(f["path"]) for f in c.files}
         (recovery_paths if c.recovery else worker_paths).update(paths)
+    prior_paths: set[str] = set()
+    for c in prior_commits:
+        prior_paths.update(_normalize_rel(f["path"]) for f in c.files)
     split = git_service.status_split(wt)
     uncommitted = {_normalize_rel(p) for p in (*split.tracked_modified, *split.untracked_added)}
     claims = [_normalize_rel(f) for f in (handoff.files_changed if handoff else [])]
@@ -295,6 +311,8 @@ def delivery_evidence(
             status[claim] = artifact_service.CLAIM_RECOVERY_COMMIT
         elif claim in uncommitted:
             status[claim] = artifact_service.CLAIM_UNCOMMITTED
+        elif claim in prior_paths:
+            status[claim] = artifact_service.CLAIM_PRIOR_RUN
         else:
             status[claim] = artifact_service.CLAIM_ABSENT
     counts: dict[str, int] = {}
@@ -305,10 +323,15 @@ def delivery_evidence(
         "arrival": arrival,
         "exit_state": exit_state,
         "base_branch": base_branch,
+        "baseline_sha": baseline_sha,
         "commits": [c.as_dict() for c in commits],
         "commit_count": len(commits),
-        "worker_commit_count": sum(1 for c in commits if not c.recovery),
-        "recovery_commit_count": sum(1 for c in commits if c.recovery),
+        "run_commits": [c.as_dict() for c in run_commits],
+        "run_commit_count": len(run_commits),
+        "prior_run_commits": [c.as_dict() for c in prior_commits],
+        "prior_run_commit_count": len(prior_commits),
+        "worker_commit_count": sum(1 for c in run_commits if not c.recovery),
+        "recovery_commit_count": sum(1 for c in run_commits if c.recovery),
         "diffstat": diffstat,
         "porcelain_at_ingestion": [
             line for line in status_porcelain(wt).splitlines() if line.strip()
@@ -318,7 +341,7 @@ def delivery_evidence(
         "claimed_count": len(claims),
         "claim_status": status,
         "claim_counts": counts,
-        "claims_all_backed_by_worker_commits": bool(claims)
+        "claims_all_backed_by_this_run_commits": bool(claims)
         and all(s == artifact_service.CLAIM_WORKER_COMMIT for s in status.values()),
     }
 
@@ -410,11 +433,13 @@ def _salvage_log_payload(
         "salvaged": handoff is not None,
     }
     if evidence is not None:
-        payload["claims_all_backed_by_worker_commits"] = evidence[
-            "claims_all_backed_by_worker_commits"
+        payload["claims_all_backed_by_this_run_commits"] = evidence[
+            "claims_all_backed_by_this_run_commits"
         ]
         payload["claim_counts"] = evidence["claim_counts"]
         payload["commit_count"] = evidence["commit_count"]
+        payload["run_commit_count"] = evidence["run_commit_count"]
+        payload["prior_run_commit_count"] = evidence["prior_run_commit_count"]
         payload["recovery_commit_count"] = evidence["recovery_commit_count"]
     payload.update({k: v for k, v in extra.items() if v is not None})
     return payload
@@ -431,6 +456,7 @@ def try_salvage_handoff(
     result: AdapterResult,
     uncommitted_before_sweep: list[str],
     stale_snapshot: dict[str, Any] | None = None,
+    baseline_sha: str | None = None,
 ) -> Handoff | None:
     """Ingest a handoff the killed Worker already wrote (T-10 DoD 1 + 2).
 
@@ -485,6 +511,7 @@ def try_salvage_handoff(
         arrival=artifact_service.HANDOFF_ARRIVAL_SALVAGED,
         exit_state=exit_state_text(run, result),
         uncommitted_before_sweep=uncommitted_before_sweep,
+        baseline_sha=baseline_sha,
     )
     archive_handoff_artifacts(run, handoff)
     _write_run_json(
@@ -515,7 +542,7 @@ def try_salvage_handoff(
             f"handoff.json + handoff.md; run.status stays {run.status} and the Supervisor gate "
             f"(not the Worker's own claim) decides the round. Claims backed only by uncommitted "
             f"worktree state: "
-            f"{'yes' if not evidence['claims_all_backed_by_worker_commits'] else 'none'}.",
+            f"{'yes' if not evidence['claims_all_backed_by_this_run_commits'] else 'none'}.",
             _salvage_log_payload(
                 task, run, result, handoff, SALVAGE_MODE_NON_CLEAN_EXIT, evidence
             ),
@@ -534,6 +561,29 @@ def _previous_round_run(session: Session, task: Task, run: Run) -> Run | None:
         if r.id != run.id:
             return r
     return None
+
+
+def _run_baseline_sha(
+    session: Session, task: Task, run: Run, wt: Path, base_branch: str
+) -> str | None:
+    """The branch head this run started from, used to scope claims to THIS run (T-10 DoD 7).
+
+    The previous run's `commit_sha` is already on the runs table and is the honest baseline: it is
+    where the last round stopped, so `baseline..HEAD` is what this round created. A first run falls
+    back to the merge-base with the base branch (the same scope `git log base..HEAD` has always
+    used). A stale or unrelated sha is ignored and the merge-base is used instead, so a force-moved
+    branch cannot make old work look new.
+    """
+    for r in task_service.runs_for(session, task):
+        if r.id == run.id or not r.commit_sha:
+            continue
+        ancestor = run_git(
+            ["merge-base", "--is-ancestor", r.commit_sha, "HEAD"], wt, check=False
+        )
+        if ancestor.code == 0:
+            return r.commit_sha
+    merged = run_git(["merge-base", base_branch, "HEAD"], wt, check=False)
+    return merged.stdout.strip() if merged.code == 0 and merged.stdout.strip() else None
 
 
 def archive_before_round_start(
@@ -790,6 +840,10 @@ async def _execute(
             task_id=task.id,
             run_id=run.id,
         )
+    # Scope delivery evidence to what THIS run creates, not to the whole phase branch. Measure it
+    # before the pre-run recovery sweep so this run's own sweep is not attributed to an earlier
+    # round (a retry that creates zero commits must not inherit the previous round's delivery).
+    baseline_sha = _run_baseline_sha(session, task, run, wt.path, project.base_branch)
     # Supervisor duty: check git status BEFORE (re)trying; recover dirty trees safely. The
     # trailer names the aborted run whose work is being swept, not the run that finds it.
     leftover_of = _last_aborted_run(session, task, run.id)
@@ -941,6 +995,7 @@ async def _execute(
             result,
             dirt_before_sweep,
             stale_snapshot=stale_handoff,
+            baseline_sha=baseline_sha,
         )
         if salvaged is None:
             task_service.transition(
@@ -974,6 +1029,7 @@ async def _execute(
             result,
             dirt_before_sweep,
             stale_snapshot=stale_handoff,
+            baseline_sha=baseline_sha,
         )
         if salvaged is None:
             task.handoff_status = "RUN_" + status.upper()
@@ -1039,6 +1095,7 @@ async def _execute(
             arrival=arrival,
             exit_state=exit_state_text(run, result, status=RunStatus.completed),
             uncommitted_before_sweep=dirt_before_sweep,
+            baseline_sha=baseline_sha,
         ),
     )
     if not synthesized and handoff.memory_suggestions:

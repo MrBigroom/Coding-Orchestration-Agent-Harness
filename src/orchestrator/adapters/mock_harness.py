@@ -39,7 +39,10 @@ MOCK_CANCEL_SECONDS = 15
 # editable install points at (see `run()`).
 PACKAGE_SRC = Path(__file__).resolve().parents[2]
 
-# Tags this adapter understands (everything else starting with `mock-` is a routing tag).
+# Behaviour tags this adapter understands. `build_command` forwards only these; `main()` also
+# rejects any other `mock-` tag with exit 2 so a directly-invoked mock cannot silently fall through
+# to the success path. That guard is a CLI safety net, not a routing mechanism: through
+# `build_command` an unrecognised `mock-` tag is simply not forwarded.
 KNOWN_TAGS = {
     "mock-fail",
     "mock-timeout",
