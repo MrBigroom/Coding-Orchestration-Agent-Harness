@@ -1,0 +1,32 @@
+HEAD 51855f9db95467c14a8c1f2a1d64113c0caf4c0a
+Last-sorting evidence index: decisive excerpts the branch diff may truncate.
+
+TESTS (14 notification tests, all in the 596-passed suite):
+tests/unit/test_notifications.py
+  test_off_by_default_records_skip_and_delivers_nothing
+  test_trigger_selection_against_the_real_event_vocabulary
+  test_payload_shape_link_and_redaction
+  test_parallel_runs_coalesce_and_a_trigger_is_deduped
+  test_failures_never_lose_the_build_log_or_poison_the_session
+  test_a_bug_inside_the_fanout_leaves_one_durable_failed_row
+  test_noisy_events_are_silent_until_enabled
+  test_duration_reports_compute_and_wall_and_only_names_a_large_freeze
+  test_channel_actions_markup_and_no_client
+  test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded
+tests/integration/test_notifications.py
+  test_completed_mock_run_yields_one_coalesced_notification
+  test_cancelled_run_emits_run_cancelled_once_and_fans_out
+  test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending
+  test_notifications_endpoint_serves_the_persistent_list
+tests/integration/test_handoff_salvage.py::test_cancel_with_a_valid_handoff_is_salvaged
+  asserts exactly one run_cancelled event (was "not in" before T-9; deliberate update, DoD 8).
+
+DOCS / CONTRACT:
+README.md:47 "Desktop notifications (off by default)"
+docs/configuration.md:52 "notifications_enabled (master, default false) plus one notification_<trigger>"
+docs/build-loop.md:501 lists run_cancelled; :509-533 names all four terminal events and the trigger set
+docs/frozen-contracts.md:92 run_cancelled; :100 "Notification records" table + GET /api/notifications
+docs/contract-change-request-T9-01-notifications.md: status REQUESTED, DoD 3/8 authorize it
+
+RUNTIME: `./scripts/orch_verify.sh test` -> 596 passed, 6 skipped; lint -> All checks passed;
+`tsc -b --force` -> tsc_exit=0 (see full_suite.txt, lint.txt, gui_typecheck.txt).

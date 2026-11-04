@@ -1,0 +1,3 @@
+HEAD 51855f9db95467c14a8c1f2a1d64113c0caf4c0a
+command: tsc -b --force (scratch dir with the main checkout's web/node_modules symlinked outside this worktree)
+tsc_exit=0
