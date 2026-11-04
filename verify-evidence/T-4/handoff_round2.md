@@ -94,6 +94,11 @@ demo: `review_round2.txt` FINDING 8 (`imported 0` for a fact already stored, `im
   `CliRunner`, `tests/conftest.py` deletes all six secret env vars; no adapter, no provider call,
   no network, no API key.
 
+  Provenance of those numbers: `git diff --name-only 5c678f9 HEAD` lists only files under
+  `verify-evidence/T-4/`. Every `src/`, `tests/` and `docs/` byte on this branch is at `5c678f9`,
+  which is the tree the stamped logs tested, so the 520/6/0 and the clean lint describe the whole
+  source content of the tip.
+
 **DoD self-check.** All five items ticked, each with file:line + test + log in
 `handoff.json`. Nothing in the DoD was left partially true; the two items the reviewer found broken
 (fallback literalism in DoD 1, repair reporting in DoD 3) are now literally true and asserted.
