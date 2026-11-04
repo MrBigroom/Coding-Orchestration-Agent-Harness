@@ -51,7 +51,7 @@ from orchestrator.core.memory_vocab import (
     substitution_note,  # noqa: F401 - re-export
     vocab_error,
 )
-from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, utcnow
+from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, Setting, utcnow
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
 from orchestrator.utils.memory_text import is_rot_prone
 from orchestrator.utils.paths import safe_join
@@ -77,6 +77,7 @@ class SuggestionOutcome:
         """Just the substitution notes (drops start with 'dropped ')."""
         return [n for n in self.notes if not n.startswith("dropped ")]
 
+
 # Injection buckets -> (setting name for the cap).
 MEMORY_BUDGETS = {
     "global": "max_memory_tokens_global",
@@ -85,15 +86,48 @@ MEMORY_BUDGETS = {
 }
 
 
-def memory_budgets() -> dict[str, int]:
+def _effective_settings(session: Session | None) -> dict[str, Any]:
+    """Runtime settings (settings table over env defaults) when a session is available.
+
+    Without this the caps would be env-only while `settings_service.EDITABLE` advertises them
+    as runtime-editable: PATCH /api/settings and the GUI would accept an edit that injection
+    silently ignores — a machine consumer reading the WRONG value instead of failing loudly.
+    """
+    if session is None:
+        return {}
+    from orchestrator.services import settings_service  # local: avoid an import cycle
+
+    try:
+        values = settings_service.defaults()
+        for row in session.exec(select(Setting)):
+            if row.key in settings_service.EDITABLE:
+                values[row.key] = row.value_json
+        return values
+    except Exception:  # a half-initialised home must not break prompt building
+        return {}
+
+
+def memory_budgets(session: Session | None = None) -> dict[str, int]:
     s = get_settings()
-    if not s.memory_budget_enabled:
+    values = _effective_settings(session)
+    enabled = bool(values.get("memory_budget_enabled", s.memory_budget_enabled))
+    if not enabled:
         return {k: 0 for k in MEMORY_BUDGETS}
-    return {k: int(getattr(s, attr)) for k, attr in MEMORY_BUDGETS.items()}
+    return {k: int(values.get(attr, getattr(s, attr))) for k, attr in MEMORY_BUDGETS.items()}
 
 
-def memory_budgets_enabled() -> bool:
-    return get_settings().memory_budget_enabled
+def memory_budgets_enabled(session: Session | None = None) -> bool:
+    s = get_settings()
+    values = _effective_settings(session)
+    return bool(values.get("memory_budget_enabled", s.memory_budget_enabled))
+
+
+def memory_warn_fraction(session: Session | None = None) -> float:
+    return float(
+        _effective_settings(session).get(
+            "memory_budget_warn_fraction", get_settings().memory_budget_warn_fraction
+        )
+    )
 
 
 @dataclass
@@ -185,9 +219,7 @@ def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
     if entry.category == MemoryCategory.project:
         if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
             return ()
-        return tuple(
-            r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
-        )
+        return tuple(r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes)
     key = role_file_key(entry)
     if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
         return ()
@@ -399,9 +431,7 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     "unchanged" guarantee does not depend on session rollback behaviour.
     """
     entry = _get(session, entry_id)
-    new_content = (
-        redact(data.content.strip()) if data.content is not None else entry.content
-    )
+    new_content = redact(data.content.strip()) if data.content is not None else entry.content
     new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
     preview = MemoryEntry(
         category=entry.category,
@@ -569,10 +599,7 @@ def orphan_files(session: Session) -> list[Path]:
     return [
         p
         for p in sorted(root.rglob("*.md"))
-        if p not in owned
-        and in_layout_dir(p)
-        and not canonical_file(p)
-        and _renderer_output(p)
+        if p not in owned and in_layout_dir(p) and not canonical_file(p) and _renderer_output(p)
     ]
 
 
@@ -653,9 +680,7 @@ def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> S
         # A row that moves away from a non-canonical file leaves that file with no owner;
         # the GC below collects it. Computed before the mutation so a dry run can say so.
         other_owners = {
-            _file_for(e)
-            for e in list_entries(session, status="approved")
-            if e.id != entry.id
+            _file_for(e) for e in list_entries(session, status="approved") if e.id != entry.id
         }
         preview = MemoryEntry(
             category=entry.category,
@@ -786,7 +811,7 @@ def select_for_prompt(
     uncapped growth squeezes diff/handoff/verification evidence instead. Capping happens here
     so the squeeze is visible, reviewable and reported.
     """
-    budgets = budgets if budgets is not None else memory_budgets()
+    budgets = budgets if budgets is not None else memory_budgets(session)
     approved = list_entries(session, status="approved")
     if also_approved:
         approved = approved + list(also_approved)
@@ -822,15 +847,15 @@ def select_for_prompt(
         )
         selection.sections[bucket] = text
         selection.used[bucket] = estimate_tokens(text)
-    selection.warnings = _budget_warnings(selection)
+    selection.warnings = _budget_warnings(selection, session)
     return selection
 
 
-def _budget_warnings(selection: MemorySelection) -> list[str]:
+def _budget_warnings(selection: MemorySelection, session: Session | None = None) -> list[str]:
     """Tripwire before the guillotine: warn as a section approaches its cap."""
-    if not get_settings().memory_budget_enabled:
+    if not memory_budgets_enabled(session):
         return []
-    frac = get_settings().memory_budget_warn_fraction
+    frac = memory_warn_fraction(session)
     out = []
     for bucket, cap in selection.budgets.items():
         if cap <= 0:
@@ -873,8 +898,9 @@ def export_all(session: Session) -> dict[str, Any]:
     }
 
 
-def _import_keys(category: str, scope: str, project_slug: str | None, role: str | None,
-                 content: str) -> set[tuple[Any, ...]]:
+def _import_keys(
+    category: str, scope: str, project_slug: str | None, role: str | None, content: str
+) -> set[tuple[Any, ...]]:
     """Every tuple that identifies this fact, before AND after the scope repair.
 
     A stored legacy row keeps its dead scope until `fix-scopes` runs, so an import of the
@@ -924,9 +950,7 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             approved=bool(raw.get("approved")),
             rejected=bool(raw.get("rejected")),
         )
-        raw_keys = _import_keys(
-            category, entry.scope, entry.project_slug, entry.role, content
-        )
+        raw_keys = _import_keys(category, entry.scope, entry.project_slug, entry.role, content)
         if raw_keys & existing:
             continue
         try:
