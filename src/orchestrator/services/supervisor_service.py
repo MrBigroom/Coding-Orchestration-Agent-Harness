@@ -361,29 +361,156 @@ async def verify(
     return result
 
 
-def _rounds_used(session: Session, task: Task) -> int:
-    return sum(
-        1 for r in task_service.runs_for(session, task) if r.status in ("completed", "testing")
+# T-12: a review round is still a run that reached the gate (its status is `testing` while the
+# gate runs, then `completed`). An *attempt* is every run that consumed an adapter window,
+# including the ones that ended timeout/failed/cancelled and so produced no submission. The two
+# counters are deliberately separate: the old cap counted only successes, which let a Worker that
+# never submits be retried forever at full adapter cost.
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def run_attempt_stats(session: Session, task: Task) -> dict[str, int]:
+    """Count verified rounds and every attempt from the runs table, not from prose.
+
+    `completed` includes `testing` because the current run is still in that state when
+    `_requeue_or_block` decides: it has produced its submission and reached the gate, which is
+    exactly what the old `_rounds_used` counted. Every timeout/failed/cancelled run is an attempt
+    that bought no verified round, and is counted here as well.
+    """
+    counts = {"completed": 0, "timeout": 0, "failed": 0, "cancelled": 0}
+    for r in task_service.runs_for(session, task):
+        if r.status in ("completed", "testing"):
+            counts["completed"] += 1
+        elif r.status in ("timeout", "failed", "cancelled"):
+            counts[r.status] += 1
+    counts["attempts"] = sum(counts.values())
+    counts["verified_rounds"] = counts["completed"]
+    return counts
+
+
+def attempt_summary(session: Session, task: Task) -> dict[str, int | str]:
+    """The additive derived field rendered by Tasks/TaskDetail (T-12 DoD 2)."""
+    stats = run_attempt_stats(session, task)
+    return {
+        **stats,
+        "max_review_rounds": settings_service.get(session, "max_review_rounds"),
+        "max_run_attempts_per_task": settings_service.get(session, "max_run_attempts_per_task"),
+        "summary": (
+            f"{_plural(stats['attempts'], 'attempt')}, "
+            f"{_plural(stats['verified_rounds'], 'verified round')}"
+        ),
+    }
+
+
+def _attempt_breakdown(stats: dict[str, int]) -> str:
+    return (
+        f"attempts={stats['attempts']} (completed={stats['completed']}, "
+        f"timeout={stats['timeout']}, failed={stats['failed']}, "
+        f"cancelled={stats['cancelled']}); verified rounds={stats['verified_rounds']}"
     )
 
 
-def _requeue_or_block(session: Session, task: Task, reason: str) -> None:
-    limit = settings_service.get(session, "max_review_rounds")
-    if _rounds_used(session, task) >= limit:
-        task_service.transition(
+def _fired_limits(
+    stats: dict[str, int], review_limit: int, attempt_limit: int
+) -> list[str]:
+    fired: list[str] = []
+    if stats["verified_rounds"] >= review_limit:
+        fired.append(f"review round limit (max_review_rounds={review_limit})")
+    if stats["attempts"] >= attempt_limit:
+        fired.append(f"run attempt limit (max_run_attempts_per_task={attempt_limit})")
+    return fired
+
+
+def _block_for_limits(
+    session: Session,
+    task: Task,
+    run: Run,
+    reason: str,
+    stats: dict[str, int],
+    fired: list[str],
+) -> None:
+    which = " and ".join(fired)
+    detail = f"{reason}; {which} reached — needs human; {_attempt_breakdown(stats)}"
+    limits = ["review_rounds" if f.startswith("review") else "attempts" for f in fired]
+    log_service.log_event(
+        session,
+        "task_limits_exhausted",
+        structured_log.attach(
+            f"{which} reached; {_attempt_breakdown(stats)}",
+            {
+                "limits": limits,
+                "review_limit": settings_service.get(session, "max_review_rounds"),
+                "attempt_limit": settings_service.get(session, "max_run_attempts_per_task"),
+                **stats,
+                "task_id": task.id,
+                "run_id": run.id,
+            },
+        ),
+        role="supervisor",
+        task_id=task.id,
+        run_id=run.id,
+        phase=task_service.phase_label(task),
+    )
+    task_service.transition(session, task, TaskStatus.blocked, detail, role="supervisor")
+
+
+def submission_status(run: Run) -> str:
+    """How the previous round's submission reached (or failed to reach) its artifacts.
+
+    Read back from `run.json` (`artifact_service.handoff_arrival`), never inferred from the
+    Worker's prose. T-10 made the round-start unlink archive-safe; this label is what the next
+    requeue reason and Worker prompt state so a retry cannot silently look like a fresh first
+    attempt when the previous round left nothing usable behind.
+    """
+    arrival = artifact_service.handoff_arrival(run.id)
+    if arrival == artifact_service.HANDOFF_ARRIVAL_SALVAGED:
+        return "salvaged from a killed run"
+    if arrival == artifact_service.HANDOFF_ARRIVAL_CLEAN_EXIT:
+        return "submitted on clean exit"
+    if arrival == artifact_service.HANDOFF_ARRIVAL_SYNTHESIZED:
+        return "absent (no usable handoff; the harness synthesized one)"
+    return f"absent (run ended {run.status} without a usable handoff)"
+
+
+def enforce_attempt_limit(session: Session, task: Task, run: Run, reason: str) -> bool:
+    """Block a failed/timed-out/cancelled run once it has spent the attempt budget.
+
+    Called from the non-clean-exit paths in `run_service`, before the task is returned to
+    `planned`. Returns True when it blocked, so the caller does not move the task again.
+    """
+    stats = run_attempt_stats(session, task)
+    attempt_limit = settings_service.get(session, "max_run_attempts_per_task")
+    if stats["attempts"] >= attempt_limit:
+        _block_for_limits(
             session,
             task,
-            TaskStatus.blocked,
-            f"{reason}; review round limit ({limit}) reached — needs human",
-            role="supervisor",
+            run,
+            reason,
+            stats,
+            [f"run attempt limit (max_run_attempts_per_task={attempt_limit})"],
         )
+        return True
+    return False
+
+
+def _requeue_or_block(session: Session, task: Task, run: Run, reason: str) -> None:
+    stats = run_attempt_stats(session, task)
+    review_limit = settings_service.get(session, "max_review_rounds")
+    attempt_limit = settings_service.get(session, "max_run_attempts_per_task")
+    fired = _fired_limits(stats, review_limit, attempt_limit)
+    if fired:
+        _block_for_limits(session, task, run, reason, stats, fired)
     else:
         task.source = "retry"
         task_service.transition(
             session,
             task,
             TaskStatus.queued,
-            f"{reason}; returned to Worker on the same branch",
+            (
+                f"{reason}; previous round submission ({run.short_id}, {run.status}): "
+                f"{submission_status(run)}; returned to Worker on the same branch"
+            ),
             role="supervisor",
         )
 
@@ -443,7 +570,9 @@ async def after_run(
     outcome: dict = {"verification": verification.final_result}
 
     if not tests_green or handoff is None:
-        _requeue_or_block(session, task, "tests not green or handoff missing; review not triggered")
+        _requeue_or_block(
+            session, task, run, "tests not green or handoff missing; review not triggered"
+        )
         outcome["decision"] = task.status
         return outcome
 
@@ -476,12 +605,14 @@ async def after_run(
             outcome["decision"] = task.status
             return outcome
         if review.verdict == ReviewVerdict.CHANGES_REQUESTED:
-            _requeue_or_block(session, task, "architect requested changes")
+            _requeue_or_block(session, task, run, "architect requested changes")
             outcome["decision"] = task.status
             return outcome
 
     if verification.final_result != "pass":
-        _requeue_or_block(session, task, "supervisor verification failed (believe the check)")
+        _requeue_or_block(
+            session, task, run, "supervisor verification failed (believe the check)"
+        )
         outcome["decision"] = task.status
         return outcome
 

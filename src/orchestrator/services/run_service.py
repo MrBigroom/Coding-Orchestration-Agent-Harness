@@ -563,6 +563,49 @@ def _previous_round_run(session: Session, task: Task, run: Run) -> Run | None:
     return None
 
 
+def _submission_note(
+    session: Session,
+    task: Task,
+    run: Run,
+    *,
+    leftover_present: bool,
+    archived_before_round: bool,
+) -> str | None:
+    """State what became of the previous round's submission (T-12 DoD 3).
+
+    The next Worker prompt is built in the same round that runs the round-start archive/unlink.
+    Without this note a retry after a timeout looks identical to a first attempt, even though the
+    previous round produced no submission at all. Read the status back from the archived run
+    artifact, and describe the worktree copy separately: T-10 archives it before the unlink, so
+    the honest wording is "archived at round start", not "deleted".
+    """
+    prev = _previous_round_run(session, task, run)
+    if prev is None:
+        if not leftover_present:
+            return None
+        status = "no previous round run is recorded"
+    else:
+        prev_status = supervisor_service.submission_status(prev)
+        status = f"previous round {prev.short_id} ({prev.status}): {prev_status}"
+    lines = [f"Previous round submission: {status}."]
+    if leftover_present:
+        if archived_before_round:
+            lines.append(
+                "A handoff.json from that round was still in the worktree at the start of this "
+                "round; it was archived to the orchestrator's evidence store before the "
+                "round-start unlink, so the worktree copy was removed only after a copy existed."
+            )
+        else:
+            lines.append(
+                "A handoff.json from that round was still in the worktree at the start of this "
+                "round, but archiving it failed; it was left in place and will not be read as "
+                "this round's submission."
+            )
+    else:
+        lines.append("No handoff.json was present in the worktree when this round started.")
+    return " ".join(lines)
+
+
 def _run_baseline_sha(
     session: Session, task: Task, run: Run, wt: Path, base_branch: str
 ) -> str | None:
@@ -773,9 +816,12 @@ async def execute(
                 session, run, RunStatus.failed, error=redact(str(e))[:2000], finished_at=utcnow()
             )
         if task.status == TaskStatus.in_progress:
-            task_service.transition(
-                session, task, TaskStatus.planned, f"run failed: {e}", role="supervisor"
-            )
+            if not supervisor_service.enforce_attempt_limit(
+                session, task, run, f"run failed: {e}"
+            ):
+                task_service.transition(
+                    session, task, TaskStatus.planned, f"run failed: {e}", role="supervisor"
+                )
         log_service.log_event(
             session, "run_error", str(e), role="supervisor", task_id=task.id, run_id=run.id
         )
@@ -866,7 +912,9 @@ async def _execute(
     # Do NOT just unlink: a submission left over from the previous round is work, and deleting it
     # was the second half of the bug (a retry after a timeout actively destroyed the round it was
     # meant to recover). Archive first, unlink only when the copy provably exists (T-10 DoD 3).
-    if archive_before_round_start(session, task, run, project, handoff_path):
+    leftover_present = handoff_path.is_file()
+    archived_before_round = archive_before_round_start(session, task, run, project, handoff_path)
+    if archived_before_round:
         handoff_path.unlink(missing_ok=True)
     # Only survives that attempt when the archive failed. Remember the exact leftover: if it is
     # still identical when the run ends, it is the previous round's file and must never be read as
@@ -902,7 +950,17 @@ async def _execute(
             run_id=run.id,
         )
 
-    state = DynamicState(feedback=_latest_feedback(session, task), recovery=recovery_state)
+    state = DynamicState(
+        feedback=_latest_feedback(session, task),
+        recovery=recovery_state,
+        submission=_submission_note(
+            session,
+            task,
+            run,
+            leftover_present=leftover_present,
+            archived_before_round=archived_before_round,
+        ),
+    )
     prompt = prompt_builder.build_prompt(session, Role.worker, task, project, state)
     prompt_text = prompt.static_text() + "\n\n" + prompt.dynamic_text()
     prompt_file = artifact_service.write_text(run.id, "prompt.md", prompt_text)
@@ -998,9 +1056,12 @@ async def _execute(
             baseline_sha=baseline_sha,
         )
         if salvaged is None:
-            task_service.transition(
-                session, task, TaskStatus.planned, "run cancelled", role="supervisor"
-            )
+            if not supervisor_service.enforce_attempt_limit(
+                session, task, run, "run cancelled"
+            ):
+                task_service.transition(
+                    session, task, TaskStatus.planned, "run cancelled", role="supervisor"
+                )
             return {"run_id": run.id, "status": run.status}
         return await _gate_salvaged(session, task, run, project, salvaged)
     if result.timed_out or result.exit_code != 0 or result.error:
@@ -1033,9 +1094,12 @@ async def _execute(
         )
         if salvaged is None:
             task.handoff_status = "RUN_" + status.upper()
-            task_service.transition(
-                session, task, TaskStatus.planned, f"run {status}", role="supervisor"
-            )
+            if not supervisor_service.enforce_attempt_limit(
+                session, task, run, f"run {status}"
+            ):
+                task_service.transition(
+                    session, task, TaskStatus.planned, f"run {status}", role="supervisor"
+                )
             return {"run_id": run.id, "status": run.status, "error": run.error}
         return await _gate_salvaged(session, task, run, project, salvaged)
 
@@ -1194,9 +1258,12 @@ async def _execute_direct(
     except ProviderError as e:
         finished = utcnow()
         _set_run(session, run, RunStatus.failed, error=redact(str(e)), finished_at=finished)
-        task_service.transition(
-            session, task, TaskStatus.planned, f"provider error: {e}", role="supervisor"
-        )
+        if not supervisor_service.enforce_attempt_limit(
+            session, task, run, f"provider error: {e}"
+        ):
+            task_service.transition(
+                session, task, TaskStatus.planned, f"provider error: {e}", role="supervisor"
+            )
         return {"run_id": run.id, "status": run.status, "error": str(e)}
     artifact_service.write_text(run.id, "stdout.log", res.text)
     artifact_service.write_json(run.id, "handoff.json", handoff.model_dump(mode="json"))

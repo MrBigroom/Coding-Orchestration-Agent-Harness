@@ -59,8 +59,11 @@ Run states: `pending → preparing → running → testing → completed`, with 
    `run_completed`. **Before the task goes back to `planned`,** the harness tries to salvage a
    `handoff.json` the killed Worker already wrote — see “Salvaging a handoff from a killed run”.
    With no usable submission the task returns to `planned` for a deliberate retry, exactly as
-   before. Every new round clears the previous round's lifecycle markers (see
-   “What a new round resets”).
+   before — **unless the attempt cap has fired**: once `max_run_attempts_per_task` attempts have
+   been spent, the task goes to `blocked` instead of `planned`, so a timeout/cancel loop cannot
+   run forever. Every new round clears the previous round's lifecycle markers (see
+   “What a new round resets”) and its prompt states what became of the previous round's
+   submission (salvaged, absent, or archived at round start).
 7. **Handoff.** `.orchestrator/handoff.json` in the worktree (git-excluded) is
    validated and copied to `runs/<id>/handoff.json`, with `handoff.md` rendered next to
    it. If the worker produced none, the orchestrator writes a **synthesized** handoff
@@ -315,11 +318,26 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
    "Review input size (known limitation)" below.
    - `NEEDS_HUMAN` → `blocked`
    - `CHANGES_REQUESTED` → back to the Worker on the same branch
-   - after `max_review_rounds` rounds (default 3) → `blocked`
+   - after `max_review_rounds` verified rounds (default 3) → `blocked`
 5. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
    Architect, so cron jobs don't spend Opus tokens.
 6. **Merge gate** (below).
+
+### Verified rounds versus attempts
+
+Two limits bound the loop, and they count different things. `max_review_rounds` (default 3)
+counts a **verified round**: a run that reached the gate, i.e. status `completed`, plus the
+`testing` run currently being gated. It says nothing about a run that timed out, failed or was
+cancelled before submitting. `max_run_attempts_per_task` (default 6) counts **every adapter
+attempt**, including those timeout/failed/cancelled runs, because each one costs a full paid
+adapter window even though it buys no verified round. With the defaults, a flow that only ever
+completes still blocks at three review rounds exactly as before; a flow that keeps timing out now
+blocks after six attempts instead of requeueing forever. Either limit firing transitions the task
+to `blocked`, names the fired limit and the `completed / timeout / failed / cancelled` breakdown
+in the transition reason, and emits the additive `task_limits_exhausted` build-log event. The
+Tasks list and Task Detail render the derived `attempts` summary (“6 attempts, 2 verified rounds”)
+from `GET /api/tasks` / `GET /api/tasks/{id}`; that field is additive and never stored.
 
 ## Verification commands must be path-independent
 
@@ -442,7 +460,7 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `nits_deferred`, `merge_candidate`, `merged`, `merge_refused`, `schedule_fired`,
 `standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
 `retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
-`handoff_salvage_failed`, `run_error`. The GUI Build Log page and
+`handoff_salvage_failed`, **`task_limits_exhausted`**, `run_error`. The GUI Build Log page and
 `GET /api/build-log` read it.
 
 ### Terminal run events

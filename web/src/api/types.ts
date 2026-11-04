@@ -1,3 +1,15 @@
+export interface AttemptSummary {
+  attempts: number;
+  verified_rounds: number;
+  completed: number;
+  timeout: number;
+  failed: number;
+  cancelled: number;
+  max_review_rounds: number;
+  max_run_attempts_per_task: number;
+  summary: string;
+}
+
 export interface Task {
   id: number;
   short_id: string;
@@ -27,6 +39,8 @@ export interface Task {
   agent_id: number | null;
   created_at: string;
   updated_at: string;
+  /** T-12 derived counter from the runs table; never stored on the task row. */
+  attempts?: AttemptSummary;
 }
 
 export interface Run {

@@ -43,7 +43,16 @@ Stored in the `settings` table; they override the env defaults: `merge_enabled`,
 `auto_merge_enabled`, `supervisor_microfixes_enabled`, `max_parallel_runs`,
 `max_parallel_runs_per_project`, `scheduler_enabled`, `worker_enabled`,
 `allow_gui_commands`, `allow_interactive_sessions`, `allow_unattended_sessions`,
-`max_review_rounds` (default 3), and `theme` (dark).
+`max_review_rounds` (default 3), `max_run_attempts_per_task` (default 6), and `theme` (dark).
+
+`max_review_rounds` counts **verified rounds**: runs that reached the gate, i.e. `completed`,
+plus the `testing` run currently being gated. `max_run_attempts_per_task` counts **every adapter
+attempt**, including runs that ended `timeout`, `failed` or `cancelled` without a submission. The
+default 6 is deliberately above the default 3 review rounds: a flow that only ever completes still
+blocks on the review-round limit exactly as before, while a Worker that keeps timing out cannot
+consume unbounded adapter windows. When either limit fires, the task goes to `blocked`, the
+`task_limits_exhausted` build-log event records which limit fired and the attempt breakdown, and
+the blocked reason names both the limit and the counts.
 
 The React GUI doesn't read the stored `theme` setting. Theme is a per-browser choice
 (Light / Dark / System, default System) made in the sidebar or on Settings → Appearance,

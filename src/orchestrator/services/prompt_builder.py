@@ -130,6 +130,9 @@ class DynamicState:
     # How the handoff arrived (clean exit / salvaged from a killed run / synthesized) and what git
     # says about the files it claims — provenance a Worker cannot edit (T-10 DoD 7).
     delivery_evidence: str | None = None
+    # T-12: what happened to the PREVIOUS round's submission (salvaged / absent / archived at
+    # round start), so a retry cannot silently look like a fresh first attempt.
+    submission: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -145,6 +148,11 @@ def _dynamic(state: DynamicState) -> str:
         parts.append(
             "### Harness-detected findings (computed by the orchestrator, not asserted by a "
             "model)\n" + truncate_middle(state.harness_findings, s.max_log_tokens)
+        )
+    if state.submission:
+        parts.append(
+            "### Previous round submission status\n"
+            + truncate_middle(state.submission, s.max_log_tokens)
         )
     if state.delivery_evidence:
         parts.append(

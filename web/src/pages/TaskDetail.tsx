@@ -138,6 +138,14 @@ export default function TaskDetail() {
               <dt className="text-muted">Verification</dt><dd><Badge value={task.verification_status} /></dd>
               <dt className="text-muted">Merge</dt><dd><Badge value={task.merge_status} /></dd>
               <dt className="text-muted">Risk / priority</dt><dd><Badge value={task.risk} /> {task.priority}</dd>
+              <dt className="text-muted">Attempts</dt><dd className="text-xs">
+                {task.attempts ? (
+                  <span title={`completed ${task.attempts.completed} · timeout ${task.attempts.timeout} · failed ${task.attempts.failed} · cancelled ${task.attempts.cancelled}`}>
+                    {task.attempts.summary}
+                    <span className="text-muted"> · limits {task.attempts.max_review_rounds} verified rounds / {task.attempts.max_run_attempts_per_task} attempts</span>
+                  </span>
+                ) : "—"}
+              </dd>
               <dt className="text-muted">Tags</dt><dd className="text-xs">{task.tags.join(", ") || "—"}</dd>
               <dt className="text-muted">Assigned</dt><dd className="text-xs">{task.assigned_harness_adapter ?? "auto"} / {task.assigned_provider_profile ?? "auto"}</dd>
             </dl>
