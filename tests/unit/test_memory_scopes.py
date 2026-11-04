@@ -90,7 +90,8 @@ def test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded(sessi
     assert "worker" in m.reachable_roles(entry)
 
 
-def test_global_suggestion_infers_the_scope_it_names(session):
+def test_global_suggestion_with_a_scope_that_hints_a_vocabulary_word_falls_back(session):
+    """The hint is not followed: `environment` here is the FALLBACK, not an inference."""
     out = suggest(
         session,
         {
@@ -100,8 +101,50 @@ def test_global_suggestion_infers_the_scope_it_names(session):
         },
         project_slug=None,
     )
-    assert [e.scope for e in out.created] == ["environment"]
-    assert "environment" in out.notes[0]
+    assert [e.scope for e in out.created] == [m.FALLBACK_SCOPE[MemoryCategory.global_]]
+    assert "deterministic fallback" in out.notes[0]
+
+
+def test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope(session):
+    """DoD 1 read literally: the out-of-vocabulary case has ONE answer per category.
+
+    Inferring `decisions` from a scope that merely mentions it would change WHICH ROLES
+    receive the note (decisions -> Architect+Supervisor, gotchas -> Worker+Supervisor), and
+    the substring pass used to fire inside unrelated words. Neither is allowed.
+    """
+    fallbacks = {
+        MemoryCategory.project: "gotchas",
+        MemoryCategory.global_: "environment",
+    }
+    for category, expected in fallbacks.items():
+        for scope in (
+            "decisions-and-gating",  # a vocabulary TOKEN inside a longer scope
+            "decisionss",  # a vocabulary word as a raw SUBSTRING
+            "conventions-notes",
+            "patterns-of-the-team",
+            "logbook",
+        ):
+            got, note = m.coerce_scope(category, scope)
+            assert got == expected, (category, scope, got)
+            assert note and "deterministic fallback" in note, (category, scope, note)
+    # In-vocabulary scopes are untouched and silent.
+    assert m.coerce_scope(MemoryCategory.project, "decisions") == ("decisions", "")
+    assert m.coerce_scope(MemoryCategory.global_, "patterns") == ("patterns", "")
+
+
+def test_a_scope_mentioning_decisions_does_not_route_the_note_to_the_architect(session):
+    out = suggest(
+        session,
+        {
+            "category": "project",
+            "scope": "decisions-about-the-gate",
+            "content": "Parse reviews fail closed.",
+        },
+    )
+    entry = out.created[0]
+    assert entry.scope == "gotchas"
+    assert "worker" in m.reachable_roles(entry)
+    assert "architect" not in m.reachable_roles(entry)
 
 
 def test_suggestions_with_no_hint_fall_back_deterministically(session):
@@ -225,6 +268,36 @@ def test_create_rejects_out_of_vocabulary_scope_for_every_category(session, kwar
 def test_create_accepts_the_vocabulary(session, kwargs):
     entry = m.create(session, MemoryCreate(**kwargs))
     assert m.is_injectable(entry)
+
+
+def test_update_rejects_without_touching_the_row_or_the_rendered_file(session):
+    """A refused PATCH must not depend on session rollback to be harmless.
+
+    `update()` validates a throwaway preview BEFORE assigning anything, so the stored row
+    and its markdown are byte-for-byte unchanged after the error.
+    """
+    entry = m.create(
+        session,
+        MemoryCreate(
+            category="project",
+            scope="gotchas",
+            project_slug="demo",
+            content="Watch out.",
+            approved=True,
+        ),
+    )
+    home = m._file_for(entry)
+    before = home.read_text()
+    with pytest.raises(m.MemoryError_):
+        m.update(session, entry.id, MemoryUpdate(scope="housekeeping", content="Reworded."))
+    fresh = session.get(MemoryEntry, entry.id)
+    assert fresh.scope == "gotchas" and fresh.content == "Watch out."
+    assert home.read_text() == before
+    assert not session.dirty and not session.new  # nothing half-assigned waiting for a commit
+    # The same call with a good scope still works, and a content-only edit still works.
+    m.update(session, entry.id, MemoryUpdate(content="Reworded."))
+    assert session.get(MemoryEntry, entry.id).content == "Reworded."
+    assert "Reworded." in home.read_text()
 
 
 def test_update_rejects_an_out_of_vocabulary_scope(session):
@@ -367,6 +440,53 @@ def test_gc_removes_dead_files_and_keeps_the_canonical_layout(session):
     assert not (root / "projects" / "p").exists()  # emptied project directory tidied away
 
 
+def test_gc_only_deletes_files_render_file_could_have_written(session):
+    """Hand-authored markdown is operator input (docs/memory.md, `import --markdown`).
+
+    The GC predicate is `in_layout_dir AND not canonical_file AND not owned AND
+    _renderer_output`, and the last term is what protects a human's file: the first line
+    must be exactly `# <stem>` and every later line must be a `- … <!-- mem:N -->` marker.
+    """
+    root = m.memory_root()
+    proj = root / "projects" / "p"
+    proj.mkdir(parents=True, exist_ok=True)
+    hand = proj / "notes.md"
+    hand.write_text("# Hand-written notes\n\n- a line someone typed by hand\n")
+    hand_title_only = proj / "scratch.md"  # right heading shape, prose body -> kept
+    hand_title_only.write_text("# scratch\n\nremember to check the mount path\n")
+    header = proj / "conventions.md"  # canonical name holding an ensure_layout header
+    header.write_text("# Project p — conventions\n")
+    ghost = proj / "p.md"  # render_file's own output, now with no owning entry
+    ghost.write_text("# p\n")
+    stale = proj / "old-scope.md"  # rendered with a marker whose entry has moved away
+    stale.write_text("# old-scope\n\n- dead line  <!-- mem:999 -->\n")
+    outside = root.parent / "zz-p.md"  # not in a layout directory
+    outside.write_text("# p\n")
+
+    removed = m.gc_orphan_files(session)
+    assert removed == [stale, ghost]  # sorted by path, and only the two renderer-shaped files
+    assert hand.exists() and hand_title_only.exists() and header.exists()
+    assert not ghost.exists() and not stale.exists()
+    assert outside.exists()
+    assert m.orphan_files(session) == []  # idempotent
+
+
+def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
+    row = legacy(
+        session, category="project", scope="ai-livestreaming-avatar", project_slug="p",
+        content="Reachable host.", approved=True,
+    )
+    ghost = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
+    assert ghost.exists()
+    repair = m.fix_scopes(session, gc=False)
+    assert repair.moved_ids == [row.id]
+    assert repair.removed_files == [] and ghost.exists()
+    # `--no-gc` still SHOWS the dead file instead of pretending there is none.
+    assert [str(p) for p in repair.ghost_files] == [str(ghost)]
+    assert f"mem:{row.id}" not in ghost.read_text()  # re-rendered, just not deleted
+    assert f"mem:{row.id}" in (m.memory_root() / "projects" / "p" / "gotchas.md").read_text()
+
+
 def test_import_repairs_a_legacy_export_instead_of_dropping_it(session):
     slug = "ai-livestreaming-avatar"
     payload = {
@@ -385,6 +505,46 @@ def test_import_repairs_a_legacy_export_instead_of_dropping_it(session):
 
 
 # ------------------------------------------------------------- list marker (DoD 4)
+
+
+def test_role_rows_still_render_by_the_rule_main_used(session):
+    """T-4 changes no rendering and no role-injection semantics (frozen contract).
+
+    A legacy row whose `role` is not a role memory file keeps rendering to its own dead
+    file — it is REPORTED as uninjectable, not quietly re-homed into the scope's file — and
+    the rows that always worked keep working.
+    """
+    root = m.memory_root()
+    dead_role = legacy(
+        session, category="role", scope="worker", role="logbook-writer",
+        content="Diary of the logbook writer.", approved=True,
+    )
+    assert m._file_for(dead_role).name == "logbook-writer.md"
+    assert (root / "roles" / "logbook-writer.md").exists()
+    assert "Diary of the logbook writer." not in (root / "roles" / "worker.md").read_text()
+    assert not m.is_injectable(dead_role)
+    assert "logbook-writer.md" in m.injectability(dead_role)[1]
+    # fix-scopes refuses to invent a role, so this row is reported and stays put.
+    repair = m.fix_scopes(session)
+    assert [s["id"] for s in repair.skipped] == [dead_role.id]
+    session.refresh(dead_role)
+    assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
+
+    # The counter-examples from the task (#39/#47): role=worker scope=worker.
+    good = legacy(
+        session, category="role", scope="worker", role="worker", content="Small commits.",
+        approved=True,
+    )
+    assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
+    assert m.reachable_roles(good) == ("worker", "agent")
+    assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
+    # `scope` is the fallback for the file name exactly as it was on main.
+    scope_only = legacy(session, category="role", scope="supervisor", content="Recommend only.")
+    assert m._file_for(scope_only).name == "supervisor.md"
+    assert m.is_injectable(scope_only)
+    # And the boundary refuses such a row going forward, so it cannot be created again.
+    with pytest.raises(m.MemoryError_):
+        m.create(session, MemoryCreate(category="role", scope="logbook-writer", content="x"))
 
 
 def test_injectability_marks_only_the_unreachable(session):

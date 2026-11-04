@@ -15,6 +15,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from orchestrator.core.config import get_settings
@@ -988,15 +989,17 @@ def _memory_table(entries) -> Table:
         # Valid role rows (category=role scope=worker, resolved through ROLE_MEMORY_KEY) are
         # never misflagged.
         ok, _reason = memory_service.injectability(e)
+        # Everything below is operator data, not markup: a scope or a note containing
+        # brackets would otherwise be eaten by Rich and the row would lie.
         table.add_row(
             str(e.id),
-            e.category,
-            e.scope,
-            e.project_slug or "-",
-            e.role or "-",
+            escape(e.category),
+            escape(e.scope),
+            escape(e.project_slug or "-"),
+            escape(e.role or "-"),
             status,
             "ok" if ok else "[red]NO[/red]",
-            e.content[:80],
+            escape(e.content[:80]),
         )
     return table
 
@@ -1007,8 +1010,10 @@ def _print_injectability(entries) -> int:
 
     bad = [e for e in entries if not memory_service.is_injectable(e)]
     for e in bad:
-        console.print(f"[red]uninjectable[/red] #{e.id} {e.category}: "
-                      f"{memory_service.injectability(e)[1]}")
+        console.print(
+            f"[red]uninjectable[/red] #{e.id} {escape(e.category)}: "
+            f"{escape(memory_service.injectability(e)[1])}"
+        )
     if bad:
         err.print(
             f"{len(bad)} entr{'y' if len(bad) == 1 else 'ies'} above cannot be injected: "
@@ -1114,48 +1119,72 @@ def memory_fix_scopes(
     gc_only: bool = typer.Option(
         False, "--gc-only", help="Only remove rendered files that no entry owns."
     ),
+    no_gc: bool = typer.Option(
+        False,
+        "--no-gc",
+        help="Move rows and re-render, but delete no file (the GC list is still reported).",
+    ),
 ) -> None:
     """Repair entries stored with a scope no injector can read (task T-4).
 
     Rows are moved, never deleted; rejected rows are left alone. Both the old and the new
     markdown file are re-rendered, and rendered files that no longer have an owning entry
-    are removed so a re-scoped entry cannot leave a title-only ghost behind.
+    are removed so a re-scoped entry cannot leave a title-only ghost behind. Only files
+    `render_file` could have written are collectable — hand-edited markdown in the memory
+    tree is never deleted (see docs/memory.md), and `--no-gc` turns the deletion off.
     """
     from orchestrator.services import memory_service as m
 
     _ensure_ready()
     with _session() as s:
         if gc_only:
-            repair = m.ScopeRepair(
-                removed_files=m.gc_orphan_files(s, dry_run=dry_run), dry_run=dry_run
-            )
+            listed = m.orphan_files(s)
+            removed = [] if dry_run else m.gc_orphan_files(s)
+            repair = m.ScopeRepair(removed_files=removed or listed, dry_run=dry_run)
         else:
-            repair = m.fix_scopes(s, dry_run=dry_run)
+            repair = m.fix_scopes(s, dry_run=dry_run, gc=not no_gc)
     verb = "would move" if dry_run else "moved"
+    file_verb = "would re-render" if dry_run else "re-rendered"
     for mv in repair.moved:
         console.print(
-            f"{verb} #{mv['id']} {mv['category']}: {mv['from']!r} -> {mv['to']!r}"
-            + (f"  ({mv['note']})" if mv.get("note") else "")
+            f"{verb} #{mv['id']} {escape(str(mv['category']))}: "
+            f"{escape(repr(mv['from']))} -> {escape(repr(mv['to']))}"
+            + (f"  ({escape(mv['note'])})" if mv.get("note") else "")
         )
-        console.print(f"  re-rendered {mv['old_file']} and {mv['new_file']}")
-        if mv["collect_old_file"]:
-            console.print(
-                f"  {'would collect' if dry_run else 'collected'} "
-                f"dead scope-file {mv['old_file']}"
-            )
+        console.print(
+            f"  {file_verb} {escape(mv['old_file'])} and {escape(mv['new_file'])}"
+        )
+        # A dry run cannot show this file in the removed list below (the row has not moved
+        # yet, so the file is still owned), so say here what the real run will collect.
+        if dry_run and mv["collect_old_file"]:
+            console.print(f"  would collect dead scope-file {escape(mv['old_file'])}")
     for sk in repair.skipped:
         console.print(
-            f"left #{sk['id']} {sk['category']} scope {sk['scope']!r} alone "
-            f"[{sk.get('why', '')}]"
+            f"left #{sk['id']} {escape(str(sk['category']))} scope "
+            f"{escape(repr(sk['scope']))} alone: {escape(str(sk.get('why', '')))}"
         )
+    ghost_verb = "would remove" if dry_run else "removed"
     for path in repair.removed_files:
-        console.print(f"{'would remove' if dry_run else 'removed'} orphan memory file {path}")
+        console.print(f"{ghost_verb} dead scope-file {escape(str(path))}")
+    if repair.ghost_files:
+        console.print(
+            f"gc is off: {len(repair.ghost_files)} dead scope-file(s) left in place "
+            f"({', '.join(escape(str(p)) for p in repair.ghost_files)})"
+        )
     ids = repair.moved_ids
     console.print(
         f"{verb} {len(ids)} entr{'y' if len(ids) == 1 else 'ies'}"
         + (f" (ids: {', '.join(str(i) for i in ids)})" if ids else "")
         + f"; {len(repair.skipped)} left alone; "
-        f"{len(repair.removed_files)} orphan file(s)"
+        + (
+            f"{len(repair.removed_files)} dead scope-file(s) "
+            + ("to remove" if dry_run else "removed")
+        )
+        + (
+            f"; {len(repair.ghost_files)} more reported with gc off"
+            if repair.ghost_files
+            else ""
+        )
         + (" (dry run, nothing written)" if dry_run else "")
     )
 

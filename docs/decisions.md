@@ -229,15 +229,29 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `global-environment-verifying-orchestrator-change` that no injector can read: `for_prompt`
   filters project memory through `ROLE_PROJECT_SCOPES` and role memory through `ROLE_FILES`,
   and there was no `ROLE_SCOPES` to check the role category against at all. We chose to keep
-  the fact instead of the label: a `project`/`global` suggestion is coerced deterministically
-  (a vocabulary word inside the proposed scope, else `gotchas`/`environment`) and `role`
+  the fact instead of the label: a `project`/`global` suggestion is coerced to the
+  deterministic fallback for its category (`gotchas` / `environment`) and `role`
   suggestions that resolve to no role file are dropped with a warning, because guessing a
-  role would file a note under the wrong agent. Every substitution and drop is a build-log
-  event, never a silent `continue`. `create`/`update` — the API's POST and PATCH and the CLI
-  — now reject an out-of-vocabulary scope for all three categories, naming the allowed values.
+  role would file a note under the wrong agent. Nothing is inferred from the words inside a
+  proposed scope — an earlier draft matched vocabulary tokens and substrings, which silently
+  re-routes a note to different roles (`decisions` → Architect+Supervisor vs `gotchas` →
+  Worker+Supervisor) and fires inside unrelated words. Every substitution and drop is a
+  build-log event, never a silent `continue`. `create`/`update` — the API's POST and PATCH and
+  the CLI — now reject an out-of-vocabulary scope for all three categories, naming the allowed
+  values; PATCH validates a throwaway preview before assigning anything, so a refused edit
+  leaves the row and its markdown unchanged without depending on a rollback.
   Repair is part of the fix and moves rows, never deletes them: `orchestrator memory
   fix-scopes` re-renders both the old and the new file and collects rendered files with no
   owning entry, since a hand re-scope had left a title-only
-  `memory/projects/<slug>/<slug>.md` ghost in the tree. `orchestrator memory list` marks the
+  `memory/projects/<slug>/<slug>.md` ghost in the tree. The collector only deletes text
+  `render_file` could have written (title line `# <stem>` plus `<!-- mem:N -->` markers, in a
+  layout directory, not a canonical name, no owning entry), because hand-edited markdown in
+  this tree is operator input indexed by `memory import --markdown`; `--no-gc` opts out. CLI
+  repair output is Rich-escaped and a `--dry-run` only ever says "would", so an interpolated
+  scope or reason with brackets in it is seen instead of parsed as a style tag and dropped.
+  `orchestrator memory list` marks the
   defect (an entry's own category can never reach its scope) so the next occurrence is
-  visible the day it lands rather than months later.
+  visible the day it lands rather than months later. Role rendering and role injection
+  semantics are untouched: `_file_for` still keys off `role`, else `scope`, through
+  `ROLE_MEMORY_KEY`, so a legacy `role='logbook-writer'` row keeps its (dead) file and is
+  reported rather than re-homed.

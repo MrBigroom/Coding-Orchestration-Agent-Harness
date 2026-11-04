@@ -93,11 +93,14 @@ class SuggestionOutcome:
 
 @dataclass
 class ScopeRepair:
-    """Result of `fix_scopes`: rows moved, rows left alone, orphan files removed."""
+    """Result of `fix_scopes`: rows moved, rows left alone, dead files removed."""
 
     moved: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[dict[str, Any]] = field(default_factory=list)
     removed_files: list[Path] = field(default_factory=list)
+    # Dead rendered files that were only REPORTED because gc was off (`--no-gc`). A dry run
+    # fills `removed_files` with what it would remove, never `ghost_files`.
+    ghost_files: list[Path] = field(default_factory=list)
     dry_run: bool = False
 
     @property
@@ -188,37 +191,52 @@ def normalize_scope(category: str, scope: str) -> str:
 
 
 def coerce_scope(category: str, scope: str) -> tuple[str, str]:
-    """Best-effort repair of an out-of-vocabulary scope. Returns (scope, note).
+    """Repair an out-of-vocabulary scope by falling back. Returns (scope, note).
 
-    `note` is empty when the scope was already injectable. Deterministic: first an exact
-    vocabulary token inside the proposed scope, then a substring of it, then the
-    category's fallback. Categories without a fallback (role) re-raise, which is how the
-    suggestion path drops instead of storing an unreachable row.
+    `note` is empty when the scope was already injectable. The fallback is the WHOLE rule:
+    a scope that is not in its category's vocabulary goes to `FALLBACK_SCOPE[category]`
+    (`gotchas` for project, `environment` for global) and is reported. Nothing is ever
+    *inferred* from the words inside a proposed scope, because the scope decides which
+    roles receive the note — guessing that `decisions-and-gating` means `decisions` would
+    silently route a Worker's gotcha to the Architect and the Supervisor, and a substring
+    match fires inside unrelated words. A predictable place to find it beats a clever
+    guess, and the operator sees the substitution either way.
+
+    Categories with no fallback (`role`) re-raise: inventing a role would file someone's
+    note under the wrong agent, so the suggestion path drops it with a warning instead of
+    storing an unreachable row.
     """
     try:
         return normalize_scope(category, scope), ""
     except MemoryError_ as e:
         err = e
-    vocab = scope_vocabulary(category)
-    text = slugify(scope or "")
-    tokens = set(re.split(r"[-_]", text))
-    for candidate in vocab:  # declared vocabulary order keeps this deterministic
-        if candidate in tokens:
-            return candidate, _substitution_note(category, scope, candidate, "inferred")
-    for candidate in vocab:
-        if candidate in text:
-            return candidate, _substitution_note(category, scope, candidate, "inferred")
     fallback = FALLBACK_SCOPE.get(category)
     if fallback is None:
         raise err
-    return fallback, _substitution_note(category, scope, fallback, "fallback")
+    return fallback, _substitution_note(category, scope, fallback)
 
 
-def _substitution_note(category: str, requested: str, stored: str, how: str) -> str:
+def _substitution_note(category: str, requested: str, stored: str) -> str:
     return (
         f"{category} scope {requested!r} is not in "
-        f"{'|'.join(SCOPE_VOCABULARY.get(category, ()))}; stored as {stored!r} ({how})"
+        f"{'|'.join(SCOPE_VOCABULARY.get(category, ()))}; stored as {stored!r} "
+        f"(deterministic fallback, not inferred from the words)"
     )
+
+
+def role_file_key(entry: MemoryEntry) -> str | None:
+    """The role-memory file a row maps to, by the rule `for_prompt` and `_file_for` use.
+
+    Identical to the pre-T-4 resolution — `role`, falling back to `scope`, through
+    `ROLE_MEMORY_KEY` — and deliberately NOT checked against `ROLE_FILES`: a legacy row
+    with a non-file role and a valid scope must keep rendering to (and being judged by) the
+    same file it always did. Task T-4 changes no role-injection semantics; membership is
+    tested by the caller so an uninjectable row is reported instead of re-homed.
+    """
+    name = entry.role or entry.scope
+    if not name:
+        return None
+    return ROLE_MEMORY_KEY.get(name, name)
 
 
 def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
@@ -233,10 +251,10 @@ def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
         return tuple(
             r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
         )
-    key = role_memory_file(entry.role) or role_memory_file(entry.scope)
-    if key is None:
+    key = role_file_key(entry)
+    if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
         return ()
-    return tuple(r.value for r in Role if role_memory_file(r.value) == key)
+    return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)
 
 
 def injectability(entry: MemoryEntry) -> tuple[bool, str]:
@@ -247,8 +265,20 @@ def injectability(entry: MemoryEntry) -> tuple[bool, str]:
         return False, "project memory requires project_slug"
     if reachable_roles(entry):
         return True, ""
-    scope = entry.role or entry.scope if entry.category == MemoryCategory.role else entry.scope
-    return False, str(_vocab_error(entry.category, scope or ""))
+    if entry.category == MemoryCategory.role:
+        name = entry.role or entry.scope
+        allowed = "|".join(ROLE_SCOPES)
+        if not name:
+            return False, f"role memory needs a role or a scope resolving to one of {allowed}"
+        # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
+        # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
+        # vocabulary it has to resolve into.
+        return False, (
+            f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
+            f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
+            f"(reviewer -> architect, agent -> worker)"
+        )
+    return False, str(_vocab_error(entry.category, entry.scope or ""))
 
 
 def is_injectable(entry: MemoryEntry) -> bool:
@@ -263,9 +293,10 @@ def _file_for(entry: MemoryEntry) -> Path:
         return safe_join(
             root, "projects", slugify(entry.project_slug or "unknown"), f"{slugify(entry.scope)}.md"
         )
-    key = role_memory_file(entry.role) or role_memory_file(entry.scope)
-    role = key or (entry.role or entry.scope)
-    return safe_join(root, "roles", f"{slugify(role)}.md")
+    # Unchanged from before T-4 on purpose: rendering is a frozen contract and role
+    # injection is out of this task's scope. `role`, else `scope`, through ROLE_MEMORY_KEY.
+    name = entry.role or entry.scope
+    return safe_join(root, "roles", f"{slugify(ROLE_MEMORY_KEY.get(name, name))}.md")
 
 
 def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
@@ -417,16 +448,30 @@ def suggest_from_handoff_report(
 
 def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     """Apply an edit. A scope the caller supplies is checked like at creation; a stored
-    legacy scope that is out of vocabulary does not freeze the row."""
+    legacy scope that is out of vocabulary does not freeze the row.
+
+    Validation happens on a throwaway preview BEFORE anything is assigned, so a rejected
+    PATCH leaves the stored row and its rendered markdown exactly as they were — the
+    "unchanged" guarantee does not depend on session rollback behaviour.
+    """
     entry = _get(session, entry_id)
-    old_file = _file_for(entry)
-    if data.content is not None:
-        entry.content = redact(data.content.strip())
-    if data.scope is not None:
-        entry.scope = data.scope
-    if data.tags is not None:
-        entry.tags_json = sorted(set(data.tags))
-    _validate(entry, check_scope=data.scope is not None)
+    new_content = (
+        redact(data.content.strip()) if data.content is not None else entry.content
+    )
+    new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
+    preview = MemoryEntry(
+        category=entry.category,
+        scope=data.scope if data.scope is not None else entry.scope,
+        project_slug=entry.project_slug,
+        role=entry.role,
+        content=new_content,
+    )
+    _validate(preview, check_scope=data.scope is not None)
+    old_file = _file_for(entry)  # before the mutation: the file this row used to render into
+    entry.content = new_content
+    entry.tags_json = new_tags
+    entry.scope = preview.scope  # normalized by _validate when a scope was supplied
+    entry.role = preview.role
     entry.updated_at = utcnow()
     session.add(entry)
     session.commit()
@@ -526,22 +571,74 @@ def canonical_file(path: Path) -> bool:
     return False
 
 
+def in_layout_dir(path: Path) -> bool:
+    """Is the file somewhere `ensure_layout`/`render_file` write: global/, roles/ or
+    projects/<slug>/ — and nothing deeper, and nothing outside the memory root?"""
+    root = memory_root()
+    try:
+        rel = path.relative_to(root).parts
+    except ValueError:
+        return False
+    if len(rel) == 2:
+        return rel[0] in ("global", "roles") and rel[1].endswith(".md")
+    if len(rel) == 3:
+        return rel[0] == "projects" and rel[1] and rel[2].endswith(".md")
+    return False
+
+
+_MD_MARKER_LINE = re.compile(r"^- .+  <!-- mem:\d+ -->\s*$")
+
+
+def _renderer_output(path: Path) -> bool:
+    """Could `render_file` have written this text? Only then may the GC delete it.
+
+    `render_file` emits exactly `# <stem>` as its first line, then blank lines and
+    `- <content>  <!-- mem:N -->` marker lines. So the title line must equal `# ` + the
+    filename stem, and every other non-blank line must be a marker line. Anything else —
+    prose, an un-marked bullet, a different or deeper heading, an `ensure_layout` header
+    such as `# Project X — decisions` — disqualifies the whole file.
+
+    This matters because `docs/memory.md` tells operators to hand-edit these files and
+    index the lines with `memory import --markdown`: a hand-authored note must never be
+    swept up by a garbage collector. The measured orphan (`# ai-livestreaming-avatar\n`,
+    left title-only when entry #5 was re-scoped by hand) matches this predicate exactly.
+    """
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not lines or lines[0] != f"# {path.stem}":
+        return False
+    return all(_MD_MARKER_LINE.match(ln) for ln in lines[1:])
+
+
 def orphan_files(session: Session) -> list[Path]:
-    """Rendered markdown files with no owning approved entry and no canonical name."""
+    """Rendered markdown files that are dead output: no owning approved entry, not a name
+    `ensure_layout` owns, and text that only `render_file` could have produced.
+
+    A hand-authored file fails `_renderer_output`, so it is never listed here.
+    """
     root = memory_root()
     if not root.exists():
         return []
     owned = {_file_for(e) for e in list_entries(session, status="approved")}
     return [
-        p for p in sorted(root.rglob("*.md")) if p not in owned and not canonical_file(p)
+        p
+        for p in sorted(root.rglob("*.md"))
+        if p not in owned
+        and in_layout_dir(p)
+        and not canonical_file(p)
+        and _renderer_output(p)
     ]
 
 
 def gc_orphan_files(session: Session, *, dry_run: bool = False) -> list[Path]:
     """Delete dead scope-files so a re-scoped entry cannot leave a title-only ghost behind.
 
-    Only rows are left untouched (never deleted); these files are derived output, and a
-    canonical empty file is kept because `ensure_layout` owns it.
+    Only rows are ever left untouched (nothing here deletes a `memory_entries` row, and no
+    canonical layout file is removed); the files it deletes are derived output that passes
+    `orphan_files` — unowned, outside the canonical names, and text `render_file` wrote.
+    Hand-written markdown in the tree is protected by `_renderer_output`.
     """
     root = memory_root()
     removed: list[Path] = []
@@ -562,9 +659,15 @@ def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> S
 
     Rows are moved, never deleted, and rejected rows are left exactly as they are. Both
     the OLD and the NEW markdown file are re-rendered so the old file cannot keep a stale
-    `<!-- mem:ID -->` line, then rendered files with no owning entry are garbage-collected
-    (the measured orphan was `memory/projects/<slug>/<slug>.md`, left title-only when
-    entry #5 was re-scoped by hand). Idempotent: a second run moves nothing.
+    `<!-- mem:ID -->` line, then — with `gc=True`, which is what the CLI's `--no-gc` turns
+    off — dead rendered files are collected (the measured orphan was
+    `memory/projects/<slug>/<slug>.md`, left title-only when entry #5 was re-scoped by
+    hand). `orphan_files` is deliberately narrow: unowned AND not a canonical layout name
+    AND text `render_file` could have written, so hand-authored markdown indexed via
+    `memory import --markdown` is never deleted.
+
+    Idempotent: a second run moves nothing. A dry run computes the same report and writes
+    nothing, including the file list.
     """
     repair = ScopeRepair(dry_run=dry_run)
     for entry in list_entries(session):
@@ -585,7 +688,10 @@ def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> S
                 {
                     **detail,
                     "why": "role memory has no fallback file: an unresolvable role would be "
-                    "invented, so the row is reported instead (reject it or set a role)",
+                    "invented, so the row is reported instead (approve it under a real role "
+                    "or reject it). Note that for_prompt selects on the `role` column, so a "
+                    "legacy row with an empty role and a valid scope is a shape the boundary "
+                    "can no longer create (_validate fills role from scope).",
                 }
             )
             continue
@@ -644,6 +750,9 @@ def fix_scopes(session: Session, *, dry_run: bool = False, gc: bool = True) -> S
     if gc:
         for path in gc_orphan_files(session, dry_run=dry_run):
             repair.removed_files.append(path)
+    else:
+        # --no-gc: the operator still has to SEE the dead files, they are just not deleted.
+        repair.ghost_files = orphan_files(session)
     return repair
 
 
