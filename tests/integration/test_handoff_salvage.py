@@ -23,7 +23,6 @@ from orchestrator.core.models import Review, Run, TaskStatus, Verification
 from orchestrator.core.schemas import Handoff, ProjectCreate, TaskCreate
 from orchestrator.services import (
     artifact_service,
-    git_service,
     log_service,
     project_service,
     prompt_builder,
@@ -103,12 +102,17 @@ def project(session, tmp_path):
 
 
 def _task(session, project, tags, phase, dod=("MOCK_CHANGE.md updated",)):
+    # Every task carries the plain `mock` tag as well as its behaviour tag: provider routing only
+    # selects the offline mock provider when `"mock"` is a tag (the behaviour tags such as
+    # `mock-timeout-handoff` match the harness, not `"mock"`), so without it the Architect review
+    # would call the configured `architect-claude-cli`/Opus profile — a real external CLI inside a
+    # test, non-deterministic (APPROVED vs CHANGES_REQUESTED on identical inputs) and slow.
     return task_service.create(
         session,
         TaskCreate(
             title=f"T-10 salvage probe {phase}",
             project_id=project.id,
-            tags=list(tags),
+            tags=[*tags, "mock"],
             phase_number=phase,
             phase_slug=f"p{phase}",
             definition_of_done=list(dod),
@@ -322,10 +326,10 @@ def test_a_pre_existing_submission_is_archived_before_the_round_start_unlink(ses
     dest = Path(payload["archived_to"])
     assert dest.is_dir() and (dest / "handoff.json").read_bytes() == bytes_before
     assert "never ingested" in (dest / "handoff.md").read_text()
-    # the new round is unaffected: its own submission is its own
-    assert json.loads(artifact_service.read_text(run2.id, "handoff.json"))["summary"] != (
-        "written by the killed round, never ingested"
-    )
+    # the new round is unaffected: it produced NO submission of its own (the `mock-timeout` tag
+    # writes nothing), and the leftover was never ingested as this round's handoff
+    assert second["status"] == "timeout" and "salvaged" not in second
+    assert artifact_service.read_text(run2.id, "handoff.json") is None
     assert run2.id != run1.id
 
 
@@ -336,7 +340,9 @@ def test_an_unusable_leftover_is_archived_raw_and_the_round_still_starts(session
     (wt / ".orchestrator" / "handoff.json").write_text('{"phase": "x", "summary": "trunc')
 
     second = _run(session, task)
-    assert second["status"] == "completed", second
+    # the round still starts and ends on its own terms: the unusable leftover is archived raw and
+    # the `mock-timeout` tag's plain timeout is reported exactly as before
+    assert second["status"] == "timeout" and "salvaged" not in second, second
     payload = structured_log.parse(_events(session, task, "handoff_salvaged")[0].details)
     assert payload["valid"] is False and "not valid JSON" in payload["parse_error"]
     assert (Path(payload["archived_to"]) / "handoff.json").read_text().startswith('{"phase"')
@@ -351,9 +357,10 @@ def test_a_retry_after_a_salvaged_round_does_not_lose_the_archived_copy(session,
     bytes_before = archived_path.read_bytes()
     assert json.loads(bytes_before)["status"] == "READY_FOR_REVIEW"
 
-    # the operator takes the decision, then the round is retried on the same branch
-    run_service.human_decision(session, task, True, "accept the salvaged round")
+    # the operator retries the round on the same branch without accepting it (blocked -> queued is
+    # the documented retry edge; `accepted -> queued` is not a legal transition)
     task = task_service.get(session, task.id)
+    assert task.status == TaskStatus.blocked and task.handoff_status == "SALVAGED"
     task_service.queue(session, task)
     second = _run(session, task)
     session.refresh(task)
@@ -386,8 +393,14 @@ def test_salvaged_claims_that_were_never_committed_fail_the_claims_check(session
     assert checks[supervisor_service.CLAIMS_CHECK]["status"] == "fail", checks
     assert "PROMISE_ONLY.md=recovery_commit_only" in checks[supervisor_service.CLAIMS_CHECK]["notes"]
     assert outcome["verification"] == "fail", outcome
-    assert task.status == TaskStatus.queued and task.review_status is None
-    assert "verdict" not in outcome
+    # The gate believed the deterministic check, not the promise: the round was requeued and never
+    # accepted. The canned mock reviewer's verdict is irrelevant here — verification decides —
+    # which is exactly the property that must hold when a salvaged handoff over-promises.
+    assert task.status == TaskStatus.queued
+    assert task.verification_status == "fail"
+    assert task.merge_status != "ready"
+    for event in _events(session, task, "verdict_recorded"):
+        assert "accepted" not in event.details
 
     evidence = artifact_service.handoff_delivery_evidence(run.id)
     assert artifact_service.handoff_arrival(run.id) == "salvaged"

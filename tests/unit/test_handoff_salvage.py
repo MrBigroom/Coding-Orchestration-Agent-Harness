@@ -5,6 +5,7 @@ Offline and deterministic: a real local git repo in tmp, no network, no live har
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -197,3 +198,74 @@ def test_render_carries_the_provenance_and_the_flag(home, tmp_path):
     assert "uncommitted when the run ended (before the harness recovery sweep): promise.md" in text
     assert "PROMISES, not delivered work" in text
     assert "commits on this branch since main: 0" in text
+
+
+# ------------------------------------------- mock harness plumbing (why 9 tests could lie green)
+
+
+def test_mock_child_process_is_pinned_to_the_checkout_under_test(tmp_path):
+    """The mock's own subprocess must import THIS checkout.
+
+    `core.security.BASE_ENV_ALLOWLIST` deliberately excludes PYTHONPATH, and this repo's venv is
+    an editable install pointing at the main checkout, so `python -m
+    orchestrator.adapters.mock_harness` in a worktree used to execute the MAIN copy of the file.
+    That is how every T-10 integration test asked for a timeout and got a `completed` run: the
+    stale copy did not know the new tags and fell through to the success path.
+    """
+    from orchestrator.adapters import mock_harness
+    from orchestrator.adapters.base import AdapterResult
+
+    adapter = mock_harness.MockHarnessAdapter(mock_harness.MockHarnessAdapter.default_spec())
+    ctx = mock_harness.RunContext(
+        run_id=1,
+        task_id=1,
+        cwd=tmp_path,
+        prompt_file=tmp_path / "prompt.md",
+        artifacts_dir=tmp_path,
+        handoff_path=tmp_path / "handoff.json",
+        branch="phase-1-p1",
+        phase="p1",
+        tags=["mock-timeout-handoff"],
+        timeout_seconds=600,
+    )
+    seen: dict = {}
+
+    async def fake_runner(**kw):
+        seen.update(kw)
+        return AdapterResult(exit_code=0)
+
+    result = asyncio.run(adapter.run(ctx, fake_runner))
+
+    assert result.exit_code == 0
+    assert seen["extra_env"]["PYTHONPATH"] == str(mock_harness.PACKAGE_SRC)
+    # the pinned root really is the tree holding this module, not the main checkout
+    assert (mock_harness.PACKAGE_SRC / "orchestrator" / "adapters" / "mock_harness.py").is_file()
+    assert ctx.timeout_seconds == mock_harness.MOCK_TIMEOUT_SECONDS
+
+
+def test_mock_harness_refuses_an_unknown_behaviour_tag(tmp_path, capsys):
+    """A tag the mock does not understand must fail the run, never look like success."""
+    from orchestrator.adapters import mock_harness
+
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("x\n")
+    handoff = tmp_path / "handoff.json"
+    rc = mock_harness.main(
+        [
+            "--cwd",
+            str(tmp_path),
+            "--prompt-file",
+            str(prompt),
+            "--handoff",
+            str(handoff),
+            "--branch",
+            "phase-1-p1",
+            "--run-id",
+            "1",
+            "--tag",
+            "mock-timeout-handof",  # typo: the shape that silently completed a run
+        ]
+    )
+    assert rc == 2
+    assert not handoff.exists()
+    assert "unknown behaviour tag" in capsys.readouterr().err
