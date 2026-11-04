@@ -1,4 +1,4 @@
-# HEAD=df08273c30465b261c03efa78203c7959237e756 (df08273) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:00:15+08:00 tree=0 dirty-entries
+# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # READ-ONLY audit of the operator's LIVE ORCHESTRATOR_HOME with this branch's rule.
 # Nothing here writes: no CLI call (a CLI command runs _ensure_ready -> db.upgrade() on
 # the live DB with branch code, which this phase must not do), no fix_scopes, no

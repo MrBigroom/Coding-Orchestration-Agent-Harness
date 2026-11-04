@@ -1,4 +1,4 @@
-# HEAD=df08273c30465b261c03efa78203c7959237e756 (df08273) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:00:15+08:00 tree=0 dirty-entries
+# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # command: ./scripts/orch_verify.sh test   (whole tests/ tree of THIS worktree)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -8,13 +8,13 @@ orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
 orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/tests
-........................................................................ [ 14%]
-.....................................ssssss............................. [ 28%]
-........................................................................ [ 42%]
-........................................................................ [ 56%]
-........................................................................ [ 70%]
-........................................................................ [ 84%]
-........................................................................ [ 98%]
-.........                                                                [100%]
-507 passed, 6 skipped in 101.06s (0:01:41)
+........................................................................ [ 13%]
+.....................................ssssss............................. [ 27%]
+........................................................................ [ 41%]
+........................................................................ [ 55%]
+........................................................................ [ 69%]
+........................................................................ [ 83%]
+........................................................................ [ 97%]
+...........                                                              [100%]
+509 passed, 6 skipped in 101.34s (0:01:41)
 SUITE_EXIT=0

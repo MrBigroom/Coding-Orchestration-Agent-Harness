@@ -1,4 +1,4 @@
-# HEAD=df08273c30465b261c03efa78203c7959237e756 (df08273) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:00:15+08:00 tree=0 dirty-entries
+# HEAD=ef1bdce813107a7d874a9fedb019c9b22186b362 (ef1bdce) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T12:09:09+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # command: ./scripts/orch_verify.sh lint   (ruff check src tests)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -78,15 +78,15 @@ moved #9 project: 'ai-livestreaming-avatar' -> 'gotchas'  (project scope
 'ai-livestreaming-avatar' is not in conventions|decisions|gotchas; stored as 
 'gotchas' (fallback))
   re-rendered 
-/tmp/t4-evidence.71EyF7/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
 aming-avatar.md and 
-/tmp/t4-evidence.71EyF7/home/memory/projects/ai-livestreaming-avatar/gotchas.md
+/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/gotchas.md
   collected dead scope-file 
-/tmp/t4-evidence.71EyF7/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
 aming-avatar.md
 left #8 project scope 'ai-livestreaming-avatar' alone 
 removed orphan memory file 
-/tmp/t4-evidence.71EyF7/home/memory/projects/ai-livestreaming-avatar/ai-livestre
+/tmp/t4-evidence.B8HrBc/home/memory/projects/ai-livestreaming-avatar/ai-livestre
 aming-avatar.md
 moved 1 entry (ids: 9); 1 left alone; 1 orphan file(s)
 $ orchestrator memory list --uninjectable
