@@ -72,6 +72,10 @@ sections, `.gitattributes` / diff-completeness findings) is intact.
   no external service.
 - Regenerate with `bash verify-evidence/T-11/capture.sh`.
 
+- Tip re-run: `./scripts/orch_verify.sh all` on the clean worktree at **ba27534** ->
+  **554 passed, 0 failed, 6 skipped**, `All checks passed!` (same numbers as the stamped
+  capture at 96289d7; commits after ba27534 touch only `verify-evidence/T-11/`).
+
 ## DoD self-check
 
 1. **Archive reviewer input + truncation manifest; PROPOSED CCR; no frozen-contract edit** — met.

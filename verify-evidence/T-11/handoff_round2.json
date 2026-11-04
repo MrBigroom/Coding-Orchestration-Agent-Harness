@@ -74,6 +74,7 @@
   "new_dependencies": [],
   "assumptions": [
     "The evidence files are stamped at 96289d7 with tree=0 dirty-entries; the commit that carries this index (4eb490d) changes only verify-evidence/T-11/**, never source or tests, so 554 passed / 6 skipped / lint clean are the counts for the code under review.",
+    "After the stamped capture (HEAD 96289d7), ./scripts/orch_verify.sh all was re-run on a clean worktree at ba27534 \u2014 the tip at that moment \u2014 and reported 554 passed / 0 failed / 6 skipped, 'All checks passed!'. Every commit after ba27534 changes only files under verify-evidence/T-11/, never source or tests.",
     "T-11 DoD 1 explicitly grants the review_payload.md archive and orders a PROPOSED CCR; the name stays PROPOSED and docs/frozen-contracts.md is not edited.",
     "review.json keeps its frozen shape: absence provenance lives in the existing notes and missing_artifacts arrays with harness-detected:/reviewer-asserted: labels, plus prose notes; no new key and no new verdict value.",
     "A refuted claim routes to the existing NEEDS_HUMAN (-> blocked). That is a routing decision inside the allowed verdict vocabulary, not a change to who may accept a task: nothing is accepted on a refuted claim any more, and no finding is silently dropped without being recorded.",

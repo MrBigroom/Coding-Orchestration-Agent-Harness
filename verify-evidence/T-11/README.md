@@ -21,6 +21,9 @@ the counts above are the counts for the code the reviewer is reading.
 - `bash verify-evidence/T-11/capture.sh` regenerates all four files at the current HEAD.
 - `./scripts/orch_verify.sh all` -> exit 0, `554 passed, 6 skipped`, `All checks passed!`
   (`suite_and_lint.txt`, stamped).
+- Tip re-run at `ba27534` (clean worktree, after the stamped capture): `554 passed,
+  6 skipped`, `All checks passed!` — identical numbers; later commits touch only this
+  directory.
 - `./scripts/orch_verify.sh test -vv -k 'review_audit or review_payload or diff_budget or visibility
   or sensitive_files_withheld or partly'` -> `20 passed`, every T-11 test named (`t11_tests.txt`).
 
