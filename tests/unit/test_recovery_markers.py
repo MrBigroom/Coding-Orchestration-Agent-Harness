@@ -364,12 +364,12 @@ def test_contract_authorization_a_bare_mention_grants_nothing(session, initializ
     assert project_service.unauthorized_contract_changes(task, CONTRACT_CHANGED) == CONTRACT_CHANGED
 
 
-def test_reviewer_prompt_sections_are_rendered_without_new_run_artifacts(session, initialized, tmp_path):
+def test_reviewer_prompt_sections_are_rendered_from_their_builders(session, initialized, tmp_path):
     """The recovery + harness-findings sections reach the Architect prompt.
 
-    Round 5 archived the payload as `runs/<id>/review_payload.md`; that file is not in the frozen
-    artifact layout and no DoD item granted it, so round 6 removed the writer (reviewer finding 2)
-    and pins the sections where they are actually consumed instead.
+    T-11 now archives the full payload (PROPOSED layout addition, see
+    docs/contract-change-request-T11-review-payload.md); this test stays at the section builders
+    so it pins the text itself rather than the archive wrapper.
     """
     from orchestrator.services import prompt_builder
 

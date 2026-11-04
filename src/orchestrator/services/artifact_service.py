@@ -7,6 +7,9 @@ runs/<run_id>/
   test.log             verification command output
   handoff.md handoff.json
   review.md review.json  (+ review.raw.txt when output was ambiguous)
+  review_payload.md    exact reviewer input + truncation manifest + absence provenance
+                       (T-11; PROPOSED layout addition, see
+                       docs/contract-change-request-T11-review-payload.md)
   verification.md verification.json
   run.json             run metadata snapshot
 

@@ -300,3 +300,21 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   the enum text contains each word `architect`, `worker`, `supervisor`, so a per-value loop
   passes on it; only the joined vocabulary and the "allowed role memory files" phrasing
   distinguish the two, and those are the assertions the test is built on.
+- **2026-11-04 — T-11: archive the reviewer input, and give absence claims a provenance.** A \
+  reviewer finding that says evidence is missing is prose written by the party the harness is \
+  asking to judge prose, so it now gets the same treatment as a contract authorization: a \
+  mechanical check before the claim can move the loop. Resolution: `review_payload.md` archives \
+  `static_text() + dynamic_text()` exactly as sent plus a truncation manifest produced by the \
+  same code that cuts (`prompt_builder.TruncationRecorder`); diffs get an explicit per-file \
+  budget with a named included/omitted file list instead of one silent middle cut; harness- \
+  detected and reviewer-asserted missing artifacts are separate payload sections, with each \
+  concrete claim marked confirmed/refuted/unchecked (`review_absence_refuted`). A refuted claim \
+  can only soften a CHANGES_REQUESTED verdict that rests solely on it — it never turns a \
+  substantive finding into an approval. The new run file name is a PROPOSED layout addition in \
+  `docs/contract-change-request-T11-review-payload.md`, not an edit to `frozen-contracts.md`; \
+  `review.json` keeps its frozen shape and records provenance in its existing `notes` and \
+  `missing_artifacts` arrays. DoD 7 closes the `.gitattributes` escape hatch: `git diff \
+  --numstat` is compared with the supplied patch, `git check-attr -a` is run for `-diff` / \
+  `export-ignore`, an attribute introduced by this task is a harness finding \
+  (`review_diff_incomplete`), and one that predates the merge-base is labelled pre-existing so \
+  it cannot fail an unrelated run.

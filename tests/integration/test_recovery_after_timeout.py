@@ -333,10 +333,9 @@ def test_recovery_reaches_the_reviewer_and_the_gui_payload(session, client, tmp_
     text = review_service.recovery_section(session, task, session.get(Run, outcome["run_id"]))
     assert "created by the ORCHESTRATOR" in text and "NEVER self-checked" in text
     assert swept[0].commit_sha[:7] in text
-    # What the reviewer is shown, asserted from the section builders rather than from an archived
-    # copy of the prompt. Archiving that copy would add a file to the frozen `runs/<run_id>/`
-    # artifact layout, which no DoD item grants (round 6, reviewer finding 2); review-input
-    # archiving belongs to the separately tracked "truncated review input" harness item.
+    # What the reviewer is shown is now both asserted from the section builders AND archived
+    # verbatim by T-11 (runs/<run_id>/review_payload.md, filed as a PROPOSED layout addition in
+    # docs/contract-change-request-T11-review-payload.md).
     run2 = session.get(Run, outcome["run_id"])
     assert "dump.log" in text  # the swept untracked path is named in the reviewer's recovery list
     findings = review_service.harness_findings_section(session, task, run2, project)
@@ -344,7 +343,13 @@ def test_recovery_reaches_the_reviewer_and_the_gui_payload(session, client, tmp_
     assert "docs/frozen-contracts.md" in findings  # the watched list is stated, not implied
     assert "UNAUTHORIZED" not in findings  # nothing was touched, so nothing is flagged
     names = {a["name"] for a in artifact_service.list_artifacts(run2.id)}
-    assert "review_payload.md" not in names, names
+    assert "review_payload.md" in names, names
+    payload = artifact_service.read_text(run2.id, "review_payload.md")
+    assert "## Exact reviewer input (static_text() + dynamic_text())" in payload
+    assert "NEVER self-checked" in payload  # the archived bytes are the ones that were sent
+    assert "## Truncation manifest" in payload
+    assert "## Harness-detected missing artifacts" in payload
+    assert "## Reviewer-asserted missing artifacts" in payload
 
     # the GUI's own audit trail: recovery badge data, straight from the task detail response.
     # There is deliberately no GET /api/tasks/{id}/recovery (reviewer ruling 3 — dead code); the

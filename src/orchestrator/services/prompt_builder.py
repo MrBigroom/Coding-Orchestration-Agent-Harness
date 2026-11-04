@@ -33,6 +33,212 @@ from orchestrator.services import memory_service
 from orchestrator.utils.redaction import redact, strip_sensitive_files_from_diff
 from orchestrator.utils.truncate import estimate_tokens, truncate_middle, truncate_tail
 
+
+@dataclass
+class TruncationRecord:
+    """One piece of content the prompt builder did not send in full.
+
+    Recorded for the archived reviewer payload (T-11 DoD 1): a truncation that is not named is
+    indistinguishable from evidence the reviewer never received.
+    """
+
+    section: str
+    item: str
+    bytes_available: int
+    bytes_included: int
+    budget: str
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "section": self.section,
+            "item": self.item,
+            "bytes_available": self.bytes_available,
+            "bytes_included": self.bytes_included,
+            "budget": self.budget,
+            "reason": self.reason,
+        }
+
+
+class TruncationRecorder:
+    """Collects truncations without changing the text any provider receives."""
+
+    def __init__(self) -> None:
+        self.records: list[TruncationRecord] = []
+
+    def record(
+        self,
+        section: str,
+        item: str,
+        original: str,
+        rendered: str,
+        budget: str,
+        reason: str,
+    ) -> None:
+        if rendered == original:
+            return
+        self.records.append(
+            TruncationRecord(
+                section=section,
+                item=item,
+                bytes_available=len(original.encode("utf-8")),
+                bytes_included=len(rendered.encode("utf-8")),
+                budget=budget,
+                reason=reason,
+            )
+        )
+
+
+def _limited(
+    recorder: TruncationRecorder | None,
+    section: str,
+    item: str,
+    text: str,
+    max_tokens: int,
+    mode: str = "middle",
+    budget_name: str = "max_log_tokens",
+) -> str:
+    """Apply the existing truncation helper and record exactly what it dropped."""
+    rendered = (
+        truncate_tail(text, max_tokens) if mode == "tail" else truncate_middle(text, max_tokens)
+    )
+    if recorder is not None:
+        recorder.record(
+            section,
+            item,
+            text,
+            rendered,
+            f"{budget_name}={max_tokens} tokens",
+            f"{mode} truncation by prompt_builder",
+        )
+    return rendered
+
+
+def split_diff_files(patch: str) -> list[tuple[str, str]]:
+    """Split a unified diff into (path, chunk) pairs, preserving every byte per file."""
+    if not patch:
+        return []
+    starts = [m.start() for m in re.finditer(r"(?m)^diff --git ", patch)]
+    if not starts:
+        return [("<unnamed diff>", patch)]
+    starts.append(len(patch))
+    out: list[tuple[str, str]] = []
+    for i in range(len(starts) - 1):
+        chunk = patch[starts[i] : starts[i + 1]]
+        path = "<unknown>"
+        for line in chunk.splitlines():
+            if line.startswith("+++ b/"):
+                path = line[6:]
+                break
+            if line.startswith("diff --git "):
+                # Fallback for a binary/mode-only chunk with no +++ line: last token of the
+                # header is the b-side path.
+                parts = line.rsplit(" b/", 1)
+                if len(parts) == 2:
+                    path = parts[1]
+        out.append((path, chunk))
+    return out
+
+
+def _chunk_head(chunk: str, max_tokens: int) -> str:
+    """Header plus as many complete hunks as fit; the first hunk is cut only as a last resort."""
+    lines = chunk.splitlines(keepends=True)
+    hunk_starts = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    if not hunk_starts:
+        return truncate_middle(chunk, max_tokens)
+    header = "".join(lines[: hunk_starts[0]])
+    hunks: list[str] = []
+    for n, start in enumerate(hunk_starts):
+        end = hunk_starts[n + 1] if n + 1 < len(hunk_starts) else len(lines)
+        hunks.append("".join(lines[start:end]))
+    rendered = header
+    for hunk in hunks:
+        candidate = rendered + hunk
+        if estimate_tokens(candidate) > max_tokens:
+            break
+        rendered = candidate
+    if rendered == header and hunks:
+        # One hunk is itself larger than the file budget: keep a middle slice of it rather than
+        # dropping the file silently.
+        rendered = header + truncate_middle(hunks[0], max(50, max_tokens - estimate_tokens(header)))
+    return rendered
+
+
+def render_diff_budget(
+    patch: str, max_tokens: int, recorder: TruncationRecorder | None = None
+) -> str:
+    """Render a diff under an explicit per-file budget and name every file that did not fit.
+
+    Replaces silently cutting the middle of one big diff: every file gets a header and as many
+    complete hunks as its share allows, and the output starts with the included/omitted file
+    lists. The same information lands in the truncation manifest.
+    """
+    chunks = split_diff_files(patch)
+    if not chunks or estimate_tokens(patch) <= max_tokens:
+        return patch
+    header_reserve = max(80, min(300, max_tokens // 8))
+    per_file = max(120, (max_tokens - header_reserve) // max(1, len(chunks)))
+    included: list[str] = []
+    omitted: list[str] = []
+    rendered_parts: list[str] = []
+    remaining = max_tokens - header_reserve
+    for path, chunk in chunks:
+        budget = min(per_file, remaining)
+        if budget < 60:
+            omitted.append(path)
+            if recorder is not None:
+                recorder.record(
+                    "dynamic_state",
+                    f"diff:{path}",
+                    chunk,
+                    "",
+                    f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens",
+                    "omitted because the diff budget was exhausted by earlier files",
+                )
+            continue
+        rendered = chunk if estimate_tokens(chunk) <= budget else _chunk_head(chunk, budget)
+        rendered_parts.append(rendered)
+        included.append(path)
+        remaining -= estimate_tokens(rendered)
+        if recorder is not None:
+            recorder.record(
+                "dynamic_state",
+                f"diff:{path}",
+                chunk,
+                rendered,
+                f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens",
+                "per-file diff budget (header plus as many complete hunks as fit)",
+            )
+    preamble = (
+        f"[review diff budget: max_diff_tokens={max_tokens}; {len(chunks)} file(s); "
+        f"per-file budget {per_file} tokens.\n"
+        f"included ({len(included)}): {', '.join(included) or 'none'}\n"
+        f"omitted ({len(omitted)}): {', '.join(omitted) or 'none'}]"
+    )
+    return preamble + "\n" + "".join(rendered_parts)
+
+
+def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
+    """The markdown manifest archived beside the exact reviewer input (T-11 DoD 1)."""
+    if not records:
+        return (
+            "No truncation: every prompt section and every changed file was included in full "
+            "in the archived input below."
+        )
+    rows = [
+        "| section | file / item | bytes available | bytes included | budget | reason |",
+        "|---|---|---:|---:|---|---|",
+    ]
+    for r in records:
+        item = str(r.get("item", "")).replace("|", "\\|")
+        budget = str(r.get("budget", "")).replace("|", "\\|")
+        reason = str(r.get("reason", "")).replace("|", "\\|")
+        rows.append(
+            f"| {r.get('section', '')} | {item} | {r.get('bytes_available', 0)} | "
+            f"{r.get('bytes_included', 0)} | {budget} | {reason} |"
+        )
+    return "\n".join(rows)
+
 SECTION_ORDER = [
     "system",
     "global_memory",
@@ -69,14 +275,24 @@ def system_prompt_for(role: str) -> str:
     )
 
 
-def _contracts(task: Task | None, project: Project | None) -> str:
+def _contracts(
+    task: Task | None, project: Project | None, recorder: TruncationRecorder | None = None
+) -> str:
     parts: list[str] = []
     if project:
         doc = Path(project.path) / "docs" / "frozen-contracts.md"
         if doc.is_file():
+            original = doc.read_text(errors="replace")
             parts.append(
                 "Project frozen contracts (docs/frozen-contracts.md):\n"
-                + truncate_middle(doc.read_text(errors="replace"), 4000)
+                + _limited(
+                    recorder,
+                    "contracts",
+                    "docs/frozen-contracts.md",
+                    original,
+                    4000,
+                    budget_name="hard-coded contracts budget",
+                )
             )
     if task and task.frozen_contracts:
         parts.append(
@@ -136,49 +352,92 @@ class DynamicState:
     extra: dict[str, str] = field(default_factory=dict)
 
 
-def _dynamic(state: DynamicState) -> str:
+def _dynamic(state: DynamicState, recorder: TruncationRecorder | None = None) -> str:
     s = get_settings()
     parts: list[str] = []
     if state.recovery:
         parts.append(
             "### Recovery commits on this branch (created by the harness, NEVER self-checked "
-            "by the Worker)\n" + truncate_middle(state.recovery, s.max_log_tokens)
+            "by the Worker)\n"
+            + _limited(
+                recorder, "dynamic_state", "recovery commits", state.recovery, s.max_log_tokens
+            )
         )
     if state.harness_findings:
         parts.append(
             "### Harness-detected findings (computed by the orchestrator, not asserted by a "
-            "model)\n" + truncate_middle(state.harness_findings, s.max_log_tokens)
+            "model)\n"
+            + _limited(
+                recorder,
+                "dynamic_state",
+                "harness findings",
+                state.harness_findings,
+                s.max_log_tokens,
+            )
         )
     if state.submission:
         parts.append(
             "### Previous round submission status\n"
-            + truncate_middle(state.submission, s.max_log_tokens)
+            + _limited(
+                recorder, "dynamic_state", "previous submission", state.submission, s.max_log_tokens
+            )
         )
     if state.delivery_evidence:
         parts.append(
             "### Handoff provenance and delivery evidence (computed from git by the harness, not "
-            "asserted by the Worker)\n" + truncate_middle(state.delivery_evidence, s.max_log_tokens)
+            "asserted by the Worker)\n"
+            + _limited(
+                recorder,
+                "dynamic_state",
+                "delivery evidence",
+                state.delivery_evidence,
+                s.max_log_tokens,
+            )
         )
     if state.handoff:
-        parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))
+        parts.append(
+            "### Latest handoff\n"
+            + _limited(recorder, "dynamic_state", "handoff block", state.handoff, s.max_log_tokens)
+        )
     if state.test_summary:
         parts.append(
-            "### Latest test summary\n" + truncate_tail(state.test_summary, s.max_log_tokens)
+            "### Latest test summary\n"
+            + _limited(
+                recorder,
+                "dynamic_state",
+                "test summary",
+                state.test_summary,
+                s.max_log_tokens,
+                mode="tail",
+            )
         )
     if state.verification:
         parts.append(
             "### Supervisor verification narrative\n"
-            + truncate_middle(state.verification, s.max_log_tokens)
+            + _limited(
+                recorder,
+                "dynamic_state",
+                "verification narrative",
+                state.verification,
+                s.max_log_tokens,
+            )
         )
     if state.diff:
         diff = strip_sensitive_files_from_diff(state.diff)
         parts.append(
-            "### Latest diff\n```diff\n" + truncate_middle(diff, s.max_diff_tokens) + "\n```"
+            "### Latest diff\n```diff\n"
+            + render_diff_budget(diff, s.max_diff_tokens, recorder)
+            + "\n```"
         )
     if state.feedback:
-        parts.append("### Latest reviewer feedback\n" + truncate_middle(state.feedback, 2000))
+        parts.append(
+            "### Latest reviewer feedback\n"
+            + _limited(recorder, "dynamic_state", "reviewer feedback", state.feedback, 2000)
+        )
     for k, v in sorted(state.extra.items()):
-        parts.append(f"### {k}\n{truncate_middle(v, s.max_log_tokens)}")
+        parts.append(
+            f"### {k}\n" + _limited(recorder, "dynamic_state", k, v, s.max_log_tokens)
+        )
     return "\n\n".join(parts)
 
 
@@ -190,6 +449,7 @@ def build_prompt(
     state: DynamicState | None = None,
 ) -> BuiltPrompt:
     state = state or DynamicState()
+    recorder = TruncationRecorder()
     mem = memory_service.for_prompt(session, role, project.slug if project else None)
 
     def sec(name: str, content: str) -> PromptSection:
@@ -200,6 +460,7 @@ def build_prompt(
             cache_breakpoint=name in BREAKPOINTS,
         )
 
+    history = state.history or ""
     sections = [
         sec("system", system_prompt_for(role)),
         sec("global_memory", f"{memory.GLOBAL_HEADER}\n{mem['global']}" if mem["global"] else ""),
@@ -207,16 +468,21 @@ def build_prompt(
         sec(
             "project_memory", f"{memory.PROJECT_HEADER}\n{mem['project']}" if mem["project"] else ""
         ),
-        sec("contracts", _contracts(task, project)),
+        sec("contracts", _contracts(task, project, recorder)),
         sec("phase", _phase(task, project)),
-        sec("history", truncate_middle(state.history or "", 2000)),
-        sec("dynamic_state", _dynamic(state)),
+        sec(
+            "history",
+            _limited(recorder, "history", "history", history, 2000),
+        ),
+        sec("dynamic_state", _dynamic(state, recorder)),
     ]
     prompt = BuiltPrompt(role=role, sections=sections)
-    return enforce_budget(prompt)
+    prompt = enforce_budget(prompt, recorder)
+    prompt.truncations = [r.as_dict() for r in recorder.records]
+    return prompt
 
 
-def enforce_budget(prompt: BuiltPrompt) -> BuiltPrompt:
+def enforce_budget(prompt: BuiltPrompt, recorder: TruncationRecorder | None = None) -> BuiltPrompt:
     """If over the max context, shrink dynamic sections into a structured summary."""
     limit = get_settings().max_prompt_context_tokens
     total = sum(estimate_tokens(s.content) for s in prompt.sections)
@@ -228,10 +494,20 @@ def enforce_budget(prompt: BuiltPrompt) -> BuiltPrompt:
     per = max(200, room // max(1, len(dyn)))
     for s in dyn:
         if estimate_tokens(s.content) > per:
+            original = s.content
             s.content = (
                 "[structured summary: content exceeded the context budget and was "
                 "truncated]\n" + truncate_middle(s.content, per)
             )
+            if recorder is not None:
+                recorder.record(
+                    "context_budget",
+                    s.name,
+                    original,
+                    s.content,
+                    f"max_prompt_context_tokens={limit} tokens; per-section={per} tokens",
+                    "aggregate prompt context budget (prompt_builder.enforce_budget)",
+                )
     return prompt
 
 

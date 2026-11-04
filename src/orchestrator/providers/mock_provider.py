@@ -112,7 +112,20 @@ class MockProvider(BaseProvider):
                     "violates": "DoD item 1",
                 }
             ]
+        if "mock-refute" in tags:
+            # T-11: an absence claim the worktree disproves. README.md is present in the task
+            # worktree, so the harness must mark this finding refuted instead of requeueing.
+            findings = [
+                {
+                    "file_or_area": "README.md",
+                    "issue": "README.md is missing from the supplied artifacts and worktree",
+                    "violates": "DoD item 1",
+                }
+            ]
+            verdict = "CHANGES_REQUESTED"
         missing = list(meta.get("missing_artifacts") or [])
+        if "mock-assert-missing-artifact" in tags:
+            missing.append("docs/not-in-repo.md")
         return json.dumps(
             {
                 "verdict": verdict,

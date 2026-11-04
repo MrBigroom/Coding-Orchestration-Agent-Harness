@@ -22,6 +22,9 @@ class PromptSection:
 class BuiltPrompt:
     role: str
     sections: list[PromptSection]
+    # Additive: what the builder had to drop to fit its budgets. `review_service` archives this
+    # next to the exact prompt text so a truncated reviewer input can never look complete.
+    truncations: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def static_sections(self) -> list[PromptSection]:

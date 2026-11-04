@@ -107,9 +107,10 @@ to the reviewer and in the diff — so a recovery commit is **machine-identifiab
   `recovery_commits` field of `GET /api/tasks/{id}` — that field is the only place the data is
   served; there is no `GET /api/tasks/{id}/recovery` route (reviewer ruling: the route was dead
   code, nothing read it, and no DoD item asked for a new endpoint).
-  The payload itself is **not** archived as a new `runs/<id>/` file: that directory layout is a
-  frozen contract and no DoD item grants a new artifact in it — see
-  "Review input size (known limitation)" below.
+  Since T-11 the exact payload that reached the reviewer is archived as
+  `runs/<id>/review_payload.md`, together with its truncation manifest — see
+  "Review input auditability" below and the PROPOSED layout request
+  `docs/contract-change-request-T11-review-payload.md`.
 - Sensitive paths (`.env`, keys) are **never** staged into a recovery commit; they stay on
   disk untracked and are reported in `skipped_sensitive`.
 
@@ -315,11 +316,17 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
 4. **Architect review** (coding/maintenance/review tasks, or any high-risk task). It sees
    only artifacts: the diff, handoff, test summary, verification narrative, the recovery
    commit list, the harness-computed contract findings, and a list of missing artifacts.
-   Sections are truncated by the `max_log_tokens` / `max_diff_tokens` settings, and nothing is
-   archived to say which bytes the model actually received — see
-   "Review input size (known limitation)" below.
+   Sections are capped by `max_log_tokens` / `max_diff_tokens`; the exact bytes sent and every
+   cut that was made are archived in `runs/<id>/review_payload.md` — see
+   "Review input auditability" below.
+   - an absence finding ("file/test/line X is missing") is checked against the worktree before
+     the verdict is acted on. A **refuted** claim is recorded (`review_absence_refuted`) and
+     cannot on its own requeue the Worker; `confirmed` and `unchecked` claims keep their normal
+     weight.
    - `NEEDS_HUMAN` → `blocked`
-   - `CHANGES_REQUESTED` → back to the Worker on the same branch
+   - `CHANGES_REQUESTED` → back to the Worker on the same branch. It is softened to APPROVED
+     only when *every* remaining finding was a refuted absence claim and no required artifact
+     is missing.
    - after `max_review_rounds` verified rounds (default 3) → `blocked`
 5. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
@@ -426,23 +433,39 @@ Missing required artifacts are always added as findings, and an `APPROVED` verdi
 missing artifacts is downgraded to `CHANGES_REQUESTED`. If the reviewer claims it
 executed anything ("I ran…"), a note records that the claim is disregarded.
 
-### Review input size (known limitation)
+`runs/<run_id>/review_payload.md` is the archived reviewer input (T-11). Its name is a
+**PROPOSED** addition to the frozen `runs/<run_id>/` layout, declared in
+`docs/contract-change-request-T11-review-payload.md`; `docs/frozen-contracts.md` is untouched
+until a human approves that request. `review.json` keeps its frozen shape: provenance is
+recorded in the existing `notes` and `missing_artifacts` arrays, not in a new key.
 
-The Architect prompt is assembled from artifacts and truncated per section
-(`prompt_builder._dynamic`, `max_log_tokens` / `max_diff_tokens`). A large handoff block or a
-long diff can therefore reach the reviewer cut off — measured on T-8 round 5, where the supplied
-handoff block stopped mid DoD 5 and DoD 6-10 plus the trailing fields were never reviewable.
-Nothing today archives the exact bytes the model received, so "the reviewer was shown X" is not
-checkable after the fact.
+### Review input auditability
 
-This is a **harness limitation, not a T-8 deliverable**: no DoD item asked for review-input
-budgeting or archiving, and the obvious fix — writing a new `runs/<run_id>/review_payload.md` —
-would amend the *frozen artifact directory layout* (`frozen-contracts.md`), which requires its
-own contract-change request and a human decision. An earlier revision on this branch did add
-that file; round 6 removed it for exactly this reason (reviewer finding 2). It stays owned by the
-separate review-payload-archiving item, where the sizing policy, the layout change and the CCR
-can be decided together. Workers mitigate in the meantime by keeping the handoff block small and
-pointing evidence at committed files the reviewer can open directly (`verify-evidence/<task>/`).
+A reviewer claim about *absent evidence* is now machine-checked before it can cost a round, and
+the input itself is archived so "the reviewer was shown X" is answerable from disk.
+
+- **Exact input.** `review_payload.md` starts with `static_text() + dynamic_text()` exactly as
+  built, and then a **truncation manifest**: section, file/item, bytes available, bytes
+  included, the budget that caused the cut, and the reason. The recorder sits in the same code
+  that performs the cut (`prompt_builder`), so a cut cannot happen without a row.
+- **Per-file diff budget.** A large diff is split by file and each file gets a header plus as
+  many complete hunks as its share allows. The rendered diff starts with the included/omitted
+  file lists; no file disappears silently, and `max_diff_tokens` is not widened.
+- **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
+  directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
+  payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,
+  `refuted` or `unchecked`.
+- **Diff completeness.** Before the review ships, the harness compares the git diffstat with the
+  supplied patch (`git diff --numstat` vs the archived `patch.diff`): every changed file must
+  have a hunk body, and `git check-attr -a` is run for `-diff` / `export-ignore` on every changed
+  path. A hiding attribute this task introduced is a harness finding (and an additive
+  `review_diff_incomplete` build-log event); one that predates the merge-base is reported as
+  pre-existing and is not a reason to fail the run. A Worker cannot opt out of review by
+  configuring `.gitattributes`.
+
+Measured motivation: reviews.7 (T-8 round 5) asserted three required proofs were missing; all
+three existed on the branch, and the reviewer had also received a handoff block cut off at DoD 5.
+The void finding requeued a 45-minute paid round (run 15).
 
 ## Verification artifacts
 
@@ -460,7 +483,8 @@ Every event is appended to `ORCHESTRATOR_HOME/build-log.jsonl` and mirrored to t
 `nits_deferred`, `merge_candidate`, `merged`, `merge_refused`, `schedule_fired`,
 `standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
 `retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
-`handoff_salvage_failed`, **`task_limits_exhausted`**, `run_error`. The GUI Build Log page and
+`handoff_salvage_failed`, **`task_limits_exhausted`**, **`review_absence_refuted`**,
+**`review_diff_incomplete`**, `run_error`. The GUI Build Log page and
 `GET /api/build-log` read it.
 
 ### Terminal run events
