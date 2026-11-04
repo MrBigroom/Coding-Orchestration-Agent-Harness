@@ -2,8 +2,10 @@
 
 **Branch:** `task-4-memory-suggestions-accept-unvalidated-scopes-cre`
 **Status:** CHANGES_APPLIED (READY_FOR_REVIEW again)
-**Base:** `main` @ `db00112` (merge-base) — this branch: `1fc412d` + `5c678f9` (+ the evidence
-commit that follows)
+**Base:** `main` @ `db00112` (merge-base). Commits this round: `1fc412d` (the eight review
+fixes) → `5c678f9` (the import-duplicate guard) → `95f3c78` (stamped evidence, branch tip when
+`make test`/`make lint` were last run) → this final commit, whose only content is the committed
+copies of this handoff.
 
 **Summary.** All eight R-25 findings are fixed at the source, each with a test and a line in
 `verify-evidence/T-4/review_round2.txt` that demonstrates the behaviour on this worktree's code:
@@ -104,9 +106,10 @@ renders into, so a legacy row with an empty `role` column reads `ok` even though
 selects on `role` — that asymmetry is main's, is documented in `docs/memory.md`, can no longer be
 created (`_validate` fills `role` from `scope`), and is deliberately not auto-repaired because
 DoD 3 covers invalid *scopes* and `MemoryUpdate` has no role field (adding one would change the
-frozen PATCH/MemoryCreate shape). (c) Evidence counts are stamped at HEAD `5c678f9` with
-`tree=0` dirty entries outside `verify-evidence/T-4`; only evidence text changed after that, and
-`make test`/`make lint` were re-run afterwards with the same 520/6/0 and a clean lint.
+frozen PATCH/MemoryCreate shape). (c) The logs in `verify-evidence/T-4/` are stamped at HEAD `5c678f9` with
+`tree=0` dirty entries outside that directory; `make test` and `make lint` were then re-run at the
+branch tip `95f3c78`, on a clean tree, with the identical **520 passed / 6 skipped / 0 failed** and
+`All checks passed!`.
 (d) R-25's `error=none -> harness reported an error while exiting 0` is explained, not smoothed
 over: `runs/25/run.json` says `exit_code=0, timed_out=False, cancelled=False, status=completed,
 handoff_arrival=clean_exit` with no error; the phrase comes from `run_service.exit_state_text`
