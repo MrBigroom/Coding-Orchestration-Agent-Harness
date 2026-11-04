@@ -33,9 +33,11 @@ It contains, in order:
    `max_prompt_context_tokens` shave in `enforce_budget`;
 3. **harness-detected missing artifacts** (computed from the run directory) in their own section;
 4. **reviewer-asserted missing artifacts** (supplied by the model) in a separate section;
-5. **absence checks** against the task worktree: every concrete file/test/line claim marked
-   `confirmed`, `refuted` or `unchecked`;
-6. **diff completeness** findings from the git diffstat, `git check-attr -a`, and the supplied
+5. **what the reviewer was actually given** — changed files, files with a patch section, files the
+   manifest records as cut, whether the aggregate context budget shaved the whole section;
+6. **absence checks**, split by claim kind: every concrete file/test/line claim marked
+   `confirmed`, `refuted` or `unchecked`, with what it was checked against;
+7. **diff completeness** findings from the git diffstat, `git check-attr -a`, and the supplied
    patch, including whether a hiding attribute predates the task.
 
 ## Why
@@ -44,8 +46,18 @@ Measured on reviews.7 (T-8 round 5): the reviewer asserted that three required p
 missing. They all existed on the branch. The reviewer also saw a handoff block cut off at DoD 5.
 Nothing in `runs/<run_id>/` could show what the model had been given, so the void finding cost a
 45-minute paid round (run 15). Archiving the input plus its truncation manifest makes "the
-reviewer was shown X" checkable after the fact. Checking absence claims against the worktree
-prevents a refuted finding from spending another round.
+reviewer was shown X" checkable after the fact. Checking absence claims mechanically prevents a
+refuted finding from spending another round.
+
+The two kinds of claim are checked differently (round-2 reviewer finding 2): an **existence**
+claim ("the file is missing from the branch") is refuted by the file being in the worktree, while
+a **visibility** claim ("its hunks were not supplied / the payload was truncated") is checked
+against the supplied patch and the truncation manifest — existence cannot refute it — and is
+`unchecked` when neither can decide.
+
+A review whose every remaining finding was refuted is routed to **NEEDS_HUMAN**, never upgraded to
+APPROVED (round-2 reviewer finding 1): refuting a claim about the evidence is not evidence that
+the code is correct, and no verdict value or acceptance rule changes.
 
 ## Shape
 
@@ -55,9 +67,11 @@ prevents a refuted finding from spending another round.
   top-level key is introduced.
 - No REST API route or response changes.
 - Two **additive** build-log events: `review_absence_refuted` (the model claimed missing evidence
-  the repository disproves) and `review_diff_incomplete` (a changed file has no hunk in the
-  supplied patch, or an attribute hides it). The frozen line shape `{timestamp, phase, task_id,
-  run_id, role, event, details, commit_sha}` is unchanged.
+  the repository or the archived input disproves) and `review_diff_incomplete` (a changed file has
+  no hunk in the supplied patch, or an attribute hides it). The frozen line shape `{timestamp,
+  phase, task_id, run_id, role, event, details, commit_sha}` is unchanged.
+- No verdict value is added, removed or redefined, and no rule about who may accept a task
+  changes: a refuted claim routes the review to the existing `NEEDS_HUMAN`.
 
 ## Proposed contract text (for `docs/frozen-contracts.md` if approved)
 

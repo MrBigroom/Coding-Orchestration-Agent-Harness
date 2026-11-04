@@ -319,14 +319,20 @@ reviewer for the same reason. Recovery-commit paths are named as such in the fin
    Sections are capped by `max_log_tokens` / `max_diff_tokens`; the exact bytes sent and every
    cut that was made are archived in `runs/<id>/review_payload.md` — see
    "Review input auditability" below.
-   - an absence finding ("file/test/line X is missing") is checked against the worktree before
-     the verdict is acted on. A **refuted** claim is recorded (`review_absence_refuted`) and
-     cannot on its own requeue the Worker; `confirmed` and `unchecked` claims keep their normal
-     weight.
+   - an absence finding ("file/test/line X is missing") is checked mechanically before the
+     verdict is acted on, and the two kinds of claim are checked differently (T-11): an
+     **existence** claim is refuted when the file is in the worktree; a **visibility** claim
+     ("not supplied / truncated / not in the diff") is never refuted by existence — it is
+     checked against the supplied patch and the archived truncation manifest, and is
+     `unchecked` when neither can decide it. A **refuted** claim is recorded
+     (`review_absence_refuted`) and cannot on its own requeue the Worker; `confirmed` and
+     `unchecked` claims keep their normal weight.
    - `NEEDS_HUMAN` → `blocked`
-   - `CHANGES_REQUESTED` → back to the Worker on the same branch. It is softened to APPROVED
-     only when *every* remaining finding was a refuted absence claim and no required artifact
-     is missing.
+   - `CHANGES_REQUESTED` → back to the Worker on the same branch, unless *every* remaining
+     finding was a claim the harness refuted. That case does not requeue and is **not** turned
+     into an APPROVED verdict either: the verdict becomes `NEEDS_HUMAN` with a "review verdict"
+     finding, because refuting a claim about the evidence is not evidence that the code is
+     correct, and the harness does not decide who may accept a task.
    - after `max_review_rounds` verified rounds (default 3) → `blocked`
 5. **APPROVED + verification pass** → `accepted`. Nits in an APPROVED review are logged as
    *deferred in writing* (`nits_deferred`). Agent tasks without high risk skip the
@@ -447,14 +453,27 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
 - **Exact input.** `review_payload.md` starts with `static_text() + dynamic_text()` exactly as
   built, and then a **truncation manifest**: section, file/item, bytes available, bytes
   included, the budget that caused the cut, and the reason. The recorder sits in the same code
-  that performs the cut (`prompt_builder`), so a cut cannot happen without a row.
-- **Per-file diff budget.** A large diff is split by file and each file gets a header plus as
-  many complete hunks as its share allows. The rendered diff starts with the included/omitted
-  file lists; no file disappears silently, and `max_diff_tokens` is not widened.
+  that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
+  sensitive-file strip (`.env`, keys), which uses to vanish between `patch.diff` and the prompt.
+- **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
+  funded before the evidence that describes it). Files are included **whole** whenever they fit
+  in what is left — a reviewer verifying wiring needs one complete file far more than the first
+  tenth of five, which is what a flat per-file split produced (round-3 reviewer finding 5). A file
+  that cannot fit whole gets as many complete hunks as the remaining budget allows, then an
+  inline `... [review diff: N of M hunks shown for <path>; ... omitted ... (@@ headers named) ...]`
+  marker, then the rest are named as omitted. One file may consume at most half the budget so a
+  single generated artifact cannot starve the rest, and the whole thing stays inside
+  `max_diff_tokens`: the budget is never widened.
 - **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
   directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
   payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,
-  `refuted` or `unchecked`.
+  `refuted` or `unchecked`, and says what it was checked against.
+- **Existence is not visibility.** A file that exists on disk does not refute "its hunks were not
+  supplied". Visibility claims are compared with the supplied patch and the truncation manifest;
+  `refuted` means the evidence was in fact supplied in full, `confirmed` means the manifest
+  records the cut, and `unchecked` is used whenever neither can decide it (fail closed). A
+  `refuted` claim removes the finding and is logged (`review_absence_refuted`), but a verdict is
+  never upgraded on it: the round goes to `NEEDS_HUMAN`, not to `APPROVED`.
 - **Diff completeness.** Before the review ships, the harness compares the git diffstat with the
   supplied patch (`git diff --numstat` vs the archived `patch.diff`): every changed file must
   have a hunk body, and `git check-attr -a` is run for `-diff` / `export-ignore` on every changed

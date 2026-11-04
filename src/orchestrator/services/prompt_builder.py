@@ -140,28 +140,78 @@ def split_diff_files(patch: str) -> list[tuple[str, str]]:
     return out
 
 
-def _chunk_head(chunk: str, max_tokens: int) -> str:
-    """Header plus as many complete hunks as fit; the first hunk is cut only as a last resort."""
+# Source first, evidence last: when the diff has to be cut, the code a reviewer must judge wins
+# the budget over the logs that describe it. Stable within a priority band (patch order).
+_DIFF_PRIORITY: tuple[tuple[str, int], ...] = (
+    ("src/", 0),
+    ("web/src/", 0),
+    ("tests/", 1),
+    ("scripts/", 2),
+    ("pyproject", 2),
+    ("Makefile", 2),
+    ("justfile", 2),
+    ("docs/", 3),
+    ("verify-evidence/", 5),
+)
+
+
+def diff_priority(path: str) -> int:
+    """Ordering key for the diff budget: lower is more important to include in full."""
+    for prefix, rank in _DIFF_PRIORITY:
+        if path.startswith(prefix):
+            return rank
+    return 4
+
+
+def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, int, bool]:
+    """Header plus as many complete hunks as fit; the first hunk is cut only as a last resort.
+
+    Returns `(rendered, hunks_shown, hunks_total)`. The rendered text always ends with a visible
+    marker when hunks were dropped, so a partially supplied file cannot look complete to the
+    reviewer: only the archived manifest used to know (T-11 round-2 reviewer finding 4).
+    """
     lines = chunk.splitlines(keepends=True)
     hunk_starts = [i for i, line in enumerate(lines) if line.startswith("@@")]
     if not hunk_starts:
-        return truncate_middle(chunk, max_tokens)
+        rendered = truncate_middle(chunk, max_tokens)
+        return rendered, 1, 1, True
     header = "".join(lines[: hunk_starts[0]])
     hunks: list[str] = []
     for n, start in enumerate(hunk_starts):
         end = hunk_starts[n + 1] if n + 1 < len(hunk_starts) else len(lines)
         hunks.append("".join(lines[start:end]))
+    shown: list[str] = []
     rendered = header
     for hunk in hunks:
+        # Reserve room for the marker itself so the note about the cut is not the thing cut.
         candidate = rendered + hunk
-        if estimate_tokens(candidate) > max_tokens:
+        if estimate_tokens(candidate) + 40 > max_tokens:
             break
         rendered = candidate
-    if rendered == header and hunks:
+        shown.append(hunk)
+    sliced = False
+    if not shown and hunks:
         # One hunk is itself larger than the file budget: keep a middle slice of it rather than
         # dropping the file silently.
-        rendered = header + truncate_middle(hunks[0], max(50, max_tokens - estimate_tokens(header)))
-    return rendered
+        rendered = header + truncate_middle(
+            hunks[0], max(50, max_tokens - estimate_tokens(header) - 40)
+        )
+        shown = [hunks[0]]
+        sliced = True
+    if sliced or len(shown) < len(hunks):
+        what = "the body of the shown hunk was cut" if sliced else f"{len(hunks) - len(shown)} hunk(s) omitted"
+        omitted_headers = [
+            hunk.splitlines()[0] for hunk in hunks[len(shown) :] if hunk.splitlines()
+        ]
+        where = (
+            " (" + ", ".join(omitted_headers) + ")" if omitted_headers else ""
+        )
+        rendered += (
+            f"\n... [review diff: {len(shown)} of {len(hunks)} hunks shown for "
+            f"{path or 'this file'}; {what} by the per-file diff budget{where} — the "
+            "archive's truncation manifest has the byte counts] ...\n"
+        )
+    return rendered, len(shown), len(hunks), sliced
 
 
 def render_diff_budget(
@@ -169,22 +219,34 @@ def render_diff_budget(
 ) -> str:
     """Render a diff under an explicit per-file budget and name every file that did not fit.
 
-    Replaces silently cutting the middle of one big diff: every file gets a header and as many
-    complete hunks as its share allows, and the output starts with the included/omitted file
-    lists. The same information lands in the truncation manifest.
+    Replaces silently cutting the middle of one big diff. Files are ordered source-first, and a
+    file is included **whole** whenever it fits in what is left, because a reviewer verifying
+    wiring needs a complete file far more than it needs the first 10% of five files (round-3
+    reviewer finding 5: the wiring was unverifiable because one budget cut landed mid-file). A
+    file that cannot fit whole gets as many complete hunks as the remaining budget allows and an
+    inline marker saying so; the files after it are named as omitted. One file may consume at most
+    half the budget, so a single generated artifact cannot starve the rest. The output starts with
+    three explicit lists — included in full, partially included (with hunk counts), omitted — so
+    the reviewer can tell *in the prompt itself* what was held back. The same information lands in
+    the truncation manifest. `max_diff_tokens` is not widened.
     """
     chunks = split_diff_files(patch)
     if not chunks or estimate_tokens(patch) <= max_tokens:
         return patch
+    ordered = sorted(chunks, key=lambda pair: diff_priority(pair[0]))
     header_reserve = max(80, min(300, max_tokens // 8))
-    per_file = max(120, (max_tokens - header_reserve) // max(1, len(chunks)))
-    included: list[str] = []
+    per_file = max(120, (max_tokens - header_reserve) // max(1, len(ordered)))
+    cap = max(per_file, (max_tokens - header_reserve) // 2)
+    full: list[str] = []
+    partial: list[str] = []
     omitted: list[str] = []
     rendered_parts: list[str] = []
     remaining = max_tokens - header_reserve
-    for path, chunk in chunks:
-        budget = min(per_file, remaining)
-        if budget < 60:
+    minimum = 60  # ~ a file header plus one short hunk
+    for path, chunk in ordered:
+        size = estimate_tokens(chunk)
+        budget = min(size, cap, max(remaining, 0))
+        if budget < minimum:
             omitted.append(path)
             if recorder is not None:
                 recorder.record(
@@ -192,13 +254,26 @@ def render_diff_budget(
                     f"diff:{path}",
                     chunk,
                     "",
-                    f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens",
-                    "omitted because the diff budget was exhausted by earlier files",
+                    f"max_diff_tokens={max_tokens} tokens; per-file cap {per_file}/{cap} tokens",
+                    "omitted because the diff budget was exhausted by higher-priority files",
                 )
             continue
-        rendered = chunk if estimate_tokens(chunk) <= budget else _chunk_head(chunk, budget)
+        if size <= budget:
+            rendered = chunk
+            hunks_shown, hunks_total, sliced = 1, 1, False
+            full.append(path)
+            reason = "included in full"
+        else:
+            rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, budget, path)
+            detail = f"{hunks_shown} of {hunks_total} hunks"
+            if sliced:
+                detail += ", body cut inside the shown hunk"
+            partial.append(f"{path} ({detail})")
+            reason = (
+                f"per-file diff budget: {detail} shown; omitted hunk headers are named inline in "
+                "the reviewer-visible text"
+            )
         rendered_parts.append(rendered)
-        included.append(path)
         remaining -= estimate_tokens(rendered)
         if recorder is not None:
             recorder.record(
@@ -206,13 +281,15 @@ def render_diff_budget(
                 f"diff:{path}",
                 chunk,
                 rendered,
-                f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens",
-                "per-file diff budget (header plus as many complete hunks as fit)",
+                f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}",
+                reason,
             )
     preamble = (
-        f"[review diff budget: max_diff_tokens={max_tokens}; {len(chunks)} file(s); "
-        f"per-file budget {per_file} tokens.\n"
-        f"included ({len(included)}): {', '.join(included) or 'none'}\n"
+        f"[review diff budget: max_diff_tokens={max_tokens}; {len(ordered)} file(s); "
+        f"per-file budget {per_file} tokens (one file may use up to {cap}); files are ordered "
+        "source-first so code is funded before evidence.\n"
+        f"included in full ({len(full)}): {', '.join(full) or 'none'}\n"
+        f"partially included ({len(partial)}): {', '.join(partial) or 'none'}\n"
         f"omitted ({len(omitted)}): {', '.join(omitted) or 'none'}]"
     )
     return preamble + "\n" + "".join(rendered_parts)
@@ -423,7 +500,23 @@ def _dynamic(state: DynamicState, recorder: TruncationRecorder | None = None) ->
             )
         )
     if state.diff:
-        diff = strip_sensitive_files_from_diff(state.diff)
+        # A withheld sensitive file is a truncation like any other: it is recorded here, named in
+        # the archived manifest, and shown to the reviewer as an explicit omission marker instead
+        # of vanishing between the patch and the prompt (T-11 round-2 reviewer finding 3).
+        dropped: list[str] = []
+        diff = strip_sensitive_files_from_diff(state.diff, dropped=dropped)
+        if dropped and recorder is not None:
+            originals = dict(split_diff_files(state.diff))
+            for path in dropped:
+                recorder.record(
+                    "dynamic_state",
+                    f"diff:{path}",
+                    originals.get(path, ""),
+                    "",
+                    f"max_diff_tokens={s.max_diff_tokens} tokens",
+                    "sensitive file: content withheld before the diff budget "
+                    "(utils/redaction.strip_sensitive_files_from_diff); only the path is shown",
+                )
         parts.append(
             "### Latest diff\n```diff\n"
             + render_diff_budget(diff, s.max_diff_tokens, recorder)

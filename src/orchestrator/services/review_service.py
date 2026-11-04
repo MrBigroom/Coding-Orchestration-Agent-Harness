@@ -10,7 +10,12 @@ missing artifacts is downgraded to CHANGES_REQUESTED.
 
 T-11: the exact prompt sent to the reviewer is archived as `review_payload.md` with a truncation
 manifest, harness-detected and model-asserted missing artifacts are kept in separate sections,
-and an absence finding is checked against the task worktree before it can requeue a round.
+and an absence finding is checked as either an existence claim (refuted by the worktree) or a
+visibility claim (checked against the supplied patch and the truncation manifest) before it can
+requeue a round. A review whose every remaining finding was a refuted claim is routed to
+NEEDS_HUMAN: the harness never upgrades a reviewer's verdict to APPROVED, because "the model was
+wrong about one absence" is not evidence that the code is correct and accepting a task is not
+the harness's call to make (T-11 round-2 reviewer finding 1).
 """
 
 from __future__ import annotations
@@ -175,6 +180,7 @@ def render_review_payload(
     reviewer_missing: list[str],
     absence_checks: list[review_audit.AbsenceCheck],
     diff_issues: list[review_audit.DiffIssue],
+    supplied: review_audit.SuppliedEvidence,
 ) -> str:
     """The archived reviewer input plus the provenance of every absence/truncation claim.
 
@@ -197,6 +203,10 @@ def render_review_payload(
 
 {prompt_builder.render_truncation_manifest(truncations)}
 
+## What the reviewer was actually given
+
+{review_audit.render_supplied_summary(supplied)}
+
 ## Harness-detected missing artifacts
 
 Computed by the orchestrator from the run directory; a model did not assert these.
@@ -210,7 +220,7 @@ cost a round.
 
 {reviewer_list}
 
-## Absence checks against the task worktree
+## Absence checks (existence claims vs visibility claims)
 
 {review_audit.render_absence_checks(absence_checks)}
 
@@ -288,9 +298,16 @@ async def architect_review(
         artifact_service.write_text(run.id, "review.raw.txt", raw)
 
     model_missing = list(result.missing_artifacts)
-    absence_checks = review_audit.check_findings(result.findings, cwd) + (
-        review_audit.check_missing_artifacts(model_missing, cwd)
+    # What the reviewer was actually given, derived from the same recorder that performed every
+    # cut. Visibility claims are checked against this, never against file existence.
+    supplied = review_audit.supplied_evidence(
+        patch_text,
+        prompt.truncations,
+        review_audit.changed_paths(cwd, base_branch),
     )
+    absence_checks = review_audit.check_findings(
+        result.findings, cwd, supplied
+    ) + review_audit.check_missing_artifacts(model_missing, cwd, supplied)
     kept: list[ReviewFinding] = []
     refuted: list[ReviewFinding] = []
     for i, finding in enumerate(result.findings):
@@ -372,8 +389,12 @@ async def architect_review(
         )
 
     # A round is only requeued on a finding a human/model can act on. If every remaining
-    # CHANGES_REQUESTED finding was an absence claim the worktree refutes, soften the verdict
-    # instead of paying for another Worker round.
+    # CHANGES_REQUESTED finding was an absence claim the harness refuted, do NOT requeue — but do
+    # NOT accept either. Refuting a claim proves the reviewer was wrong about the evidence, not
+    # that the code is correct, and changing a verdict to APPROVED would let a heuristic decide
+    # who may accept a task (T-11 round-2 reviewer finding 1: that was a fail-open gate). The
+    # verdict stays a reviewer verdict; the harness records what it could not resolve and routes
+    # to a human. `NEEDS_HUMAN` -> `blocked`, so no Worker round is consumed either.
     if (
         result.verdict == ReviewVerdict.CHANGES_REQUESTED
         and refuted
@@ -381,10 +402,21 @@ async def architect_review(
         and not result.missing_artifacts
         and not ambiguous
     ):
-        result.verdict = ReviewVerdict.APPROVED
+        result.verdict = ReviewVerdict.NEEDS_HUMAN
+        result.findings.append(
+            ReviewFinding(
+                file_or_area="review verdict",
+                issue=(
+                    "the reviewer requested changes, but every remaining finding was an absence "
+                    "claim the harness mechanically refuted; the harness neither requeues a "
+                    "round for a refuted claim nor accepts a task on one — a human must decide"
+                ),
+                violates="T-11 DoD 3 (refuted findings must not consume a round, and never accept)",
+            )
+        )
         result.notes.append(
-            "verdict softened to APPROVED: the only remaining findings were absence claims that "
-            "the task worktree mechanically refuted"
+            "verdict held at NEEDS_HUMAN (never upgraded): the only remaining findings were "
+            "absence claims the repository or the archived input mechanically refuted"
         )
     if refuted:
         log_service.log_event(
@@ -403,6 +435,19 @@ async def architect_review(
             role="supervisor",
             task_id=task.id,
             run_id=run.id,
+        )
+
+    # DoD 2: review.json must say which findings the harness can confirm mechanically. Absence
+    # provenance is recorded above; this is the one-line summary an auditor reads first.
+    by_status = {"confirmed": 0, "refuted": 0, "unchecked": 0}
+    for check in absence_checks:
+        by_status[check.status] = by_status.get(check.status, 0) + 1
+    if absence_checks:
+        result.notes.append(
+            "mechanical absence checks: "
+            f"{by_status['confirmed']} confirmed, {by_status['refuted']} refuted, "
+            f"{by_status['unchecked']} unchecked (of {len(result.findings)} finding(s) kept, "
+            f"{len(refuted)} refuted finding(s) removed)"
         )
 
     if _EXEC_CLAIM.search(raw):
@@ -426,6 +471,7 @@ async def architect_review(
             reviewer_missing=model_missing,
             absence_checks=absence_checks,
             diff_issues=diff_issues,
+            supplied=supplied,
         ),
         redact_content=False,
     )

@@ -99,8 +99,13 @@ def is_sensitive_path(path: str) -> bool:
     return any(r.search(p) for r in SENSITIVE_FILE_PATTERNS)
 
 
-def strip_sensitive_files_from_diff(diff: str) -> str:
-    """Drop hunks for sensitive files (.env, keys) from a unified diff before sending to LLMs."""
+def strip_sensitive_files_from_diff(diff: str, dropped: list[str] | None = None) -> str:
+    """Drop hunks for sensitive files (.env, keys) from a unified diff before sending to LLMs.
+
+    `dropped` (optional) collects the path of every file whose content was withheld, so the caller
+    can record it as a truncation instead of letting the file disappear between the patch and the
+    prompt (T-11 DoD 4). The path itself is still shown — only the body is withheld.
+    """
     out: list[str] = []
     skip = False
     for line in diff.splitlines(keepends=True):
@@ -109,6 +114,8 @@ def strip_sensitive_files_from_diff(diff: str) -> str:
             path = parts[-1][2:] if len(parts) >= 4 else ""
             skip = is_sensitive_path(path)
             if skip:
+                if dropped is not None:
+                    dropped.append(path)
                 out.append(f"diff --git {parts[-2]} {parts[-1]}\n# [sensitive file omitted]\n")
                 continue
         if not skip:

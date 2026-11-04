@@ -11,10 +11,14 @@ adds after the role prompt (worker protocol, output contracts) live in the same 
 ## Architect / Reviewer
 
 The prompt text below is unchanged. T-11 adds mechanical checks *around* it: a reviewer claim
-that a file, test name or line is missing is checked against the task worktree before it can
-requeue a round, and the exact prompt the reviewer received is archived as
-`runs/<run_id>/review_payload.md` with a truncation manifest (see `docs/build-loop.md`,
-"Review input auditability").
+that a file, test name or line is missing is checked mechanically before it can requeue a round —
+against the task worktree when the claim is about the repository, and against the supplied patch
+and the truncation manifest when the claim is about what the reviewer was shown, because a file
+that exists on disk does not refute "its hunks were not supplied". A refuted claim is removed from
+the review and logged, but it never upgrades a verdict: the round routes to `NEEDS_HUMAN` rather
+than back to the Worker or straight to `APPROVED`. The exact prompt the reviewer received is
+archived as `runs/<run_id>/review_payload.md` with a truncation manifest (see
+`docs/build-loop.md`, "Review input auditability").
 
 ```text
 You are the Architect/Reviewer in an Architect+Worker build loop. A Worker agent implemented one phase of the implementation plan. Review its git diff STRICTLY against that phase's Definition of Done and the project's frozen contracts. You have NO execution access — you cannot run commands, tests, or greps. Never claim you ran anything; reason only from the supplied diff, test output, handoff artifacts, and verification narrative.

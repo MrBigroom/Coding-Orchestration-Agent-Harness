@@ -10,13 +10,20 @@ Two independent jobs, both required by T-11:
     attribute made invisible (`-diff`, `export-ignore`). A Worker must not be able to opt out of
     review by editing `.gitattributes`.
 
+One distinction is load-bearing (T-11 round-2 reviewer finding 2): a claim that something is
+missing from the **repository** is refuted by the file existing, but a claim that something was
+not **supplied to the reviewer** is not — existence does not refute a visibility claim. Those
+claims are checked against the archived truncation manifest and the supplied patch instead, and
+an unknowable one is marked `unchecked`, never `refuted`.
+
 Everything here is offline: local git commands and local files only.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +35,13 @@ from orchestrator.utils.git import run_git
 _ABSENCE = re.compile(
     r"(?i)\b(missing|absent|not\s+present|does\s+not\s+exist|no\s+such|not\s+supplied|"
     r"not\s+included|not\s+found|omitted|truncated|not\s+visible|not\s+archived|unavailable|"
-    r"isn'?t\s+present|never\s+provided)\b"
+    r"isn'?t\s+present|never\s+provided|not\s+shown|cut\s+off|dropped)\b"
+)
+# Language that makes the claim about what the REVIEWER RECEIVED rather than about the repo.
+_VISIBILITY = re.compile(
+    r"(?i)\b(supplied|provided|visible|shown|seen\s+by\s+the\s+reviewer|truncated|cut\s+off|"
+    r"omitted|dropped|not\s+in\s+the\s+(?:diff|patch|payload|prompt|handoff)|in\s+the\s+supplied\s+"
+    r"(?:diff|patch|payload)|not\s+included|not\s+supplied|not\s+visible|not\s+shown|not\s+archived)\b"
 )
 _FILE = re.compile(
     r"(?<![\w./-])((?:\.{0,2}/)?(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\."
@@ -45,6 +58,30 @@ EVIDENCE_OR_SOURCE_PREFIXES = (
     "verify-evidence/",
     "evidence/",
 )
+
+
+@dataclass
+class SuppliedEvidence:
+    """What actually reached the reviewer, derived from the archived prompt/truncation records.
+
+    `diff_cut` maps a path to `(bytes_included, bytes_available)` for every file the per-file
+    diff budget cut; `diff_supplied` is every path that has a section in the supplied patch;
+    `changed_paths` is the git diffstat; `section_cut` says the whole dynamic section was shaved
+    by the aggregate context budget, which makes per-file statements unknowable.
+    """
+
+    diff_supplied: set[str] = field(default_factory=set)
+    diff_cut: dict[str, tuple[int, int]] = field(default_factory=dict)
+    changed_paths: set[str] = field(default_factory=set)
+    section_cut: bool = False
+    truncations: list[dict[str, Any]] = field(default_factory=list)
+
+    def cut_table(self) -> str:
+        if not self.diff_cut:
+            return "none"
+        return ", ".join(
+            f"{p} ({inc}/{avail} bytes)" for p, (inc, avail) in sorted(self.diff_cut.items())
+        )
 
 
 @dataclass
@@ -111,13 +148,202 @@ def _find_test_name(cwd: Path, name: str) -> str | None:
     return None
 
 
-def _check_claim_text(
-    cwd: Path | None, text: str, *, source: str = "finding", index: int = -1
+def changed_paths(cwd: Path | None, base_branch: str | None) -> set[str]:
+    """The same changed-file set the harness diffstat check uses (T-11 DoD 7)."""
+    if cwd is None or not cwd.is_dir() or not base_branch:
+        return set()
+    return {path for _a, _d, path in _numstat(cwd, base_branch)}
+
+
+def supplied_evidence(
+    patch: str,
+    truncations: list[dict[str, Any]] | None,
+    changed: Iterable[str] = (),
+) -> SuppliedEvidence:
+    """Derive what the reviewer was given from the recorder that performed the cuts.
+
+    A file is "cut" only when the prompt builder recorded a truncation for it, which is the same
+    code that produced the text, so the manifest and this check cannot drift apart.
+    """
+    cut: dict[str, tuple[int, int]] = {}
+    section_cut = False
+    for record in truncations or []:
+        item = str(record.get("item", ""))
+        if item.startswith("diff:"):
+            cut[item[5:]] = (
+                int(record.get("bytes_included") or 0),
+                int(record.get("bytes_available") or 0),
+            )
+        elif record.get("section") == "context_budget" and item == "dynamic_state":
+            section_cut = True
+    return SuppliedEvidence(
+        diff_supplied={path for path, _chunk in split_diff_files(patch or "")},
+        diff_cut=cut,
+        changed_paths=set(changed),
+        section_cut=section_cut,
+        truncations=list(truncations or []),
+    )
+
+
+def _vis_unchecked(claim: str, detail: str, index: int, source: str) -> AbsenceCheck:
+    return AbsenceCheck(
+        finding_index=index, claim=claim, status="unchecked", detail=detail, source=source
+    )
+
+
+def _check_visibility(
+    cwd: Path | None,
+    path: str,
+    index: int,
+    source: str,
+    supplied: SuppliedEvidence | None,
+) -> AbsenceCheck:
+    """Check a "was not supplied to the reviewer" claim against what was actually supplied.
+
+    Existence in the worktree is deliberately NOT used to refute one of these: a file can exist on
+    disk and still have had every hunk withheld from the reviewer (T-11 round-2 reviewer finding
+    2). Without the archived manifest the best a missing path can be called is `confirmed` (it is
+    absent everywhere we can see); a present path is `unchecked`, never `refuted`.
+    """
+    if supplied is None:
+        exists = bool(cwd) and (cwd / path.removeprefix("./")).is_file()
+        if exists:
+            return _vis_unchecked(
+                path,
+                "the path exists in the worktree, but presence in the supplied artifacts cannot be "
+                "decided without the archived truncation manifest",
+                index,
+                source,
+            )
+        return AbsenceCheck(
+            finding_index=index,
+            claim=path,
+            status="confirmed",
+            detail="path is absent from the task worktree (no truncation manifest was available)",
+            source=source,
+        )
+    if supplied.section_cut:
+        return _vis_unchecked(
+            path,
+            "the whole dynamic_state section was shaved by the aggregate context budget, so "
+            "per-file visibility cannot be decided from the archived manifest",
+            index,
+            source,
+        )
+    if path in supplied.diff_cut:
+        included, available = supplied.diff_cut[path]
+        if included == 0:
+            return AbsenceCheck(
+                finding_index=index,
+                claim=path,
+                status="confirmed",
+                detail=(
+                    "the archived truncation manifest says this file was omitted entirely "
+                    f"(0 of {available} bytes reached the reviewer)"
+                ),
+                source=source,
+            )
+        return AbsenceCheck(
+            finding_index=index,
+            claim=path,
+            status="confirmed",
+            detail=(
+                "the archived truncation manifest says only "
+                f"{included} of {available} bytes reached the reviewer"
+            ),
+            source=source,
+        )
+    if path in supplied.diff_supplied:
+        return AbsenceCheck(
+            finding_index=index,
+            claim=path,
+            status="refuted",
+            detail=(
+                "supplied to the reviewer in full: the patch has a section for it and the "
+                "archived manifest records no truncation for it"
+            ),
+            source=source,
+        )
+    if path in supplied.changed_paths:
+        return AbsenceCheck(
+            finding_index=index,
+            claim=path,
+            status="confirmed",
+            detail=(
+                "changed by this task, but the supplied patch has no section for it "
+                "(see the diff-completeness findings)"
+            ),
+            source=source,
+        )
+    exists = bool(cwd) and (cwd / path.removeprefix("./")).is_file()
+    if exists:
+        return _vis_unchecked(
+            path,
+            "the path exists in the worktree but is not part of this task's diff, so presence in "
+            "the supplied artifacts cannot be decided mechanically",
+            index,
+            source,
+        )
+    return AbsenceCheck(
+        finding_index=index,
+        claim=path,
+        status="confirmed",
+        detail=(
+            "path is absent from the task worktree, the supplied patch and the truncation "
+            "manifest"
+        ),
+        source=source,
+    )
+
+
+def _manifest_topic_checks(
+    text: str, supplied: SuppliedEvidence, index: int, source: str
 ) -> list[AbsenceCheck]:
-    """Extract concrete file/test/line claims from one absence finding and check each one."""
+    """Match a vague truncation claim ("the handoff block was cut") to the manifest."""
+    low = (text or "").lower()
+    out: list[AbsenceCheck] = []
+    for record in supplied.truncations:
+        item = str(record.get("item", ""))
+        topic = item[5:] if item.startswith("diff:") else item
+        if not topic or topic.lower() not in low:
+            continue
+        out.append(
+            AbsenceCheck(
+                finding_index=index,
+                claim=topic,
+                status="confirmed",
+                detail=(
+                    "the archived manifest records this cut: "
+                    f"{record.get('bytes_included', 0)} of "
+                    f"{record.get('bytes_available', 0)} bytes included "
+                    f"(budget: {record.get('budget', '')})"
+                ),
+                source=source,
+            )
+        )
+    return out
+
+
+def _check_claim_text(
+    cwd: Path | None,
+    text: str,
+    *,
+    source: str = "finding",
+    index: int = -1,
+    supplied: SuppliedEvidence | None = None,
+) -> list[AbsenceCheck]:
+    """Extract concrete file/test/line claims from one absence finding and check each one.
+
+    Two families of claim are checked differently:
+      - "X is missing" (about the repository) — the file's existence refutes it;
+      - "X was not supplied / was truncated" (about the review input) — existence proves nothing,
+        so it is checked against the supplied patch and the truncation manifest, and marked
+        `unchecked` when neither can decide it.
+    """
     if not _ABSENCE.search(text or ""):
         return []
-    if cwd is None or not cwd.is_dir():
+    visibility = bool(_VISIBILITY.search(text or "")) or source == "missing_artifact"
+    if not visibility and (cwd is None or not cwd.is_dir()):
         return [
             AbsenceCheck(
                 finding_index=index,
@@ -128,13 +354,18 @@ def _check_claim_text(
             )
         ]
     claims: list[AbsenceCheck] = []
+    # Only reached for existence claims, where the worktree was required above.
+    root = cwd if cwd is not None else Path(".")
 
     for match in _FILE.finditer(text):
         raw = match.group(1).strip().rstrip(".,;:)}]")
         rel = raw.removeprefix("./")
-        target = (cwd / rel).resolve()
+        if visibility:
+            claims.append(_check_visibility(cwd, rel, index, source, supplied))
+            continue
+        target = (root / rel).resolve()
         try:
-            target.relative_to(cwd.resolve())
+            target.relative_to(root.resolve())
         except ValueError:
             claims.append(
                 AbsenceCheck(
@@ -204,7 +435,10 @@ def _check_claim_text(
 
     for match in _TEST.finditer(text):
         name = match.group(1)
-        found = _find_test_name(cwd, name)
+        found = _find_test_name(cwd, name) if cwd is not None else None
+        if found and visibility and supplied is not None:
+            claims.append(_check_visibility(cwd, found, index, source, supplied))
+            continue
         if found:
             claims.append(
                 AbsenceCheck(
@@ -226,6 +460,8 @@ def _check_claim_text(
                 )
             )
 
+    if visibility and supplied is not None:
+        claims.extend(_manifest_topic_checks(text, supplied, index, source))
     if not claims:
         claims.append(
             AbsenceCheck(
@@ -236,7 +472,16 @@ def _check_claim_text(
                 source=source,
             )
         )
-    return claims
+    # The same path is often named in both `file_or_area` and `issue`; one claim, one row.
+    seen: set[tuple[str, str]] = set()
+    unique: list[AbsenceCheck] = []
+    for check in claims:
+        key = (check.claim, check.status)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(check)
+    return unique
 
 
 def _aggregate(checks: list[AbsenceCheck]) -> str:
@@ -250,7 +495,11 @@ def _aggregate(checks: list[AbsenceCheck]) -> str:
     return "unchecked"
 
 
-def check_findings(findings: list[Any], cwd: Path | None) -> list[AbsenceCheck]:
+def check_findings(
+    findings: list[Any],
+    cwd: Path | None,
+    supplied: SuppliedEvidence | None = None,
+) -> list[AbsenceCheck]:
     """Check every finding that asserts absence. Non-absence findings are left alone."""
     out: list[AbsenceCheck] = []
     for i, finding in enumerate(findings):
@@ -260,16 +509,31 @@ def check_findings(findings: list[Any], cwd: Path | None) -> list[AbsenceCheck]:
             text = " ".join(
                 str(getattr(finding, k, "")) for k in ("file_or_area", "issue", "violates")
             )
-        out.extend(_check_claim_text(cwd, text, index=i))
+        out.extend(_check_claim_text(cwd, text, index=i, supplied=supplied))
     return out
 
 
-def check_missing_artifacts(items: list[str], cwd: Path | None) -> list[AbsenceCheck]:
-    """Reviewer-supplied `missing_artifacts` entries are claims too; check them the same way."""
+def check_missing_artifacts(
+    items: list[str],
+    cwd: Path | None,
+    supplied: SuppliedEvidence | None = None,
+) -> list[AbsenceCheck]:
+    """Reviewer-supplied `missing_artifacts` entries are claims about the supplied artifacts.
+
+    They are always checked as visibility claims: the item names something the reviewer says it
+    did not receive, so a file existing in the worktree does not refute it (T-11 round-2
+    reviewer finding 2).
+    """
     out: list[AbsenceCheck] = []
     for i, item in enumerate(items):
         out.extend(
-            _check_claim_text(cwd, f"{item} is missing", source="missing_artifact", index=i)
+            _check_claim_text(
+                cwd,
+                f"{item} is missing",
+                source="missing_artifact",
+                index=i,
+                supplied=supplied,
+            )
         )
     return out
 
@@ -282,14 +546,33 @@ def render_absence_checks(checks: list[AbsenceCheck]) -> str:
     if not checks:
         return "No reviewer absence claim needed a mechanical check."
     lines = [
-        "| claim | source | status | evidence |",
+        "| claim | source | status | checked against / evidence |",
         "|---|---|---|---|",
     ]
     for c in checks:
         claim = c.claim.replace("|", "\\|")
         detail = c.detail.replace("|", "\\|")
         lines.append(f"| {claim} | {c.source} | **{c.status}** | {detail} |")
+    lines.append("")
+    lines.append(
+        "`refuted` = the repository or the archived input disproves the claim. `confirmed` = the "
+        "claim holds and the finding keeps its normal weight. `unchecked` = no mechanical decision "
+        "was possible, so the finding keeps its normal weight (fail closed)."
+    )
     return "\n".join(lines)
+
+
+def render_supplied_summary(supplied: SuppliedEvidence) -> str:
+    """What the reviewer was actually given, stated next to the absence checks."""
+    return "\n".join(
+        [
+            f"- changed files named by git: {len(supplied.changed_paths)}",
+            f"- files with a section in the supplied patch: {len(supplied.diff_supplied)}",
+            f"- files the truncation manifest records as cut: {supplied.cut_table()}",
+            "- whole dynamic section shaved by the aggregate context budget: "
+            + ("yes" if supplied.section_cut else "no"),
+        ]
+    )
 
 
 # ---------------------------------------------------------------- diff completeness (DoD 7)

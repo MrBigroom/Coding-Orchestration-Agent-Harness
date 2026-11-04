@@ -300,6 +300,24 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   the enum text contains each word `architect`, `worker`, `supervisor`, so a per-value loop
   passes on it; only the joined vocabulary and the "allowed role memory files" phrasing
   distinguish the two, and those are the assertions the test is built on.
+- **2026-11-04 — T-11 round 2: a refuted claim never becomes an approval, and existence does
+  not refute visibility.** Two defects in the first cut of the reviewer audit. (1) When every
+  remaining finding was a refuted absence claim, the gate softened `CHANGES_REQUESTED` to
+  `APPROVED` — a heuristic existence check deciding who may accept a task, i.e. fail-open, on
+  top of changing a frozen verdict semantic. Resolution: the verdict is set to `NEEDS_HUMAN` with
+  a "review verdict" finding, which routes to `blocked`; the round is still not requeued for a
+  refuted claim, but nothing is accepted on one either. (2) The check treated "X was not supplied
+  / is truncated in the diff" as an existence claim, so a file that existed on disk refuted a
+  reviewer who was right that its hunks never reached them. Resolution: claims are split into
+  existence claims (worktree) and visibility claims (supplied patch + archived truncation
+  manifest), and an undecidable one is `unchecked`, never `refuted`; `review_audit.
+  supplied_evidence` derives the supplied set from the same recorder that performed the cuts.
+  Two smaller holes closed on the same pass: the sensitive-file strip now records the paths it
+  withholds (they disappeared between `patch.diff` and the prompt), and a partially rendered file
+  carries an inline `[review diff: N of M hunks shown ...]` marker and is named in a
+  `partially included` list instead of being reported as simply included; the diff is ordered
+  source-first with a per-file floor so code is funded before evidence, and the budget is not
+  widened.
 - **2026-11-04 — T-11: archive the reviewer input, and give absence claims a provenance.** A \
   reviewer finding that says evidence is missing is prose written by the party the harness is \
   asking to judge prose, so it now gets the same treatment as a contract authorization: a \
