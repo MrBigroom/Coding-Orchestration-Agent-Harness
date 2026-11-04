@@ -1,0 +1,21 @@
+# HEAD=967aea9b332f0beab40701a90c2fcabfb7799aa4 tree-entries=259 dirty=1
+# command: ./scripts/orch_verify.sh all
+
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=all|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10/tests
+orch-verify: lint target  ruff check src tests
+........................................................................ [ 15%]
+..........................ssssss........................................ [ 31%]
+........................................................................ [ 46%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 93%]
+............................                                             [100%]
+454 passed, 6 skipped in 76.67s (0:01:16)
+All checks passed!
