@@ -6,6 +6,7 @@ import BuildLog from "./pages/BuildLog";
 import Chat from "./pages/Chat";
 import Dashboard from "./pages/Dashboard";
 import Memory from "./pages/Memory";
+import Notifications from "./pages/Notifications";
 import Models from "./pages/Models";
 import Projects from "./pages/Projects";
 import PromptPreview from "./pages/PromptPreview";
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/agents" element={<Agents />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/build-log" element={<BuildLog />} />
+        <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<div className="text-muted">Not found.</div>} />
       </Routes>

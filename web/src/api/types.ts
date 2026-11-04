@@ -201,6 +201,24 @@ export interface BuildLog {
   commit_sha: string | null;
 }
 
+export interface NotificationRecord {
+  id: number;
+  created_at: string;
+  task_id: number | null;
+  run_id: number | null;
+  trigger: string;
+  event: string;
+  status: "pending" | "delivered" | "failed" | "skipped" | "coalesced";
+  reason: string;
+  title: string;
+  body: string;
+  link: string;
+  channel: string | null;
+  error: string | null;
+  coalesced_into: number | null;
+  details_json: Record<string, unknown>;
+}
+
 export interface PreviewSection {
   index: number;
   name: string;

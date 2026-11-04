@@ -38,6 +38,27 @@ const BOOLS: [string, string][] = [
   ["allow_unattended_sessions", "Allow standalone agent runs with nobody watching (skips the task pipeline and review)"],
   ["memory_budget_enabled", "Cap how much approved memory is injected per prompt section (memory is static, so uncapped growth squeezes diff/verification evidence)"],
 ];
+// T-9. Keys are the same ones settings_service exposes; the master switch is OFF on a new
+// install and every trigger can be individually disabled.
+const NOTIFICATION_TRIGGERS: [string, string, boolean][] = [
+  ["notification_run_completed", "Run completed (success path)", false],
+  ["notification_run_failed", "Run failed", false],
+  ["notification_run_timeout", "Run timed out", false],
+  ["notification_run_cancelled", "Run cancelled", false],
+  ["notification_task_review", "Task reached review / awaiting acceptance", false],
+  ["notification_task_blocked", "Task blocked", false],
+  ["notification_escalated", "Task escalated", false],
+  ["notification_merge_candidate", "Merge candidate ready", false],
+  ["notification_merged", "Branch merged", false],
+  ["notification_merge_refused", "Merge refused", false],
+  ["notification_worktree_created", "Noisy: worktree created", true],
+  ["notification_recovery_commit", "Noisy: recovery commit", true],
+  ["notification_supervisor_verification", "Noisy: supervisor verification", true],
+  ["notification_architect_review", "Noisy: architect review", true],
+  ["notification_nits_deferred", "Noisy: review nits deferred", true],
+  ["notification_schedule_fired", "Noisy: schedule fired", true],
+];
+
 const NUMS: [string, string][] = [
   ["max_parallel_runs", "Max parallel runs"],
   ["max_parallel_runs_per_project", "Max parallel runs per project"],
@@ -77,6 +98,24 @@ export default function Settings() {
                   <Toggle checked={Boolean(data[k])} onChange={(v) => update(k, v)} />
                 </div>
               ))}
+            </div>
+          </Card>
+          <Card title="Notifications">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm">Desktop notifications
+                  <span className="block text-xs text-muted">Off by default on a new install. Uses the freedesktop D-Bus channel; every attempt is also kept in the Notifications list.</span>
+                </span>
+                <Toggle checked={Boolean(data.notifications_enabled)} onChange={(v) => update("notifications_enabled", v)} />
+              </div>
+              <div className="space-y-2 border-t border-line pt-3">
+                {NOTIFICATION_TRIGGERS.map(([k, label, noisy]) => (
+                  <div key={k} className="flex items-center justify-between gap-4">
+                    <span className={`text-sm ${noisy ? "text-muted" : ""}`}>{label}</span>
+                    <Toggle checked={Boolean(data[k])} onChange={(v) => update(k, v)} />
+                  </div>
+                ))}
+              </div>
             </div>
           </Card>
           <Card title="Limits">

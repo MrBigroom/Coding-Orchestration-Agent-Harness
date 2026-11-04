@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  BarChart3, Bot, Brain, CalendarClock, Cpu, DatabaseZap, FolderGit2, LayoutDashboard, ListChecks,
+  BarChart3, Bell, Bot, Brain, CalendarClock, Cpu, DatabaseZap, FolderGit2, LayoutDashboard, ListChecks,
   MessagesSquare, ScrollText, Settings, Workflow, Wrench, type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -20,6 +20,7 @@ const NAV: readonly (readonly [string, string, LucideIcon])[] = [
   ["/memory", "Memory", Brain],
   ["/prompt-preview", "Prompt Cache", DatabaseZap],
   ["/build-log", "Build Log", ScrollText],
+  ["/notifications", "Notifications", Bell],
   ["/settings", "Settings", Settings],
 ];
 

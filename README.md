@@ -44,6 +44,21 @@ The app opens the GUI in a native window. It attaches to an orchestrator that is
 running, or starts one in the background. When you close it with tasks still running, it
 asks whether to keep the server running. See [`docs/desktop.md`](docs/desktop.md).
 
+### Desktop notifications (off by default)
+
+A finished run is only useful if someone comes back to accept it, request changes or resolve a
+block, so the harness can notify you through the desktop: a freedesktop D-Bus notification
+(`notify-send`, or a direct `gdbus` message) that works under Hyprland/Wayland with no browser or
+desktop window open. It carries the task and run ids, the outcome, the next action and a link to
+the task. Desktop delivery is best-effort; every decision is also kept in the **Notifications**
+page and `GET /api/notifications`, including "not attempted because notifications are off" and
+"attempted but failed" separately. The master switch `notifications_enabled` is **off on a new
+install** and each trigger is individually disable-able in Settings. See
+[`docs/build-loop.md`](docs/build-loop.md#notifications-t-9) and
+[`docs/configuration.md`](docs/configuration.md#runtime-settings-gui--patch-apisettings).
+
+The mock/demo flow keeps all of this offline: no notification client is contacted in tests.
+
 ### What the demo does
 
 `orchestrator demo` initialises `ORCHESTRATOR_HOME`. It copies the sample project there as
@@ -89,7 +104,7 @@ The GUI covers the same workflows. Its pages are Dashboard, Usage (tokens per mo
 day, as a heatmap and stacked bars), Chat, Tasks, Task Detail (live logs, diff, handoff,
 review, verification, accept/reject/escalate, retry with a different harness/model),
 Agents, Scheduled Tasks, Projects, Models & Providers, Adapters, Memory, Prompt Cache,
-Build Log, and Settings. It has light and dark themes (switch in the sidebar or on
+Build Log, Notifications, and Settings. It has light and dark themes (switch in the sidebar or on
 Settings) and a choice of text and code fonts (Inter, IBM Plex, Fira Code, JetBrains Mono,
 Roboto Mono or your system's), all bundled locally. Code, diffs and JSON are highlighted with
 VS Code themes (pick a light and a dark one on Settings), with line numbers and a copy
