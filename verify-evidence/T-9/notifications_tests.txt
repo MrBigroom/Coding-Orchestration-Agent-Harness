@@ -1,0 +1,39 @@
+T-9 verification evidence -- the two notification test files, -vv so every test is named
+HEAD: dd6a2a83ae7b0568d302619ff213d1d0d96aa0a6
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9
+orch-verify: pytest target -vv tests/unit/test_notifications.py tests/integration/test_notifications.py
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 18 items
+
+tests/unit/test_notifications.py::test_off_by_default_records_skip_and_delivers_nothing PASSED [  5%]
+tests/unit/test_notifications.py::test_trigger_selection_against_the_real_event_vocabulary PASSED [ 11%]
+tests/unit/test_notifications.py::test_payload_shape_link_and_redaction PASSED [ 16%]
+tests/unit/test_notifications.py::test_parallel_runs_coalesce_and_a_trigger_is_deduped PASSED [ 22%]
+tests/unit/test_notifications.py::test_failures_never_lose_the_build_log_or_poison_the_session PASSED [ 27%]
+tests/unit/test_notifications.py::test_a_bug_inside_the_fanout_leaves_one_durable_failed_row PASSED [ 33%]
+tests/unit/test_notifications.py::test_noisy_events_are_silent_until_enabled PASSED [ 38%]
+tests/unit/test_notifications.py::test_duration_reports_compute_and_wall_and_only_names_a_large_freeze PASSED [ 44%]
+tests/unit/test_notifications.py::test_channel_actions_markup_and_no_client PASSED [ 50%]
+tests/unit/test_notifications.py::test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded PASSED [ 55%]
+tests/unit/test_notifications.py::test_a_failing_fanout_rolls_back_a_poisoned_caller_session PASSED [ 61%]
+tests/unit/test_notifications.py::test_an_event_arriving_mid_flush_rearms_the_timer PASSED [ 66%]
+tests/unit/test_notifications.py::test_flush_never_raises_and_never_poisons_a_caller_session PASSED [ 72%]
+tests/integration/test_notifications.py::test_completed_mock_run_yields_one_coalesced_notification PASSED [ 77%]
+tests/integration/test_notifications.py::test_cancelled_run_emits_run_cancelled_once_and_fans_out PASSED [ 83%]
+tests/integration/test_notifications.py::test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending PASSED [ 88%]
+tests/integration/test_notifications.py::test_notifications_endpoint_serves_the_persistent_list PASSED [ 94%]
+tests/integration/test_notifications.py::test_the_task_link_is_a_real_target_when_web_dist_is_absent PASSED [100%]
+
+============================== 18 passed in 3.01s ==============================
+exit=0

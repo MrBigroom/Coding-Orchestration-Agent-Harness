@@ -1,4 +1,25 @@
-HEAD 51855f9db95467c14a8c1f2a1d64113c0caf4c0a
+T-9 verification evidence -- full test suite
+HEAD: dd6a2a83ae7b0568d302619ff213d1d0d96aa0a6
+dirty-entries-excluding-this-capture: 0
 command: ./scripts/orch_verify.sh test
+date: 2026-11-05T01:41:43+08:00
+-----------------------------------------------------------
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9
-596 passed, 6 skipped in 117.37s (0:01:57)
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/tests
+........................................................................ [ 11%]
+........................................ssssss.......................... [ 23%]
+........................................................................ [ 35%]
+........................................................................ [ 47%]
+........................................................................ [ 59%]
+........................................................................ [ 71%]
+........................................................................ [ 83%]
+........................................................................ [ 95%]
+..............................                                           [100%]
+600 passed, 6 skipped in 116.91s (0:01:56)
+suite_exit=0

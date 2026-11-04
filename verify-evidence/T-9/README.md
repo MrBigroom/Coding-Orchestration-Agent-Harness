@@ -1,63 +1,75 @@
-# T-9 evidence — run-completion notifications (round after CHANGES_REQUESTED)
+# T-9 verification evidence
 
-Code HEAD: `51855f9db95467c14a8c1f2a1d64113c0caf4c0a`. Source/tests/docs were committed first; the
-suite and lint below ran at that HEAD; this directory is the only later commit. The branch diff is
-large, so `handoff.md` repeats the decisive excerpts for the review budget.
+Everything here was produced from this worktree at the code HEAD stamped inside each file. The
+evidence commit that adds these files changes only these files; `full_suite.txt` names the sha the
+suite ran at, which is the code HEAD (the commit before the evidence commit).
 
-| Command | Result | Log |
-|---|---|---|
-| `./scripts/orch_verify.sh test` | **596 passed, 6 skipped**, exit 0 | `full_suite.txt` |
-| `./scripts/orch_verify.sh lint` | `All checks passed!`, exit 0 | `lint.txt` |
-| `tsc -b --force` (main checkout `web/node_modules` symlinked outside the worktree) | `tsc_exit=0` | `gui_typecheck.txt` |
+| file | what it proves |
+| --- | --- |
+| `full_suite.txt` | `./scripts/orch_verify.sh test` -> `600 passed, 6 skipped`, `suite_exit=0`, with the ORCH_VERIFY marker line proving `orchestrator.__file__` resolved inside this worktree |
+| `lint.txt` | `./scripts/orch_verify.sh lint` -> `All checks passed!`, `lint_exit=0` |
+| `notifications_tests.txt` | the two notification test files run with `-vv` -> 18 named tests passed |
+| `gui_typecheck.txt` | `tsc -b --force` exit 0, `readlink -f` proof the compiler read THIS worktree's `web/src`, and the list of 30 sources it read |
+| `mutation_checks.txt` | four in-place mutations of committed source, each turning exactly the guarding test red, each restored with `git checkout --` |
+| `zz_review_index.txt` | round-1 review findings answered per finding with file:line + the test that pins each |
 
-## DoD -> code -> test
+## DoD -> evidence
 
-1. **Single chokepoint, human-must-act triggers.** `log_service.py:70` calls the fan-out after the
-   build-log row commits. Trigger map `core/notification_vocab.py:29`; exact `task_status` parse
-   `notification_vocab.py:69-83`. Tests: `test_trigger_selection_against_the_real_event_vocabulary`
-   (including the negative `review_notes` case).
-2. **Desktop channel and payload.** `notification_service.py:169` prefers `notify-send` (with
-   `--action=default=Open task`), else a typed `gdbus` Notifications call; `_markup` (`:159`) escapes
-   the body and emits a real `<a href>`; `_payload` (`:100`) carries task/run ids, outcome, next action
-   and `http://<host>:<port>/tasks/<id>`; everything goes through `redact`. SPA `/tasks/<id>` is
-   served by `api/main.py` and already pinned by `test_api.py::test_fallback_ui_served`.
-3. **Persistent list, off vs failed.** `models.py:409` + `migrations/versions/0010_notifications.py`;
-   `GET /api/notifications` (`api/routes/notifications.py:23`); `skipped` has
-   `master_disabled`/`trigger_disabled`, `failed` carries the channel error. Tests:
-   `test_off_by_default_records_skip_and_delivers_nothing`, `test_no_client...`,
-   `test_notifications_endpoint_serves_the_persistent_list`.
-4. **Settings default off + per-event toggles.** `settings_service.py:41,78`; Settings card
-   `web/src/pages/Settings.tsx`; README `README.md:47`; `docs/configuration.md:52`.
-5. **Failure-proof.** The fan-out opens its own session (`notification_service.py:262`), records a
-   `fanout_error` row (`:244`), and `log_service.py:77-81` rolls back only if the caller's session is
-   already inactive, then logs a warning. Tests: `test_failures_never_lose_the_build_log_or_poison_the_session`,
-   `test_a_bug_inside_the_fanout_leaves_one_durable_failed_row`.
-6. **Spam control.** Unique `dedupe_key` per run+trigger (`models.py:418`); one global pending flush
-   (`notification_service.py:189`) coalesces parallel runs; noisy triggers default false. Tests:
-   `test_parallel_runs_coalesce_and_a_trigger_is_deduped`, `test_noisy_events_are_silent_until_enabled`.
-7. **Offline e2e + build.** Mock-harness completion: `test_completed_mock_run_yields_one_coalesced_notification`;
-   cancellation: `test_cancelled_run_emits_run_cancelled_once_and_fans_out`; logs above; tsc above.
-8. **`run_cancelled`.** Emitted once in the cancel branch (`run_service.py:1091`) before handoff
-   salvage, with run short id and exit code; vocabulary updated in `docs/build-loop.md:501,509`;
-   contract updated in `docs/frozen-contracts.md:92` via
-   `docs/contract-change-request-T9-01-notifications.md`. Tested by the cancellation test and the
-   updated `test_handoff_salvage.py` assertion.
-9. **Honest duration.** `duration_details` (`notification_service.py:45`) reads
-   `run.json.process_ms` + DB `duration_ms`, adds `clock suspended` only above 25% of wall. Tests:
-   `test_duration_reports_compute_and_wall_and_only_names_a_large_freeze` and the e2e completed-run
-   assertion that the live terminal body contains `compute / ... wall`.
+1. Fan-out at the single chokepoint, trigger set, individually disable-able
+   `src/orchestrator/services/log_service.py:64-89` calls the fan-out after the row and JSONL line
+   are committed; `src/orchestrator/core/notification_vocab.py:29-66` is the trigger table
+   (one `notification_<key>` setting each); `settings_service.py:38-42` registers them.
+   Pinned by `tests/unit/test_notifications.py::test_trigger_selection_against_the_real_event_vocabulary`
+   and `::test_noisy_events_are_silent_until_enabled` (log line: `notifications_tests.txt`).
+2. freedesktop D-Bus channel, content, redaction, clickable link
+   `notification_service.py:146-190` (notify-send, else gdbus, else a recorded error),
+   `:162-170` markup escaping + anchor, `:103-133` payload, `:48-68` duration.
+   Pinned by `::test_channel_actions_markup_and_no_client`, `::test_payload_shape_link_and_redaction`
+   (secret `sk-ant-...` is absent from title/body/link and `[REDACTED]` is present), and
+   `tests/integration/test_notifications.py::test_the_task_link_is_a_real_target_when_web_dist_is_absent`.
+3. Persistent list, skipped vs failed
+   `src/orchestrator/core/models.py` `Notification` (statuses incl. `skipped`/`failed`),
+   `migrations/versions/0010_notifications.py`, `api/routes/notifications.py`;
+   `notification_service.py:320-331` records `skipped` with `master_disabled` /
+   `trigger_disabled` and `failed` only after an attempt.
+   Pinned by `::test_off_by_default_records_skip_and_delivers_nothing` and
+   `tests/integration/test_notifications.py::test_notifications_endpoint_serves_the_persistent_list`.
+4. Settings: master + per-trigger, PATCH, Settings page switch, default off, documented
+   `settings_service.py:38-42` + `:78-82`; `web/src/pages/Settings.tsx`;
+   `README.md` "Desktop notifications (off by default)"; `docs/configuration.md` runtime settings.
+   Pinned by `::test_off_by_default_records_skip_and_delivers_nothing`
+   (`settings_service.defaults()[MASTER_SETTING] is False`).
+5. Fire-and-forget, failure-proof, recorded at most once
+   `log_service.py:74-89` (unconditional rollback, durable `record_failure`, line already written);
+   `notification_service.py:247-263` (`flush_pending` never raises), `:266-288` (deduped failure row).
+   Pinned by `::test_failures_never_lose_the_build_log_or_poison_the_session`,
+   `::test_a_failing_fanout_rolls_back_a_poisoned_caller_session`,
+   `::test_flush_never_raises_and_never_poisons_a_caller_session`,
+   `::test_a_bug_inside_the_fanout_leaves_one_durable_failed_row`; mutations M1 and M3.
+6. Spam control
+   `notification_service.py:29` one global window, `:192-224` deliver all pending as one popup and
+   mark the rest `coalesced`; dedupe_key is per run per trigger; noisy triggers default off.
+   Pinned by `::test_parallel_runs_coalesce_and_a_trigger_is_deduped`,
+   `::test_noisy_events_are_silent_until_enabled`, and mutation M2 for the timer.
+7. Tests + `make test` / `make lint` through the wrapper + GUI build + fallback UI
+   `full_suite.txt`, `lint.txt`, `gui_typecheck.txt`, and
+   `test_the_task_link_is_a_real_target_when_web_dist_is_absent` for the fallback UI (mutation M4).
+8. `run_cancelled`
+   `run_service.py:1089-1097`; vocabulary `docs/build-loop.md` (13 insertions / 7 deletions, each
+   deletion a T-8 sentence that is stale once the event exists, per the answer in
+   `zz_review_index.txt` #7). Pinned by
+   `tests/integration/test_notifications.py::test_cancelled_run_emits_run_cancelled_once_and_fans_out`
+   (exactly one event, run short id in details, fan-out fires).
+9. Honest duration under suspend
+   `notification_service.py:48-68` reports `compute / wall` and adds `clock suspended <gap>` only
+   above the 25% threshold, phrased as information; the compute figure is read from the archived
+   `run.json` (`run_service.py:1047`, written before the terminal transitions at 1074/1125).
+   Pinned by `::test_duration_reports_compute_and_wall_and_only_names_a_large_freeze` and the
+   end-to-end `::test_completed_mock_run_yields_one_coalesced_notification`, which asserts the
+   delivered body carries the archived `process_ms` of that run.
 
-## Reviewer findings addressed
+## Contract surface
 
-- Session poisoning / unrecorded failure: own session + `fanout_error` row + conditional rollback.
-- Timer slot/mid-flush events: `_timer` cleared before delivery; `flush_pending` wired at API
-  startup (`api/main.py:117`) and tested by `test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending`.
-- Duration evidence: mock-harness e2e asserts the live terminal body carries both windows.
-- Clickable link/markup: action + escaped anchor + typed gdbus arguments, asserted in
-  `test_channel_actions_markup_and_no_client`; `/tasks/<id>` SPA target already tested.
-- Parallel-run stampede: one global pending flush, asserted by the parallel coalescing test.
-- Frozen contracts: CCR-T9-01 + `docs/frozen-contracts.md` updated for the table, route and
-  `run_cancelled`.
-- Trigger substring: exact transition-format parse, negative `review_notes` assertion.
-- GUI build: `gui_typecheck.txt` (tsc exit 0); the Supervisor build command is not configured, so
-  its check is `not_applicable` by design, not a Worker claim.
+`docs/frozen-contracts.md` is byte-identical to the merge-base `d966bd8`. The table, the route and
+`run_cancelled` are requested in `docs/contract-change-request-T9-01-notifications.md` for the
+operator to approve at the merge gate; the branch does not edit a contract file.

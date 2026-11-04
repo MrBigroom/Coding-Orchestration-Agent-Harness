@@ -1,3 +1,45 @@
-HEAD 51855f9db95467c14a8c1f2a1d64113c0caf4c0a
-command: tsc -b --force (scratch dir with the main checkout's web/node_modules symlinked outside this worktree)
+T-9 verification evidence -- GUI TypeScript build
+HEAD: dd6a2a83ae7b0568d302619ff213d1d0d96aa0a6
+Note: this worktree has no web/node_modules (git worktrees copy tracked files only), so the
+      main checkout's node_modules is symlinked into a scratch dir under /tmp and the
+      worktree's web sources are symlinked in. Nothing is written into the worktree.
+command: cd /tmp/t9-tsc && ./node_modules/.bin/tsc -b --force
+-----------------------------------------------------------
 tsc_exit=0
+--- proof the compiler read THIS worktree's sources:
+readlink -f /tmp/t9-tsc/src/api/types.ts -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/web/src/api/types.ts
+readlink -f /tmp/t9-tsc/src/pages/Notifications.tsx -> /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9/web/src/pages/Notifications.tsx
+project sources read (excluding node_modules):
+/tmp/t9-tsc/src/api/client.ts
+/tmp/t9-tsc/src/theme.ts
+/tmp/t9-tsc/src/components/ui.tsx
+/tmp/t9-tsc/src/components/Layout.tsx
+/tmp/t9-tsc/src/api/types.ts
+/tmp/t9-tsc/src/hooks/useApi.ts
+/tmp/t9-tsc/src/pages/Adapters.tsx
+/tmp/t9-tsc/src/pages/Agents.tsx
+/tmp/t9-tsc/src/pages/BuildLog.tsx
+/tmp/t9-tsc/src/highlight.ts
+/tmp/t9-tsc/src/components/Code.tsx
+/tmp/t9-tsc/src/hooks/useChatSession.ts
+/tmp/t9-tsc/src/pages/Chat.tsx
+/tmp/t9-tsc/src/pages/Dashboard.tsx
+/tmp/t9-tsc/src/pages/Memory.tsx
+/tmp/t9-tsc/src/pages/Notifications.tsx
+/tmp/t9-tsc/src/pages/Models.tsx
+/tmp/t9-tsc/src/pages/Projects.tsx
+/tmp/t9-tsc/src/pages/PromptPreview.tsx
+/tmp/t9-tsc/src/pages/Schedules.tsx
+/tmp/t9-tsc/src/fonts.ts
+/tmp/t9-tsc/src/pages/Settings.tsx
+/tmp/t9-tsc/src/hooks/useRunLogs.ts
+/tmp/t9-tsc/src/pages/TaskDetail.tsx
+/tmp/t9-tsc/src/pages/Tasks.tsx
+/tmp/t9-tsc/src/pages/Usage.tsx
+/tmp/t9-tsc/src/App.tsx
+/tmp/t9-tsc/src/main.tsx
+/tmp/t9-tsc/src/vite-env.d.ts
+/tmp/t9-tsc/vite.config.ts
+--- the new notification types/pages are among them:
+src/api/types.ts:0
+src/pages/Notifications.tsx:0
