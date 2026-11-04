@@ -82,3 +82,48 @@ def test_reset_requires_flag(home):
     runner.invoke(app, ["init"])
     assert runner.invoke(app, ["reset"]).exit_code == 2
     assert runner.invoke(app, ["reset", "--i-understand-data-loss"]).exit_code == 0
+
+
+def test_memory_triage_and_budget_commands(home, tmp_path):
+    import json
+
+    repo = tmp_path / "demo-repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "orch_verify.sh").write_text("#!/bin/sh\n")
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert (
+        runner.invoke(
+            app, ["project", "add", "Demo", str(repo), "--test-command", "make test"]
+        ).exit_code
+        == 0
+    )
+    added = runner.invoke(
+        app,
+        [
+            "memory",
+            "add",
+            "T-9 decisions: (1) the gate blocks when an artifact is missing.",
+            "--category",
+            "project",
+            "--scope",
+            "gotchas",
+            "--project",
+            "demo",
+        ],
+    )
+    assert added.exit_code == 0 and "pending" in added.output
+
+    r = runner.invoke(app, ["memory", "triage"])
+    assert r.exit_code == 0, r.output
+    assert "rewrite-durable" in r.output and "task_shape" in r.output
+    assert "if the whole queue were approved" in r.output
+    assert runner.invoke(app, ["memory", "triage", "--action", "merge"]).exit_code == 0
+
+    j = runner.invoke(app, ["memory", "triage", "--json"])
+    assert j.exit_code == 0
+    report = json.loads(j.output[j.output.index("{") :])
+    assert report["totals"]["entries"] == 1 and report["rows"][0]["bucket"] == "project"
+    assert report["budget_enabled"] is True
+
+    b = runner.invoke(app, ["memory", "budget", "--project", "demo"])
+    assert b.exit_code == 0 and "caps" in b.output

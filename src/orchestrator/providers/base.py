@@ -22,6 +22,11 @@ class PromptSection:
 class BuiltPrompt:
     role: str
     sections: list[PromptSection]
+    # Approved memory demoted by the per-section memory budget (id/bucket/scope/tokens/reason).
+    # Never rendered into the prompt; it is surfaced in prompt preview as a warning.
+    memory_exclusions: list[dict[str, Any]] = field(default_factory=list)
+    # Warnings raised when a memory section approaches its cap.
+    memory_warnings: list[str] = field(default_factory=list)
 
     @property
     def static_sections(self) -> list[PromptSection]:

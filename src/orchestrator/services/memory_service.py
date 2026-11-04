@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +24,11 @@ from sqlmodel import Session, col, or_, select
 from orchestrator.core.config import get_settings
 from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, utcnow
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
+from orchestrator.utils.memory_text import is_rot_prone
 from orchestrator.utils.paths import safe_join
 from orchestrator.utils.redaction import redact
 from orchestrator.utils.slug import slugify
+from orchestrator.utils.truncate import estimate_tokens
 
 GLOBAL_SCOPES = ("environment", "preferences", "patterns")
 PROJECT_SCOPES = ("conventions", "decisions", "gotchas")
@@ -41,6 +44,46 @@ ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
 }
 # Role memory file used for each role (reviewer shares the architect file).
 ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
+
+# Injection buckets -> (setting name for the cap).
+MEMORY_BUDGETS = {
+    "global": "max_memory_tokens_global",
+    "role": "max_memory_tokens_role",
+    "project": "max_memory_tokens_project",
+}
+
+
+def memory_budgets() -> dict[str, int]:
+    s = get_settings()
+    if not s.memory_budget_enabled:
+        return {k: 0 for k in MEMORY_BUDGETS}
+    return {k: int(getattr(s, attr)) for k, attr in MEMORY_BUDGETS.items()}
+
+
+def memory_budgets_enabled() -> bool:
+    return get_settings().memory_budget_enabled
+
+
+@dataclass
+class MemorySelection:
+    """What gets injected, and what the budget left out (never silently)."""
+
+    sections: dict[str, str] = field(default_factory=dict)  # global/role/project -> text
+    used: dict[str, int] = field(default_factory=dict)  # bucket -> rendered tokens
+    budgets: dict[str, int] = field(default_factory=dict)
+    excluded: list[dict[str, Any]] = field(default_factory=list)  # id/bucket/reason/tokens
+    warnings: list[str] = field(default_factory=list)  # approaching a cap
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(self.used.values())
+
+    def headroom(self) -> dict[str, float]:
+        """Fraction of each cap in use (0 when the cap is disabled)."""
+        return {
+            b: (round(self.used.get(b, 0) / v, 3) if v > 0 else 0.0)
+            for b, v in self.budgets.items()
+        }
 
 
 class MemoryError_(ValueError):
@@ -262,8 +305,92 @@ def pending_count(session: Session) -> int:
 
 
 def for_prompt(session: Session, role: str, project_slug: str | None) -> dict[str, str]:
-    """Approved memory for a role, split into the three cached prefix sections."""
+    """Approved memory for a role, split into the three cached prefix sections.
+
+    Convenience wrapper around `select_for_prompt`; use the latter when you need the
+    exclusion report (prompt preview, `orchestrator memory triage`).
+    """
+    return select_for_prompt(session, role, project_slug).sections
+
+
+def _keep_priority(entry: MemoryEntry) -> tuple[int, int]:
+    """Higher = keep. Durable entries outrank task/round/SHA-shaped ones; within a class,
+    newer (higher id) outranks older. Content-derived only: no clock, no file access, so the
+    rendered text stays byte-identical across calls and does not churn the prompt cache."""
+    return (0 if is_rot_prone(entry.content) else 1, entry.id or 0)
+
+
+def _line_tokens(content: str) -> int:
+    return estimate_tokens(f"- {content.strip()}\n")
+
+
+def _select_bucket(
+    bucket: str, entries: list[MemoryEntry], budget: int
+) -> tuple[list[MemoryEntry], list[dict[str, Any]]]:
+    """Keep entries within `budget` tokens; return (kept sorted by id, excluded with reasons).
+
+    `budget <= 0` disables the cap. Rule, stated so it is reviewable: if the bucket already
+    fits, everything is injected. If it does not, demote until it fits -- first the
+    rot-prone entries (task/round/SHA-shaped) oldest-first, then the rest oldest-first.
+    The newest entries are therefore never the ones silently dropped, and every exclusion
+    carries a reason that prompt preview and `orchestrator memory triage` show.
+    """
+    cost = {e.id: _line_tokens(e.content) for e in entries}
+    total = sum(cost.values())
+    if budget <= 0 or total <= budget:
+        return list(entries), []
+
+    demotion_order = sorted(entries, key=_keep_priority)
+    kept_ids = {e.id for e in entries}
+    excluded: list[dict[str, Any]] = []
+    for entry in demotion_order:
+        if total <= budget:
+            break
+        total -= cost[entry.id]
+        kept_ids.discard(entry.id)
+        prone = is_rot_prone(entry.content)
+        excluded.append(
+            {
+                "id": entry.id,
+                "bucket": bucket,
+                "scope": entry.scope,
+                "tokens": cost[entry.id],
+                "reason": (
+                    f"rot-prone (names a task/round/SHA) and the {bucket} section is over "
+                    f"its budget of {budget} tokens"
+                    if prone
+                    else f"oldest of the remaining durable entries while the {bucket} section "
+                    f"is over its budget of {budget} tokens"
+                ),
+            }
+        )
+    kept = [e for e in entries if e.id in kept_ids]
+    kept.sort(key=lambda e: e.id or 0)
+    return kept, excluded
+
+
+def select_for_prompt(
+    session: Session,
+    role: str,
+    project_slug: str | None,
+    *,
+    budgets: dict[str, int] | None = None,
+    also_approved: list[MemoryEntry] | None = None,
+) -> MemorySelection:
+    """Approved memory for a role, capped per injected section (see MEMORY_BUDGETS).
+
+    `also_approved` is a what-if list of unapproved entries treated as approved for the
+    calculation only (used by `orchestrator memory triage` to price a batch). Nothing is
+    written.
+
+    Memory is a static prompt section, so `prompt_builder.enforce_budget` can never trim it;
+    uncapped growth squeezes diff/handoff/verification evidence instead. Capping happens here
+    so the squeeze is visible, reviewable and reported.
+    """
+    budgets = budgets if budgets is not None else memory_budgets()
     approved = list_entries(session, status="approved")
+    if also_approved:
+        approved = approved + list(also_approved)
     role_key = ROLE_MEMORY_KEY.get(role, role)
     glob = [e for e in approved if e.category == MemoryCategory.global_]
     role_mem = [
@@ -282,16 +409,43 @@ def for_prompt(session: Session, role: str, project_slug: str | None) -> dict[st
         and e.scope in scopes
     ]
 
-    def fmt(entries: list[MemoryEntry]) -> str:
+    buckets = {"global": glob, "role": role_mem, "project": proj}
+    selection = MemorySelection(budgets=dict(budgets))
+    for bucket, entries in buckets.items():
+        kept, excluded = _select_bucket(bucket, entries, budgets.get(bucket, -1))
+        selection.excluded.extend(excluded)
         by_scope: dict[str, list[str]] = {}
-        for e in entries:
+        for e in kept:
             by_scope.setdefault(e.scope, []).append(e.content.strip())
-        return "\n".join(
+        text = "\n".join(
             f"### {scope}\n" + "\n".join(f"- {c}" for c in items)
             for scope, items in sorted(by_scope.items())
         )
+        selection.sections[bucket] = text
+        selection.used[bucket] = estimate_tokens(text)
+    selection.warnings = _budget_warnings(selection)
+    return selection
 
-    return {"global": fmt(glob), "role": fmt(role_mem), "project": fmt(proj)}
+
+def _budget_warnings(selection: MemorySelection) -> list[str]:
+    """Tripwire before the guillotine: warn as a section approaches its cap."""
+    if not get_settings().memory_budget_enabled:
+        return []
+    frac = get_settings().memory_budget_warn_fraction
+    out = []
+    for bucket, cap in selection.budgets.items():
+        if cap <= 0:
+            continue
+        used = selection.used.get(bucket, 0)
+        if used >= frac * cap:
+            demoted = sum(1 for x in selection.excluded if x["bucket"] == bucket)
+            out.append(
+                f"memory section '{bucket}' is at {used}/{cap} tokens "
+                f"({round(100 * used / cap)}% of its cap)"
+                + (f"; {demoted} approved entry(ies) are already demoted" if demoted else "")
+                + " - condense or merge entries before approving more"
+            )
+    return out
 
 
 # ---------------------------------------------------------------- export/import

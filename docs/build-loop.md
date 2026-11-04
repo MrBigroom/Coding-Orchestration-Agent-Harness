@@ -229,3 +229,62 @@ When a phase seems to need a contract change:
    `task unblock`, or descope and `task reject`/`archive`.
 4. Schema changes after baseline always ship as a **new Alembic revision**. The baseline
    (`0001_baseline`) is never edited.
+
+## Verification, evidence capture and test-authoring mechanics
+
+Operational detail that belongs in a doc rather than in injected memory: it is read when
+someone edits these paths, not needed by every prompt.
+
+### `scripts/orch_verify.sh` argument handling
+
+The wrapper replaces its pytest collection target **only when an extra argument names an
+existing path** (`[ -e "$a" ]`, relative to the worktree root). A bare node id
+(`tests/some.py::test_name`) therefore does **not** filter: the id is appended to the whole
+`tests` target and the full suite runs. Pass file paths to get a subset.
+
+`pyproject.toml` sets pytest `addopts = "-q"`, so:
+
+- one extra `-v` cancels it and is needed for individual test names (`-vv` to be sure);
+- an extra `-q` makes `-qq`, which **suppresses the final `N passed, M skipped` summary
+  line**, leaving only progress dots — so the counts cannot be read off the log.
+
+### Capturing evidence into a worktree
+
+- Stage every command output in a scratch directory under `/tmp` and move the files into
+  `verify-evidence/<task>/` **after** all captures finish. Writing the first log straight
+  into the worktree makes the next command's `git status` stamp report dirty entries,
+  which reads as evidence captured against uncommitted code.
+- A `dirty-entries=0` stamp additionally requires excluding the transcript path itself from
+  the count, and printing that exclusion in the line so it is auditable.
+- Capture helpers are committed as evidence under `verify-evidence/<task>/` (e.g.
+  `capture.sh`, `capture_gui_typecheck.sh`); they are not `scripts/` files.
+- `tsc --listFiles` resolves a `node_modules` symlink to its realpath, so those entries
+  appear under the main checkout while branch sources stay under the scratch dir. Split the
+  count by prefix rather than reporting "entries NOT under scratch dir: N", and add a
+  negative control (same input plus one deliberate type error must exit 1) so a green
+  type-check is evidence rather than a no-op.
+
+### Writing CLI output
+
+Any `rich` `console.print` that interpolates operator data (a scope, a branch name, a reason
+string) must pass it through `rich.markup.escape` first. An unescaped bracketed value is
+parsed as a style tag and silently **deleted** from the printed line — the operator gets
+output with the explanation missing. Escape the data, keep markup only in the literal part
+of the string, and cover it with a test that puts a bracketed value through the CLI.
+
+### Testing the loop itself (mock provider and mock harness)
+
+Two hermeticity traps, both found by gated runs:
+
+1. `process_service` builds the child environment from `core.security.BASE_ENV_ALLOWLIST`,
+   which excludes `PYTHONPATH`, and the repo venv is an editable install pointing at the
+   main checkout. So running the mock harness module inside a task worktree executes the
+   **main checkout's** copy of the file; a stale copy falls through to the success path
+   silently, which is how tests asking for a timeout got a `completed` run.
+   `MockHarnessAdapter.run` pins `PYTHONPATH` from its own file location via `extra_env`,
+   and the harness entrypoint refuses unknown `mock-*` tags with exit 2.
+2. `provider_service.choose_profile` selects the offline mock provider only when the literal
+   tag `mock` is present. Behaviour tags such as `mock-timeout-handoff` satisfy the harness
+   router (which matches a `mock-` prefix) but **not** provider routing, so an Architect
+   review would call the real Opus profile from inside a test: non-deterministic verdicts
+   and a slow, paid call per test. Tag such tasks with the bare `mock` tag as well.

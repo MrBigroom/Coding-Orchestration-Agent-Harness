@@ -35,6 +35,11 @@ the providers/adapters when they run.
 | `ORCHESTRATOR_MAX_PROMPT_CONTEXT_TOKENS` | `60000` | Prompt budget (~4 chars/token) |
 | `ORCHESTRATOR_MAX_LOG_TOKENS` | `4000` | Per-log budget in prompts |
 | `ORCHESTRATOR_MAX_DIFF_TOKENS` | `12000` | Diff budget in prompts |
+| `ORCHESTRATOR_MAX_MEMORY_TOKENS_GLOBAL` | `2000` | Cap on the injected global memory section |
+| `ORCHESTRATOR_MAX_MEMORY_TOKENS_ROLE` | `800` | Cap on the injected role memory section |
+| `ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT` | `4000` | Cap on the injected project memory section |
+| `ORCHESTRATOR_MEMORY_BUDGET_ENABLED` | `true` | When false, every approved entry is injected |
+| `ORCHESTRATOR_MEMORY_BUDGET_WARN_FRACTION` | `0.8` | Warn once a memory section reaches this share of its cap |
 | `ORCHESTRATOR_ANTHROPIC_REFUSAL_FALLBACK` | `true` | Anthropic server-side refusal fallback on Claude 5.x |
 
 ## Runtime settings (GUI / `PATCH /api/settings`)

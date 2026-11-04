@@ -108,6 +108,57 @@ def test_memory_endpoints_flow(client):
     )
 
 
+def test_memory_budget_and_triage_endpoints_are_read_only(client, tmp_path):
+    repo = tmp_path / "demo-repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "build-loop.md").write_text("# loop\n")
+    r = client.post("/api/projects", json={"name": "demo", "path": str(repo)})
+    assert r.status_code == 201, r.text
+    client.post(
+        "/api/memory",
+        json={
+            "category": "project",
+            "scope": "gotchas",
+            "project_slug": "demo",
+            "content": "T-9 decisions: (1) the gate blocks when an artifact is missing.",
+        },
+    )
+    budget = client.get("/api/memory/budget", params={"project": "demo"})
+    assert budget.status_code == 200
+    body = budget.json()
+    assert set(body["budgets"]) == {"global", "role", "project"}
+    assert set(body["roles"]) == {"architect", "worker", "supervisor"}
+    assert body["pending_count"] == 1
+
+    tri = client.get("/api/memory/triage", params={"status": "pending", "project": "demo"})
+    assert tri.status_code == 200
+    row = tri.json()["rows"][0]
+    assert row["suggested_action"] == "rewrite-durable"
+    codes = {f["code"] for f in row["flags"]}
+    assert "task_shape" in codes and "unknown-project" not in codes
+    # Triage reports, it never decides: the row stays pending and unapproved.
+    pending = client.get("/api/memory?status=pending").json()
+    assert [e["id"] for e in pending] == [row["id"]]
+    assert all(e["approved"] is False for e in pending)
+    assert row["id"] not in [e["id"] for e in client.get("/api/memory?status=approved").json()]
+    assert client.get("/api/memory/triage", params={"status": "bogus"}).status_code == 422
+
+
+def test_triage_flags_an_unregistered_project(client):
+    client.post(
+        "/api/memory",
+        json={
+            "category": "project",
+            "scope": "gotchas",
+            "project_slug": "ghost",
+            "content": "The gate blocks when an artifact is missing.",
+        },
+    )
+    row = client.get("/api/memory/triage", params={"project": "ghost"}).json()["rows"][0]
+    assert {f["code"] for f in row["flags"]} == {"unknown-project"}
+    assert row["suggested_action"] == "fix-stale"
+
+
 def test_prompt_preview_endpoint_detects_bad_order(client):
     r = client.post(
         "/api/prompt-preview",

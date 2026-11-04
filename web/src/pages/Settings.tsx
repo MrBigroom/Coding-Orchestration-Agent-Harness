@@ -36,11 +36,15 @@ const BOOLS: [string, string][] = [
   ["allow_gui_commands", "Allow running project test/lint/build commands from the GUI"],
   ["allow_interactive_sessions", "Allow interactive harness sessions in Chat (agents get shell access)"],
   ["allow_unattended_sessions", "Allow standalone agent runs with nobody watching (skips the task pipeline and review)"],
+  ["memory_budget_enabled", "Cap how much approved memory is injected per prompt section (memory is static, so uncapped growth squeezes diff/verification evidence)"],
 ];
 const NUMS: [string, string][] = [
   ["max_parallel_runs", "Max parallel runs"],
   ["max_parallel_runs_per_project", "Max parallel runs per project"],
   ["max_review_rounds", "Max review rounds before NEEDS_HUMAN"],
+  ["max_memory_tokens_global", "Cap on the injected global memory section (tokens, 0 = no cap)"],
+  ["max_memory_tokens_role", "Cap on the injected role memory section (tokens, 0 = no cap)"],
+  ["max_memory_tokens_project", "Cap on the injected project memory section (tokens, 0 = no cap)"],
 ];
 
 export default function Settings() {

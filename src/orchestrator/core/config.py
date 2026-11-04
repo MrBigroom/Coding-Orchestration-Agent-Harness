@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     max_log_tokens: int = 4_000
     max_diff_tokens: int = 12_000
 
+    # Memory budgets (per injected section, ~4 chars/token). Memory is static, so
+    # `enforce_budget` can never trim it: uncapped growth squeezes diff/handoff/verification
+    # evidence instead. These caps are enforced inside `memory_service.for_prompt`.
+    max_memory_tokens_global: int = 2_000
+    max_memory_tokens_role: int = 800
+    max_memory_tokens_project: int = 4_000
+    # Warn (prompt preview, `memory budget`, triage) once a section reaches this share of
+    # its cap, so the operator can condense before anything is demoted.
+    memory_budget_warn_fraction: float = 0.8
+    # Set false to inject every approved entry (pre-budget behaviour).
+    memory_budget_enabled: bool = True
+
     # Use Anthropic's server-side refusal fallback ("default" routing) on Claude 5.x models.
     anthropic_refusal_fallback: bool = True
     # Let GUI/API trigger project commands (test/lint/build) directly. Off by default.
