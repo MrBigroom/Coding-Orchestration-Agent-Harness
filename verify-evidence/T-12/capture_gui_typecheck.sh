@@ -23,7 +23,7 @@ run() { echo "\$ $*"; OUTP=$("$@" 2>&1); rc=$?; printf '%s\n' "$OUTP"; echo "exi
   echo "# generated: $(date -Is)"
   echo "# worktree: $WT"
   echo "# HEAD=$(git -C "$WT" rev-parse HEAD)"
-  echo "# dirty-entries(-uall, excludes this file, written to /tmp first)=$(git -C "$WT" status --porcelain -uall | wc -l)"
+  echo "# dirty-entries(-uall, excluding gui_typecheck.txt itself, which this run rewrites)=$(git -C "$WT" status --porcelain -uall | grep -v 'verify-evidence/T-12/gui_typecheck.txt$' | wc -l)"
   echo "# web/ unchanged since c4f0ae9? $(git -C "$WT" diff --quiet c4f0ae9 HEAD -- web && echo yes || echo no)"
   echo
   echo "## Scratch tree (recipe from approved project memory: never inside the worktree)"
