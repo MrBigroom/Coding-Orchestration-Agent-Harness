@@ -1,4 +1,4 @@
-# HEAD=bb43acc1d105953004093d315805308f9b58b533 (bb43acc) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T10:51:44+08:00 tree=0 dirty-entries
+# HEAD=c4f0ae9f724efae3fc67143f2c571add669769d6 (c4f0ae9) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:01:46+08:00 tree=0 dirty-entries
 # command: ./scripts/orch_verify.sh test tests/integration/test_attempt_cap.py -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -28,5 +28,5 @@ tests/integration/test_attempt_cap.py::test_next_prompt_states_an_absent_previou
 tests/integration/test_attempt_cap.py::test_salvaged_round_is_named_in_the_requeue_and_the_next_prompt PASSED [ 90%]
 tests/integration/test_attempt_cap.py::test_task_api_exposes_attempts_in_the_list_and_detail PASSED [100%]
 
-============================= 11 passed in 13.95s ==============================
+============================= 11 passed in 13.98s ==============================
 TARGETED_EXIT=0
