@@ -660,6 +660,23 @@ PY3
 
 {
   echo "$STAMP"
+  echo "# REVIEW ROUND 4 - the operator's items 1-4, each MEASURED on THIS worktree's code in"
+  echo "# a throwaway ORCHESTRATOR_HOME (round4_demo.py, committed on this branch). No network,"
+  echo "# no API keys, the live home is never opened. ITEM 3's mutations are runtime patches of"
+  echo "# that process only (m.render_file / m.gc_orphan_files): no committed file is edited."
+  echo "# ITEM 1 prints the very list the handoff's files_changed is generated from, and checks"
+  echo "# each path against `git ls-tree HEAD`; ITEM 2 prints the rejection text at POST/PATCH,"
+  echo "# MemoryCreate and the CLI for all three vocabularies; ITEM 4 prints this HEAD."
+  echo "# A non-zero ROUND4_EXIT means one of the demo's own claims stopped being true."
+  echo "# command: ORCHESTRATOR_HOME=\$TMP/home4 PYTHONPATH=\$WT/src \$MAIN/.venv/bin/python verify-evidence/T-4/round4_demo.py"
+  env -u VIRTUAL_ENV -u ORCHESTRATOR_ENABLE_WORKER -u ORCHESTRATOR_ENABLE_SCHEDULER \
+    ORCHESTRATOR_HOME="$TMP/home4" PYTHONPATH="$WT/src" COLUMNS=400 \
+    "$MAIN/.venv/bin/python" verify-evidence/T-4/round4_demo.py 2>/dev/null
+  echo "ROUND4_EXIT=$?"
+} >"$TMP/review_round4.txt"
+
+{
+  echo "$STAMP"
   echo "# Every file this branch changes, as a COMPLETE per-file diff vs the merge-base."
   echo "# Split per file because the supplied combined diff was truncated mid-function; each"
   echo "# diff_*.txt beside this file is self-contained and ends with its own DIFF_COMPLETE"
@@ -821,8 +838,23 @@ dump_fn("slice_cli__memory_list", cli.memory_list, "DoD 4 the list marker comman
 dump_fn("slice_cli__print_injectability", cli._print_injectability,
         "DoD 4 the reason line under the table")
 
-dump_lines("slice_memory_service__vocabularies", SVC, 29, 78,
-           "the three named constants + FALLBACK_SCOPE + ROLE_PROJECT_SCOPES + ROLE_MEMORY_KEY")
+VOC = "src/orchestrator/core/memory_vocab.py"
+dump_lines("slice_memory_vocab__vocabularies", VOC, 24, 64,
+           "ROUND 4: the three named constants + FALLBACK_SCOPE + ROLE_PROJECT_SCOPES + "
+           "ROLE_MEMORY_KEY now live in core, below schemas, so both boundaries share one "
+           "source (memory_service imports schemas, so schemas cannot import the service)")
+dump_lines("slice_memory_service__re_exports", SVC, 26, 56,
+           "ROUND 4: memory_service re-exports every vocabulary name, so "
+           "memory_service.GLOBAL_SCOPES and friends keep resolving for callers and tests")
+dump_lines("slice_schemas__memory_create", "src/orchestrator/core/schemas.py",
+           next(i for i, ln in enumerate(
+               Path("src/orchestrator/core/schemas.py").read_text().splitlines(), 1)
+               if "class MemoryCreate(BaseModel):" in ln),
+           next(i for i, ln in enumerate(
+               Path("src/orchestrator/core/schemas.py").read_text().splitlines(), 1)
+               if "class MemoryUpdate(BaseModel):" in ln) - 2,
+           "ROUND 4, DoD 2: the before-validator that makes POST /api/memory name the role "
+           "memory files instead of Pydantic's enum list")
 dump_lines("slice_cli__gc_only_branch", "src/orchestrator/cli.py",
            next(i for i, ln in enumerate(
                Path("src/orchestrator/cli.py").read_text().splitlines(), 1)
@@ -847,14 +879,30 @@ dump_tests("slice_tests_unit__coercion_and_log", UT, [
     "test_coercion_is_written_to_the_build_log_the_operator_reads",
 ], "DoD 1 coercion + the substitution record")
 dump_tests("slice_tests_unit__repair_and_gc", UT, [
-    "test_fix_scopes_moves_legacy_rows_and_re_renders_both_files",
+    "test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file",
+    "test_fix_scopes_with_gc_on_deletes_the_dead_old_file",
+    "test_fix_scopes_can_move_rows_without_deleting_a_single_file",
     "test_fix_scopes_leaves_rejected_rows_alone",
     "test_gc_only_deletes_files_render_file_could_have_written",
-], "DoD 3 re-rendering both files, and the GC predicate")
+], "DoD 3, one outcome per case (R-27 finding 6): CASE A asserts the OLD file's re-rendered "
+   "text with gc=False, CASE B asserts the deletion with gc on; plus the --no-gc report and "
+   "the GC predicate")
 dump_tests("slice_tests_unit__list_marker", UT, [
     "test_injectability_marks_only_the_unreachable",
     "test_role_rows_still_render_by_the_rule_main_used",
 ], "DoD 4 the marker, and the #39/#47 counter-examples")
+dump_tests("slice_tests_unit__round4_text_and_split", UT, [
+    "test_the_request_model_refuses_an_unknown_role_by_naming_the_role_files",
+    "test_the_vocabularies_are_one_source_importable_from_core_and_re_exported",
+], "R-27 findings 5/6 in the unit layer: the schema boundary's message, and one vocabulary "
+   "source shared by core and the service (asserted to be the SAME objects)")
+dump_tests("slice_tests_integration__round4_api_text", IT, [
+    "test_api_create_refuses_an_unknown_role_with_a_message_naming_the_role_files",
+    "test_api_create_still_accepts_every_role_name_the_enum_allows",
+    "test_api_rejects_every_category_with_its_own_named_vocabulary",
+], "R-27 finding 5, at the HTTP boundary, asserted on the ERROR TEXT: the 422 names "
+   "architect|worker|supervisor + 'allowed role memory files' + both aliases, each category "
+   "names its own vocabulary, and the accepted set of role names is unchanged")
 dump_tests("slice_tests_integration__gc_only_honesty", IT, [
     "test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted",
     "test_cli_add_refuses_a_role_name_no_prompt_can_read",
@@ -875,7 +923,7 @@ echo "== captured files =="
 ls -1 verify-evidence/T-4
 echo
 echo "== exits =="
-grep -H -E "^(SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT|ROUND2_EXIT|ROUND3_EXIT)=" \
+grep -H -E "^(SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT|ROUND2_EXIT|ROUND3_EXIT|ROUND4_PART1_EXIT|ROUND4_EXIT)=" \
   verify-evidence/T-4/*.txt
 echo
 echo "== counts =="
