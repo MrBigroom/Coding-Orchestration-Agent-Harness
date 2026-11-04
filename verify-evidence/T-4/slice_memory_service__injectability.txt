@@ -1,0 +1,27 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.injectability
+# lines 281-302 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 4 the per-category reachability judgement
+# part 1/1
+  281 | def injectability(entry: MemoryEntry) -> tuple[bool, str]:
+  282 |     """(ok, reason). reason names the vocabulary that the entry failed."""
+  283 |     if entry.category not in SCOPE_VOCABULARY:
+  284 |         return False, f"unknown category {entry.category!r}"
+  285 |     if entry.category == MemoryCategory.project and not entry.project_slug:
+  286 |         return False, "project memory requires project_slug"
+  287 |     if reachable_roles(entry):
+  288 |         return True, ""
+  289 |     if entry.category == MemoryCategory.role:
+  290 |         name = entry.role or entry.scope
+  291 |         allowed = "|".join(ROLE_SCOPES)
+  292 |         if not name:
+  293 |             return False, f"role memory needs a role or a scope resolving to one of {allowed}"
+  294 |         # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
+  295 |         # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
+  296 |         # vocabulary it has to resolve into.
+  297 |         return False, (
+  298 |             f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
+  299 |             f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
+  300 |             f"(reviewer -> architect, agent -> worker)"
+  301 |         )
+  302 |     return False, str(_vocab_error(entry.category, entry.scope or ""))

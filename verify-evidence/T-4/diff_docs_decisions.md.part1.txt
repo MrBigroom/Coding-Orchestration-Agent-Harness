@@ -1,10 +1,13 @@
-# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- docs/decisions.md  (COMPLETE: 41 diff lines)
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- docs/decisions.md   PART 1/1
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 59 lines.
 diff --git a/docs/decisions.md b/docs/decisions.md
-index 3fab74e..6f08e46 100644
+index 3fab74e..11b0ba7 100644
 --- a/docs/decisions.md
 +++ b/docs/decisions.md
-@@ -222,3 +222,36 @@ Running log of architecture decisions. Newest last. Format: date — decision 
+@@ -222,3 +222,54 @@ Running log of architecture decisions. Newest last. Format: date — decision 
    those chunks. Tokens carry both theme colors, so switching light and dark needs no
    re-highlighting. Blocks over 150k characters or 3,000 lines stay plain. The Chat Changes
    panel now returns the diff itself, untracked files included.
@@ -41,4 +44,22 @@ index 3fab74e..6f08e46 100644
 +  semantics are untouched: `_file_for` still keys off `role`, else `scope`, through
 +  `ROLE_MEMORY_KEY`, so a legacy `role='logbook-writer'` row keeps its (dead) file and is
 +  reported rather than re-homed.
-DIFF_COMPLETE=docs/decisions.md
++- **2026-11-04 — T-4 round 3: the role COLUMN is a boundary too, and a repair report claims
++  only what it did.** The review of the round above was right that `category=role` was still
++  half-guarded *in the evidence*: `scope` was visibly checked, but injectability keys off
++  `role` first, and no test showed create, PATCH or `memory add` refusing
++  `role='logbook-writer' scope='worker'`. Two things were actually broken behind that: a raw
++  role string reaching `memory_service.create()` died on `AttributeError: 'str' object has no
++  attribute 'value'` instead of being refused (only reachable via `import`/`model_construct`,
++  since `MemoryCreate.role` is a `Role` enum and Pydantic answers an HTTP caller with a 422),
++  and `memory add --role` reported Pydantic's list of role *values*, which never names the
++  role *files* the DoD requires. We chose to expose `check_role_name()` in `memory_service`
++  as the single message, call it from `_validate` (so create/update/import refuse the shape
++  for one reason) and from the CLI before `MemoryCreate` is built, rather than widening
++  `MemoryCreate.role` to `str` — that would change the frozen request shape for a message
++  string. Second: `memory fix-scopes --gc-only` printed `removed dead scope-file` for files it
++  had not deleted, because the report fell back to the pre-GC listing (`removed or listed`);
++  it now carries exactly what `gc_orphan_files` unlinked, so a repair run can never claim a
++  deletion the disk contradicts — the same "never narrate unverified success" rule the harness
++  holds Workers to, applied to its own CLI.
+DIFF_PART_COMPLETE=docs/decisions.md part 1/1

@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 2/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 808 lines.
++    """The canonical, injectable scope for (category, scope).
++
++    Raises `MemoryError_` naming the allowed values when the scope cannot be reached by
++    its own category — this is the single boundary check used by create, update, import
++    and the suggestion path, so the API and the CLI reject the same rows for the same
++    reason.
++    """
++    vocab = scope_vocabulary(category)
++    if category == MemoryCategory.role:
++        key = role_memory_file(scope)
++        if key is None:
++            raise _vocab_error(category, scope or "")
++        return key
++    slug = slugify(scope or "")
++    if slug in vocab:
++        return slug
++    raise _vocab_error(category, scope or "")
++
++
++def coerce_scope(category: str, scope: str) -> tuple[str, str]:
++    """Repair an out-of-vocabulary scope by falling back. Returns (scope, note).
++
++    `note` is empty when the scope was already injectable. The fallback is the WHOLE rule:
++    a scope that is not in its category's vocabulary goes to `FALLBACK_SCOPE[category]`
++    (`gotchas` for project, `environment` for global) and is reported. Nothing is ever
++    *inferred* from the words inside a proposed scope, because the scope decides which
++    roles receive the note — guessing that `decisions-and-gating` means `decisions` would
++    silently route a Worker's gotcha to the Architect and the Supervisor, and a substring
++    match fires inside unrelated words. A predictable place to find it beats a clever
++    guess, and the operator sees the substitution either way.
++
++    Categories with no fallback (`role`) re-raise: inventing a role would file someone's
++    note under the wrong agent, so the suggestion path drops it with a warning instead of
++    storing an unreachable row.
++    """
++    try:
++        return normalize_scope(category, scope), ""
++    except MemoryError_ as e:
++        err = e
++    fallback = FALLBACK_SCOPE.get(category)
++    if fallback is None:
++        raise err
++    return fallback, _substitution_note(category, scope, fallback)
++
++
++def _substitution_note(category: str, requested: str, stored: str) -> str:
++    return (
++        f"{category} scope {requested!r} is not in "
++        f"{'|'.join(SCOPE_VOCABULARY.get(category, ()))}; stored as {stored!r} "
++        f"(deterministic fallback, not inferred from the words)"
++    )
++
++
++def role_file_key(entry: MemoryEntry) -> str | None:
++    """The role-memory file a row maps to, by the rule `for_prompt` and `_file_for` use.
++
++    Identical to the pre-T-4 resolution — `role`, falling back to `scope`, through
++    `ROLE_MEMORY_KEY` — and deliberately NOT checked against `ROLE_FILES`: a legacy row
++    with a non-file role and a valid scope must keep rendering to (and being judged by) the
++    same file it always did. Task T-4 changes no role-injection semantics; membership is
++    tested by the caller so an uninjectable row is reported instead of re-homed.
++    """
++    name = entry.role or entry.scope
++    if not name:
++        return None
++    return ROLE_MEMORY_KEY.get(name, name)
++
++
++def reachable_roles(entry: MemoryEntry) -> tuple[str, ...]:
++    """Which prompt roles would actually read this entry's scope, once approved."""
++    if entry.category == MemoryCategory.global_:
++        if entry.scope not in GLOBAL_SCOPES:
++            return ()
++        return tuple(r.value for r in Role)
++    if entry.category == MemoryCategory.project:
++        if entry.scope not in PROJECT_SCOPES or not entry.project_slug:
++            return ()
++        return tuple(
++            r.value for r, scopes in ROLE_PROJECT_SCOPES.items() if entry.scope in scopes
++        )
++    key = role_file_key(entry)
++    if key not in ROLE_FILES:  # None, or a name no injector reads (e.g. role='logbook')
++        return ()
++    return tuple(r.value for r in Role if ROLE_MEMORY_KEY.get(r.value, r.value) == key)
++
++
++def injectability(entry: MemoryEntry) -> tuple[bool, str]:
++    """(ok, reason). reason names the vocabulary that the entry failed."""
++    if entry.category not in SCOPE_VOCABULARY:
++        return False, f"unknown category {entry.category!r}"
++    if entry.category == MemoryCategory.project and not entry.project_slug:
++        return False, "project memory requires project_slug"
++    if reachable_roles(entry):
++        return True, ""
++    if entry.category == MemoryCategory.role:
++        name = entry.role or entry.scope
++        allowed = "|".join(ROLE_SCOPES)
++        if not name:
++            return False, f"role memory needs a role or a scope resolving to one of {allowed}"
++        # `role='logbook-writer'` renders to roles/logbook-writer.md, which no role prompt
++        # reads. Name the file (it is the frozen rendering rule, unchanged by T-4) and the
++        # vocabulary it has to resolve into.
++        return False, (
++            f"role memory renders to {_file_for(entry).name}, which no role prompt reads: "
++            f"role={entry.role!r} scope={entry.scope!r} must resolve to one of {allowed} "
++            f"(reviewer -> architect, agent -> worker)"
++        )
++    return False, str(_vocab_error(entry.category, entry.scope or ""))
++
++
++def is_injectable(entry: MemoryEntry) -> bool:
++    return injectability(entry)[0]
++
++
+ def _file_for(entry: MemoryEntry) -> Path:
+     root = memory_root()
+     if entry.category == MemoryCategory.global_:
+@@ -81,17 +314,40 @@ def _file_for(entry: MemoryEntry) -> Path:
+         return safe_join(
+             root, "projects", slugify(entry.project_slug or "unknown"), f"{slugify(entry.scope)}.md"
+         )
+-    role = entry.role or entry.scope
+-    return safe_join(root, "roles", f"{slugify(ROLE_MEMORY_KEY.get(role, role))}.md")
++    # Unchanged from before T-4 on purpose: rendering is a frozen contract and role
++    # injection is out of this task's scope. `role`, else `scope`, through ROLE_MEMORY_KEY.
++    name = entry.role or entry.scope
++    return safe_join(root, "roles", f"{slugify(ROLE_MEMORY_KEY.get(name, name))}.md")
++
+ 
++def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
++    """Boundary validation shared by create(), update(), import and the suggestion path.
+ 
+-def _validate(entry: MemoryEntry) -> None:
++    Every category is vocabulary-checked (T-4 DoD 2): before this, category=global and
++    category=project got no scope check at all and category=role was only half-guarded.
++    `check_scope=False` is what `update()` passes when the caller supplied no scope, so the
++    CONTENT of a legacy row stays editable — refusing that would lock the operator out of
++    the very rows `fix-scopes` exists to repair.
++    """
+     if entry.category == MemoryCategory.project and not entry.project_slug:
+         raise MemoryError_("project memory requires project_slug")
+-    if entry.category == MemoryCategory.role and not (entry.role or entry.scope in ROLE_FILES):
+-        raise MemoryError_("role memory requires role")
+-    if entry.category == MemoryCategory.role and not entry.role:
+-        entry.role = entry.scope
++    if not check_scope:
++        return
++    if entry.category == MemoryCategory.role:
++        # The column that decides which prompt reads the row is checked BEFORE the scope, so
++        # `role='logbook-writer' scope='worker'` is refused instead of rendering to a file no
++        # injector opens. Same refusal from create(), update() and import_all().
++        if entry.role:
++            check_role_name(entry.role)
++        key = role_memory_file(entry.role) or role_memory_file(entry.scope)
++        if key is None:
++            raise _vocab_error(entry.category, entry.scope or entry.role or "")
++        if not entry.role:
++            # Historic behaviour kept: a role row may carry its role in `scope`.
++            entry.role = entry.scope
++        entry.scope = key
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 2/6

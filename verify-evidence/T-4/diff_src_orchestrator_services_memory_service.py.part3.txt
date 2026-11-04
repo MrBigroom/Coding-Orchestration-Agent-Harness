@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 3/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 808 lines.
++        return
++    entry.scope = normalize_scope(entry.category, entry.scope)
+ 
+ 
+ def render_file(session: Session, path: Path) -> None:
+@@ -113,7 +369,11 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+         category=data.category.value,
+         scope=data.scope,
+         project_slug=slugify(data.project_slug) if data.project_slug else None,
+-        role=data.role.value if data.role else None,
++        # `getattr(..., "value", ...)`: MemoryCreate types `role` as the Role enum, so an
++        # HTTP caller cannot send an unknown one — but the service boundary must still refuse
++        # that shape (an unvalidated object, an import payload, a future caller) with the
++        # vocabulary error rather than crashing on `.value`.
++        role=getattr(data.role, "value", data.role) or None,
+         content=redact(data.content.strip()),
+         source=data.source,
+         tags_json=sorted(set(data.tags)),
+@@ -135,54 +395,111 @@ def suggest_from_handoff(
+     project_slug: str | None,
+     role: str = "worker",
+ ) -> list[MemoryEntry]:
+-    """Store worker/architect suggestions as unapproved entries for Supervisor review."""
+-    created = []
++    """The created entries only. Kept for callers that do not read the notes."""
++    return suggest_from_handoff_report(
++        session, suggestions, source, project_slug, role=role
++    ).created
++
++
++def suggest_from_handoff_report(
++    session: Session,
++    suggestions: list[MemorySuggestion],
++    source: str,
++    project_slug: str | None,
++    role: str = "worker",
++) -> SuggestionOutcome:
++    """Store worker/architect suggestions as unapproved entries for Supervisor review.
++
++    T-4: a Worker's proposed scope is never trusted. `project`/`global` suggestions whose
++    scope is outside their category vocabulary are coerced to a deterministic scope and
++    every substitution is reported in `notes` (the caller writes them to the build log,
++    where the operator sees them); `role` suggestions that resolve to no role memory file
++    are dropped with a warning instead of being stored. Nothing is stored with a scope no
++    injector can read.
++    """
++    outcome = SuggestionOutcome()
+     existing = {
+         (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
+     }
+     for s in suggestions:
+-        key = (
+-            s.category,
+-            slugify(s.scope),
+-            slugify(project_slug) if s.category == "project" and project_slug else None,
+-            redact(s.content.strip()),
+-        )
+-        if key in existing:
++        try:
++            category = MemoryCategory(s.category)
++        except ValueError:
++            outcome.notes.append(
++                f"dropped suggestion from {source}: unknown category {s.category!r}; "
++                f"allowed: global|project|role"
++            )
+             continue
+-        existing.add(key)
++        slug = slugify(s.scope)
+         try:
+-            scope = slugify(s.scope)
+-            created.append(
++            if category == MemoryCategory.role:
++                file_key = role_memory_file(slug)
++                if file_key is None:
++                    raise MemoryError_(str(_vocab_error(category, slug)))
++                scope = file_key
++                role_value = slug if slug in Role.__members__ else role
++                create_role = Role(role_value) if role_value in Role.__members__ else Role.worker
++            else:
++                scope, note = coerce_scope(category, slug)
++                if note:
++                    outcome.notes.append(f"memory suggestion from {source}: {note}")
++                create_role = None
++            proj = (
++                slugify(project_slug)
++                if category == MemoryCategory.project and project_slug
++                else None
++            )
++            key = (category, scope, proj, redact(s.content.strip()))
++            if key in existing:
++                continue
++            existing.add(key)
++            outcome.created.append(
+                 create(
+                     session,
+                     MemoryCreate(
+-                        category=MemoryCategory(s.category),
++                        category=category,
+                         scope=scope,
+                         content=s.content,
+-                        project_slug=project_slug if s.category == "project" else None,
+-                        role=Role(scope)
+-                        if s.category == "role" and scope in Role.__members__
+-                        else (Role(role) if s.category == "role" else None),
++                        project_slug=project_slug if category == MemoryCategory.project else None,
++                        role=create_role,
+                         tags=s.tags,
+                         source=source,
+                         approved=False,
+                     ),
+                 )
+             )
+-        except (ValueError, MemoryError_):
+-            continue
+-    return created
++        except (ValueError, MemoryError_) as e:
++            # A drop is an operator-visible decision, never a silent `continue`.
++            outcome.notes.append(f"dropped suggestion from {source}: {e}")
++    return outcome
+ 
+ 
+ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
++    """Apply an edit. A scope the caller supplies is checked like at creation; a stored
++    legacy scope that is out of vocabulary does not freeze the row.
++
++    Validation happens on a throwaway preview BEFORE anything is assigned, so a rejected
++    PATCH leaves the stored row and its rendered markdown exactly as they were — the
++    "unchanged" guarantee does not depend on session rollback behaviour.
++    """
+     entry = _get(session, entry_id)
+-    old_file = _file_for(entry)
+-    if data.content is not None:
+-        entry.content = redact(data.content.strip())
+-    if data.scope is not None:
+-        entry.scope = data.scope
+-    if data.tags is not None:
+-        entry.tags_json = sorted(set(data.tags))
++    new_content = (
++        redact(data.content.strip()) if data.content is not None else entry.content
++    )
++    new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
++    preview = MemoryEntry(
++        category=entry.category,
++        scope=data.scope if data.scope is not None else entry.scope,
++        project_slug=entry.project_slug,
++        role=entry.role,
++        content=new_content,
++    )
++    _validate(preview, check_scope=data.scope is not None)
++    old_file = _file_for(entry)  # before the mutation: the file this row used to render into
++    entry.content = new_content
++    entry.tags_json = new_tags
++    entry.scope = preview.scope  # normalized by _validate when a scope was supplied
++    entry.role = preview.role
+     entry.updated_at = utcnow()
+     session.add(entry)
+     session.commit()
+@@ -258,6 +575,215 @@ def pending_count(session: Session) -> int:
+     return len(list_entries(session, status="pending"))
+ 
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 3/6

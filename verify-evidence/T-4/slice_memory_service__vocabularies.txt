@@ -1,0 +1,54 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD: src/orchestrator/services/memory_service.py lines 29-78
+# why the reviewer asked for it: the three named constants + FALLBACK_SCOPE + ROLE_PROJECT_SCOPES + ROLE_MEMORY_KEY
+# part 1/1
+   29 | from orchestrator.utils.slug import slugify
+   30 | 
+   31 | # ---------------------------------------------------------------- vocabularies
+   32 | # These three tuples are the ONLY scopes any injector can read. A row stored with a
+   33 | # scope outside its own category's vocabulary is invisible to every prompt (task T-4),
+   34 | # so the boundary checks membership and not just shape. Tests import these names.
+   35 | GLOBAL_SCOPES: tuple[str, ...] = ("environment", "preferences", "patterns")
+   36 | PROJECT_SCOPES: tuple[str, ...] = ("conventions", "decisions", "gotchas")
+   37 | ROLE_FILES: tuple[str, ...] = ("architect", "worker", "supervisor")
+   38 | # The scope vocabulary for category=role: the role-memory FILE names, i.e. ROLE_FILES
+   39 | # after applying the ROLE_MEMORY_KEY aliases (reviewer -> architect, agent -> worker).
+   40 | # `reviewer`/`agent` are accepted at the boundary as role NAMES and resolved to a file;
+   41 | # they are never scopes of their own. There was no ROLE_SCOPES before T-4, which is why
+   42 | # an out-of-vocabulary check could only ever be written for two of three categories.
+   43 | ROLE_SCOPES: tuple[str, ...] = ROLE_FILES
+   44 | 
+   45 | SCOPE_VOCABULARY: dict[str, tuple[str, ...]] = {
+   46 |     MemoryCategory.global_: GLOBAL_SCOPES,
+   47 |     MemoryCategory.project: PROJECT_SCOPES,
+   48 |     MemoryCategory.role: ROLE_SCOPES,
+   49 | }
+   50 | # Deterministic fallback scope used to COERCE a suggestion whose scope is out of
+   51 | # vocabulary. Only global and project have one: a role suggestion with no resolvable
+   52 | # role would land in a file that no injector reads, so it is dropped with a warning.
+   53 | FALLBACK_SCOPE: dict[str, str] = {
+   54 |     MemoryCategory.global_: "environment",
+   55 |     MemoryCategory.project: "gotchas",
+   56 | }
+   57 | 
+   58 | # Which project scopes each role receives.
+   59 | ROLE_PROJECT_SCOPES: dict[str, tuple[str, ...]] = {
+   60 |     Role.architect: ("decisions", "conventions"),
+   61 |     Role.reviewer: ("decisions", "conventions"),
+   62 |     Role.worker: ("conventions", "gotchas"),
+   63 |     Role.agent: ("conventions", "gotchas"),
+   64 |     Role.supervisor: ("decisions", "gotchas"),
+   65 | }
+   66 | # Role memory file used for each role (reviewer shares the architect file).
+   67 | ROLE_MEMORY_KEY = {Role.reviewer: "architect", Role.agent: "worker"}
+   68 | # Role names accepted for category=role, resolved through ROLE_MEMORY_KEY.
+   69 | ROLE_SCOPE_ALIASES: dict[str, str] = {k.value: v for k, v in ROLE_MEMORY_KEY.items()}
+   70 | 
+   71 | 
+   72 | class MemoryError_(ValueError):
+   73 |     pass
+   74 | 
+   75 | 
+   76 | @dataclass
+   77 | class SuggestionOutcome:
+   78 |     """What the suggestion path stored, and what it refused to store.

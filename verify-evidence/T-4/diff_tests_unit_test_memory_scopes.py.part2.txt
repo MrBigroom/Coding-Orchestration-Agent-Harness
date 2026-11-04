@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 2/5
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 743 lines.
++        {"category": "global", "scope": "misc-note", "content": "A fact."},
++        project_slug=None,
++    )
++    assert [e.scope for e in first.created] == [m.FALLBACK_SCOPE[MemoryCategory.global_]]
++    second = suggest(
++        session,
++        {"category": "project", "scope": "logbook", "content": "Another fact."},
++    )
++    assert [e.scope for e in second.created] == ["gotchas"]
++    assert any("fallback" in n for n in second.notes)
++
++
++def test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored(session):
++    out = suggest(
++        session,
++        {
++            "category": "role",
++            "scope": "ai-livestreaming-avatar-logbook",
++            "content": "The logbook writer keeps a running diary.",
++        },
++    )
++    assert out.created == []
++    assert len(out.notes) == 1 and out.notes[0].startswith("dropped ")
++    assert "architect|worker|supervisor" in out.notes[0]
++    assert m.list_entries(session, category="role") == []
++
++
++def test_in_vocabulary_suggestions_are_stored_untouched_and_silent(session):
++    before = len(m.list_entries(session))
++    out = suggest(
++        session,
++        {"category": "project", "scope": "gotchas", "content": "Mount path is fake."},
++        {"category": "global", "scope": "patterns", "content": "Assert the resolution."},
++        {"category": "role", "scope": "worker", "content": "One phase at a time."},
++    )
++    assert [e.scope for e in out.created] == ["gotchas", "patterns", "worker"]
++    assert out.notes == []
++    assert len(m.list_entries(session)) == before + 3
++
++
++def test_role_alias_suggestion_lands_in_the_shared_role_file(session):
++    out = suggest(
++        session,
++        {"category": "role", "scope": "reviewer", "content": "Fail closed on parsing."},
++    )
++    entry = out.created[0]
++    assert entry.scope == "architect" and entry.role == "reviewer"
++    assert out.notes == []
++    m.approve(session, entry.id)
++    root = m.memory_root()
++    assert "Fail closed on parsing." in (root / "roles" / "architect.md").read_text()
++    assert "Fail closed on parsing." in m.for_prompt(session, "reviewer", None)["role"]
++
++
++def test_coerced_suggestion_reaches_a_prompt_once_approved(session):
++    out = suggest(
++        session,
++        {"category": "project", "scope": "ai-livestreaming-avatar", "content": "Reachable host."},
++    )
++    entry = out.created[0]
++    assert entry.content == "Reachable host." and entry.scope == "gotchas"
++    assert "Reachable host." not in m.for_prompt(session, "worker", "ai-livestreaming-avatar")[
++        "project"
++    ]
++    m.approve(session, entry.id)
++    assert "Reachable host." in m.for_prompt(session, "worker", "ai-livestreaming-avatar")[
++        "project"
++    ]
++    assert "Reachable host." not in m.for_prompt(session, "architect", "ai-livestreaming-avatar")[
++        "project"
++    ]
++
++
++def test_duplicate_suggestions_are_compared_on_the_repaired_scope(session):
++    item = {"category": "project", "scope": "ai-livestreaming-avatar", "content": "Same fact."}
++    assert len(suggest(session, item).created) == 1
++    # The second copy is proposed under the *good* scope name; it must still deduplicate
++    # against the row stored under the coerced scope.
++    out = suggest(session, {**item, "scope": "misc"})
++    assert out.created == []
++    assert len(m.list_entries(session, category="project")) == 1
++
++
++# ------------------------------------------------------------- boundary (DoD 2)
++
++
++@pytest.mark.parametrize(
++    "kwargs,expected",
++    [
++        (
++            {"category": "global", "scope": "environment-notes-etc", "content": "x"},
++            "environment|preferences|patterns",
++        ),
++        (
++            {"category": "project", "scope": "conventions-and-decisions", "content": "x",
++             "project_slug": "demo"},
++            "conventions|decisions|gotchas",
++        ),
++        ({"category": "role", "scope": "logbook-writer", "content": "x"}, "architect|worker|supervisor"),
++    ],
++)
++def test_create_rejects_out_of_vocabulary_scope_for_every_category(session, kwargs, expected):
++    before = len(m.list_entries(session))
++    with pytest.raises(m.MemoryError_) as exc:
++        m.create(session, MemoryCreate(**kwargs))
++    assert expected in str(exc.value)
++    assert len(m.list_entries(session)) == before  # nothing half-stored
++
++
++@pytest.mark.parametrize("kwargs", [
++    {"category": "global", "scope": "preferences", "content": "x"},
++    {"category": "project", "scope": "decisions", "content": "x", "project_slug": "demo"},
++    {"category": "role", "scope": "supervisor", "content": "x"},
++    {"category": "role", "scope": "reviewer", "content": "x", "role": "reviewer"},
++])
++def test_create_accepts_the_vocabulary(session, kwargs):
++    entry = m.create(session, MemoryCreate(**kwargs))
++    assert m.is_injectable(entry)
++
++
++def test_update_rejects_without_touching_the_row_or_the_rendered_file(session):
++    """A refused PATCH must not depend on session rollback to be harmless.
++
++    `update()` validates a throwaway preview BEFORE assigning anything, so the stored row
++    and its markdown are byte-for-byte unchanged after the error.
++    """
++    entry = m.create(
++        session,
++        MemoryCreate(
++            category="project",
++            scope="gotchas",
++            project_slug="demo",
++            content="Watch out.",
++            approved=True,
++        ),
++    )
++    home = m._file_for(entry)
++    before = home.read_text()
++    with pytest.raises(m.MemoryError_):
++        m.update(session, entry.id, MemoryUpdate(scope="housekeeping", content="Reworded."))
++    fresh = session.get(MemoryEntry, entry.id)
++    assert fresh.scope == "gotchas" and fresh.content == "Watch out."
++    assert home.read_text() == before
++    assert not session.dirty and not session.new  # nothing half-assigned waiting for a commit
++    # The same call with a good scope still works, and a content-only edit still works.
++    m.update(session, entry.id, MemoryUpdate(content="Reworded."))
++    assert session.get(MemoryEntry, entry.id).content == "Reworded."
++    assert "Reworded." in home.read_text()
++
++
++def test_update_rejects_an_out_of_vocabulary_scope(session):
++    entry = m.create(
++        session,
++        MemoryCreate(category="project", scope="gotchas", project_slug="demo", content="x"),
++    )
++    with pytest.raises(m.MemoryError_) as exc:
++        m.update(session, entry.id, MemoryUpdate(scope="housekeeping"))
++    assert "conventions|decisions|gotchas" in str(exc.value)
++    session.refresh(entry)
++    assert entry.scope == "gotchas"
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 2/5

@@ -1,0 +1,26 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service._renderer_output
+# lines 620-640 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 3 the hand-edited-markdown protection predicate
+# part 1/1
+  620 | def _renderer_output(path: Path) -> bool:
+  621 |     """Could `render_file` have written this text? Only then may the GC delete it.
+  622 | 
+  623 |     `render_file` emits exactly `# <stem>` as its first line, then blank lines and
+  624 |     `- <content>  <!-- mem:N -->` marker lines. So the title line must equal `# ` + the
+  625 |     filename stem, and every other non-blank line must be a marker line. Anything else —
+  626 |     prose, an un-marked bullet, a different or deeper heading, an `ensure_layout` header
+  627 |     such as `# Project X — decisions` — disqualifies the whole file.
+  628 | 
+  629 |     This matters because `docs/memory.md` tells operators to hand-edit these files and
+  630 |     index the lines with `memory import --markdown`: a hand-authored note must never be
+  631 |     swept up by a garbage collector. The measured orphan (`# ai-livestreaming-avatar\n`,
+  632 |     left title-only when entry #5 was re-scoped by hand) matches this predicate exactly.
+  633 |     """
+  634 |     try:
+  635 |         lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+  636 |     except (OSError, UnicodeDecodeError):
+  637 |         return False
+  638 |     if not lines or lines[0] != f"# {path.stem}":
+  639 |         return False
+  640 |     return all(_MD_MARKER_LINE.match(ln) for ln in lines[1:])

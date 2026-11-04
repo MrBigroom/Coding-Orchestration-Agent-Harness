@@ -1,0 +1,157 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 3/3
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 471 lines.
++
++    `[red]error:[/red]` markup is the CLI's own. A scope or a reason containing brackets used
++    to be parsed as a style tag and VANISH from the printed line — the reviewer measured the
++    skipped-row reason disappearing from the repair output — so every interpolated value goes
++    through `rich.markup.escape`. And a collected ghost file is named as a collection exactly
++    once, not twice.
++    """
++    root = m.memory_root()
++    with session_scope() as s:
++        kept = legacy(s, category="project", scope="[stale]", project_slug="demo",
++                      content="Brackets in a scope.", rejected=True)
++        moved = legacy(s, category="global", scope="[dim]notes", content="Escaped.",
++                       approved=True)
++    ghost = str(root / "global" / "dim-notes.md")  # slugified file name, bracketed scope
++    dead = root / "global" / "zz-dead.md"  # already-dead ghost, no owning row at all
++    dead.write_text("# zz-dead\n")
++    assert kept.id and moved.id and dead.exists()
++
++    dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"], env=WIDE)
++    assert dry.exit_code == 0, dry.output
++    d = flat(dry.output)
++    assert "scope '[stale]' alone:" in d  # brackets survive
++    assert "rejected rows are left alone" in d  # the reason is not eaten
++    assert "would move" in d and "would re-render" in d
++    # the file that only becomes dead AFTER the move is reported once, as a collection;
++    # a file that is already dead is reported once, as a removal
++    assert "would collect dead scope-file" in d
++    assert f"would remove dead scope-file {ghost}" not in d
++    assert f"would remove dead scope-file {dead}" in d
++    # a dry run must never claim a write
++    for lie in ("moved #", "re-rendered", "removed dead scope-file", " collected "):
++        assert lie not in d, lie
++    assert "(dry run, nothing written)" in d
++    assert Path(ghost).exists() and dead.exists()
++
++    run = runner.invoke(app, ["memory", "fix-scopes"], env=WIDE)
++    assert run.exit_code == 0, run.output
++    r = flat(run.output)
++    assert "would" not in r
++    assert r.count("removed dead scope-file") == 2  # both ghosts, one line each
++    assert r.count(f"removed dead scope-file {dead}") == 1
++    assert r.count(f"removed dead scope-file {ghost}") == 1
++    assert "collected" not in r
++    assert "'[dim]notes' -> 'environment'" in r  # bracketed scope printed literally
++    assert not Path(ghost).exists() and not dead.exists()
++    with session_scope() as s:
++        assert [e.scope for e in m.list_entries(s) if e.id == moved.id] == ["environment"]
++
++
++def test_cli_fix_scopes_no_gc_moves_rows_and_deletes_nothing(initialized):
++    root = m.memory_root()
++    with session_scope() as s:
++        row = legacy(s, category="global", scope="logbook", content="Keep the file.",
++                     approved=True)
++        row_id = row.id
++    out = runner.invoke(app, ["memory", "fix-scopes", "--no-gc"], env=WIDE)
++    assert out.exit_code == 0, out.output
++    assert "gc is off" in out.output
++    assert "removed dead scope-file" not in out.output
++    assert (root / "global" / "logbook.md").exists()
++    # the row moved and its old file was re-rendered; only the deletion was declined
++    assert "mem:" not in (root / "global" / "logbook.md").read_text()
++    with session_scope() as s:
++        assert [e.scope for e in m.list_entries(s) if e.id == row_id] == ["environment"]
++
++
++def test_cli_fix_scopes_gc_only_reports_only_the_files_it_actually_deleted(initialized, monkeypatch):
++    """DoD 3: a repair report may claim nothing that did not happen on disk.
++
++    The `--gc-only` branch used to fall back to the pre-GC listing
++    (`removed_files=removed or listed`), so whenever the collector returned an empty list the
++    CLI still printed `removed dead scope-file <path>` for a file that was sitting right there.
++    The report now carries exactly what `gc_orphan_files` unlinked, and nothing else.
++    """
++    root = m.memory_root()
++    ghost = root / "projects" / "demo" / "demo.md"
++    ghost.parent.mkdir(parents=True, exist_ok=True)
++    ghost.write_text("# demo\n")  # the measured orphan shape: title line only
++    with session_scope() as s:
++        assert ghost in m.orphan_files(s)
++
++    # Simulate a GC that deletes nothing (a file re-claimed by another row, a failed unlink
++    # swallowed upstream): the listing is non-empty, the deletions are not.
++    monkeypatch.setattr(m, "gc_orphan_files", lambda *a, **k: [])
++    out = runner.invoke(app, ["memory", "fix-scopes", "--gc-only"], env=WIDE)
++    assert out.exit_code == 0, out.output
++    d = flat(out.output)
++    assert "removed dead scope-file" not in d  # the false claim, gone
++    assert "0 dead scope-file(s) removed" in d
++    assert ghost.exists()  # and the disk agrees with the report
++
++    # A --gc-only --dry-run still shows the operator what a real run would collect.
++    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
++                             env=WIDE).output)
++    assert f"would remove dead scope-file {ghost}" in dry
++    assert "1 dead scope-file(s) to remove" in dry
++    assert "removed dead scope-file" not in dry
++    assert ghost.exists()
++
++
++def test_cli_list_prints_an_uninjectable_scope_literally(initialized):
++    """The `inj` marker has to NAME the bad scope; a swallowed bracket hides the defect."""
++    with session_scope() as s:
++        legacy(s, category="project", scope="[logbook]", project_slug="demo",
++               content="Bracketed scope.")
++    out = runner.invoke(app, ["memory", "list"])
++    assert out.exit_code == 0, out.output
++    assert "uninjectable #" in out.output
++    assert "'[logbook]'" in out.output
++    assert "conventions|decisions|gotchas" in out.output
++
++
++def test_cli_import_repairs_a_legacy_export_scope(initialized):
++    """`import` REPAIRS; the create boundaries REJECT (docs/memory.md says which is which).
++
++    An export written before validation existed must not lose its facts, while a live
++    create/PATCH can still be refused and corrected. Both are true at once, and a legacy row
++    that is ALREADY stored under its dead scope is not duplicated by importing its export.
++    """
++    payload = {
++        "version": 1,
++        "entries": [
++            {"category": "project", "scope": "logbook", "project_slug": "demo",
++             "content": "A fact worth keeping.", "approved": False, "source": "handoff:R-3"},
++            {"category": "role", "scope": "logbook-writer", "content": "Unplaceable.",
++             "approved": False},
++        ],
++    }
++    exported = initialized / "mem.json"
++    exported.write_text(json.dumps(payload))
++    assert "imported 1" in runner.invoke(app, ["memory", "import", str(exported)]).output
++    assert "imported 0" in runner.invoke(app, ["memory", "import", str(exported)]).output
++    with session_scope() as s:
++        rows = m.list_entries(s, category="project")
++        assert [(e.scope, e.project_slug) for e in rows] == [("gotchas", "demo")]
++        assert m.list_entries(s, category="role") == []  # the unplaceable one was skipped
++    # a legacy row still stored under its dead scope is the SAME fact, not a new one
++    with session_scope() as s:
++        legacy(s, category="global", scope="logbook", content="Already stored, badly scoped.")
++        again = json.loads(m.dumps_export(s))
++    round2 = initialized / "mem2.json"
++    round2.write_text(json.dumps(again))
++    assert "imported 0" in runner.invoke(app, ["memory", "import", str(round2)]).output
++    with session_scope() as s:
++        same = [e for e in m.list_entries(s) if e.content == "Already stored, badly scoped."]
++        assert len(same) == 1 and same[0].scope == "logbook"  # untouched, awaiting fix-scopes
++    # and the same scope is still refused at the create boundary
++    refused = runner.invoke(app, ["memory", "add", "x", "--category", "project",
++                                  "--scope", "logbook", "--project", "demo"])
++    assert refused.exit_code == 1
++    assert "conventions|decisions|gotchas" in refused.output
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 3/3

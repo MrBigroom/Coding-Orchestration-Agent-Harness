@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/services/memory_service.py   PART 5/6
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 808 lines.
++        # A row that moves away from a non-canonical file leaves that file with no owner;
++        # the GC below collects it. Computed before the mutation so a dry run can say so.
++        other_owners = {
++            _file_for(e)
++            for e in list_entries(session, status="approved")
++            if e.id != entry.id
++        }
++        preview = MemoryEntry(
++            category=entry.category,
++            scope=new_scope,
++            project_slug=entry.project_slug,
++            role=entry.role,
++            content=entry.content,
++        )
++        moved = {
++            "id": entry.id,
++            "category": entry.category,
++            "project_slug": entry.project_slug,
++            "from": entry.scope,
++            "to": new_scope,
++            "note": note,
++            "approved": entry.approved,
++            "old_file": str(old_file),
++            "new_file": str(_file_for(preview)),
++            "collect_old_file": not canonical_file(old_file) and old_file not in other_owners,
++        }
++        repair.moved.append(moved)
++        if dry_run:
++            continue
++        entry.scope = new_scope
++        _validate(entry)
++        entry.updated_at = utcnow()
++        session.add(entry)
++        session.commit()
++        if entry.approved:
++            render_file(session, old_file)
++            render_file(session, _file_for(entry))
++        elif old_file.exists():
++            # An unapproved row never rendered, but a stale copy from an earlier approval
++            # may still name it.
++            render_file(session, old_file)
++    if gc:
++        for path in gc_orphan_files(session, dry_run=dry_run):
++            repair.removed_files.append(path)
++    else:
++        # --no-gc: the operator still has to SEE the dead files, they are just not deleted.
++        repair.ghost_files = orphan_files(session)
++    return repair
++
++
+ # ---------------------------------------------------------------- injection
+ 
+ 
+@@ -320,44 +846,71 @@ def export_all(session: Session) -> dict[str, Any]:
+     }
+ 
+ 
++def _import_keys(category: str, scope: str, project_slug: str | None, role: str | None,
++                 content: str) -> set[tuple[Any, ...]]:
++    """Every tuple that identifies this fact, before AND after the scope repair.
++
++    A stored legacy row keeps its dead scope until `fix-scopes` runs, so an import of the
++    same export would otherwise add a SECOND row with the same content under the fallback
++    scope and render the line twice. Recognising both spellings keeps `import` idempotent
++    in both directions; a repairable category contributes its coerced scope too.
++    """
++    keys = {(category, scope, project_slug, role, content)}
++    if category in FALLBACK_SCOPE:
++        try:
++            repaired, _ = coerce_scope(category, scope)
++            keys.add((category, repaired, project_slug, role, content))
++        except MemoryError_:
++            pass
++    return keys
++
++
+ def import_all(session: Session, payload: dict[str, Any]) -> int:
+-    """Import entries; skips exact duplicates (same category/scope/project/role/content)."""
++    """Import entries; skips duplicates (same category/scope/project/role/content).
++
++    T-4: an export written before scope validation existed carries free-form scopes, so the
++    scope is repaired on the way in rather than dropping a good fact over a vocabulary
++    mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
++    importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
++    nor re-adds anything on a second pass.
++    """
+     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
+-    existing = {
+-        (e.category, e.scope, e.project_slug, e.role, e.content) for e in list_entries(session)
+-    }
++    existing: set[tuple[Any, ...]] = set()
++    for e in list_entries(session):
++        existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
+     count = 0
+     touched: set[Path] = set()
+     for raw in payload["entries"]:
+-        key = (
+-            raw.get("category"),
+-            raw.get("scope"),
+-            raw.get("project_slug"),
+-            raw.get("role"),
+-            redact(str(raw.get("content", "")).strip()),
+-        )
+-        if key in existing or not key[4]:
++        content = redact(str(raw.get("content", "")).strip())
++        category = raw.get("category")
++        if not content or category not in {c.value for c in MemoryCategory}:
+             continue
+         entry = MemoryEntry(
+-            category=key[0],
+-            scope=key[1],
+-            project_slug=key[2],
+-            role=key[3],
+-            content=key[4],
++            category=category,
++            scope=slugify(str(raw.get("scope") or "")),
++            project_slug=raw.get("project_slug"),
++            role=raw.get("role"),
++            content=content,
+             source=raw.get("source", "import"),
+             tags_json=list(raw.get("tags_json") or []),
+             approved=bool(raw.get("approved")),
+             rejected=bool(raw.get("rejected")),
+         )
+-        if entry.category not in {c.value for c in MemoryCategory}:
++        raw_keys = _import_keys(
++            category, entry.scope, entry.project_slug, entry.role, content
++        )
++        if raw_keys & existing:
+             continue
+         try:
++            if entry.category in FALLBACK_SCOPE:
++                entry.scope, _ = coerce_scope(entry.category, entry.scope)
+             _validate(entry)
+         except MemoryError_:
+             continue
++        key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
++        existing |= raw_keys | {key}
+         session.add(entry)
+-        existing.add(key)
+         count += 1
+         if entry.approved:
+             touched.add(_file_for(entry))
+@@ -383,16 +936,21 @@ def import_markdown_tree(session: Session) -> int:
+                 continue
+             content = m.group("content")
+             if rel[0] == "global":
++                # A dead scope-file (an orphan named after something other than a
++                # vocabulary scope) is repaired on the way in, never indexed as another
++                # entry no injector can reach.
++                scope, _ = coerce_scope(MemoryCategory.global_, slugify(path.stem))
+                 data = MemoryCreate(
+                     category=MemoryCategory.global_,
+-                    scope=slugify(path.stem),
++                    scope=scope,
+                     content=content,
+                     source="markdown",
+                 )
+             elif rel[0] == "projects" and len(rel) == 3:
+DIFF_PART_COMPLETE=src/orchestrator/services/memory_service.py part 5/6

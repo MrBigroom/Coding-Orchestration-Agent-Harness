@@ -1,0 +1,86 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.cli.memory_fix_scopes
+# lines 1122-1202 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/cli.py
+# why the reviewer asked for it: DoD 3 the repair report, including this round's gc-only honesty fix
+# part 1/1
+ 1122 | @memory_app.command("fix-scopes")
+ 1123 | @handled
+ 1124 | def memory_fix_scopes(
+ 1125 |     dry_run: bool = typer.Option(False, "--dry-run", help="Report the moves, change nothing."),
+ 1126 |     gc_only: bool = typer.Option(
+ 1127 |         False, "--gc-only", help="Only remove rendered files that no entry owns."
+ 1128 |     ),
+ 1129 |     no_gc: bool = typer.Option(
+ 1130 |         False,
+ 1131 |         "--no-gc",
+ 1132 |         help="Move rows and re-render, but delete no file (the GC list is still reported).",
+ 1133 |     ),
+ 1134 | ) -> None:
+ 1135 |     """Repair entries stored with a scope no injector can read (task T-4).
+ 1136 | 
+ 1137 |     Rows are moved, never deleted; rejected rows are left alone. Both the old and the new
+ 1138 |     markdown file are re-rendered, and rendered files that no longer have an owning entry
+ 1139 |     are removed so a re-scoped entry cannot leave a title-only ghost behind. Only files
+ 1140 |     `render_file` could have written are collectable — hand-edited markdown in the memory
+ 1141 |     tree is never deleted (see docs/memory.md), and `--no-gc` turns the deletion off.
+ 1142 |     """
+ 1143 |     from orchestrator.services import memory_service as m
+ 1144 | 
+ 1145 |     _ensure_ready()
+ 1146 |     with _session() as s:
+ 1147 |         if gc_only:
+ 1148 |             if dry_run:
+ 1149 |                 # a preview of what a real run would collect: nothing is deleted, and the
+ 1150 |                 # verb printed below is "would remove"
+ 1151 |                 repair = m.ScopeRepair(removed_files=m.orphan_files(s), dry_run=True)
+ 1152 |             else:
+ 1153 |                 # ONLY what was actually unlinked. `orphan_files()` is a pre-view taken
+ 1154 |                 # before the GC, and falling back to it (`removed or listed`) let a real run
+ 1155 |                 # print "removed dead scope-file" for files it had left on disk.
+ 1156 |                 repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s), dry_run=False)
+ 1157 |         else:
+ 1158 |             repair = m.fix_scopes(s, dry_run=dry_run, gc=not no_gc)
+ 1159 |     verb = "would move" if dry_run else "moved"
+ 1160 |     file_verb = "would re-render" if dry_run else "re-rendered"
+ 1161 |     for mv in repair.moved:
+ 1162 |         console.print(
+ 1163 |             f"{verb} #{mv['id']} {escape(str(mv['category']))}: "
+ 1164 |             f"{escape(repr(mv['from']))} -> {escape(repr(mv['to']))}"
+ 1165 |             + (f"  ({escape(mv['note'])})" if mv.get("note") else "")
+ 1166 |         )
+ 1167 |         console.print(
+ 1168 |             f"  {file_verb} {escape(mv['old_file'])} and {escape(mv['new_file'])}"
+ 1169 |         )
+ 1170 |         # A dry run cannot show this file in the removed list below (the row has not moved
+ 1171 |         # yet, so the file is still owned), so say here what the real run will collect.
+ 1172 |         if dry_run and mv["collect_old_file"]:
+ 1173 |             console.print(f"  would collect dead scope-file {escape(mv['old_file'])}")
+ 1174 |     for sk in repair.skipped:
+ 1175 |         console.print(
+ 1176 |             f"left #{sk['id']} {escape(str(sk['category']))} scope "
+ 1177 |             f"{escape(repr(sk['scope']))} alone: {escape(str(sk.get('why', '')))}"
+ 1178 |         )
+ 1179 |     ghost_verb = "would remove" if dry_run else "removed"
+ 1180 |     for path in repair.removed_files:
+ 1181 |         console.print(f"{ghost_verb} dead scope-file {escape(str(path))}")
+ 1182 |     if repair.ghost_files:
+ 1183 |         console.print(
+ 1184 |             f"gc is off: {len(repair.ghost_files)} dead scope-file(s) left in place "
+ 1185 |             f"({', '.join(escape(str(p)) for p in repair.ghost_files)})"
+ 1186 |         )
+ 1187 |     ids = repair.moved_ids
+ 1188 |     console.print(
+ 1189 |         f"{verb} {len(ids)} entr{'y' if len(ids) == 1 else 'ies'}"
+ 1190 |         + (f" (ids: {', '.join(str(i) for i in ids)})" if ids else "")
+ 1191 |         + f"; {len(repair.skipped)} left alone; "
+ 1192 |         + (
+ 1193 |             f"{len(repair.removed_files)} dead scope-file(s) "
+ 1194 |             + ("to remove" if dry_run else "removed")
+ 1195 |         )
+ 1196 |         + (
+ 1197 |             f"; {len(repair.ghost_files)} more reported with gc off"
+ 1198 |             if repair.ghost_files
+ 1199 |             else ""
+ 1200 |         )
+ 1201 |         + (" (dry run, nothing written)" if dry_run else "")
+ 1202 |     )

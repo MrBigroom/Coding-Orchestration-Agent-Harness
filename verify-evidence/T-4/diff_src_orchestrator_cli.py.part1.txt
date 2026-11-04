@@ -1,7 +1,10 @@
-# HEAD=5c678f942c9a3ff009ad1bff301660d7ab833cbd (5c678f9) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:22:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
-# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/cli.py  (COMPLETE: 185 diff lines)
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- src/orchestrator/cli.py   PART 1/2
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 205 lines.
 diff --git a/src/orchestrator/cli.py b/src/orchestrator/cli.py
-index 048c9e4..a1607e9 100644
+index 048c9e4..c95c9e8 100644
 --- a/src/orchestrator/cli.py
 +++ b/src/orchestrator/cli.py
 @@ -15,6 +15,7 @@ from typing import Any
@@ -97,7 +100,21 @@ index 048c9e4..a1607e9 100644
  
  
  @memory_app.command("add")
-@@ -1074,7 +1107,86 @@ def memory_search(query: str) -> None:
+@@ -1028,6 +1061,13 @@ def memory_add(
+     from orchestrator.services import memory_service
+ 
+     _ensure_ready()
++    # `--role` is a plain string here, and MemoryCreate types it as the Role enum, so an
++    # unreadable role would be refused by Pydantic with a message that never names the role
++    # MEMORY FILES (DoD 2 requires the allowed values to be named). Validate it through the
++    # service's own check first; a valid name (including the reviewer/agent aliases) passes
++    # through untouched and is still re-checked by _validate.
++    if role is not None:
++        memory_service.check_role_name(role)
+     with _session() as s:
+         e = memory_service.create(
+             s,
+@@ -1074,7 +1114,92 @@ def memory_search(query: str) -> None:
  
      _ensure_ready()
      with _session() as s:
@@ -133,56 +150,17 @@ index 048c9e4..a1607e9 100644
 +    _ensure_ready()
 +    with _session() as s:
 +        if gc_only:
-+            listed = m.orphan_files(s)
-+            removed = [] if dry_run else m.gc_orphan_files(s)
-+            repair = m.ScopeRepair(removed_files=removed or listed, dry_run=dry_run)
++            if dry_run:
++                # a preview of what a real run would collect: nothing is deleted, and the
++                # verb printed below is "would remove"
++                repair = m.ScopeRepair(removed_files=m.orphan_files(s), dry_run=True)
++            else:
++                # ONLY what was actually unlinked. `orphan_files()` is a pre-view taken
++                # before the GC, and falling back to it (`removed or listed`) let a real run
++                # print "removed dead scope-file" for files it had left on disk.
++                repair = m.ScopeRepair(removed_files=m.gc_orphan_files(s), dry_run=False)
 +        else:
 +            repair = m.fix_scopes(s, dry_run=dry_run, gc=not no_gc)
 +    verb = "would move" if dry_run else "moved"
 +    file_verb = "would re-render" if dry_run else "re-rendered"
-+    for mv in repair.moved:
-+        console.print(
-+            f"{verb} #{mv['id']} {escape(str(mv['category']))}: "
-+            f"{escape(repr(mv['from']))} -> {escape(repr(mv['to']))}"
-+            + (f"  ({escape(mv['note'])})" if mv.get("note") else "")
-+        )
-+        console.print(
-+            f"  {file_verb} {escape(mv['old_file'])} and {escape(mv['new_file'])}"
-+        )
-+        # A dry run cannot show this file in the removed list below (the row has not moved
-+        # yet, so the file is still owned), so say here what the real run will collect.
-+        if dry_run and mv["collect_old_file"]:
-+            console.print(f"  would collect dead scope-file {escape(mv['old_file'])}")
-+    for sk in repair.skipped:
-+        console.print(
-+            f"left #{sk['id']} {escape(str(sk['category']))} scope "
-+            f"{escape(repr(sk['scope']))} alone: {escape(str(sk.get('why', '')))}"
-+        )
-+    ghost_verb = "would remove" if dry_run else "removed"
-+    for path in repair.removed_files:
-+        console.print(f"{ghost_verb} dead scope-file {escape(str(path))}")
-+    if repair.ghost_files:
-+        console.print(
-+            f"gc is off: {len(repair.ghost_files)} dead scope-file(s) left in place "
-+            f"({', '.join(escape(str(p)) for p in repair.ghost_files)})"
-+        )
-+    ids = repair.moved_ids
-+    console.print(
-+        f"{verb} {len(ids)} entr{'y' if len(ids) == 1 else 'ies'}"
-+        + (f" (ids: {', '.join(str(i) for i in ids)})" if ids else "")
-+        + f"; {len(repair.skipped)} left alone; "
-+        + (
-+            f"{len(repair.removed_files)} dead scope-file(s) "
-+            + ("to remove" if dry_run else "removed")
-+        )
-+        + (
-+            f"; {len(repair.ghost_files)} more reported with gc off"
-+            if repair.ghost_files
-+            else ""
-+        )
-+        + (" (dry run, nothing written)" if dry_run else "")
-+    )
- 
- 
- @memory_app.command("export")
-DIFF_COMPLETE=src/orchestrator/cli.py
+DIFF_PART_COMPLETE=src/orchestrator/cli.py part 1/2

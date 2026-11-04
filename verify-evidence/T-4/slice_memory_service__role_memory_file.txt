@@ -1,0 +1,15 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.role_memory_file
+# lines 147-156 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: the alias resolution (reviewer -> architect, agent -> worker)
+# part 1/1
+  147 | def role_memory_file(name: str | None) -> str | None:
+  148 |     """Resolve a role name (including the reviewer/agent aliases) to its memory file.
+  149 | 
+  150 |     Returns None when the name cannot reach any role memory file. Dict lookups work with
+  151 |     plain strings because `Role` is a StrEnum, which is how `for_prompt` already matches.
+  152 |     """
+  153 |     if not name:
+  154 |         return None
+  155 |     key = ROLE_MEMORY_KEY.get(name, name)
+  156 |     return key if key in ROLE_SCOPES else None

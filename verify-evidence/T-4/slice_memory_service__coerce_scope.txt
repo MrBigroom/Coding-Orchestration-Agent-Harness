@@ -1,0 +1,29 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# FINAL SOURCE at this HEAD (the file as it now stands, NOT a patch): orchestrator.services.memory_service.coerce_scope
+# lines 214-237 of /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4/src/orchestrator/services/memory_service.py
+# why the reviewer asked for it: DoD 1 deterministic fallback, never an inference
+# part 1/1
+  214 | def coerce_scope(category: str, scope: str) -> tuple[str, str]:
+  215 |     """Repair an out-of-vocabulary scope by falling back. Returns (scope, note).
+  216 | 
+  217 |     `note` is empty when the scope was already injectable. The fallback is the WHOLE rule:
+  218 |     a scope that is not in its category's vocabulary goes to `FALLBACK_SCOPE[category]`
+  219 |     (`gotchas` for project, `environment` for global) and is reported. Nothing is ever
+  220 |     *inferred* from the words inside a proposed scope, because the scope decides which
+  221 |     roles receive the note — guessing that `decisions-and-gating` means `decisions` would
+  222 |     silently route a Worker's gotcha to the Architect and the Supervisor, and a substring
+  223 |     match fires inside unrelated words. A predictable place to find it beats a clever
+  224 |     guess, and the operator sees the substitution either way.
+  225 | 
+  226 |     Categories with no fallback (`role`) re-raise: inventing a role would file someone's
+  227 |     note under the wrong agent, so the suggestion path drops it with a warning instead of
+  228 |     storing an unreachable row.
+  229 |     """
+  230 |     try:
+  231 |         return normalize_scope(category, scope), ""
+  232 |     except MemoryError_ as e:
+  233 |         err = e
+  234 |     fallback = FALLBACK_SCOPE.get(category)
+  235 |     if fallback is None:
+  236 |         raise err
+  237 |     return fallback, _substitution_note(category, scope, fallback)

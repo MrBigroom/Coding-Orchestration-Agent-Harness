@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 1/3
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 471 lines.
+diff --git a/tests/integration/test_memory_scope_boundary.py b/tests/integration/test_memory_scope_boundary.py
+new file mode 100644
+index 0000000..1a51ba3
+--- /dev/null
++++ b/tests/integration/test_memory_scope_boundary.py
+@@ -0,0 +1,465 @@
++"""T-4 DoD 2/3/4 at the real boundaries: the API rejects, the CLI rejects, repairs and marks.
++
++Offline: in-process TestClient and CliRunner against an isolated ORCHESTRATOR_HOME.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++from fastapi.testclient import TestClient
++from typer.testing import CliRunner
++
++from orchestrator.cli import app
++from orchestrator.core.db import session_scope
++from orchestrator.core.models import MemoryEntry
++from orchestrator.services import memory_service as m
++
++runner = CliRunner()
++
++# Rich folds long lines at 80 columns, which would break an assertion about a whole output
++# line (the memory root path in a tmp dir is longer than that). Widen the console and compare
++# on whitespace-normalized text so the assertions are about the WORDS, not the wrapping.
++WIDE = {"COLUMNS": "400", "TERMINAL_WIDTH": "400"}
++
++
++def flat(out: str) -> str:
++    return " ".join(out.split())
++
++
++@pytest.fixture
++def client(initialized):
++    from orchestrator.api.main import create_app
++
++    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as c:
++        yield c
++
++
++def legacy(session, **kw) -> MemoryEntry:
++    kw.setdefault("content", "A fact.")
++    entry = MemoryEntry(
++        category=kw["category"],
++        scope=kw["scope"],
++        project_slug=kw.get("project_slug"),
++        role=kw.get("role"),
++        content=kw["content"],
++        source=kw.get("source", "handoff:R-3"),
++        approved=kw.get("approved", False),
++        rejected=kw.get("rejected", False),
++    )
++    session.add(entry)
++    session.commit()
++    session.refresh(entry)
++    if entry.approved:
++        m.render_file(session, m._file_for(entry))
++    return entry
++
++
++# ------------------------------------------------------------------ API boundary
++
++
++@pytest.mark.parametrize(
++    "body,expected",
++    [
++        (
++            {"category": "global", "scope": "global-environment-verifying", "content": "x"},
++            "environment|preferences|patterns",
++        ),
++        (
++            {"category": "project", "scope": "ai-livestreaming-avatar", "project_slug": "demo",
++             "content": "x"},
++            "conventions|decisions|gotchas",
++        ),
++        (
++            {"category": "role", "scope": "ai-livestreaming-avatar-logbook", "content": "x"},
++            "architect|worker|supervisor",
++        ),
++    ],
++)
++def test_api_create_rejects_an_uninjectable_scope_for_every_category(client, body, expected):
++    r = client.post("/api/memory", json=body)
++    assert r.status_code == 400
++    err = r.json()
++    assert set(err) == {"error", "detail"}  # the frozen error shape
++    assert expected in err["error"] and body["scope"] in err["error"]
++    assert client.get("/api/memory", params={"scope": body["scope"]}).json() == []
++
++
++def test_api_create_still_accepts_the_vocabulary_including_role_aliases(client):
++    for body in (
++        {"category": "global", "scope": "patterns", "content": "a"},
++        {"category": "project", "scope": "gotchas", "project_slug": "demo", "content": "a"},
++        {"category": "role", "scope": "reviewer", "content": "a"},
++    ):
++        r = client.post("/api/memory", json=body)
++        assert r.status_code == 201, r.json()
++        assert r.json()["scope"] in m.SCOPE_VOCABULARY[body["category"]]
++
++
++def test_api_patch_rejects_an_uninjectable_scope(client):
++    mid = client.post(
++        "/api/memory",
++        json={"category": "project", "scope": "gotchas", "project_slug": "demo",
++              "content": "Watch out."},
++    ).json()["id"]
++    r = client.patch(f"/api/memory/{mid}", json={"scope": "housekeeping"})
++    assert r.status_code == 400 and "conventions|decisions|gotchas" in r.json()["error"]
++    got = [e for e in client.get("/api/memory").json() if e["id"] == mid][0]
++    assert got["scope"] == "gotchas"
++    assert client.patch(f"/api/memory/{mid}", json={"scope": "decisions"}).json()["scope"] == (
++        "decisions"
++    )
++
++
++def test_api_patch_still_edits_the_content_of_a_legacy_row(client):
++    """A stored bad scope must not freeze the row out of the API.
++
++    `fix-scopes` is the repair path; refusing a content edit would leave the operator no way
++    to fix the wording of an entry they already have.
++    """
++    with session_scope() as s:
++        row_id = legacy(s, category="project", scope="logbook", project_slug="demo",
++                        content="Old wording.").id
++    r = client.patch(f"/api/memory/{row_id}", json={"content": "New wording."})
++    assert r.status_code == 200 and r.json()["content"] == "New wording."
++    assert r.json()["scope"] == "logbook"
++    assert client.patch(f"/api/memory/{row_id}",
++                        json={"scope": "housekeeping"}).status_code == 400
++
++
++def test_api_create_refuses_an_unknown_role_name_with_the_frozen_error_shape(client):
++    """The POST boundary cannot be fed an unreadable role, and says so in the frozen shape.
++
++    `MemoryCreate.role` is the Role enum, so Pydantic stops 'logbook-writer' before the
++    service is entered (422, not 400). The service boundary under it refuses the same shape
++    with the role vocabulary named -- see
++    `test_create_refuses_an_unreadable_role_column_even_when_the_scope_is_valid`.
++    """
++    r = client.post(
++        "/api/memory",
++        json={"category": "role", "scope": "worker", "role": "logbook-writer",
++              "content": "Diary."},
++    )
++    assert r.status_code == 422, r.json()
++    assert set(r.json()) == {"error", "detail"}  # the frozen error shape
++    with session_scope() as s:
++        assert [e for e in m.list_entries(s, category="role")
++                if e.role == "logbook-writer"] == []
++    assert not (m.memory_root() / "roles" / "logbook-writer.md").exists()
++
++
++def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope(client):
++    """DoD 2 at the PATCH boundary for a row already stored in the dead shape.
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 1/3

@@ -1,0 +1,109 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/unit/test_memory_scopes.py   PART 5/5
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 743 lines.
++    dead_role = legacy(
++        session, category="role", scope="worker", role="logbook-writer",
++        content="Diary of the logbook writer.", approved=True,
++    )
++    assert m._file_for(dead_role).name == "logbook-writer.md"
++    assert (root / "roles" / "logbook-writer.md").exists()
++    assert "Diary of the logbook writer." not in (root / "roles" / "worker.md").read_text()
++    assert not m.is_injectable(dead_role)
++    assert "logbook-writer.md" in m.injectability(dead_role)[1]
++    # fix-scopes refuses to invent a role, so this row is reported and stays put.
++    repair = m.fix_scopes(session)
++    assert [s["id"] for s in repair.skipped] == [dead_role.id]
++    session.refresh(dead_role)
++    assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
++
++    # The counter-examples from the task (#39/#47): role=worker scope=worker.
++    good = legacy(
++        session, category="role", scope="worker", role="worker", content="Small commits.",
++        approved=True,
++    )
++    assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
++    assert m.reachable_roles(good) == ("worker", "agent")
++    assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
++    # `scope` is the fallback for the file name exactly as it was on main.
++    scope_only = legacy(session, category="role", scope="supervisor", content="Recommend only.")
++    assert m._file_for(scope_only).name == "supervisor.md"
++    assert m.is_injectable(scope_only)
++    # And the boundary refuses such a row going forward, so it cannot be created again.
++    with pytest.raises(m.MemoryError_):
++        m.create(session, MemoryCreate(category="role", scope="logbook-writer", content="x"))
++
++
++def test_injectability_marks_only_the_unreachable(session):
++    slug = "ai-livestreaming-avatar"
++    bad = legacy(session, category="global", scope=slug, content="Global orphan.")
++    ok_global = legacy(session, category="global", scope="environment", content="Env fact.")
++    bad_project = legacy(
++        session, category="project", scope=slug, project_slug=slug, content="Project orphan."
++    )
++    # The counter-examples from the task: category=role scope=worker IS injectable.
++    worker = legacy(session, category="role", scope="worker", content="Small commits.")
++    worker_with_role = legacy(
++        session, category="role", scope="worker", role="worker", content="Re-test then resubmit."
++    )
++    reviewer = legacy(session, category="role", scope="architect", role="reviewer", content="Gate.")
++    agent = legacy(session, category="role", scope="agent", role="agent", content="Ship one phase.")
++    supervisor = legacy(session, category="role", scope="supervisor", content="Recommend only.")
++
++    assert not m.is_injectable(bad) and "environment|preferences|patterns" in m.injectability(bad)[1]
++    assert not m.is_injectable(bad_project)
++    assert m.is_injectable(ok_global)
++    assert m.reachable_roles(ok_global) == tuple(r.value for r in Role)
++    for entry in (worker, worker_with_role, reviewer, agent, supervisor):
++        assert m.is_injectable(entry), (entry.role, entry.scope)
++    assert m.reachable_roles(reviewer) == ("architect", "reviewer")
++    assert m.reachable_roles(agent) == ("worker", "agent")
++
++
++def test_coercion_is_written_to_the_build_log_the_operator_reads(session):
++    """DoD 1: the substitution is recorded where the run's log shows it.
++
++    `run_service._store_memory_suggestions` is the seam every handoff path goes through
++    (clean exit, salvage, agent run); the notes come back with the entries and become
++    build-log events instead of a silent `continue`.
++    """
++    from sqlmodel import select
++
++    from orchestrator.core.models import BuildLogEntry
++    from orchestrator.services import run_service
++
++    out = run_service._store_memory_suggestions(
++        session,
++        [
++            MemorySuggestion(
++                category="project", scope="ai-livestreaming-avatar", content="Reachable host."
++            ),
++            MemorySuggestion(category="role", scope="logbook-writer", content="Diary."),
++        ],
++        source="handoff:R-3",
++        project_slug="ai-livestreaming-avatar",
++        role="worker",
++    )
++    assert [e.scope for e in out.created] == ["gotchas"]
++    events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
++    assert "memory_scope_substituted" in events
++    assert "ai-livestreaming-avatar" in events["memory_scope_substituted"]
++    assert "gotchas" in events["memory_scope_substituted"]
++    assert "memory_suggestion_dropped" in events
++    assert "architect|worker|supervisor" in events["memory_suggestion_dropped"]
++
++
++def test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt(session):
++    slug = "ai-livestreaming-avatar"
++    orphan = legacy(
++        session, category="project", scope=slug, project_slug=slug,
++        content="Invisible to every prompt.", approved=True,
++    )
++    assert not m.is_injectable(orphan)
++    for role in ("worker", "architect", "supervisor", "reviewer", "agent"):
++        assert "Invisible to every prompt." not in m.for_prompt(session, role, slug)[ "project"]
++    repair = m.fix_scopes(session)
++    assert repair.moved_ids == [orphan.id]
++    assert "Invisible to every prompt." in m.for_prompt(session, "worker", slug)["project"]
+DIFF_PART_COMPLETE=tests/unit/test_memory_scopes.py part 5/5

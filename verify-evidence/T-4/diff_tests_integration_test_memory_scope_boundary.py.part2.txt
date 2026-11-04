@@ -1,0 +1,166 @@
+# HEAD=d5aa57b57878ce3d954fc3feb29b7b9a43a7689b (d5aa57b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T13:56:33+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# git diff db0011212a775e0ee766ebbee40a4f1cdf26a6e7 HEAD -- tests/integration/test_memory_scope_boundary.py   PART 2/3
+# The COMPLETE per-file diff, cut at 160-line boundaries so that a reader with a
+# 2000-line/50KB view limit never sees a function chopped off mid-hunk: every diff
+# line appears in exactly one part, in order. Raw diff = 471 lines.
++
++    scope='worker' is in the vocabulary; the STORED role is what no prompt can select, and
++    `for_prompt`/`_file_for` key off the role column first -- so the PATCH is refused and the
++    row, its rendered file and its content-only editability are all untouched.
++    """
++    with session_scope() as s:
++        row = legacy(s, category="role", scope="worker", role="logbook-writer",
++                     content="Diary.", approved=True)
++        row_id, home = row.id, m._file_for(row)
++    before = home.read_text()
++    r = client.patch(f"/api/memory/{row_id}", json={"scope": "worker"})
++    assert r.status_code == 400, r.json()
++    assert "architect|worker|supervisor" in r.json()["error"]
++    assert "logbook-writer" in r.json()["error"]
++    got = [e for e in client.get("/api/memory").json() if e["id"] == row_id][0]
++    assert got["role"] == "logbook-writer" and got["scope"] == "worker"
++    assert home.read_text() == before
++    # ...and the operator is not locked out of the row: a content edit still goes through.
++    ok = client.patch(f"/api/memory/{row_id}", json={"content": "Reworded."})
++    assert ok.status_code == 200 and ok.json()["content"] == "Reworded."
++
++
++# ------------------------------------------------------------------ CLI boundary
++
++
++def test_cli_add_rejects_and_names_the_allowed_values(initialized):
++    for args, expected in (
++        (["memory", "add", "x", "--category", "global", "--scope", "environment-notes"],
++         "environment|preferences|patterns"),
++        (["memory", "add", "x", "--category", "project", "--scope", "logbook",
++          "--project", "demo"], "conventions|decisions|gotchas"),
++        (["memory", "add", "x", "--category", "role", "--scope", "logbook-writer"],
++         "architect|worker|supervisor"),
++    ):
++        r = runner.invoke(app, args)
++        assert r.exit_code == 1, (args, r.output)
++        assert "error:" in r.output and expected in r.output
++    from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
++
++    with session_scope() as s:
++        # Nothing was half-stored: only the memory `init` seeds is present.
++        assert len(m.list_entries(s)) == len(DEFAULT_GLOBAL_MEMORY)
++
++
++def test_cli_add_refuses_a_role_name_no_prompt_can_read(initialized):
++    """`memory add --role` is a plain string, so its error must name the role FILES.
++
++    Without the pre-check Pydantic answers with `Input should be 'architect', 'supervisor',
++    'worker', 'reviewer' or 'agent'` -- the enum, not the memory vocabulary with the
++    reviewer -> architect / agent -> worker aliases resolved (DoD 2).
++    """
++    from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
++
++    with session_scope() as s:
++        before = len(m.list_entries(s))
++        assert before == len(DEFAULT_GLOBAL_MEMORY)
++    bad = runner.invoke(
++        app,
++        ["memory", "add", "Diary.", "--category", "role", "--scope", "worker",
++         "--role", "logbook-writer"],
++        env=WIDE,
++    )
++    assert bad.exit_code == 1, bad.output
++    assert "error:" in bad.output
++    assert "architect|worker|supervisor" in flat(bad.output)
++    assert "logbook-writer" in flat(bad.output)
++    assert "reviewer -> architect" in flat(bad.output)  # the aliases are spelled out
++    with session_scope() as s:
++        assert len(m.list_entries(s)) == before  # nothing half-stored
++    # A real role name (including an alias) is still accepted, and lands in the file it is
++    # read from -- role='reviewer' resolves to the architect file.
++    ok = runner.invoke(
++        app,
++        ["memory", "add", "Gate the merge.", "--category", "role", "--scope", "reviewer",
++         "--role", "reviewer"],
++        env=WIDE,
++    )
++    assert ok.exit_code == 0, ok.output
++    with session_scope() as s:
++        row = [e for e in m.list_entries(s, category="role") if e.content == "Gate the merge."]
++        assert len(row) == 1 and row[0].scope == "architect" and row[0].role == "reviewer"
++        assert m.is_injectable(row[0])
++    assert "Gate the merge." not in (
++        m.memory_root() / "roles" / "worker.md").read_text()
++
++
++def test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone(initialized):
++    with session_scope() as s:
++        bad = legacy(s, category="project", scope="ai-livestreaming-avatar",
++                     project_slug="ai-livestreaming-avatar", content="Orphan fact.")
++        # The counter-examples from the task: these ARE injectable and must not be flagged.
++        legacy(s, category="role", scope="worker", content="Small commits.")
++        legacy(s, category="role", scope="worker", role="worker", content="Re-test.")
++        bad_id, worker_id = bad.id, None
++        for e in m.list_entries(s, category="role"):
++            if e.content == "Small commits.":
++                worker_id = e.id
++    r = runner.invoke(app, ["memory", "list"])
++    assert r.exit_code == 0
++    # Exactly one row is flagged: the two valid role rows are never misflagged.
++    assert r.output.count("uninjectable #") == 1
++    assert f"uninjectable #{worker_id}" not in r.output
++    assert "conventions|decisions|gotchas" in r.output
++    assert f"uninjectable #{bad_id} project:" in r.output
++    filtered = runner.invoke(app, ["memory", "list", "--uninjectable"])
++    assert str(bad_id) in filtered.output and str(worker_id) not in filtered.output
++    assert filtered.output.count("uninjectable #") == 1
++    warn = [ln for ln in filtered.output.splitlines() if "fix-scopes" in ln]
++    assert warn and "cannot be injected" in warn[0]
++
++
++def test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files(initialized):
++    root = m.memory_root()
++    with session_scope() as s:
++        a = legacy(s, category="global", scope="global-environment-verifying-orchestrator",
++                   content="Verification is path-independent.", approved=True)
++        b = legacy(s, category="project", scope="ai-livestreaming-avatar",
++                   project_slug="ai-livestreaming-avatar", content="Repo is reachable.",
++                   approved=True)
++        legacy(s, category="project", scope="ai-livestreaming-avatar", project_slug="p2",
++               content="Rejected, so untouched.", rejected=True)
++        ids = f"{a.id}, {b.id}"
++    dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"])
++    assert dry.exit_code == 0
++    assert f"would move #{a.id}" in dry.output and f"would move #{b.id}" in dry.output
++    assert f"(ids: {ids})" in dry.output
++    assert (root / "global" / "global-environment-verifying-orchestrator.md").exists()
++
++    run = runner.invoke(app, ["memory", "fix-scopes"])
++    assert run.exit_code == 0, run.output
++    assert (
++        f"moved #{a.id} global: 'global-environment-verifying-orchestrator' -> 'environment'"
++        in run.output
++    )
++    assert f"(ids: {ids})" in run.output
++    assert "left #" in run.output  # the rejected row is reported as left alone
++    with session_scope() as s:
++        rows = {e.id: e for e in m.list_entries(s)}
++        assert rows[a.id].scope == "environment" and rows[b.id].scope == "gotchas"
++        assert rows[b.id].approved and not rows[b.id].rejected
++    assert (root / "global" / "environment.md").read_text().count(
++        "Verification is path-independent."
++    ) == 1
++    assert "Repo is reachable." in (
++        root / "projects" / "ai-livestreaming-avatar" / "gotchas.md"
++    ).read_text()
++    assert not (root / "global" / "global-environment-verifying-orchestrator.md").exists()
++    assert not (
++        root / "projects" / "ai-livestreaming-avatar" / "ai-livestreaming-avatar.md"
++    ).exists()
++    # Idempotent: nothing left to move.
++    again = runner.invoke(app, ["memory", "fix-scopes"])
++    assert "moved 0 entries" in again.output
++
++
++# ------------------------------------------------------- reporting honesty (review round)
++
++
++def test_cli_fix_scopes_reports_lines_the_operator_can_actually_read(initialized):
++    """Interpolated text is escaped, and a dry run only ever says "would".
+DIFF_PART_COMPLETE=tests/integration/test_memory_scope_boundary.py part 2/3
