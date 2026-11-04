@@ -1,4 +1,4 @@
-# HEAD=b9b3f1c71023a243d05d57989d937b85110a8d96 (b9b3f1c) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:20:13+08:00 tree=1 dirty-entries
+# HEAD=44f77692fdb21cb515b87ef2893f3a088aa8a50c (44f7769) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:22:16+08:00 tree=1 dirty-entries
 # command: ./scripts/orch_verify.sh all   (whole tests/ tree of THIS worktree, then lint)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -17,17 +17,6 @@ orch-verify: lint target  ruff check src tests
 ........................................................................ [ 77%]
 ........................................................................ [ 90%]
 ........................................................                 [100%]
-554 passed, 6 skipped in 110.76s (0:01:50)
-E501 Line too long (111 > 100)
-   --> src/orchestrator/services/prompt_builder.py:202:101
-    |
-200 |         sliced = True
-201 |     if sliced or len(shown) < len(hunks):
-202 |         what = "the body of the shown hunk was cut" if sliced else f"{len(hunks) - len(shown)} hunk(s) omitted"
-    |                                                                                                     ^^^^^^^^^^^
-203 |         omitted_headers = [
-204 |             hunk.splitlines()[0] for hunk in hunks[len(shown) :] if hunk.splitlines()
-    |
-
-Found 1 error.
-ALL_EXIT=1
+554 passed, 6 skipped in 110.65s (0:01:50)
+All checks passed!
+ALL_EXIT=0

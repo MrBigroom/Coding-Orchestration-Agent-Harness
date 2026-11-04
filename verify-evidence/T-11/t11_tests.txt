@@ -1,4 +1,4 @@
-# HEAD=b9b3f1c71023a243d05d57989d937b85110a8d96 (b9b3f1c) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:20:13+08:00 tree=1 dirty-entries
+# HEAD=44f77692fdb21cb515b87ef2893f3a088aa8a50c (44f7769) branch=task-11-the-reviewer-prompt-and-payload-are-never-archiv captured=2026-11-04T16:22:16+08:00 tree=1 dirty-entries
 # command: ./scripts/orch_verify.sh test -vv -k 'review_audit or review_payload or diff_budget or visibility or sensitive_files_withheld or partly'
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -37,5 +37,5 @@ tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_i
 tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block PASSED [ 95%]
 tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body PASSED [100%]
 
-====================== 20 passed, 540 deselected in 3.71s ======================
+====================== 20 passed, 540 deselected in 3.77s ======================
 TARGETED_EXIT=0
