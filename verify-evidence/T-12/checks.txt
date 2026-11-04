@@ -1,4 +1,4 @@
-# HEAD=c4f0ae9f724efae3fc67143f2c571add669769d6 (c4f0ae9) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:01:46+08:00 tree=0 dirty-entries
+# HEAD=78df94210d6259a29e3047cc3c17b9a161d80ed1 (78df942) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:13:26+08:00 tree=0 dirty-entries
 # command: ./scripts/orch_verify.sh lint   (ruff check src tests)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -30,10 +30,6 @@ theme='dark'
 worker_enabled=True
 DEFAULTS_EXIT=0
 
-web/src link: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12/web/src   # resolves into THIS worktree
-# command: cd /tmp/t12-web-typecheck && ./node_modules/.bin/tsc -b --force
-TSC_EXIT=0
-/tmp/t12-web-typecheck/src/api/types.ts
-/tmp/t12-web-typecheck/src/pages/Settings.tsx
-/tmp/t12-web-typecheck/src/pages/TaskDetail.tsx
-/tmp/t12-web-typecheck/src/pages/Tasks.tsx
+# GUI half of DoD 2 (Tasks.tsx, TaskDetail.tsx, Settings.tsx, api/types.ts) is proved
+# separately by capture_gui_typecheck.sh -> gui_typecheck.txt: a real tsc -b --force
+# over this worktree's web/src, plus --listFiles and a deliberate-error control.

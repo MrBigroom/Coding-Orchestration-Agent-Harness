@@ -1,4 +1,4 @@
-# HEAD=c4f0ae9f724efae3fc67143f2c571add669769d6 (c4f0ae9) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:01:46+08:00 tree=0 dirty-entries
+# HEAD=78df94210d6259a29e3047cc3c17b9a161d80ed1 (78df942) branch=task-12-the-review-round-cap-counts-only-completed-runs captured=2026-11-04T11:13:26+08:00 tree=0 dirty-entries
 # command: ./scripts/orch_verify.sh test   (whole tests/ tree of THIS worktree)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -15,5 +15,5 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 75%]
 ........................................................................ [ 90%]
 .............................................                            [100%]
-471 passed, 6 skipped in 101.91s (0:01:41)
+471 passed, 6 skipped in 101.77s (0:01:41)
 SUITE_EXIT=0
