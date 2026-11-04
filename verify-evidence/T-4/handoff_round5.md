@@ -11,11 +11,12 @@ Round 5 (attempt 5) applies the three operator items. No behaviour changed this 
 only non-evidence files touched are the two T-4 test files, and the full suite plus lint were
 re-measured on the resulting code HEAD.
 
-PROVENANCE, stated so it cannot go stale. This handoff was written at `abb7615`, before the
-round's terminal event; if the harness swept uncommitted output the branch tip may be a later
-recovery commit, and `handoff_arrival` / the recovery-commit count in the gate record are the
-authoritative statement of that. Every count below is stamped to `abb7615`, which is the last
-commit carrying source or tests in this round.
+PROVENANCE, stated so it cannot go stale. The counts below are stamped to code HEAD `abb7615`,
+the last commit carrying source or tests in this round; this handoff was written after that
+measurement, and the commit that carries it adds only files under `verify-evidence/T-4/`. If
+the harness swept uncommitted output the branch tip may be a later recovery commit, and
+`handoff_arrival` / the recovery-commit count in the gate record are the authoritative
+statement of that.
 
 ITEM 1 (finding 3 and finding 6: assertion shape, and the missing HTTP project/global text).
 Every rejection assertion this round added is now ONE assertion per outcome, on an exact string
