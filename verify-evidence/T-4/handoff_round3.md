@@ -21,7 +21,7 @@ Round 3: the two R-26 findings are fixed at the source, each with a test and a s
 
 (5) files_changed is the complete branch-vs-merge-base list (base db00112), evidence files included -- the two round-2 handoff copies the reviewer found unclaimed are listed there, along with this round's handoff_round3.json/.md and the .orchestrator/handoff.json the harness reads (gitignored, so it is named but cannot be shown in the diff).
 
-Docs: docs/memory.md gained the role-column boundary paragraph + the gc-only reporting rule; docs/decisions.md records this round's decision bullet; README.md's memory section states that create/edit boundaries check the role column too. No frozen contract changed: no schema/migration edit, no new route, no renamed field or event, no changed CLI argument or exit code. for_prompt, render_file and _file_for are untouched, so no role-injection semantics moved.
+Docs: docs/memory.md gained the role-column boundary paragraph + the gc-only reporting rule; docs/decisions.md records this round's decision bullet; README.md's memory section states that create/edit boundaries check the role column too. No frozen contract changed: no schema/migration edit, no new route, no renamed field or event, no changed CLI argument or exit code. Role-injection semantics did not move, measured rather than asserted: `for_prompt`, `ROLE_PROJECT_SCOPES` and `render_file` are BYTE-IDENTICAL to the merge-base (`diff <(git show db00112:... | awk '/^def for_prompt/,/^# ----/') <(awk ...)` prints nothing for each), and `_file_for` differs only by an explanatory comment and a local rename (`role` -> `name`) with the same resolution `role`, else `scope`, through ROLE_MEMORY_KEY.
 
 ## Tests
 
@@ -153,8 +153,7 @@ None.
 - Build-log events: line shape unchanged; two ADDITIVE event names memory_scope_substituted / memory_suggestion_dropped (event names are additive by contract).
 - CLI command surface: one additive command `memory fix-scopes` (authorised by DoD 3) with additive options; no existing argument or exit code changed.
 - Artifact directory layout: unchanged. Evidence is committed under verify-evidence/T-4/ because .orchestrator/ is gitignored and not archived into runs/<run_id>/.
-- docs/frozen-contracts.md: not modified. Task-level frozen constraints honoured: approved entries still render to $ORCHESTRATOR_HOME/memory/**.md as `- <content>  <!-- mem:ID -->`; existing memory_entries rows are never deleted; scope repair is idempotent (asserted).
-- Role-injection semantics: not changed -- for_prompt, ROLE_PROJECT_SCOPES and _file_for are byte-identical to the merge-base (_file_for reverted to main's body in round 2).
+- Role-injection semantics: unchanged. Measured against the merge-base db00112, `for_prompt`, `ROLE_PROJECT_SCOPES` and `render_file` are byte-identical; `_file_for` differs only by a comment and a local rename (`role` -> `name`), resolving `role`, else `scope`, through ROLE_MEMORY_KEY exactly as before. Which scopes each role receives was not touched.
 
 ## Assumptions
 

@@ -210,8 +210,8 @@ never misflags a valid role entry.
 ## Contracts
 
 No frozen contract changed. `docs/frozen-contracts.md`, `core/models.py`, `core/schemas.py`,
-`core/state.py`, the migrations, `for_prompt`, `render_file` and `_file_for` (reverted to main's
-body in round 2) are untouched. Additive only: two build-log event names
+`core/state.py`, the migrations, `for_prompt`, `render_file` and `ROLE_PROJECT_SCOPES` are
+byte-identical to the merge-base `db00112` (verified with `diff <(git show db00112:src/orchestrator/services/memory_service.py | awk '/^def for_prompt/,/^# ----/') <(awk '/^def for_prompt/,/^# ----/' src/orchestrator/services/memory_service.py)` — no output), and `_file_for` differs only by an explanatory comment plus a local rename (`role` -> `name`) with the same resolution. Additive only: two build-log event names
 (`memory_scope_substituted`, `memory_suggestion_dropped`), one CLI command
 (`memory fix-scopes`, DoD 3-authorised) with additive options, the already-frozen
 `{"error","detail"}` 400/422 bodies on existing routes. The frozen constraint for this task —
