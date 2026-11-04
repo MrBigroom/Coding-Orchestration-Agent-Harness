@@ -11,7 +11,10 @@ cd "$(dirname "$0")/../.."
 WT=$(pwd)
 MAIN=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
 HEAD=$(git rev-parse HEAD)
-STAMP="# HEAD=$HEAD ($(git rev-parse --short HEAD)) branch=$(git branch --show-current) captured=$(date -Is) tree=$(git status --porcelain | wc -l) dirty-entries"
+# The dirty-entry count excludes this directory's own outputs, which are being rewritten by
+# this very run; anything else dirty would still show up.
+DIRTY=$(git status --porcelain | grep -v '^.. verify-evidence/T-4/' | wc -l)
+STAMP="# HEAD=$HEAD ($(git rev-parse --short HEAD)) branch=$(git branch --show-current) captured=$(date -Is) tree=$DIRTY dirty-entries (excluding verify-evidence/T-4)"
 TMP=$(mktemp -d /tmp/t4-evidence.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 

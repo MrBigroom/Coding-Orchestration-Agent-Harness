@@ -242,6 +242,27 @@ def test_update_rejects_an_out_of_vocabulary_scope(session):
     assert entry.scope == "decisions"
 
 
+def test_update_of_a_legacy_row_edits_content_without_freezing_on_its_bad_scope(session):
+    """The scope the CALLER supplies is what the boundary rejects.
+
+    Refusing to touch a row only because its STORED scope is legacy-invalid would lock the
+    operator out of the rows `fix-scopes` exists to repair.
+    """
+    bad = legacy(session, category="project", scope="ai-livestreaming-avatar",
+                 project_slug="demo", content="Old wording.")
+    role = legacy(session, category="role", scope="logbook-writer", content="Who?")
+    assert not m.is_injectable(bad) and not m.is_injectable(role)
+    m.update(session, bad.id, MemoryUpdate(content="New wording."))
+    m.update(session, role.id, MemoryUpdate(content="New role wording."))
+    session.refresh(bad)
+    session.refresh(role)
+    assert bad.content == "New wording." and bad.scope == "ai-livestreaming-avatar"
+    assert role.content == "New role wording." and role.scope == "logbook-writer"
+    # A supplied scope is still refused, legacy row or not.
+    with pytest.raises(m.MemoryError_):
+        m.update(session, bad.id, MemoryUpdate(scope="housekeeping"))
+
+
 # ---------------------------------------------------------------- repair (DoD 3)
 
 

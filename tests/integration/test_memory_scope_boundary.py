@@ -101,6 +101,22 @@ def test_api_patch_rejects_an_uninjectable_scope(client):
     )
 
 
+def test_api_patch_still_edits_the_content_of_a_legacy_row(client):
+    """A stored bad scope must not freeze the row out of the API.
+
+    `fix-scopes` is the repair path; refusing a content edit would leave the operator no way
+    to fix the wording of an entry they already have.
+    """
+    with session_scope() as s:
+        row_id = legacy(s, category="project", scope="logbook", project_slug="demo",
+                        content="Old wording.").id
+    r = client.patch(f"/api/memory/{row_id}", json={"content": "New wording."})
+    assert r.status_code == 200 and r.json()["content"] == "New wording."
+    assert r.json()["scope"] == "logbook"
+    assert client.patch(f"/api/memory/{row_id}",
+                        json={"scope": "housekeeping"}).status_code == 400
+
+
 # ------------------------------------------------------------------ CLI boundary
 
 

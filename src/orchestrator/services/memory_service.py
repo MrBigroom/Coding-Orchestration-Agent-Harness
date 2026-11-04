@@ -268,14 +268,19 @@ def _file_for(entry: MemoryEntry) -> Path:
     return safe_join(root, "roles", f"{slugify(role)}.md")
 
 
-def _validate(entry: MemoryEntry) -> None:
+def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
     """Boundary validation shared by create(), update(), import and the suggestion path.
 
     Every category is vocabulary-checked (T-4 DoD 2): before this, category=global and
     category=project got no scope check at all and category=role was only half-guarded.
+    `check_scope=False` is what `update()` passes when the caller supplied no scope, so the
+    CONTENT of a legacy row stays editable — refusing that would lock the operator out of
+    the very rows `fix-scopes` exists to repair.
     """
     if entry.category == MemoryCategory.project and not entry.project_slug:
         raise MemoryError_("project memory requires project_slug")
+    if not check_scope:
+        return
     if entry.category == MemoryCategory.role:
         if entry.role and role_memory_file(entry.role) is None:
             raise _vocab_error(entry.category, entry.role)
@@ -411,7 +416,8 @@ def suggest_from_handoff_report(
 
 
 def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
-    """Apply an edit. A new scope goes through the same vocabulary check as creation."""
+    """Apply an edit. A scope the caller supplies is checked like at creation; a stored
+    legacy scope that is out of vocabulary does not freeze the row."""
     entry = _get(session, entry_id)
     old_file = _file_for(entry)
     if data.content is not None:
@@ -420,7 +426,7 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
         entry.scope = data.scope
     if data.tags is not None:
         entry.tags_json = sorted(set(data.tags))
-    _validate(entry)
+    _validate(entry, check_scope=data.scope is not None)
     entry.updated_at = utcnow()
     session.add(entry)
     session.commit()
