@@ -273,9 +273,9 @@ def delivery_evidence(
 
     Each claim is classified as exactly one of `artifact_service.CLAIM_STATUSES`, first match
     wins: `worker_commit` (delivered by a Worker-authored commit on this branch),
-    `recovery_commit_only` (only inside a harness recovery commit — wreckage no Worker
-    self-checked), `uncommitted_only` (a promise, still on the worktree, not on the branch),
-    `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
+    `recovery_commit_only` (on the branch, but only inside a harness recovery commit that no
+    Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
+    branch), `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
     one-line answer a reviewer can act on.
     """
     commits = git_service.commits_against_base(wt, base_branch)

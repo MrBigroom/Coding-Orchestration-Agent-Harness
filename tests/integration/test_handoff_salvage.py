@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 from sqlmodel import select
 
+from orchestrator.adapters.base import AdapterResult
+from orchestrator.adapters.mock_harness import MockHarnessAdapter
 from orchestrator.core.models import Review, Run, TaskStatus, Verification
 from orchestrator.core.schemas import Handoff, ProjectCreate, TaskCreate
 from orchestrator.services import (
@@ -434,6 +436,63 @@ def test_a_stale_leftover_is_not_salvaged_as_the_new_rounds_submission(
     # the leftover is still on disk untouched: refusing to read it is not permission to delete it
     assert json.loads((wt / ".orchestrator" / "handoff.json").read_text())["summary"] == (
         "previous round's submission, never ingested"
+    )
+
+
+def test_a_clean_exit_does_not_ingest_a_stale_leftover_and_synthesizes(
+    session, project, monkeypatch
+):
+    """The clean-exit half of the same provenance guard (DoD 3, DoD 6, DoD 7).
+
+    When the round-start archive fails, the fail-safe is to leave the previous round's file in
+    the worktree. A clean exit that never replaced it must then synthesize from observed evidence
+    instead of reading the leftover as this round's submission -- otherwise the previous round's
+    work would be self-certified and could be auto-accepted. The stale branch has to exist on the
+    clean path too, not only on the salvage path.
+    """
+    task = _task(session, project, ["mock-timeout"], 14)
+    first = _run(session, task)  # creates the worktree; this tag writes no handoff
+    wt = Path(session.get(Run, first["run_id"]).worktree_path)
+    leftover = {
+        "phase": "phase-14-p14",
+        "branch": task.branch_name,
+        "status": "READY_FOR_REVIEW",
+        "summary": "previous round's submission, never replaced",
+        "files_changed": ["README.md"],
+    }
+    (wt / ".orchestrator" / "handoff.json").write_text(json.dumps(leftover, indent=2))
+
+    # the archive cannot copy the leftover out, so it stays in place ...
+    def unavailable(kind, key):
+        raise OSError("evidence root unavailable")
+
+    monkeypatch.setattr(artifact_service, "evidence_dir", unavailable)
+
+    # ... and the next round exits cleanly WITHOUT writing a new handoff of its own
+    async def clean_exit_no_handoff(self, ctx, runner):
+        return AdapterResult(exit_code=0)
+
+    monkeypatch.setattr(MockHarnessAdapter, "run", clean_exit_no_handoff)
+    second = _run(session, task)
+    run2 = session.get(Run, second["run_id"])
+
+    assert run2.status == "completed"
+    # the leftover was neither ingested nor deleted: the round synthesized from observed evidence
+    assert artifact_service.handoff_arrival(run2.id) == "synthesized"
+    archived = json.loads(artifact_service.read_text(run2.id, "handoff.json"))
+    assert "synthesized by the orchestrator" in archived["summary"]
+    assert archived["summary"] != leftover["summary"]
+    failures = [
+        structured_log.parse(e.details)
+        for e in _events(session, task, "handoff_salvage_failed")
+        if e.run_id == run2.id
+    ]
+    assert any(p and p.get("stale") is True for p in failures), failures
+    assert any(
+        p and "unchanged since round start" in (p.get("reason") or "") for p in failures
+    ), failures
+    assert json.loads((wt / ".orchestrator" / "handoff.json").read_text())["summary"] == (
+        leftover["summary"]
     )
 
 

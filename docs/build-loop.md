@@ -162,7 +162,7 @@ attributing it to this run would be a provenance failure. The clean-exit path ap
 rule and synthesizes from observed evidence instead. A Worker that writes a new handoff over the
 leftover changes the fingerprint and is salvaged normally.
 
-### Lifecycle: `SALVAGED` is not `SYNTHESIZED` and not `READY_FOR_REVIEW`
+### Lifecycle: SALVAGED is not SYNTHESIZED and not READY_FOR_REVIEW
 
 A salvaged submission is a third thing, and the task row says which:
 

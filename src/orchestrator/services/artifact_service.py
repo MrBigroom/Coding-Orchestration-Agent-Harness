@@ -225,8 +225,8 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
     """The reviewer-payload rendering of `run.json.handoff_delivery_evidence` (T-10 DoD 7).
 
     Rendered from the SAME archived numbers the run artifacts carry, so a claim that exists only
-    as uncommitted worktree state — or only inside a harness recovery commit — reads as a promise
-    and not as delivered work.
+    as uncommitted worktree state reads as a promise rather than as delivered work, and a claim
+    carried only by a harness recovery commit is labelled as committed-but-not-self-checked.
     """
     if not evidence:
         return ""
@@ -270,10 +270,16 @@ def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = 
         "structured flag: claims_all_backed_by_worker_commits="
         f"{str(evidence.get('claims_all_backed_by_worker_commits')).lower()}"
     )
+    # Provenance, not a gate. Wording matters here: `recovery_commit_only` is already on the
+    # branch (T-8's recovery machinery committed it), so calling it undelivered work would
+    # contradict docs/build-loop.md and invite an LLM reviewer to reject a round for a sweep it
+    # did not cause. Only `worker_commit` carries a Worker self-check behind it.
     lines.append(
-        "`uncommitted_only`, `recovery_commit_only` and `absent` are PROMISES, not delivered "
-        "work: a recovery commit is harness-created wreckage no Worker self-checked, and an "
-        "uncommitted file is not on the branch. Only `worker_commit` is delivered by this round."
+        "provenance only, not a gate: `worker_commit` is a commit on this branch authored by the "
+        "Worker (a self-checked claim); `recovery_commit_only` IS on the branch but only inside a "
+        "harness recovery commit no Worker self-checked, so judge it by re-verification like any "
+        "other unreviewed commit; `uncommitted_only` exists only as worktree state and is NOT on "
+        "the branch; `absent` was not found. Only `worker_commit` has a self-check behind it."
     )
     return "\n".join(lines)
 

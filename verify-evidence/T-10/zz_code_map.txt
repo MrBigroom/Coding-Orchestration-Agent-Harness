@@ -1,0 +1,449 @@
+# HEAD=b2f5372 merge-base=359a991b9d0dea33ce6f5acded7b46f19a90934d branch=task-10-a-run-that-times-out-discards-the-valid-handoff
+# command: python3 verify-evidence/T-10/collect_code_map.py
+
+## Commits on the branch since the merge-base
+b2f5372 test(T-10): regenerate reviewer-reachable evidence for the round-2 fixes
+7a8215b fix(T-10): attach provenance without gating, refuse stale leftovers, de-race cancel
+d713384 test(T-10): commit reviewer-reachable evidence for the salvage DoD items
+967aea9 test(T-10): drive the salvage paths instead of asserting them, and stay offline
+47057d4 docs(T-10): document salvaging a handoff from a killed run
+3582afc fix(T-10): archive the clean-exit run status, not the mid-transition one
+01d8c75 feat(T-10): make the mock harness actually emit the failure shapes its tags name
+3e6a1a7 chore(orchestrator-recovery): uncommitted worker output from R-16
+
+## Harness recovery commits: what they touched (content never self-checked)
+3e6a1a7 chore(orchestrator-recovery): uncommitted worker output from R-16
+
+ src/orchestrator/adapters/mock_harness.py       | 186 +++++---
+ src/orchestrator/core/config.py                 |  10 +
+ src/orchestrator/services/artifact_service.py   | 144 +++++++
+ src/orchestrator/services/prompt_builder.py     |   8 +
+ src/orchestrator/services/review_service.py     |  20 +
+ src/orchestrator/services/run_service.py        | 540 ++++++++++++++++++++++--
+ src/orchestrator/services/supervisor_service.py |  92 ++++
+ tests/integration/test_handoff_salvage.py       | 449 ++++++++++++++++++++
+ tests/integration/test_mock_run.py              |  10 +-
+ tests/unit/test_handoff_salvage.py              | 199 +++++++++
+ 10 files changed, 1575 insertions(+), 83 deletions(-)
+
+## Diffstat since the merge-base
+ docs/build-loop.md                              |  117 +-
+ src/orchestrator/adapters/mock_harness.py       |  228 +++-
+ src/orchestrator/core/config.py                 |   10 +
+ src/orchestrator/services/artifact_service.py   |  144 +++
+ src/orchestrator/services/prompt_builder.py     |    8 +
+ src/orchestrator/services/review_service.py     |   20 +
+ src/orchestrator/services/run_service.py        |  623 ++++++++-
+ src/orchestrator/services/supervisor_service.py |   70 ++
+ tests/integration/test_handoff_salvage.py       |  559 +++++++++
+ tests/integration/test_mock_run.py              |   10 +-
+ tests/unit/test_handoff_salvage.py              |  271 ++++
+ verify-evidence/T-10/README.md                  |  150 +++
+ verify-evidence/T-10/changed_existing_tests.txt |   23 +
+ verify-evidence/T-10/code_map.txt               | 1524 +++++++++++++++++++++++
+ verify-evidence/T-10/collect_code_map.py        |  122 ++
+ verify-evidence/T-10/full_suite.txt             |   20 +
+ verify-evidence/T-10/handoff_salvage_tests.txt  |   50 +
+ 17 files changed, 3860 insertions(+), 89 deletions(-)
+
+## Cited functions (bodies truncated per function, file:line from THIS checkout)
+--- DoD 3 fingerprint: src/orchestrator/services/run_service.py handoff_snapshot
+--- src/orchestrator/services/run_service.py:232 def handoff_snapshot (first 20 lines)
+def handoff_snapshot(path: Path) -> dict[str, Any] | None:
+    """A cheap fingerprint of the handoff file as it stands right now.
+
+    Used to answer one question at the end of a run: is the file still the exact leftover that was
+    already in the worktree when the round started? A stat-only check is not enough (a same-size
+    rewrite with a coarse timestamp would collide), so the digest is included. An unreadable file
+    still gets a stat-based fingerprint; ingestion will report why it cannot be used.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if not path.is_file():
+        return None
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        digest = None
+    return {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "sha256": digest}
+
+
+--- DoD 1/5 read: src/orchestrator/services/run_service.py read_handoff_file
+--- src/orchestrator/services/run_service.py:203 def read_handoff_file (first 14 lines)
+def read_handoff_file(path: Path) -> tuple[Handoff | None, str | None]:
+    """Read a worktree `handoff.json`. Returns `(handoff, error)`.
+
+    `(None, None)` means "no file" — there is nothing to salvage. `(None, reason)` means a file
+    exists but cannot be used: that is a logged fact, never an exception, because a truncated
+    write from a killed process is the normal shape of this case.
+    """
+    if not path.is_file():
+        return None, None
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return None, f"{path} could not be read: {e}"
+    if not raw.strip():
+
+--- DoD 7 evidence: src/orchestrator/services/run_service.py delivery_evidence
+--- src/orchestrator/services/run_service.py:257 def delivery_evidence (first 24 lines)
+def delivery_evidence(
+    wt: Path,
+    base_branch: str,
+    handoff: Handoff | None,
+    *,
+    arrival: str,
+    exit_state: str,
+    uncommitted_before_sweep: list[str] | None = None,
+) -> dict[str, Any]:
+    """What git says about a handoff's claims, computed at ingestion time (T-10 DoD 7).
+
+    A handoff is a *statement*. `git log base..HEAD`, the diffstat and `git status --porcelain
+    -uall` are evidence. The measured case this exists for (run 13, 2026-11-04): a cancelled run
+    whose 1164-byte handoff claimed four code/doc fixes while it had made zero commits and the
+    worktree had no tracked modifications — and the old "claimed files exist on disk" check passed,
+    because the files did exist as uncommitted scratch.
+
+    Each claim is classified as exactly one of `artifact_service.CLAIM_STATUSES`, first match
+    wins: `worker_commit` (delivered by a Worker-authored commit on this branch),
+    `recovery_commit_only` (on the branch, but only inside a harness recovery commit that no
+    Worker self-checked), `uncommitted_only` (a promise, still on the worktree, not on the
+    branch), `absent` (nowhere). The structured flag `claims_all_backed_by_worker_commits` is the
+    one-line answer a reviewer can act on.
+    """
+
+--- DoD 1/2 salvage: src/orchestrator/services/run_service.py try_salvage_handoff
+--- src/orchestrator/services/run_service.py:423 def try_salvage_handoff (first 55 lines)
+def try_salvage_handoff(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project,
+    wt: Path,
+    handoff_path: Path,
+    harness_name: str | None,
+    result: AdapterResult,
+    uncommitted_before_sweep: list[str],
+    stale_snapshot: dict[str, Any] | None = None,
+) -> Handoff | None:
+    """Ingest a handoff the killed Worker already wrote (T-10 DoD 1 + 2).
+
+    Returns the salvaged Handoff when the worktree holds one that validates, else None — and None
+    means "behave exactly as before this task existed": `RUN_TIMEOUT`/`RUN_FAILED` on the task and
+    the task back to `planned`. A present-but-unusable file logs `handoff_salvage_failed` instead of
+    crashing the run, because a half-written file is the expected shape of a killed process.
+    """
+    handoff, error = read_handoff_file(handoff_path)
+    if stale_snapshot is not None and handoff_snapshot(handoff_path) == stale_snapshot:
+        # The round-start archive failed, so the previous round's file was left in place — and the
+        # Worker never replaced it. Ingesting it here would attribute a previous round's
+        # submission to this run, which is exactly the provenance failure the salvage path exists
+        # to avoid. Fail closed: this round produced nothing and is reported as incomplete.
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{run.short_id} ({run.status}) left a handoff.json in the worktree, but it is "
+                "byte-for-byte unchanged since the round started: it is the previous round's "
+                "leftover (the round-start archive could not copy it), not this run's submission. "
+                "Refusing to salvage it and falling back to the normal non-clean-exit path.",
+                _salvage_log_payload(task, run, result, None, SALVAGE_MODE_NON_CLEAN_EXIT, None)
+                | {"reason": "unchanged since round start", "stale": True},
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+        return None
+    if handoff is None and error is None:
+        return None
+    if handoff is None:
+        log_service.log_event(
+            session,
+            "handoff_salvage_failed",
+            structured_log.attach(
+                f"{run.short_id} ({run.status}) left {handoff_path} in the worktree but it could "
+                f"not be ingested; falling back to the {run.status} path: {error}",
+                _salvage_log_payload(task, run, result, None, SALVAGE_MODE_NON_CLEAN_EXIT, None)
+                | {"reason": error},
+            ),
+            role="supervisor",
+            task_id=task.id,
+
+--- DoD 3 archive: src/orchestrator/services/run_service.py archive_before_round_start
+--- src/orchestrator/services/run_service.py:539 def archive_before_round_start (first 18 lines)
+def archive_before_round_start(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project,
+    handoff_path: Path,
+) -> bool:
+    """Never destroy a pre-existing handoff.json when a round starts (T-10 DoD 3).
+
+    The round-start `unlink(missing_ok=True)` was the second half of the bug: a retry after a
+    timeout actively deleted the previous round's submission, so the operator had to copy the file
+    out in the gap. Returns True when the caller may unlink — i.e. the submission is provably
+    archived (already in `runs/<prev>/handoff.json`, or copied to ORCHESTRATOR_HOME/evidence/).
+    On any archive failure it returns False and the file is left alone: keeping a stale handoff in
+    the scratch dir is recoverable, losing one is not.
+    """
+    if not handoff_path.is_file():
+        return True
+
+--- DoD 1/4 gate: src/orchestrator/services/run_service.py _gate_salvaged
+--- src/orchestrator/services/run_service.py:636 def _gate_salvaged (first 20 lines)
+async def _gate_salvaged(
+    session: Session, task: Task, run: Run, project: Project, handoff: Handoff
+) -> dict[str, Any]:
+    """Continue to the normal verification + review path carrying a salvaged submission.
+
+    The run's status is already terminal (`timeout`/`failed`/`cancelled`) and the frozen run
+    vocabulary has no transition out of a terminal state, so the gate runs WITHOUT moving the run —
+    deliberately not `testing`/`completed`: the process really was killed, and pretending otherwise
+    would widen the frozen vocabulary and hide the fact that the Worker never saw the gate result.
+    `task.handoff_status` becomes `SALVAGED` (distinct from the Worker's own status, from
+    `SYNTHESIZED` and from `RUN_*`); see docs/build-loop.md, "Salvaging a handoff from a
+    killed run".
+    """
+    assert run.id is not None
+    task.handoff_status = artifact_service.HANDOFF_STATUS_SALVAGED
+    session.add(task)
+    session.commit()
+    if handoff.status == "BLOCKED":
+        task_service.block(
+            session,
+
+--- DoD 4 routing: src/orchestrator/services/supervisor_service.py after_run
+--- src/orchestrator/services/supervisor_service.py:432 def after_run (first 18 lines)
+async def after_run(
+    session: Session,
+    task: Task,
+    run: Run,
+    project: Project | None,
+    handoff: Handoff | None,
+    handoff_synthesized: bool,
+) -> dict:
+    """Gate order after a completed, non-blocked worker run. Task must be in `review`."""
+    verification = await verify(session, task, run, project, handoff, handoff_synthesized)
+    tests_green = all(c.status != "fail" for c in verification.checks if c.name == "tests")
+    outcome: dict = {"verification": verification.final_result}
+
+    if not tests_green or handoff is None:
+        _requeue_or_block(session, task, "tests not green or handoff missing; review not triggered")
+        outcome["decision"] = task.status
+        return outcome
+
+
+--- DoD 3/7 render: src/orchestrator/services/artifact_service.py render_delivery_evidence_md
+--- src/orchestrator/services/artifact_service.py:224 def render_delivery_evidence_md (first 24 lines)
+def render_delivery_evidence_md(evidence: dict[str, Any], arrival: str | None = None) -> str:
+    """The reviewer-payload rendering of `run.json.handoff_delivery_evidence` (T-10 DoD 7).
+
+    Rendered from the SAME archived numbers the run artifacts carry, so a claim that exists only
+    as uncommitted worktree state reads as a promise rather than as delivered work, and a claim
+    carried only by a harness recovery commit is labelled as committed-but-not-self-checked.
+    """
+    if not evidence:
+        return ""
+    commits = evidence.get("commits") or []
+    status = evidence.get("claim_status") or {}
+    counts = evidence.get("claim_counts") or {}
+    lines = [f"handoff arrival: {arrival or evidence.get('arrival') or 'unknown'}"]
+    if evidence.get("exit_state"):
+        lines.append(f"run exit state: {evidence['exit_state']}")
+    lines.append(
+        f"commits on this branch since {evidence.get('base_branch', 'the base branch')}: "
+        f"{evidence.get('commit_count', len(commits))} "
+        f"(worker-authored {evidence.get('worker_commit_count', 0)}, "
+        f"harness recovery {evidence.get('recovery_commit_count', 0)})"
+    )
+    for c in commits[:MAX_COMMITS_IN_EVIDENCE]:
+        kind = "harness recovery commit, NEVER self-checked" if c.get("recovery") else "commit"
+        paths = ", ".join(f"{f['status']} {f['path']}" for f in (c.get("files") or [])[:12])
+
+## Cited anchors
+--- DoD 1 cancel call: src/orchestrator/services/run_service.py matching 'salvaged = try_salvage_handoff'
+929-            finished_at=finished,
+930-            duration_ms=duration,
+931-            commit_sha=sha,
+932-        )
+933:        salvaged = try_salvage_handoff(
+934-            session,
+935-            task,
+936-            run,
+937-            project,
+--
+962-        )
+963-        log_service.log_event(
+964-            session, f"run_{status}", run.error or "", role="worker", task_id=task.id, run_id=run.id
+965-        )
+966:        salvaged = try_salvage_handoff(
+967-            session,
+968-            task,
+969-            run,
+970-            project,
+
+--- DoD 2 event emit: src/orchestrator/services/run_service.py matching '"handoff_salvaged",'
+507-        )
+508-    log_service.log_event(
+509-        session,
+510:        "handoff_salvaged",
+511-        structured_log.attach(
+512-            f"{run.short_id} was killed ({run.status}) after the Worker had already written a "
+513-            f"valid handoff.json to the worktree, out of band: the adapter never returned it on a "
+--
+607-        return False
+608-    log_service.log_event(
+609-        session,
+610:        "handoff_salvaged",
+611-        structured_log.attach(
+612-            f"a handoff.json from the previous round was still in the worktree at the start of "
+613-            f"{run.short_id}; archived to {dest} before the round-start unlink "
+
+--- DoD 2 payload: src/orchestrator/services/run_service.py matching 'def _salvage_log_payload'
+387-    )
+388-
+389-
+390:def _salvage_log_payload(
+391-    task: Task,
+392-    run: Run,
+393-    result: AdapterResult,
+
+--- DoD 3 clean-exit stale: src/orchestrator/services/run_service.py matching 'stale_unchanged ='
+974-            result,
+975-            dirt_before_sweep,
+976-            stale_snapshot=stale_handoff,
+977-        )
+978-        if salvaged is None:
+979-            task.handoff_status = "RUN_" + status.upper()
+980-            task_service.transition(
+981-                session, task, TaskStatus.planned, f"run {status}", role="supervisor"
+982-            )
+983-            return {"run_id": run.id, "status": run.status, "error": run.error}
+984-        return await _gate_salvaged(session, task, run, project, salvaged)
+985-
+986:    stale_unchanged = stale_handoff is not None and handoff_snapshot(handoff_path) == stale_handoff
+987-    if stale_unchanged:
+988-        # A clean exit that never replaced the leftover: do not read the previous round's handoff
+989-        # as this round's work. Synthesize from observed evidence instead. (The archive failure
+990-        # that left the file in place is already logged; this records why it was not ingested.)
+991-        log_service.log_event(
+992-            session,
+993-            "handoff_salvage_failed",
+994-            structured_log.attach(
+995-                f"{run.short_id} exited cleanly but the handoff.json in the worktree is "
+996-                "byte-for-byte unchanged since the round started; it is a previous round's "
+997-                "leftover, not this round's submission, so it is not ingested",
+998-                {
+
+--- DoD 3 round-start snapshot: src/orchestrator/services/run_service.py matching 'stale_handoff = handoff_snapshot'
+817-    # Only survives that attempt when the archive failed. Remember the exact leftover: if it is
+818-    # still identical when the run ends, it is the previous round's file and must never be read as
+819-    # this round's submission (DoD 3 + DoD 6).
+820:    stale_handoff = handoff_snapshot(handoff_path)
+821-
+822-    # A branch that carries harness wreckage must not pass it on silently: the Worker is told
+823-    # which commits are recovery commits and is required to re-verify before handing off.
+
+--- DoD 4 status const: src/orchestrator/services/artifact_service.py matching 'HANDOFF_STATUS_SALVAGED ='
+49-# from a Worker's own status string, from SYNTHESIZED (orchestrator-authored) and from the
+50-# RUN_* markers, and it is a value of an existing free-text column: no schema change.
+51:HANDOFF_STATUS_SALVAGED = "SALVAGED"
+52-
+53-# How each `files_changed` claim of a handoff is backed by git, computed at ingestion time.
+
+--- DoD 4 docs heading: docs/build-loop.md matching 'Lifecycle: SALVAGED is not'
+163-leftover changes the fingerprint and is salvaged normally.
+164-
+165:### Lifecycle: SALVAGED is not SYNTHESIZED and not READY_FOR_REVIEW
+166-
+167-A salvaged submission is a third thing, and the task row says which:
+
+--- DoD 2 docs event: docs/build-loop.md matching 'handoff_salvaged` is a new'
+189-### Events
+190-
+191:`handoff_salvaged` is a new, **additive** build-log event (no existing name or line-shape key
+192-changed). `details` carries `mode`, `run_status`, `exit_code`, `timed_out`, `cancelled`, `error`,
+193-`handoff_status`, claim/commit counts, and for the pre-round archive the `source_run`,
+
+--- DoD 2 docs event list: docs/build-loop.md matching '`handoff_salvaged`,'
+437-`standalone_run`, `escalated`, `human_accept`, `recovery_notice_included`,
+438:`retry_fields_reset`, `contract_change_detected`, `handoff_salvaged`,
+439-`handoff_salvage_failed`, `run_error`. The GUI Build Log page and
+
+--- DoD 7 review wiring: src/orchestrator/services/review_service.py matching 'delivery_evidence_section'
+136-        )
+137-    return "\n".join(lines)
+138-
+139-
+140:def delivery_evidence_section(session: Session, task: Task, run: Run) -> str:
+141-    """The reviewer-payload section for handoff provenance and claims-vs-commits (T-10 DoD 7).
+142-
+143-    Rendered from the archived `run.json`, i.e. the same numbers the run artifacts carry, so a
+144-    reviewer who wants to check them has the commit SHAs and the porcelain output in front of them
+--
+174-        verification=artifact_service.read_text(run.id, "verification.md"),
+175-        diff=artifact_service.read_text(run.id, "patch.diff"),
+176-        recovery=recovery_section(session, task, run),
+177-        harness_findings=harness_findings_section(session, task, run, project),
+178:        delivery_evidence=delivery_evidence_section(session, task, run),
+179-        extra={"Missing artifacts detected by orchestrator": "\n".join(missing) or "none"},
+180-    )
+181-    prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)
+182-    # Nothing extra is written to the run directory here. `runs/<run_id>/` is a frozen artifact
+
+--- DoD 7 prompt wiring: src/orchestrator/services/prompt_builder.py matching 'delivery_evidence'
+129-    harness_findings: str | None = None
+130-    # How the handoff arrived (clean exit / salvaged from a killed run / synthesized) and what git
+131-    # says about the files it claims — provenance a Worker cannot edit (T-10 DoD 7).
+132:    delivery_evidence: str | None = None
+133-    extra: dict[str, str] = field(default_factory=dict)
+134-
+135-
+--
+146-            "### Harness-detected findings (computed by the orchestrator, not asserted by a "
+147-            "model)\n" + truncate_middle(state.harness_findings, s.max_log_tokens)
+148-        )
+149:    if state.delivery_evidence:
+150-        parts.append(
+151-            "### Handoff provenance and delivery evidence (computed from git by the harness, not "
+152:            "asserted by the Worker)\n" + truncate_middle(state.delivery_evidence, s.max_log_tokens)
+153-        )
+154-    if state.handoff:
+155-        parts.append("### Latest handoff\n" + truncate_middle(state.handoff, s.max_log_tokens))
+
+--- DoD 6 no claims gate: src/orchestrator/services/supervisor_service.py matching 'is deliberately NOT a verification check'
+126-        )
+127-
+128:    # 1c. Claims vs. commits (T-10 DoD 7) is deliberately NOT a verification check. The evidence
+129-    # is computed at ingestion, archived in `run.json` and rendered into the reviewer payload; the
+130-    # reviewer and the operator judge it. A claim that exists only as uncommitted worktree state is
+
+--- Scope no recovery gate: src/orchestrator/services/supervisor_service.py matching 'T-8 owns the'
+49-# informational: the claims-vs-commits evidence is attached to the artifacts and the reviewer
+50-# payload (DoD 7), not turned into a new gate. Harness recovery commits are content the Worker
+51:# never self-checked, but they are still content on the branch, and T-8 owns the machinery that
+52-# decides what to do about them; T-10 must not turn them into an automatic rejection here.
+53-SALVAGE_CHECK = "handoff arrived out of band (salvaged)"
+--
+130-    # reviewer and the operator judge it. A claim that exists only as uncommitted worktree state is
+131-    # a promise, and a harness recovery commit is content the Worker never self-checked — both are
+132:    # labelled in that evidence, but neither may become a new automatic gate here: T-8 owns the
+133-    # recovery-commit machinery and DoD 7 asks for provenance, not extra rejection.
+134-
+
+## T-10 test functions (file:line from THIS checkout)
+tests/integration/test_handoff_salvage.py:175:def test_timeout_with_a_valid_handoff_is_salvaged_and_reaches_the_gate(session, project):
+tests/integration/test_handoff_salvage.py:235:def test_cancel_with_a_valid_handoff_is_salvaged(session, project):
+tests/integration/test_handoff_salvage.py:257:def test_non_zero_exit_with_a_valid_handoff_is_salvaged(session, project):
+tests/integration/test_handoff_salvage.py:273:def test_timeout_with_no_handoff_is_exactly_todays_behaviour(session, project):
+tests/integration/test_handoff_salvage.py:291:def test_timeout_with_a_truncated_handoff_falls_back_and_logs_the_parse_failure(
+tests/integration/test_handoff_salvage.py:313:def test_a_pre_existing_submission_is_archived_before_the_round_start_unlink(session, project):
+tests/integration/test_handoff_salvage.py:365:def test_a_retry_after_a_salvaged_round_does_not_lose_the_archived_copy(session, project):
+tests/integration/test_handoff_salvage.py:389:def test_a_stale_leftover_is_not_salvaged_as_the_new_rounds_submission(
+tests/integration/test_handoff_salvage.py:442:def test_a_clean_exit_does_not_ingest_a_stale_leftover_and_synthesizes(
+tests/integration/test_handoff_salvage.py:502:def test_a_salvaged_promise_is_flagged_in_the_evidence_not_turned_into_a_new_gate(
+tests/integration/test_handoff_salvage.py:549:def test_the_architect_prompt_for_a_salvaged_run_carries_the_delivery_evidence(

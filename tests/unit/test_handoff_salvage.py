@@ -196,7 +196,11 @@ def test_render_carries_the_provenance_and_the_flag(home, tmp_path):
     assert "promise.md -> uncommitted_only" in text
     assert "claims_all_backed_by_worker_commits=false" in text
     assert "uncommitted when the run ended (before the harness recovery sweep): promise.md" in text
-    assert "PROMISES, not delivered work" in text
+    # provenance wording, not a verdict: the uncommitted claim is not on the branch, while a
+    # recovery-commit claim IS on the branch and only lacks a self-check.
+    assert "uncommitted_only` exists only as worktree state and is NOT on the branch" in text
+    assert "recovery_commit_only` IS on the branch" in text
+    assert "provenance only, not a gate" in text
     assert "commits on this branch since main: 0" in text
 
 
