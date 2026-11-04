@@ -166,7 +166,8 @@ def diff_priority(path: str) -> int:
 def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, int, bool]:
     """Header plus as many complete hunks as fit; the first hunk is cut only as a last resort.
 
-    Returns `(rendered, hunks_shown, hunks_total)`. The rendered text always ends with a visible
+    Returns `(rendered, hunks_shown, hunks_total, sliced)`, where `sliced` is True when the body of
+    the shown hunk was itself cut. The rendered text always ends with a visible
     marker when hunks were dropped, so a partially supplied file cannot look complete to the
     reviewer: only the archived manifest used to know (T-11 round-2 reviewer finding 4).
     """

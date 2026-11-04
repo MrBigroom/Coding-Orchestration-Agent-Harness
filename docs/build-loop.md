@@ -454,7 +454,7 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   built, and then a **truncation manifest**: section, file/item, bytes available, bytes
   included, the budget that caused the cut, and the reason. The recorder sits in the same code
   that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
-  sensitive-file strip (`.env`, keys), which uses to vanish between `patch.diff` and the prompt.
+  sensitive-file strip (`.env`, keys), which used to vanish between `patch.diff` and the prompt.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
   in what is left — a reviewer verifying wiring needs one complete file far more than the first
