@@ -1,4 +1,4 @@
-# HEAD=f136a3ba79a35ea7058507382e506500e9aa5c74 (f136a3b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T15:00:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=abb7615c0595ebadee5adaad540417e18f81c81f (abb7615) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T15:23:34+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
 # RE-RUN of both project commands at the branch tip, after the evidence commits.
 # Nothing under verify-evidence/T-4/ is read by either command:
 #   ruff target  = 'ruff check src tests'  (see the orch-verify: lint target line)
@@ -20,7 +20,7 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 80%]
 ........................................................................ [ 93%]
 ....................................                                     [100%]
-534 passed, 6 skipped in 104.21s (0:01:44)
+534 passed, 6 skipped in 103.24s (0:01:43)
 FINAL_SUITE_EXIT=0
 # command: ./scripts/orch_verify.sh lint
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4
@@ -33,4 +33,4 @@ ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/sha
 orch-verify: lint target  ruff check src tests
 All checks passed!
 FINAL_LINT_EXIT=0
-# HEAD=f136a3ba79a35ea7058507382e506500e9aa5c74 (f136a3b) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T15:00:57+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)
+# HEAD=abb7615c0595ebadee5adaad540417e18f81c81f (abb7615) branch=task-4-memory-suggestions-accept-unvalidated-scopes-cre captured=2026-11-04T15:23:34+08:00 tree=0 dirty-entries (excluding verify-evidence/T-4)

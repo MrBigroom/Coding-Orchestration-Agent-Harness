@@ -3,6 +3,16 @@
 Task: **T-4 — Memory suggestions accept unvalidated scopes, creating entries no role can ever
 inject.** Branch `task-4-memory-suggestions-accept-unvalidated-scopes-cre`, base `main`.
 
+## Round 5 (attempt 5) — current tree
+
+Round 5 changed **tests only** (`tests/unit/test_memory_scopes.py`,
+`tests/integration/test_memory_scope_boundary.py`) and re-measured on the resulting code HEAD
+`abb7615`: **534 passed / 6 skipped / 0 failed**, lint `All checks passed!`, both stamped in
+`final_rerun.txt` (`FINAL_SUITE_EXIT=0`, `FINAL_LINT_EXIT=0`). The committed handoff for this
+round is `handoff_round5.md` / `handoff_round5.json`. `git diff --name-only fcff05d abb7615`
+shows only those two test files outside this directory, so no `src/` or `docs/` file changed
+between the round-4 measurement and this one. The round-4 sections below are kept as history.
+
 Everything here is produced by `bash verify-evidence/T-4/capture.sh` — one invocation, one
 stamped HEAD, offline (throwaway `ORCHESTRATOR_HOME` per demo, in-process `TestClient`, Typer
 `CliRunner`, no adapter, no provider call, no network, no API key). Each file's first line is
