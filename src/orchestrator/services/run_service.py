@@ -31,7 +31,7 @@ from orchestrator.core.models import (
     TaskStatus,
     utcnow,
 )
-from orchestrator.core.schemas import Handoff
+from orchestrator.core.schemas import Handoff, MemorySuggestion
 from orchestrator.core.state import check_run_transition
 from orchestrator.providers.base import ProviderError
 from orchestrator.services import (
@@ -445,6 +445,43 @@ def _salvage_log_payload(
     return payload
 
 
+def _store_memory_suggestions(
+    session: Session,
+    suggestions: list[MemorySuggestion],
+    *,
+    source: str,
+    project_slug: str | None,
+    role: str,
+    task: Task | None = None,
+    run: Run | None = None,
+) -> memory_service.SuggestionOutcome:
+    """Store a run's memory suggestions, and put every scope the harness rewrote in the log.
+
+    T-4 DoD 1: a suggestion is never stored with a scope no injector can read, and a
+    coercion or a drop is an operator-visible event, not a silent `continue`. The notes go
+    to the build log as `memory_scope_substituted` / `memory_suggestion_dropped`, one line
+    per affected suggestion, so the run's log tells the truth about what was filed where.
+    """
+    outcome = memory_service.suggest_from_handoff_report(
+        session, suggestions, source=source, project_slug=project_slug, role=role
+    )
+    for note in outcome.notes:
+        event = (
+            "memory_suggestion_dropped"
+            if note.startswith("dropped ")
+            else "memory_scope_substituted"
+        )
+        log_service.log_event(
+            session,
+            event,
+            note,
+            role="system",
+            task_id=task.id if task else None,
+            run_id=run.id if run else None,
+        )
+    return outcome
+
+
 def try_salvage_handoff(
     session: Session,
     task: Task,
@@ -525,12 +562,14 @@ def try_salvage_handoff(
     if handoff.memory_suggestions:
         # Pending, never auto-approved: a suggestion from a killed run is no more self-certifying
         # than the handoff it came with, and the Supervisor still reviews it.
-        memory_service.suggest_from_handoff(
+        _store_memory_suggestions(
             session,
             handoff.memory_suggestions,
             source=f"salvaged-handoff:{run.short_id}",
             project_slug=project.slug,
             role="worker",
+            task=task,
+            run=run,
         )
     log_service.log_event(
         session,
@@ -1170,12 +1209,14 @@ async def _execute(
         ),
     )
     if not synthesized and handoff.memory_suggestions:
-        memory_service.suggest_from_handoff(
+        _store_memory_suggestions(
             session,
             handoff.memory_suggestions,
             source=f"handoff:{run.short_id}",
             project_slug=project.slug,
             role="worker",
+            task=task,
+            run=run,
         )
     task.handoff_status = handoff.status if not synthesized else "SYNTHESIZED"
     session.add(task)
@@ -1283,12 +1324,14 @@ async def _execute_direct(
     run.usage = res.usage
     task.handoff_status = handoff.status
     if handoff.memory_suggestions:
-        memory_service.suggest_from_handoff(
+        _store_memory_suggestions(
             session,
             handoff.memory_suggestions,
             source=f"agent:{run.short_id}",
             project_slug=project.slug if project else None,
             role=role,
+            task=task,
+            run=run,
         )
     _set_run(
         session,

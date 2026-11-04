@@ -43,6 +43,9 @@ def list_memory(
 
 @router.post("/memory", status_code=201)
 def create_memory(body: MemoryCreate, session: Session = SessionDep) -> dict[str, Any]:
+    # Out-of-vocabulary scopes are refused here for EVERY category (T-4 DoD 2); the message
+    # names the allowed values. The entry shape stays exactly as frozen — the marker for an
+    # unreachable scope is shown by `orchestrator memory list`, not by a new response field.
     try:
         return dump(memory_service.create(session, body))
     except memory_service.MemoryError_ as e:
@@ -78,7 +81,12 @@ async def import_memory(request: Request, session: Session = SessionDep) -> dict
 def update_memory(
     entry_id: int, body: MemoryUpdate, session: Session = SessionDep
 ) -> dict[str, Any]:
-    return dump(memory_service.update(session, entry_id, body))
+    # A PATCH that would move an entry to a scope no injector can read is a 400, not a
+    # silently unreachable row.
+    try:
+        return dump(memory_service.update(session, entry_id, body))
+    except memory_service.MemoryError_ as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @router.post("/memory/{entry_id}/approve")

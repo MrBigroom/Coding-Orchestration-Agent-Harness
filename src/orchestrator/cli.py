@@ -977,9 +977,17 @@ def schedule_run(schedule: str) -> None:
 
 
 def _memory_table(entries) -> Table:
-    table = Table("id", "category", "scope", "project", "role", "status", "content")
+    from orchestrator.services import memory_service
+
+    table = Table("id", "category", "scope", "project", "role", "status", "inj", "content")
     for e in entries:
         status = "approved" if e.approved else ("rejected" if e.rejected else "pending")
+        # T-4 DoD 4: `inj` marks an entry whose OWN category cannot reach its scope, so the
+        # defect is visible the moment you list memory instead of months later. The full
+        # reason is printed under the table (a Rich column squeezes long text to "UNINJECT…").
+        # Valid role rows (category=role scope=worker, resolved through ROLE_MEMORY_KEY) are
+        # never misflagged.
+        ok, _reason = memory_service.injectability(e)
         table.add_row(
             str(e.id),
             e.category,
@@ -987,9 +995,26 @@ def _memory_table(entries) -> Table:
             e.project_slug or "-",
             e.role or "-",
             status,
+            "ok" if ok else "[red]NO[/red]",
             e.content[:80],
         )
     return table
+
+
+def _print_injectability(entries) -> int:
+    """Name every uninjectable row and return how many there were."""
+    from orchestrator.services import memory_service
+
+    bad = [e for e in entries if not memory_service.is_injectable(e)]
+    for e in bad:
+        console.print(f"[red]uninjectable[/red] #{e.id} {e.category}: "
+                      f"{memory_service.injectability(e)[1]}")
+    if bad:
+        err.print(
+            f"{len(bad)} entr{'y' if len(bad) == 1 else 'ies'} above cannot be injected: "
+            "fix with `orchestrator memory fix-scopes`."
+        )
+    return len(bad)
 
 
 @memory_app.command("list")
@@ -999,18 +1024,21 @@ def memory_list(
     category: str = typer.Option(None),
     project: str = typer.Option(None),
     role: str = typer.Option(None),
+    uninjectable: bool = typer.Option(
+        False, "--uninjectable", help="Show only entries no prompt can read."
+    ),
 ) -> None:
     from orchestrator.services import memory_service
 
     _ensure_ready()
     with _session() as s:
-        console.print(
-            _memory_table(
-                memory_service.list_entries(
-                    s, status=status, category=category, project_slug=project, role=role
-                )
-            )
+        entries = memory_service.list_entries(
+            s, status=status, category=category, project_slug=project, role=role
         )
+        if uninjectable:
+            entries = [e for e in entries if not memory_service.is_injectable(e)]
+    console.print(_memory_table(entries))
+    _print_injectability(entries)
 
 
 @memory_app.command("add")
@@ -1074,7 +1102,62 @@ def memory_search(query: str) -> None:
 
     _ensure_ready()
     with _session() as s:
-        console.print(_memory_table(memory_service.search(s, query)))
+        found = memory_service.search(s, query)
+    console.print(_memory_table(found))
+    _print_injectability(found)
+
+
+@memory_app.command("fix-scopes")
+@handled
+def memory_fix_scopes(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report the moves, change nothing."),
+    gc_only: bool = typer.Option(
+        False, "--gc-only", help="Only remove rendered files that no entry owns."
+    ),
+) -> None:
+    """Repair entries stored with a scope no injector can read (task T-4).
+
+    Rows are moved, never deleted; rejected rows are left alone. Both the old and the new
+    markdown file are re-rendered, and rendered files that no longer have an owning entry
+    are removed so a re-scoped entry cannot leave a title-only ghost behind.
+    """
+    from orchestrator.services import memory_service as m
+
+    _ensure_ready()
+    with _session() as s:
+        if gc_only:
+            repair = m.ScopeRepair(
+                removed_files=m.gc_orphan_files(s, dry_run=dry_run), dry_run=dry_run
+            )
+        else:
+            repair = m.fix_scopes(s, dry_run=dry_run)
+    verb = "would move" if dry_run else "moved"
+    for mv in repair.moved:
+        console.print(
+            f"{verb} #{mv['id']} {mv['category']}: {mv['from']!r} -> {mv['to']!r}"
+            + (f"  ({mv['note']})" if mv.get("note") else "")
+        )
+        console.print(f"  re-rendered {mv['old_file']} and {mv['new_file']}")
+        if mv["collect_old_file"]:
+            console.print(
+                f"  {'would collect' if dry_run else 'collected'} "
+                f"dead scope-file {mv['old_file']}"
+            )
+    for sk in repair.skipped:
+        console.print(
+            f"left #{sk['id']} {sk['category']} scope {sk['scope']!r} alone "
+            f"[{sk.get('why', '')}]"
+        )
+    for path in repair.removed_files:
+        console.print(f"{'would remove' if dry_run else 'removed'} orphan memory file {path}")
+    ids = repair.moved_ids
+    console.print(
+        f"{verb} {len(ids)} entr{'y' if len(ids) == 1 else 'ies'}"
+        + (f" (ids: {', '.join(str(i) for i in ids)})" if ids else "")
+        + f"; {len(repair.skipped)} left alone; "
+        f"{len(repair.removed_files)} orphan file(s)"
+        + (" (dry run, nothing written)" if dry_run else "")
+    )
 
 
 @memory_app.command("export")

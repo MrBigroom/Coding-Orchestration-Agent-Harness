@@ -551,15 +551,20 @@ class LiveSession:
             self.emit({"type": "notice", "message": "No memory suggestions could be read."})
             return
         with session_scope() as s:
-            added = memory_service.suggest_from_handoff(
+            outcome = memory_service.suggest_from_handoff_report(
                 s, suggestions, source=f"chat:{self.id}", project_slug=self._project_slug()
             )
+            added = outcome.created
         if added:
             n = len(added)
             message = f"Added {n} memory suggestion{'s' if n > 1 else ''} to review on Memory."
         else:
             message = "No new memory suggestions."
         self.emit({"type": "notice", "message": message})
+        # T-4: a scope that had to be rewritten, or a suggestion that was dropped, is said
+        # out loud here as well as in the log — the alternative is a silent orphan row.
+        for note in outcome.notes:
+            self.emit({"type": "notice", "message": f"Memory scope: {note}"})
 
     def _can_steer(self) -> bool:
         return bool(self.driver and self.driver.can_steer)
