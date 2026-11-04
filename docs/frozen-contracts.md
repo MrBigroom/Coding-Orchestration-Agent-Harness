@@ -55,7 +55,14 @@ change in its Definition of Done.
 - **Memory entry schema**: `memory_entries` table + `MemoryCreate`/`MemorySuggestion`.
 - **Artifact directory layout**: `runs/<run_id>/{prompt.md, stdout.log, stderr.log,
   patch.diff, diffstat.txt, test.log, test_summary.txt, handoff.md, handoff.json,
-  review.md, review.json, review.raw.txt?, verification.md, verification.json, run.json}`.
+  review.md, review.json, review.raw.txt?, review_payload.md, verification.md,
+  verification.json, run.json}`. `review_payload.md` (approved from CCR-T11-01, 2026-11-04)
+  archives the exact reviewer input — `static_text()` + `dynamic_text()` as sent — plus the
+  truncation manifest (item, bytes available, bytes included, budget, reason), separately
+  labelled harness-detected and reviewer-asserted missing artifacts, the mechanical absence
+  checks with `confirmed | refuted | unchecked` provenance, and the diff-completeness findings.
+  Additive: no existing artifact name or shape changed. A run written before the review-payload
+  merge simply has no such file; its absence is not a finding against that run.
   Worktrees live at `worktrees/<project_slug>/<task_id>` and the build log at
   `build-log.jsonl`.
 - **Provider adapter interface**: `providers/base.py` (`detect`, `health`, `complete`,

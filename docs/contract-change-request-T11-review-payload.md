@@ -1,8 +1,8 @@
 # Contract-change request CCR-T11-01 — archive the reviewer input as `review_payload.md`
 
-- **Status:** PROPOSED — awaiting an operator decision. `docs/frozen-contracts.md` is **not**
-  edited by T-11; this request is the declaration that the artifact layout addition needs a
-  human decision.
+- **Status:** APPROVED by the operator, 2026-11-04. Applied into `docs/frozen-contracts.md`
+  (the "Artifact directory layout" bullet now lists `review_payload.md` and states its contents).
+  This file is kept as the request of record.
 - **Raised by:** T-11
   (`task-11-the-reviewer-prompt-and-payload-are-never-archiv`), 2026-11-04.
 - **Reason it is a request and not a change:** the frozen artifact layout lists
