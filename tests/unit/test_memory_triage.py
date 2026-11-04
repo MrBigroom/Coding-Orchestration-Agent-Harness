@@ -383,3 +383,27 @@ def test_triage_never_writes(session, repo_project):
     session.expire_all()
     fresh = memory_service.list_entries(session, status="pending")
     assert [(x.approved, x.rejected, x.content, x.scope) for x in fresh if x.id == e.id] == [before]
+
+
+def test_cap_pressure_is_not_reported_as_a_merge_suggestion(session, repo_project, budgets):
+    """Approved rows are already injected or already demoted: that is a warning about the
+    section, not a per-row merge suggestion. Pending rows still get priced against it."""
+    budgets(max_memory_tokens_project=320)
+    for i in range(4):
+        add(
+            session,
+            f"Durable rule {i}: " + " ".join(["gamma"] * 60) + " always resolve the "
+            f"interpreter inside the worktree, variant {i}.",
+        )
+    big = add(session, " ".join(["delta"] * 90) + " tail of a long durable rule.", approved=False)
+
+    approved = mt.triage(session, status="approved", project_slug="demo")
+    assert all(r["suggested_action"] != "merge" for r in approved["rows"]), [
+        (r["id"], r["reason"]) for r in approved["rows"] if r["suggested_action"] == "merge"
+    ]
+    # The pressure is still reported, as section state rather than row advice.
+    assert approved["excluded_now"] or approved["warnings"]
+
+    pend = mt.triage(session, status="pending", project_slug="demo")
+    row = next(r for r in pend["rows"] if r["id"] == big.id)
+    assert row["suggested_action"] == "merge" and "budget" in row["reason"]
