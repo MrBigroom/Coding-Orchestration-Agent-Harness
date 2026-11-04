@@ -110,7 +110,10 @@ whole file. Every interpolated value in this output is Rich-escaped, so a scope 
 containing `[brackets]` is printed instead of being parsed as a style and vanishing.
 
 `memory import` repairs the scopes of a legacy export on the way in, and both paths are
-idempotent.
+idempotent. The import duplicate check takes **both** spellings of a fact into account —
+the scope a stored row still carries and the scope it would be repaired to — so importing
+an export never manufactures a second copy of a fact that is already in the database,
+even while the original is waiting for `fix-scopes`.
 
 ## Role-aware injection
 

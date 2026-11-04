@@ -818,19 +818,39 @@ def export_all(session: Session) -> dict[str, Any]:
     }
 
 
+def _import_keys(category: str, scope: str, project_slug: str | None, role: str | None,
+                 content: str) -> set[tuple[Any, ...]]:
+    """Every tuple that identifies this fact, before AND after the scope repair.
+
+    A stored legacy row keeps its dead scope until `fix-scopes` runs, so an import of the
+    same export would otherwise add a SECOND row with the same content under the fallback
+    scope and render the line twice. Recognising both spellings keeps `import` idempotent
+    in both directions; a repairable category contributes its coerced scope too.
+    """
+    keys = {(category, scope, project_slug, role, content)}
+    if category in FALLBACK_SCOPE:
+        try:
+            repaired, _ = coerce_scope(category, scope)
+            keys.add((category, repaired, project_slug, role, content))
+        except MemoryError_:
+            pass
+    return keys
+
+
 def import_all(session: Session, payload: dict[str, Any]) -> int:
-    """Import entries; skips exact duplicates (same category/scope/project/role/content).
+    """Import entries; skips duplicates (same category/scope/project/role/content).
 
     T-4: an export written before scope validation existed carries free-form scopes, so the
     scope is repaired on the way in rather than dropping a good fact over a vocabulary
-    mistake — and the duplicate check runs on the REPAIRED values, so importing the same
-    legacy export twice stays a no-op.
+    mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
+    importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
+    nor re-adds anything on a second pass.
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
-    existing = {
-        (e.category, e.scope, e.project_slug, e.role, e.content) for e in list_entries(session)
-    }
+    existing: set[tuple[Any, ...]] = set()
+    for e in list_entries(session):
+        existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
     count = 0
     touched: set[Path] = set()
     for raw in payload["entries"]:
@@ -849,6 +869,11 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             approved=bool(raw.get("approved")),
             rejected=bool(raw.get("rejected")),
         )
+        raw_keys = _import_keys(
+            category, entry.scope, entry.project_slug, entry.role, content
+        )
+        if raw_keys & existing:
+            continue
         try:
             if entry.category in FALLBACK_SCOPE:
                 entry.scope, _ = coerce_scope(entry.category, entry.scope)
@@ -856,9 +881,7 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
         except MemoryError_:
             continue
         key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
-        if key in existing:
-            continue
-        existing.add(key)
+        existing |= raw_keys | {key}
         session.add(entry)
         count += 1
         if entry.approved:

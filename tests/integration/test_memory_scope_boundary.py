@@ -307,28 +307,36 @@ def test_cli_import_repairs_a_legacy_export_scope(initialized):
     """`import` REPAIRS; the create boundaries REJECT (docs/memory.md says which is which).
 
     An export written before validation existed must not lose its facts, while a live
-    create/PATCH can still be refused and corrected. Both are true at once, and the CLI
-    output shows the repaired scope.
+    create/PATCH can still be refused and corrected. Both are true at once, and a legacy row
+    that is ALREADY stored under its dead scope is not duplicated by importing its export.
     """
-    with session_scope() as s:
-        legacy(s, category="project", scope="logbook", project_slug="demo",
-               content="A fact worth keeping.")
-        payload = json.loads(m.dumps_export(s))
-    assert any(e["scope"] == "logbook" for e in payload["entries"])
+    payload = {
+        "version": 1,
+        "entries": [
+            {"category": "project", "scope": "logbook", "project_slug": "demo",
+             "content": "A fact worth keeping.", "approved": False, "source": "handoff:R-3"},
+            {"category": "role", "scope": "logbook-writer", "content": "Unplaceable.",
+             "approved": False},
+        ],
+    }
     exported = initialized / "mem.json"
     exported.write_text(json.dumps(payload))
-    first = runner.invoke(app, ["memory", "import", str(exported)])
-    assert first.exit_code == 0, first.output
-    assert "imported 1" in first.output
-    second = runner.invoke(app, ["memory", "import", str(exported)])
-    assert "imported 0" in second.output  # idempotent on the repaired scope
+    assert "imported 1" in runner.invoke(app, ["memory", "import", str(exported)]).output
+    assert "imported 0" in runner.invoke(app, ["memory", "import", str(exported)]).output
     with session_scope() as s:
-        imported = [e for e in m.list_entries(s, scope="gotchas") if e.project_slug == "demo"]
-        # exactly one copy: the legacy row itself keeps its bad scope until fix-scopes
-        assert [e.content for e in imported] == ["A fact worth keeping."]
-        assert sorted(e.scope for e in m.list_entries(s, category="project")) == (
-            ["gotchas", "logbook"]
-        )
+        rows = m.list_entries(s, category="project")
+        assert [(e.scope, e.project_slug) for e in rows] == [("gotchas", "demo")]
+        assert m.list_entries(s, category="role") == []  # the unplaceable one was skipped
+    # a legacy row still stored under its dead scope is the SAME fact, not a new one
+    with session_scope() as s:
+        legacy(s, category="global", scope="logbook", content="Already stored, badly scoped.")
+        again = json.loads(m.dumps_export(s))
+    round2 = initialized / "mem2.json"
+    round2.write_text(json.dumps(again))
+    assert "imported 0" in runner.invoke(app, ["memory", "import", str(round2)]).output
+    with session_scope() as s:
+        same = [e for e in m.list_entries(s) if e.content == "Already stored, badly scoped."]
+        assert len(same) == 1 and same[0].scope == "logbook"  # untouched, awaiting fix-scopes
     # and the same scope is still refused at the create boundary
     refused = runner.invoke(app, ["memory", "add", "x", "--category", "project",
                                   "--scope", "logbook", "--project", "demo"])

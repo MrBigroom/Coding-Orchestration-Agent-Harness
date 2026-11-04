@@ -264,12 +264,234 @@ LIVEPY
   fi
 } >"$TMP/live_home_readonly.txt"
 
-for f in full_suite.txt memory_scope_tests.txt checks.txt live_home_readonly.txt; do
-  mv "$TMP/$f" "verify-evidence/T-4/$f"
+{
+  echo "$STAMP"
+  echo "# REVIEW ROUND 2 — the R-25 findings, each demonstrated on THIS worktree's code"
+  echo "# in a throwaway ORCHESTRATOR_HOME. No network, no API keys."
+  echo "# command: ORCHESTRATOR_HOME=\$TMP/home2 PYTHONPATH=\$WT/src \$MAIN/.venv/bin/python <demo>"
+  env -u VIRTUAL_ENV -u ORCHESTRATOR_ENABLE_WORKER -u ORCHESTRATOR_ENABLE_SCHEDULER \
+    ORCHESTRATOR_HOME="$TMP/home2" PYTHONPATH="$WT/src" COLUMNS=400 \
+    "$MAIN/.venv/bin/python" - <<'PY2'
+import json
+import os
+from pathlib import Path
+
+from rich.console import Console
+from typer.testing import CliRunner
+
+from orchestrator.cli import app
+from orchestrator.core import db
+from orchestrator.core.models import MemoryCategory, MemoryEntry
+from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
+from orchestrator.services import bootstrap
+from orchestrator.services import memory_service as m
+
+HOME = Path(os.environ["ORCHESTRATOR_HOME"])
+runner = CliRunner()
+
+
+def rel(p) -> str:
+    return str(Path(str(p)).relative_to(HOME / "memory"))
+
+
+def flat(out: str) -> str:
+    return " ".join(out.split())
+
+
+bootstrap.init()
+print("FINDING 1 - coercion is the literal fallback, never an inference from the words")
+for category, scope in (
+    (MemoryCategory.project, "decisions-and-gating"),
+    (MemoryCategory.project, "decisionss"),
+    (MemoryCategory.project, "conventions-notes"),
+    (MemoryCategory.global_, "patterns-of-the-team"),
+):
+    got, note = m.coerce_scope(category, scope)
+    print(f"  {category}/{scope!r} -> {got!r}   note: {note}")
+print("  in vocabulary stays put and is silent:",
+      m.coerce_scope(MemoryCategory.project, "decisions"))
+with db.session_scope() as s:
+    out = m.suggest_from_handoff_report(
+        s,
+        [MemorySuggestion(category="project", scope="decisions-about-the-gate",
+                          content="Gate the merge.")],
+        "handoff:R-26", "demo",
+    )
+    e = out.created[0]
+    print(f"  stored scope={e.scope!r} reachable_by={m.reachable_roles(e)} "
+          f"(an inference would have said 'decisions' -> architect,supervisor)")
+
+print("\nFINDING 2 - Rich markup in the repair output (brackets were eaten; now escaped)")
+console = Console(record=True, width=200)
+console.print("left #1 project scope '[stale]' alone [rejected rows are left alone]")
+print("  what the OLD bracketed line printed:", repr(console.export_text().strip()))
+with db.session_scope() as s:
+    s.add(MemoryEntry(category="project", scope="[stale]", project_slug="demo",
+                      content="Bracketed.", source="handoff:R-26", rejected=True))
+    s.commit()
+    raw = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"],
+                        env={"COLUMNS": "400"}).output
+    got = flat(raw)
+    line = [" ".join(ln.split()) for ln in raw.splitlines() if "stale" in ln]
+    print("  the CLI now prints:", line)
+    assert "'[stale]'" in got and "rejected rows are left alone" in got
+
+print("\nFINDING 3 - --dry-run promises, it does not report; each ghost is named once")
+with db.session_scope() as s:
+    bad = MemoryEntry(category="global", scope="[dim]notes", content="Escaped.",
+                      source="handoff:R-26", approved=True)
+    s.add(bad)
+    s.commit()
+    s.refresh(bad)
+    bad_id = bad.id
+    m.render_file(s, m._file_for(bad))
+    ghost = m.memory_root() / "global" / "dim-notes.md"
+    already = m.memory_root() / "global" / "zz-dead.md"
+    already.write_text("# zz-dead\n")
+    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--dry-run"],
+                             env={"COLUMNS": "400"}).output)
+    print("  dry: 'would re-render' x%s, 'would collect dead scope-file' x%s, "
+          "'would remove dead scope-file' x%s"
+          % (dry.count("would re-render"), dry.count("would collect dead scope-file"),
+             dry.count("would remove dead scope-file")))
+    for lie in ("moved #", "re-rendered", "removed dead scope-file", "collected "):
+        assert lie not in dry, lie
+    print("  dry: says 're-rendered'?", "re-rendered" in dry, "| 'moved #'?", "moved #" in dry)
+    assert ghost.exists() and already.exists()
+    run = flat(runner.invoke(app, ["memory", "fix-scopes"], env={"COLUMNS": "400"}).output)
+    print("  run: 'removed dead scope-file' x%s (one line each), 'collected' x%s"
+          % (run.count("removed dead scope-file"), run.count("collected")))
+    print("  ghost gone?", not ghost.exists(), "| already-dead gone?", not already.exists())
+with db.session_scope() as s2:  # a FRESH session: `s` still caches the pre-move row
+    print("  row after the move (re-read):", [(e.id, e.scope) for e in m.list_entries(s2)
+                                              if e.id == bad_id])
+
+print("\nFINDING 5 - the GC deletes ONLY text render_file could have written")
+proj = m.memory_root() / "projects" / "demo"
+proj.mkdir(parents=True, exist_ok=True)
+hand = proj / "notes.md"
+hand.write_text("# Hand-written notes\n\n- a line someone typed by hand\n")
+prose = proj / "scratch.md"
+prose.write_text("# scratch\n\nremember the mount path does not exist\n")
+header = proj / "conventions.md"
+header.write_text("# Project demo — conventions\n")
+ghost = proj / "demo.md"
+ghost.write_text("# demo\n")
+marker = proj / "old-scope.md"
+marker.write_text("# old-scope\n\n- dead line  <!-- mem:999 -->\n")
+print("  predicate: in_layout_dir AND not canonical_file AND not owned AND _renderer_output")
+with db.session_scope() as s:
+    owned = {m._file_for(e) for e in m.list_entries(s, status="approved")}
+    for p in (hand, prose, header, ghost, marker):
+        print(f"    {rel(p):26} layout={m.in_layout_dir(p)!s:5} "
+              f"canonical={m.canonical_file(p)!s:5} owned={(p in owned)!s:5} "
+              f"renderer_output={m._renderer_output(p)!s:5}")
+    print("  orphan_files:", sorted(rel(p) for p in m.orphan_files(s)))
+    removed = sorted(rel(p) for p in m.gc_orphan_files(s))
+    print("  gc deleted:", removed)
+    print("  hand-written survived:", hand.exists(), prose.exists(), header.exists())
+    print("  dead renderer output deleted:", not ghost.exists(), not marker.exists())
+
+print("\nFINDING 6 - a refused PATCH changes nothing (no rollback needed)")
+with db.session_scope() as s:
+    row = m.create(s, MemoryCreate(category="project", scope="gotchas", project_slug="demo",
+                                   content="Watch out.", approved=True))
+    home = m._file_for(row)
+    before = home.read_text()
+    try:
+        m.update(s, row.id, MemoryUpdate(scope="housekeeping", content="Reworded."))
+        print("  NOT REJECTED")
+    except m.MemoryError_ as err:
+        print("  rejected:", err)
+    fresh = s.get(MemoryEntry, row.id)
+    print(f"  row after: scope={fresh.scope!r} content={fresh.content!r}")
+    print("  file byte-identical:", home.read_text() == before,
+          "| session dirty/new:", bool(s.dirty), bool(s.new))
+
+print("\nFINDING 7 - role rendering is STILL main's rule: role, else scope, ROLE_MEMORY_KEY")
+with db.session_scope() as s:
+    dead = MemoryEntry(category="role", scope="worker", role="logbook-writer",
+                       content="Diary.", source="handoff:R-26", approved=True)
+    good = MemoryEntry(category="role", scope="worker", role="worker",
+                       content="Small commits.", source="handoff:R-26", approved=True)
+    for r in (dead, good):
+        s.add(r)
+        s.commit()
+        s.refresh(r)
+        m.render_file(s, m._file_for(r))
+    for e in (dead, good):
+        ok, reason = m.injectability(e)
+        print(f"  #{e.id} role={e.role!r} scope={e.scope!r} -> file {rel(m._file_for(e))} "
+              f"injectable={ok} reachable_by={m.reachable_roles(e) or '-'}")
+        print(f"     reason: {reason or '-'}")
+    print("  worker.md last line:",
+          (m.memory_root() / "roles" / "worker.md").read_text().strip().splitlines()[-1])
+    rep = m.fix_scopes(s)
+    print("  fix-scopes moved:", rep.moved_ids, "| left alone:",
+          [(x["id"], x["why"][:58]) for x in rep.skipped])
+
+print("\nFINDING 8 - rejecting vs repairing, side by side at the CLI")
+with db.session_scope() as s:
+    s.add(MemoryEntry(category="project", scope="logbook", project_slug="demo",
+                      content="Legacy fact.", source="handoff:R-26", approved=False))
+    s.commit()
+    payload = json.loads(m.dumps_export(s))
+exp = HOME / "mem.json"
+exp.write_text(json.dumps(payload))
+print("  $ orchestrator memory add x --category project --scope logbook --project demo")
+print("   ", flat(runner.invoke(app, ["memory", "add", "x", "--category", "project",
+                                      "--scope", "logbook", "--project", "demo"]).output)[:140])
+print("  $ orchestrator memory import mem.json   (REPAIRS the legacy export scope)")
+print("   ", flat(runner.invoke(app, ["memory", "import", str(exp)]).output))
+with db.session_scope() as s:
+    print("  project rows now:", [(e.id, e.scope, e.content) for e in
+                                   m.list_entries(s, category="project")])
+print("  $ orchestrator memory import mem.json   (again: idempotent)")
+print("   ", flat(runner.invoke(app, ["memory", "import", str(exp)]).output))
+print("  IMPORT NEVER MANUFACTURES A SECOND COPY of a fact that is already stored, even")
+print("  while that row still carries its dead scope (the dedupe checks both spellings).")
+with db.session_scope() as s:
+    before = len(m.list_entries(s))
+    print("   ", "re-import the live export itself:", m.import_all(s, json.loads(m.dumps_export(s))),
+          "new rows (rows stored:", before, "->", len(m.list_entries(s)), ")")
+PY2
+  echo "ROUND2_EXIT=$?"
+} >"$TMP/review_round2.txt"
+
+{
+  echo "$STAMP"
+  echo "# Every file this branch changes, as a COMPLETE per-file diff vs the merge-base."
+  echo "# Split per file because the supplied combined diff was truncated mid-function; each"
+  echo "# diff_*.txt beside this file is self-contained and ends with its own DIFF_COMPLETE"
+  echo "# trailer. Base: $(git merge-base main HEAD)"
+  BASE=$(git merge-base main HEAD)
+  echo "BASE=$BASE HEAD=$(git rev-parse HEAD)"
+  git diff --stat "$BASE" HEAD -- . ':(exclude)verify-evidence'
+  echo "CHANGED_FILES_SHA256_AND_LENGTH"
+  for f in $(git diff --name-only "$BASE" HEAD -- . ':(exclude)verify-evidence'); do
+    printf '%s  %s  lines=%s\n' "$(sha256sum "$f" | cut -c1-16)" "$f" "$(wc -l <"$f")"
+  done
+} >"$TMP/manifest.txt"
+
+BASE=$(git merge-base main HEAD)
+for f in $(git diff --name-only "$BASE" HEAD -- . ':(exclude)verify-evidence'); do
+  {
+    echo "$STAMP"
+    echo "# git diff $BASE HEAD -- $f  (COMPLETE: $(git diff "$BASE" HEAD -- "$f" | wc -l) diff lines)"
+    git diff "$BASE" HEAD -- "$f"
+    echo "DIFF_COMPLETE=$f"
+  } >"$TMP/diff_$(echo "$f" | tr '/' '_').txt"
 done
 
-grep -E "^(#|[0-9]+ (passed|failed|skipped)|All checks|SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT)" \
+for f in full_suite.txt memory_scope_tests.txt checks.txt live_home_readonly.txt \
+         review_round2.txt manifest.txt; do
+  mv "$TMP/$f" "verify-evidence/T-4/$f"
+done
+for f in "$TMP"/diff_*.txt; do mv "$f" "verify-evidence/T-4/"; done
+
+grep -E "^(#|[0-9]+ (passed|failed|skipped)|All checks|SUITE_EXIT|TARGETED_EXIT|LINT_EXIT|DEMO_EXIT|ROUND2_EXIT)" \
   verify-evidence/T-4/full_suite.txt \
   verify-evidence/T-4/memory_scope_tests.txt \
   verify-evidence/T-4/checks.txt \
-  verify-evidence/T-4/live_home_readonly.txt
+  verify-evidence/T-4/live_home_readonly.txt \
+  verify-evidence/T-4/review_round2.txt

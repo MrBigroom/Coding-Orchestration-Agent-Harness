@@ -6,6 +6,8 @@ network, no API keys.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from orchestrator.core.models import MemoryCategory, MemoryEntry, Role
@@ -485,6 +487,24 @@ def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
     assert [str(p) for p in repair.ghost_files] == [str(ghost)]
     assert f"mem:{row.id}" not in ghost.read_text()  # re-rendered, just not deleted
     assert f"mem:{row.id}" in (m.memory_root() / "projects" / "p" / "gotchas.md").read_text()
+
+
+def test_import_does_not_duplicate_a_row_that_is_still_awaiting_fix_scopes(session):
+    """The repair must not manufacture a second copy of a fact that is already stored.
+
+    A legacy row keeps its dead scope until `fix-scopes` runs, so the duplicate check takes
+    BOTH spellings into account: the stored scope and the scope it would be repaired to.
+    """
+    legacy(session, category="project", scope="logbook", project_slug="demo",
+           content="Same fact.")
+    payload = json.loads(m.dumps_export(session))
+    assert m.import_all(session, payload) == 0
+    rows = [e for e in m.list_entries(session) if e.content == "Same fact."]
+    assert len(rows) == 1 and rows[0].scope == "logbook"  # untouched, still repairable
+    m.fix_scopes(session)
+    assert m.import_all(session, payload) == 0  # and after the repair, still no duplicate
+    with pytest.raises(m.MemoryError_):
+        m.import_all(session, {"version": 1, "entries": "not a list"})
 
 
 def test_import_repairs_a_legacy_export_instead_of_dropping_it(session):
