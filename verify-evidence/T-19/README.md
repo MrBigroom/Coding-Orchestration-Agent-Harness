@@ -15,4 +15,4 @@ Source `1e2e522`; this commit changes only evidence. `full_suite.txt`: `615 pass
   mutation `test_env_guard.py:52`.
 - DoD 6: `docs/build-loop.md:423`, `README.md:270`.
 
-No contract file, dependency, run-artifact filename or verification check-field changed.
+No contract, dependency, artifact name or check-field changed.
