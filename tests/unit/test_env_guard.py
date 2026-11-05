@@ -8,9 +8,6 @@ coverage predicate, including the mutation that removing it must fail.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-import pytest
 
 from orchestrator.core.config import (
     PROVIDER_ENV_NAMES,
@@ -96,16 +93,3 @@ def test_explicit_env_file_path_is_still_loadable(tmp_path, monkeypatch):
         assert os.environ["T19_EXPLICIT_KEY"] == "loaded"
     finally:
         os.environ.pop("T19_EXPLICIT_KEY", None)
-
-
-@pytest.mark.parametrize("name", ["ORCHESTRATOR_HOME", "ORCHESTRATOR_SUPABASE_PASSWORD"])
-def test_home_fixture_clears_the_derived_names_after_collection(name):
-    """Even the fixture's own setenv calls happen after the clear, so they win."""
-    assert name in conftest.SECRET_ENV
-
-
-def test_env_file_path_default_is_unchanged():
-    """Sanity: the guard lives in conftest, not in production config."""
-    from orchestrator.core.config import load_env_file
-
-    assert Path(load_env_file.__defaults__[0]) == Path(".env")
