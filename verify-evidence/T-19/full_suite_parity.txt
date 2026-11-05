@@ -1,5 +1,4 @@
 # HEAD=1e2e522 tracked-dirty-entries=0
 # command: ./scripts/orch_verify.sh test -vv -k "full_suite_is_identical"
-# Runs the full suite twice in a throwaway worktree of HEAD (clean, then seeded .env) and asserts identical counts.
 tests/integration/test_env_hermeticity.py::test_full_suite_is_identical_with_and_without_a_seeded_dotenv PASSED
 ================ 1 passed, 620 deselected in 242.76s =================
