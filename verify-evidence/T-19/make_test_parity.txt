@@ -1,0 +1,6 @@
+# HEAD=c812467 tracked-dirty-entries=0
+# command: ORCH_PARITY_ENV_FILE=<synthetic .env> PYTEST_ADDOPTS='-k env_guard' make test-parity
+orch-parity: DEVELOPER CHECK (not the gate command)
+orch-parity: seeded env file  /tmp/t19-evidence.ZgZjLc/synthetic.env (contents not logged)
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/tmp/orch-env-parity.jDqwJ4/tree/src/orchestrator/__init__.py|worktree_root=/tmp/orch-env-parity.jDqwJ4/tree
+8 passed, 616 deselected in 1.13s

@@ -11,9 +11,21 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, EnvSettingsSource, SettingsConfigDict
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+# Provider SDKs read their own variables directly (not through `Settings`), so these are the only
+# env names the hermeticity guard still has to keep by hand. Everything with the ORCHESTRATOR_
+# prefix is derived from the model below, because a hand-kept list drifted behind the settings
+# surface once already (T-19: the T-9 merge leaked ORCHESTRATOR_SUPABASE_* past SECRET_ENV).
+PROVIDER_ENV_NAMES: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
+    "QWEN_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GLM_API_KEY",
+    "HERMES_API_KEY",
+)
 
 
 def default_home() -> Path:
@@ -137,6 +149,26 @@ class Settings(BaseSettings):
             self.memory_root,
         ):
             Path(p).mkdir(parents=True, exist_ok=True)
+
+
+def settings_env_names(model: type[BaseSettings] | None = None) -> tuple[str, ...]:
+    """Every env var pydantic-settings would read for :class:`Settings` (or `model`).
+
+    Ask pydantic-settings' own `EnvSettingsSource` for the names rather than mirroring its
+    prefix/alias algorithm: a parallel implementation drifted from the settings surface once and a
+    prefix+UPPER copy ignores `validation_alias`, `case_sensitive` and `env_prefix_target`, so an
+    aliased field would escape the hermeticity guard (T-19 DoD 1). Names are upper-cased only when
+    the model matches case-insensitively, which is exactly the comparison pydantic makes.
+    """
+    cls = model or Settings
+    source = EnvSettingsSource(cls)
+    names: list[str] = []
+    for field_name, field in cls.model_fields.items():
+        for _key, env_name, _complex in source._extract_field_info(field, field_name):
+            canonical = env_name if source.case_sensitive else env_name.upper()
+            if canonical not in names:
+                names.append(canonical)
+    return tuple(names)
 
 
 def load_env_file(path: str | Path = ".env") -> None:

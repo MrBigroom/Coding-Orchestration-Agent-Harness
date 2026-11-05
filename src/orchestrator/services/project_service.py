@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -276,7 +278,33 @@ def command_allowed(project: Project, command: str) -> bool:
     return command in project.allowed_commands or argv0 in project.allowed_commands
 
 
-def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]:
+def environment_summary(cwd: Path) -> str:
+    """Name the world a verification command actually ran in (T-19 DoD 3).
+
+    Recorded inside verification.json's existing `evidence` string because the check-record shape
+    and the runs/<run_id>/ layout are frozen. The "tracked-files-only" label is only claimed when
+    the cwd really is a linked worktree (`.git` is a file), not for every checkout without a .env.
+    """
+    cwd = Path(cwd)
+    linked_worktree = (cwd / ".git").is_file()
+    has_env = (cwd / ".env").is_file()
+    has_node_modules = any(
+        (cwd / candidate).is_dir() for candidate in ("node_modules", "web/node_modules")
+    )
+    has_venv = (cwd / ".venv").exists()
+    env_state = "present" if has_env else "absent"
+    if not has_env and linked_worktree:
+        env_state += " (tracked-files-only worktree)"
+    return (
+        f"cwd={cwd}; local .env {env_state}; "
+        f"node_modules {'present' if has_node_modules else 'absent'}; "
+        f".venv {'present' if has_venv else 'absent'}"
+    )
+
+
+def doctor(
+    project: Project, run_commands: bool = False, env_parity: bool = False
+) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str = "") -> None:
@@ -333,6 +361,8 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
             add(f"{label} command", False, str(e))
     if run_commands:
         checks.extend(run_in_worktree_checks(project))
+    if env_parity:
+        checks.extend(run_env_parity_checks(project))
     return checks
 
 
@@ -348,6 +378,7 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
 # does not expose this at all.
 
 DOCTOR_SNAPSHOT_KEY = "doctor"
+ENV_PARITY_SNAPSHOT_KEY = "env-parity"
 RUN_TIMEOUT_SECONDS = 900
 MARKER_PREFIX = "ORCH_VERIFY|"
 
@@ -386,6 +417,82 @@ def parse_orch_verify(output: str) -> list[dict[str, str]]:
 def _tail(text: str, limit: int = 400) -> str:
     flat = " / ".join(line for line in text.strip().splitlines() if line.strip())
     return flat[-limit:] if len(flat) > limit else flat
+
+
+def _marker_problems(rows: list[dict[str, str]], root: Path) -> list[str]:
+    """Why an ORCH_VERIFY marker does not prove this worktree was the code under test."""
+    problems: list[str] = []
+    for row in rows:
+        module_file = row.get("module_file", "")
+        worktree_root = row.get("worktree_root", "")
+        if not module_file or not worktree_root:
+            problems.append(f"incomplete marker: {row}")
+        elif not _under(module_file, str(root)):
+            problems.append(
+                f"{row.get('module', '?')} imported from {module_file}, outside the worktree"
+            )
+        elif not _same_dir(worktree_root, str(root)):
+            problems.append(f"wrapper root {worktree_root} is not the worktree {root}")
+    return problems
+
+
+def _drop_snapshots(project: Project, key: str, add, label: str, report_success: bool) -> None:
+    """Remove this project's clean proof worktrees for `key` (branch kept)."""
+    from orchestrator.services import git_service
+
+    try:
+        leftovers = [
+            m
+            for m in git_service.managed_worktrees()
+            if m["project_slug"] == project.slug and m["task_id"] == key
+        ]
+        for leftover in leftovers:
+            note = git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
+            if note.startswith("skip"):
+                add(label, False, f"{note}; run `orchestrator cleanup`")
+            elif report_success:
+                add(label, True, note)
+    except (OSError, GitError) as e:
+        add(label, False, f"{e}; run `orchestrator cleanup`")
+
+
+def _seeded_env_copy(source: Path, dest: Path) -> Path:
+    """Copy a real `.env` 0600, without clobbering one that already exists.
+
+    A plain `shutil.copyfile` creates the destination with the process umask (typically 0644), so
+    the operator's credentials would be world-readable under ORCHESTRATOR_HOME. Three properties
+    matter here, and each one has been a bug:
+
+    * the bytes are written to a UNIQUE per-invocation staging name and only then linked into
+      place, so a crash or a partial `os.write` never leaves a truncated `.env` that a later run
+      mistakes for a complete one;
+    * the link is create-only (`os.link`), never `os.replace`, so a destination this invocation
+      did not create — a tracked `.env` in the snapshot, a retry after a crash, a reused temp
+      path — is left byte-for-byte intact instead of being silently overwritten;
+    * the staging file is removed on every path, so a failed copy leaves no residue.
+
+    Returns the path this call created. Raises `OSError` (notably `FileExistsError` when `dest`
+    already exists, or the source is unreadable); callers turn that into a reported check because
+    `doctor` reports and never raises out.
+    """
+    data = source.read_bytes()
+    staging = dest.with_name(f"{dest.name}.{os.getpid()}-{uuid.uuid4().hex}.parity")
+    try:
+        fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:  # pragma: no cover - a broken filesystem, not a code path
+                    raise OSError(f"short write to {staging}")
+                view = view[written:]
+        finally:
+            os.close(fd)
+        os.link(staging, dest)
+    finally:
+        staging.unlink(missing_ok=True)
+    return dest
 
 
 def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
@@ -453,19 +560,7 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
                     "import the main checkout — wrap it like scripts/orch_verify.sh",
                 )
                 continue
-            problems: list[str] = []
-            for row in rows:
-                module_file = row.get("module_file", "")
-                worktree_root = row.get("worktree_root", "")
-                if not module_file or not worktree_root:
-                    problems.append(f"incomplete marker: {row}")
-                elif not _under(module_file, str(info.path)):
-                    problems.append(
-                        f"{row.get('module', '?')} imported from {module_file}, outside the "
-                        "worktree (a false pass at the gate)"
-                    )
-                elif not _same_dir(worktree_root, str(info.path)):
-                    problems.append(f"wrapper root {worktree_root} is not the worktree {info.path}")
+            problems = _marker_problems(rows, info.path)
             add(
                 f"{label} resolves inside the worktree",
                 not problems,
@@ -475,16 +570,121 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
     finally:
         # Every exit path (green, red, timeout, spawn failure, unexpected error) lands here:
         # a doctor probe must not leave a worktree behind in ORCHESTRATOR_HOME.
+        _drop_snapshots(
+            project, DOCTOR_SNAPSHOT_KEY, add, "throwaway worktree removed", False
+        )
+    return checks
+
+
+# --- opt-in environment-parity probe (`project doctor --env-parity`) -----------------
+#
+# A DEVELOPER check, never a gate command: run the project's TEST command in a throwaway worktree
+# with a copy of the local `.env`, i.e. the world the human actually works in. Off by default and
+# CLI-only; it seeds a copy of the env file without reading, logging or committing its contents.
+
+def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
+    from orchestrator.services import git_service, process_service
+
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str = "") -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail})
+
+    repo = Path(project.path)
+    # A worktree left by a killed run is REPORTED, not swept: residue hygiene for the parity path
+    # is T-20 and deliberately out of scope for T-19.
+    stale = [
+        m
+        for m in git_service.managed_worktrees()
+        if m["project_slug"] == project.slug
+        and m["task_id"] == ENV_PARITY_SNAPSHOT_KEY
+        and m["exists"]
+    ]
+    if stale:
+        add(
+            "env-parity stale worktree",
+            False,
+            f"{stale[0]['path']} is left over from an interrupted run; run `orchestrator cleanup` "
+            "(sweeping it is T-20)",
+        )
+        return checks
+
+    source_env = repo / ".env"
+    if not source_env.is_file():
+        add(
+            "env-parity suite",
+            True,
+            f"no .env at {source_env}; nothing to seed (the gate is already env-free)",
+        )
+        return checks
+    if not project.test_command:
+        add("env-parity suite", True, "no test command configured")
+        return checks
+
+    try:
+        info = git_service.ensure_snapshot(
+            repo, project.slug, ENV_PARITY_SNAPSHOT_KEY, project.base_branch
+        )
+    except GitError as e:
+        add("env-parity suite", False, f"throwaway worktree failed: {e}")
+        return checks
+    seeded: Path | None = None
+    try:
         try:
-            leftover = [
-                m
-                for m in git_service.managed_worktrees()
-                if m["project_slug"] == project.slug and m["task_id"] == DOCTOR_SNAPSHOT_KEY
-            ]
-            for m in leftover:
-                note = git_service.remove_worktree(repo, m, dry_run=False)
-                if note.startswith("skip"):
-                    add("throwaway worktree removed", False, f"{note}; run `orchestrator cleanup`")
-        except (OSError, GitError) as e:
-            add("throwaway worktree removed", False, f"{e}; run `orchestrator cleanup`")
+            seeded = _seeded_env_copy(source_env, info.path / ".env")
+        except OSError as e:
+            # `doctor` reports, it never raises out. A tracked `.env` already in
+            # the snapshot or an unreadable source is a finding about the parity probe, not a
+            # crash; nothing was created by this invocation, so `seeded` stays None and the
+            # cleanup below cannot unlink a foreign file.
+            add(
+                "env-parity .env seeded",
+                False,
+                f"could not seed a copy of {source_env}: {type(e).__name__}: {e}",
+            )
+            return checks
+        add(
+            "env-parity .env seeded",
+            True,
+            f"copy of {source_env} (contents not logged, mode 0600)",
+        )
+        try:
+            argv = command_argv(project.test_command)
+        except ProjectError as e:
+            add("env-parity suite", False, str(e))
+            return checks
+        try:
+            code, output, timed_out = process_service.run_simple_sync(
+                argv, info.path, RUN_TIMEOUT_SECONDS
+            )
+        except Exception as e:  # noqa: BLE001 - doctor reports, it never raises out
+            add("env-parity suite", False, f"could not run: {type(e).__name__}: {e}")
+            return checks
+        ok = code == 0 and not timed_out
+        detail = f"exit {code} (cwd {info.path}, local .env seeded)"
+        if timed_out:
+            detail += f" after {RUN_TIMEOUT_SECONDS}s"
+        rows = parse_orch_verify(output)
+        if not rows:
+            ok = False
+            detail += (
+                "; no ORCH_VERIFY marker: the command is not path-independent and may import "
+                "the main checkout — wrap it like scripts/orch_verify.sh"
+            )
+        else:
+            problems = _marker_problems(rows, info.path)
+            if problems:
+                ok = False
+                detail += f"; {'; '.join(problems)}"
+        if code != 0 and not timed_out:
+            detail += f"; tail: {_tail(output) or 'no output'}"
+        add("env-parity suite", ok, detail)
+    finally:
+        # Remove ONLY the file this invocation created, so the throwaway tree is clean enough for
+        # `remove_worktree` to delete it; a killed run's residue is T-20, above.
+        if seeded is not None:
+            seeded.unlink(missing_ok=True)
+        _drop_snapshots(
+            project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
+        )
     return checks

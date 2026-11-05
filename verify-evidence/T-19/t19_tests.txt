@@ -1,0 +1,22 @@
+# HEAD=c812467 tracked-dirty-entries=0
+# command: ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k 'env_guard or env_hermeticity'
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv PASSED [  5%]
+tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard PASSED [ 11%]
+tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv PASSED [ 16%]
+tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment PASSED [ 22%]
+tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree PASSED [ 27%]
+tests/integration/test_env_hermeticity.py::test_env_parity_reports_a_leftover_worktree_instead_of_sweeping_it PASSED [ 33%]
+tests/integration/test_env_hermeticity.py::test_env_parity_reports_a_preexisting_dotenv_instead_of_raising PASSED [ 38%]
+tests/integration/test_env_hermeticity.py::test_env_parity_never_unlinks_a_dotenv_it_did_not_create PASSED [ 44%]
+tests/integration/test_env_hermeticity.py::test_env_parity_rejects_a_command_without_an_orch_verify_marker PASSED [ 50%]
+tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 55%]
+tests/unit/test_env_guard.py::test_the_real_settings_surface_is_fully_covered PASSED [ 61%]
+tests/unit/test_env_guard.py::test_the_leaked_supabase_names_are_covered PASSED [ 66%]
+tests/unit/test_env_guard.py::test_a_new_env_visible_field_that_is_not_covered_is_reported PASSED [ 72%]
+tests/unit/test_env_guard.py::test_alias_and_case_sensitivity_are_read_and_covered PASSED [ 77%]
+tests/unit/test_env_guard.py::test_removing_the_settings_derivation_fails_the_coverage_check PASSED [ 83%]
+tests/unit/test_env_guard.py::test_restoring_the_import_environment_drops_arbitrary_dotenv_keys PASSED [ 88%]
+tests/unit/test_env_guard.py::test_relative_dotenv_is_not_ambient_configuration_in_the_suite PASSED [ 94%]
+tests/unit/test_env_guard.py::test_explicit_env_file_path_is_still_loadable PASSED [100%]
+===================== 18 passed, 606 deselected in 19.07s ======================

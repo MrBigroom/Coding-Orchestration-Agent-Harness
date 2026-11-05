@@ -267,4 +267,9 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 - The Supervisor micro-fix setting is stored but there is no micro-fix executor. Code
   changes always go back to the Worker.
 - Token counts are estimates (~4 characters per token), not tokenizer-exact.
+- **A gate green is a green in a clean environment, not in your checkout.** Gated runs execute in
+  a tracked-files-only worktree: no `.env`, no `node_modules`, no `.venv`. The suite itself is
+  hermetic against a repo-level `.env`, and `verification.json` records which world the gate used;
+  `make test-parity` runs the suite again with a copy of your local `.env` as a developer check
+  (never as the gate command). See `docs/build-loop.md`, "Gated runs are environment-free".
 - Single-user and local only, by design.

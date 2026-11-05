@@ -15,6 +15,10 @@ start:
 test *ARGS:
     ./scripts/orch_verify.sh test {{ARGS}}
 
+# DEVELOPER check, not the gate: suite in a throwaway worktree with your local .env seeded in.
+test-parity *ARGS:
+    ./scripts/orch_env_parity.sh test {{ARGS}}
+
 lint:
     ./scripts/orch_verify.sh lint
 
