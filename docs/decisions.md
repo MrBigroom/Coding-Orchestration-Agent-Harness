@@ -366,3 +366,22 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   Terminal-run durations quote both `run.json.process_ms` and the DB wall duration, naming a
   clock freeze only when the gap is large — informational, never an alert. New installs stay
   silent (`notifications_enabled=false`).
+- **2026-11-06 — T-22: an absence claim is resolved to a path before the harness judges it, and
+  a `confirmed` verdict carries the resolution that earned it.** The T-11 mechanical checker
+  reported `15 confirmed` on reviews.28 (run 38) for bare filenames whose tracked paths were
+  `verify-evidence/T-19/<name>`: the resolver looked for the literal name at the worktree root,
+  found nothing, and returned its strongest label. Now every path claim is matched against a
+  `PathUniverse` — supplied patch, diffstat, truncation manifest, `git ls-tree -r HEAD` at the
+  reviewed commit, worktree filesystem — and a unique basename match is judged at the nested path.
+  Ambiguous and unplaceable names are `unchecked` (`unresolvable-claim`) with all candidates listed;
+  `confirmed` survives only for a located path, and the tally prints `by path-resolution /
+  by explicit-named-path / by manifest-record / from a failed lookup` so a confident batch that
+  rests on unresolved names is visible without re-auditing each row by hand. The three states a
+  reviewer acts on are named in the existing notes/detail fields (`omitted-from-review-input` =
+  budget failure owned by T-16, `absent-at-reviewed-commit` = real evidence gap,
+  `unresolvable-claim` = checker cannot judge) because `review.json`'s shape and the
+  `confirmed | refuted | unchecked` provenance vocabulary are frozen contracts and no DoD here
+  grants a change: new labels go inside existing fields, not beside them. Rejected alternative: a
+  contract-change request adding `omitted`/`absent` as statuses — it would widen a frozen
+  vocabulary for wording that the notes already carry, and a machine check whose vocabulary only
+  the harness can edit is how run 38 got audited by hand instead of by rule.
