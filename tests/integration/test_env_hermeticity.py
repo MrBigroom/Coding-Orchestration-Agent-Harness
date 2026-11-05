@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -342,6 +343,66 @@ def test_env_parity_is_opt_in(session, tmp_path):
     names = {check["name"] for check in project_service.doctor(project)}
     assert not [name for name in names if name.startswith("env-parity")]
     assert git_service.managed_worktrees() == []
+
+
+def test_parity_script_runs_the_suite_with_a_seeded_env_and_cleans_up(tmp_path):
+    """DoD 4 behaviour (not just text): the make target's script seeds `.env` and removes its tree."""
+    wrapper = (REPO_ROOT / "scripts" / "orch_verify.sh").read_text()
+    fake = make_repo(
+        tmp_path / "parity-script",
+        {
+            ".gitignore": ".env\n",
+            "pytest.ini": "[pytest]\ntestpaths = tests\n",
+            "src/fakepkg/__init__.py": 'VALUE = "ok"\n',
+            "tests/test_parity.py": (
+                "import pathlib\n\nimport fakepkg\n\n\n"
+                "def test_the_seeded_env_is_present():\n"
+                '    assert fakepkg.VALUE == "ok"\n'
+                '    assert pathlib.Path(".env").read_text() == "SYNTHETIC_PARITY=present\\n"\n'
+            ),
+            "scripts/orch_verify.sh": wrapper,
+        },
+    )
+    (fake / "scripts" / "orch_verify.sh").chmod(0o755)
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    subprocess.run(["git", "-C", str(fake), "add", "-A"], check=True, env=git_env)
+    subprocess.run(
+        ["git", "-C", str(fake), "commit", "-q", "-m", "exec bit"], check=True, env=git_env
+    )
+    (fake / ".env").write_text("SYNTHETIC_PARITY=present\n")
+
+    env = {
+        **os.environ,
+        # sys.prefix is the venv root; resolving sys.executable follows the venv symlink to the
+        # base interpreter, which has no pytest installed.
+        "ORCH_VERIFY_VENV": sys.prefix,
+        "ORCH_VERIFY_PACKAGE": "fakepkg",
+    }
+    result = subprocess.run(
+        [str(REPO_ROOT / "scripts" / "orch_env_parity.sh"), "test"],
+        cwd=str(fake),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DEVELOPER CHECK (not the gate command)" in result.stdout
+    assert "1 passed" in result.stdout
+    assert "SYNTHETIC_PARITY" not in result.stdout  # contents are seeded, never printed
+    listing = subprocess.run(
+        ["git", "-C", str(fake), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    assert listing.count("worktree ") == 1, listing  # only the main checkout remains
 
 
 def test_make_just_and_script_document_the_developer_parity_path():

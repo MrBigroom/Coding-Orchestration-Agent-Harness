@@ -60,6 +60,15 @@ def test_removing_the_settings_derivation_makes_the_coverage_check_fail():
     assert "ORCHESTRATOR_TOKEN" in missing
 
 
+def test_a_new_env_visible_field_that_is_not_covered_is_reported(monkeypatch):
+    """The drift-detection half of DoD 1: a field outside the clear-list is never silently OK."""
+    real = settings_env_names()
+    monkeypatch.setattr(
+        conftest, "settings_env_names", lambda: (*real, "ORCHESTRATOR_FUTURE_SECRET")
+    )
+    assert "ORCHESTRATOR_FUTURE_SECRET" in conftest.env_names_not_covered()
+
+
 def test_relative_dotenv_is_not_ambient_configuration_in_the_suite(tmp_path, monkeypatch):
     """The session guard makes a repo-level `.env` inert; an explicit path still loads."""
     (tmp_path / ".env").write_text(SEEDED_ENV)
