@@ -113,11 +113,15 @@ def print_wiring() -> None:
         hit = next((i for i, line in enumerate(audit, 1) if needle in line), None)
         print(f"{hit if hit else 'MISSING!':>5} | {needle}")
     print("\n# the frozen runs/<run_id>/ artifact names this evidence lands in (no new file)")
+    # Search the joined source, not line-by-line: the call this proves spans three lines, and a
+    # per-line scan reported it MISSING while the wiring was present.
+    joined = "\n".join(src)
     for needle in [
         'artifact_service.write_text(\n        run.id,\n        "review_payload.md",',
         '"review_payload.md"',
     ]:
-        hit = next((i for i, line in enumerate(src, 1) if needle in line), None)
+        offset = joined.find(needle)
+        hit = joined[:offset].count("\n") + 1 if offset >= 0 else None
         print(f"{hit if hit else 'MISSING!':>5} | {needle}")
 
 
