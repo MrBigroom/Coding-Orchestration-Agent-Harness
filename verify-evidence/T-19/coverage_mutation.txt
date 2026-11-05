@@ -1,9 +1,6 @@
-# HEAD=1e2e522c84d571552b616e4b27e20182472dfdcf tracked-dirty-entries=0 captured=2026-11-05T08:01:19Z
-# Mutation check: the coverage predicate with the OLD hand-kept list (provider keys only).
+# HEAD=1e2e522 tracked-dirty-entries=0
+# Old hand-kept clear-list (provider keys only), i.e. the Settings derivation removed:
 derived settings env names: 42
-T-9/leak names reported as gaps when the Settings derivation is removed:
-  ORCHESTRATOR_SUPABASE_URL
-  ORCHESTRATOR_SUPABASE_EMAIL
-  ORCHESTRATOR_SUPABASE_PASSWORD
-  ORCHESTRATOR_TOKEN
+coverage gaps reported: 42, including ORCHESTRATOR_SUPABASE_URL, ORCHESTRATOR_SUPABASE_EMAIL,
+ORCHESTRATOR_SUPABASE_PASSWORD, ORCHESTRATOR_TOKEN
 MUTATION_DETECTED: removing the Settings derivation fails the coverage check
