@@ -14,7 +14,7 @@ STAMP="# HEAD=$SHA tracked-dirty-entries=$DIRTY"
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="${COMMON%/.git}"
 PY="$MAIN/.venv/bin/python"
-KEEP='ORCH_VERIFY\||passed|failed|skipped|PASSED|SKIPPED|All checks|MUTATION_DETECTED|DEVELOPER CHECK|seeded env file|nothing to seed'
+KEEP='ORCH_VERIFY\||passed|failed|skipped|PASSED|SKIPPED|All checks|MUTATION_DETECTED|MUTATION_GAPS|DEVELOPER CHECK|seeded env file|nothing to seed'
 
 { echo "$STAMP"; echo "# command: ./scripts/orch_verify.sh test"
   ./scripts/orch_verify.sh test; } 2>&1 | grep -E "$KEEP|^# (HEAD|command)" > "$STAGE/full_suite.txt"
@@ -22,14 +22,15 @@ KEEP='ORCH_VERIFY\||passed|failed|skipped|PASSED|SKIPPED|All checks|MUTATION_DET
 { echo "$STAMP"; echo "# command: ./scripts/orch_verify.sh lint"
   ./scripts/orch_verify.sh lint; } 2>&1 | grep -E "$KEEP|^# (HEAD|command)" > "$STAGE/lint.txt"
 
-{ echo "$STAMP"; echo "# command: ./scripts/orch_verify.sh test -vv -k 'env_guard or env_hermeticity'"
-  ./scripts/orch_verify.sh test -vv -k "env_guard or env_hermeticity"; } 2>&1 \
+{ echo "$STAMP"
+  echo "# command: ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k 'env_guard or env_hermeticity'"
+  ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k "env_guard or env_hermeticity"; } 2>&1 \
   | grep -E "$KEEP|::test_|^# (HEAD|command)" > "$STAGE/t19_tests.txt"
 
 { echo "$STAMP"
-  echo "# command: ORCH_ENV_PARITY_FULL=1 ./scripts/orch_verify.sh test -vv -k full_suite_is_identical"
-  ORCH_ENV_PARITY_FULL=1 ./scripts/orch_verify.sh test -vv -k full_suite_is_identical; } 2>&1 \
-  | grep -E "$KEEP|::test_|^# (HEAD|command)" > "$STAGE/full_suite_parity.txt"
+  echo "# command: ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k affected_subset_is_identical"
+  ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k affected_subset_is_identical; } 2>&1 \
+  | grep -E "$KEEP|::test_|^# (HEAD|command)" > "$STAGE/affected_subset.txt"
 
 { echo "$STAMP"
   echo "# command: PYTHONPATH=src $PY - <<'PY' (mutation: replace AMBIENT_ENV with the old provider tuple)"
@@ -53,13 +54,14 @@ PY
 SEED="$STAGE/synthetic.env"
 cat > "$SEED" <<'ENV'
 ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=not-a-secret-0000
 ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=SYNTHETIC_PLACEHOLDER
-ANTHROPIC_API_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PASSWORD=not-a-secret-0001
+ANTHROPIC_API_KEY=not-a-secret-0002
 ENV
-{ echo "$STAMP"; echo "# command: ORCH_PARITY_ENV_FILE=<synthetic .env> make test-parity"
-  ORCH_PARITY_ENV_FILE="$SEED" make test-parity; } 2>&1 \
+{ echo "$STAMP"
+  echo "# command: ORCH_PARITY_ENV_FILE=<synthetic .env> PYTEST_ADDOPTS='-k env_guard' make test-parity"
+  ORCH_PARITY_ENV_FILE="$SEED" PYTEST_ADDOPTS="-k env_guard" make test-parity; } 2>&1 \
   | grep -E "$KEEP|^# (HEAD|command)" > "$STAGE/make_test_parity.txt"
 
 cp "$STAGE"/*.txt "$OUT"/

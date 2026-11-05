@@ -1,18 +1,18 @@
-# HEAD=4276931 tracked-dirty-entries=0
-# command: ./scripts/orch_verify.sh test -vv -k 'env_guard or env_hermeticity'
+# HEAD=c3e114a tracked-dirty-entries=0
+# command: ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k 'env_guard or env_hermeticity'
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
-tests/integration/test_env_hermeticity.py::test_full_suite_is_identical_with_and_without_a_seeded_dotenv SKIPPED [  7%]
+tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv PASSED [  7%]
 tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard PASSED [ 14%]
 tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv PASSED [ 21%]
 tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment PASSED [ 28%]
 tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree PASSED [ 35%]
 tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_seeded_worktree PASSED [ 42%]
 tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 50%]
-tests/unit/test_env_guard.py::test_secret_env_is_exactly_what_pydantic_reads PASSED [ 57%]
-tests/unit/test_env_guard.py::test_alias_and_case_sensitivity_are_derived_like_pydantic PASSED [ 64%]
-tests/unit/test_env_guard.py::test_a_new_env_visible_field_that_is_not_covered_is_reported PASSED [ 71%]
+tests/unit/test_env_guard.py::test_the_leaked_supabase_names_are_covered PASSED [ 57%]
+tests/unit/test_env_guard.py::test_a_new_env_visible_field_that_is_not_covered_is_reported PASSED [ 64%]
+tests/unit/test_env_guard.py::test_alias_and_case_sensitivity_are_read_and_covered PASSED [ 71%]
 tests/unit/test_env_guard.py::test_removing_the_settings_derivation_makes_the_coverage_check_fail PASSED [ 78%]
 tests/unit/test_env_guard.py::test_restoring_the_import_environment_drops_arbitrary_dotenv_keys PASSED [ 85%]
 tests/unit/test_env_guard.py::test_relative_dotenv_is_not_ambient_configuration_in_the_suite PASSED [ 92%]
 tests/unit/test_env_guard.py::test_explicit_env_file_path_is_still_loadable PASSED [100%]
-================ 13 passed, 1 skipped, 606 deselected in 5.85s =================
+===================== 14 passed, 606 deselected in 20.05s ======================
