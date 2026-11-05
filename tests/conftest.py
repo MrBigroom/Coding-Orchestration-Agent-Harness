@@ -19,6 +19,17 @@ SECRET_ENV = (
     "GLM_API_KEY",
     "HERMES_API_KEY",
     "ORCHESTRATOR_TOKEN",
+    # A repo-level `.env` leaks into os.environ as SOON AS any test module imports the app at
+    # import time: core/config.get_settings() calls load_env_file(), which load_dotenv()s `.env`
+    # into the process environment, and that survives the chdir below. Cleared here so "disabled by
+    # default" assertions mean what they say in a checkout that has a `.env`. (Found by the T-9
+    # merge: tests/integration/test_notifications.py imports orchestrator.api.main at module level,
+    # so a full-suite run in the operator's checkout went red on test_sync_api while every gated
+    # run -- a worktree with no `.env`, because .gitignore excludes it -- stayed green.)
+    "ORCHESTRATOR_SUPABASE_URL",
+    "ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY",
+    "ORCHESTRATOR_SUPABASE_EMAIL",
+    "ORCHESTRATOR_SUPABASE_PASSWORD",
 )
 
 

@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import col, select
 
-from orchestrator.api.main import create_app
 from orchestrator.core.models import Notification, Run
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import (
@@ -27,6 +26,21 @@ from tests.conftest import make_repo, requires_git
 pytestmark = requires_git
 
 RUN_TESTS = "import sys; print('2 passed, 0 failed'); sys.exit(0)\n"
+
+
+def _create_app():
+    """Build the app on call, never at import time.
+
+    A module-level `from orchestrator.api.main import create_app` runs during collection, while the
+    working directory is still the repo, so core.config.get_settings() -> load_env_file() reads a
+    developer `.env` into os.environ — and that survives conftest's chdir. That is how the T-9 merge
+    turned tests/integration/test_sync_api.py red in a checkout with a `.env` while every gated run
+    (a worktree, which never receives the gitignored `.env`) stayed green. tests/conftest.py now
+    clears the leaked keys; importing here keeps this file off that list entirely.
+    """
+    from orchestrator.api.main import create_app
+
+    return create_app()
 
 
 @pytest.fixture
@@ -149,7 +163,7 @@ def test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending(initiali
             )
         )
         s.commit()
-    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
+    with TestClient(_create_app(), base_url="http://127.0.0.1:8321") as client:
         assert client.get("/api/health").status_code == 200
     assert sent and sent[0]["title"] == "left pending"
     with session_scope() as s:
@@ -162,7 +176,7 @@ def test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending(initiali
 def test_notifications_endpoint_serves_the_persistent_list(initialized):
     from orchestrator.core.db import session_scope
 
-    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
+    with TestClient(_create_app(), base_url="http://127.0.0.1:8321") as client:
         with session_scope() as s:
             s.add(
                 Notification(
