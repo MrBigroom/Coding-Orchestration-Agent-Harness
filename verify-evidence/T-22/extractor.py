@@ -227,7 +227,7 @@ def print_mutation() -> None:
             raw, tried, tried, review_audit.BASIS_EXPLICIT, "unresolved: claimed name"
         )
 
-    def omitted_as_absent(cwd, res, universe, index, source, supplied):
+    def omitted_as_absent(res, universe, index, source, supplied):
         if res.resolved and supplied is not None and res.path in supplied.diff_cut:
             return review_audit.AbsenceCheck(
                 finding_index=index,
@@ -240,7 +240,7 @@ def print_mutation() -> None:
                 basis=res.basis,
                 tried=res.tried,
             )
-        return orig_visibility(cwd, res, universe, index, source, supplied)
+        return orig_visibility(res, universe, index, source, supplied)
 
     def failed_lookup_gets_a_path(raw, universe):
         res = orig_resolve(raw, universe)

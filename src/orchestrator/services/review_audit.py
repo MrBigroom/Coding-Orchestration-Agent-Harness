@@ -22,20 +22,23 @@ against BARE FILENAMES (`capture.sh`, `t19_tests.txt`, `full_suite.txt`, ...) wh
 paths were tracked at `verify-evidence/T-19/<name>`. The checker looked for the literal name at
 the worktree root, found nothing, and returned the strongest verdict available — a confident
 false absence. So every path claim now goes through `resolve_claim_path()` against a
-`PathUniverse` built from the five sources that could name a path (supplied patch, diffstat,
-truncation manifest, `git ls-tree` at the reviewed commit, worktree filesystem):
+`PathUniverse` built from the four sources that could name a path (supplied patch, diffstat,
+truncation manifest, `git ls-tree` at the reviewed commit). The worktree filesystem is not one
+of them: an untracked or gitignored file is not part of the commit the reviewer saw.
 
-  - exactly one match  -> the claim is judged at that resolved path, and the row records how it
-    was resolved;
-  - several matches    -> `unchecked` / `unresolvable-claim`, listing EVERY candidate; one is
-    never picked;
+  - exactly one basename match -> the claim is judged at that resolved path, and the row records
+    how it was resolved;
+  - several matches, even when one is a root file -> `unchecked` / `unresolvable-claim`, listing
+    EVERY candidate; one is never picked;
   - no match and the claim gave only a bare name -> `unchecked` / `unresolvable-claim` with the
     reason `no path could be resolved from the claim`;
   - no match and the claim itself named a directory-qualified path -> `confirmed`, because that
-    path is now shown absent from all five sources, and the row names the sources searched.
+    path is now shown absent from the repository, and the row names the sources searched.
 
-`confirmed` therefore requires a located path; a failed lookup can only ever produce
-`unchecked`. The three states a reviewer acts on are labelled separately (DoD 3):
+`confirmed` therefore requires a located path **that the repository does not contain**; a failed
+lookup, or a path the repository does contain, can only ever produce `unchecked` (or, when the
+archived patch supplied it in full, `refuted`). The three states a reviewer acts on are labelled
+separately (DoD 3):
 `omitted-from-review-input` (present in the repository, withheld by the diff budget — T-16's
 problem, not the Worker's), `absent-at-reviewed-commit` (a real evidence gap) and
 `unresolvable-claim` (the checker cannot judge). The frozen `confirmed | refuted | unchecked`
@@ -47,7 +50,6 @@ Everything here is offline: local git commands and local files only.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -78,39 +80,24 @@ _FILE = re.compile(
 _TEST = re.compile(r"\b(test_[A-Za-z0-9_]+)\b")
 _LINE = re.compile(r":(?P<line>\d{1,7})\b")
 
-# --- the five sources a path claim is resolved against (T-22 DoD 1) -----------------
+# --- the four sources a path claim is resolved against (T-22 DoD 1) -----------------
+# The worktree filesystem is deliberately NOT one of them: untracked and gitignored files are not
+# what the reviewed commit contains, and counting them let a file missing from the commit be
+# labelled a review-input omission instead of an evidence gap (T-22 round-2 finding 3).
 SOURCE_PATCH = "supplied patch"
 SOURCE_DIFFSTAT = "diffstat"
 SOURCE_MANIFEST = "truncation manifest"
 SOURCE_LS_TREE = "git ls-tree HEAD"
-SOURCE_WORKTREE = "worktree filesystem"
 # Canonical order, so "sources searched" reads the same in every row.
 ALL_SOURCES = (
     SOURCE_PATCH,
     SOURCE_DIFFSTAT,
     SOURCE_MANIFEST,
     SOURCE_LS_TREE,
-    SOURCE_WORKTREE,
 )
-# Presence in the repository means one of these two named it; patch/diffstat/manifest name what
-# the reviewer received, not what the branch contains.
-_REPOSITORY_SOURCES = (SOURCE_LS_TREE, SOURCE_WORKTREE)
-
-# Directories never walked for a basename lookup: dependency and build trees are not evidence,
-# and scanning them would be slow and full of collisions.
-_SKIP_DIRS = {
-    ".git",
-    ".venv",
-    "venv",
-    "node_modules",
-    "dist",
-    "build",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "site-packages",
-}
+# "Presence in the repository" means tracked at the reviewed commit. The patch/diffstat/manifest
+# describe what the reviewer received, or what the commit changed, not what the commit contains.
+_REPOSITORY_SOURCES = (SOURCE_LS_TREE,)
 
 # The frozen provenance vocabulary (docs/frozen-contracts.md: confirmed | refuted | unchecked).
 STATUS_CONFIRMED = "confirmed"
@@ -213,19 +200,6 @@ def _tracked_paths(cwd: Path) -> tuple[list[str], str]:
     return [p for p in res.stdout.split("\0") if p.strip()], sha.stdout.strip()
 
 
-def _filesystem_paths(cwd: Path) -> list[str]:
-    out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(cwd):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
-        for name in filenames:
-            full = Path(dirpath) / name
-            try:
-                out.append(str(full.relative_to(cwd)))
-            except ValueError:
-                continue
-    return out
-
-
 def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathUniverse:
     """Collect the paths the reviewer was supplied, the diffstat, the manifest and git.
 
@@ -248,8 +222,6 @@ def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathU
         universe.head_sha = head
         for path in tracked:
             universe.add(path, SOURCE_LS_TREE)
-        for path in _filesystem_paths(cwd):
-            universe.add(path, SOURCE_WORKTREE)
     return universe
 
 
@@ -271,56 +243,63 @@ class PathResolution:
 
 
 def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
-    """Resolve one claimed path against every source, never guessing between candidates."""
+    """Resolve one claimed path against every source, never guessing between candidates.
+
+    A directory-qualified claim names its own location, so an exact miss is conclusive. A bare
+    name does not, and it is matched by basename against the whole universe *before* any exact
+    root match is accepted: run 38's `README.md` had a root file and a
+    `verify-evidence/T-19/README.md`, and silently picking the root one turned a real evidence
+    file into a confident false refutation (T-22 round-2 finding 1).
+    """
     tried = normalize_claim_path(raw)
     if not tried:
         return PathResolution(raw, tried, "", BASIS_NOT_A_PATH, "the claim named no path")
-    if universe.has(tried):
+    if claim_is_explicit(tried):
+        if universe.has(tried):
+            return PathResolution(
+                raw,
+                tried,
+                tried,
+                BASIS_RESOLUTION,
+                "the claim's own path is listed by the sources searched",
+                found_in=universe.names(tried),
+            )
+        # A directory-qualified path that nothing lists: the claim names its own location, so the
+        # lookup did not fail — the path is genuinely absent, and every source says so.
         return PathResolution(
             raw,
             tried,
             tried,
-            BASIS_RESOLUTION,
-            "the claim's own path is listed by the sources searched",
-            found_in=universe.names(tried),
+            BASIS_EXPLICIT,
+            "the claim itself names this path and no source lists it anywhere",
         )
-    if not claim_is_explicit(tried):
-        matches = universe.by_basename(tried)
-        if len(matches) == 1:
-            only = matches[0]
-            return PathResolution(
-                raw,
-                tried,
-                only,
-                BASIS_RESOLUTION,
-                f"the bare name matched exactly one path among the sources searched: {only}",
-                found_in=universe.names(only),
-            )
-        if len(matches) > 1:
-            return PathResolution(
-                raw,
-                tried,
-                "",
-                BASIS_FAILED_LOOKUP,
-                f"{len(matches)} paths share this bare name; none was picked",
-                candidates=tuple(matches),
-            )
+    matches = universe.by_basename(tried)
+    if len(matches) == 1:
+        only = matches[0]
+        return PathResolution(
+            raw,
+            tried,
+            only,
+            BASIS_RESOLUTION,
+            f"the bare name matched exactly one path among the sources searched: {only}",
+            found_in=universe.names(only),
+        )
+    if len(matches) > 1:
         return PathResolution(
             raw,
             tried,
             "",
             BASIS_FAILED_LOOKUP,
-            "no path could be resolved from the claim: this bare name is listed by none of the "
-            "sources searched",
+            f"{len(matches)} paths share this bare name; none was picked",
+            candidates=tuple(matches),
         )
-    # A directory-qualified path that nothing lists: the claim names its own location, so the
-    # lookup did not fail — the path is genuinely absent, and every source says so.
     return PathResolution(
         raw,
         tried,
-        tried,
-        BASIS_EXPLICIT,
-        "the claim itself names this path and no source lists it anywhere",
+        "",
+        BASIS_FAILED_LOOKUP,
+        "no path could be resolved from the claim: this bare name is listed by none of the "
+        "sources searched",
     )
 
 
@@ -547,17 +526,24 @@ def _judged(
     )
 
 
-def _repo_present(cwd: Path | None, universe: PathUniverse, path: str) -> bool:
-    """Is this path in the repository at the reviewed commit (or on the worktree filesystem)?"""
+def _repo_present(universe: PathUniverse, path: str) -> bool:
+    """Is this path in the repository at the reviewed commit?
+
+    Only `git ls-tree HEAD` answers that. An untracked file in the worktree is not in the commit
+    the reviewer was shown, so it must not rescue a claim about the repository (T-22 round-2
+    finding 3).
+    """
     if not path:
         return False
-    if cwd is not None and (cwd / normalize_claim_path(path)).is_file():
-        return True
     return universe.in_repository(path)
 
 
 def _visibility_verdict(
-    path: str, present: bool, universe: PathUniverse, supplied: SuppliedEvidence | None
+    path: str,
+    present: bool,
+    repo_searched: bool,
+    universe: PathUniverse,
+    supplied: SuppliedEvidence | None,
 ) -> tuple[str, str, str]:
     """Decide `(status, state, wording)` for a "was not supplied" claim.
 
@@ -566,22 +552,34 @@ def _visibility_verdict(
     2). What existence CAN do is name the state (T-22 DoD 3): a resolved path that is in the
     repository but did not reach the reviewer is `omitted-from-review-input` — a diff-budget
     failure owned by T-16, not a Worker evidence gap — and only a path the repository itself does
-    not contain is `absent-at-reviewed-commit`.
+    not contain is `absent-at-reviewed-commit`. `confirmed` is reserved for that second state
+    (T-22 DoD 2); a path that exists is never confirmed absent by this function.
     """
-    repo_side = "in the repository" if present else "not in the repository at this commit"
+    repo_side = (
+        "in the repository at the reviewed commit"
+        if present
+        else "not in the repository at the reviewed commit"
+    )
+    if not repo_searched:
+        return (
+            STATUS_UNCHECKED,
+            STATE_UNDECIDED,
+            "no repository view (`git ls-tree HEAD`) was available, so absence cannot be "
+            "confirmed; searched: " + universe.source_list(),
+        )
     if supplied is None:
         if present:
             return (
                 STATUS_UNCHECKED,
                 STATE_UNDECIDED,
-                "the path exists in the worktree, but presence in the supplied artifacts cannot "
-                "be decided without the archived truncation manifest",
+                "the path is in the repository at the reviewed commit, but presence in the "
+                "supplied artifacts cannot be decided without the archived truncation manifest",
             )
         return (
             STATUS_CONFIRMED,
             STATE_ABSENT,
-            f"{STATE_ABSENT}: the resolved path is not in the task worktree and no source lists "
-            f"it (no truncation manifest was available; searched: {universe.source_list()})",
+            f"{STATE_ABSENT}: the resolved path is {repo_side} and no source lists it as present "
+            f"(no truncation manifest was available; searched: {universe.source_list()})",
         )
     if supplied.section_cut:
         return (
@@ -597,17 +595,19 @@ def _visibility_verdict(
             if included == 0
             else f"only {included} of {available} bytes reached the reviewer"
         )
-        cause = (
-            "the evidence exists, the review input did not carry it (diff budget, owned by T-16), "
-            "so this is not a Worker evidence gap"
-            if present
-            else "there was nothing in the repository to supply"
-        )
+        if present:
+            return (
+                STATUS_UNCHECKED,
+                STATE_OMITTED,
+                f"{STATE_OMITTED}: the resolved path is {repo_side} and the archived truncation "
+                f"manifest says {cut_text} — the evidence exists, the review input did not carry "
+                "it (diff budget, owned by T-16), so this is not a Worker evidence gap",
+            )
         return (
             STATUS_CONFIRMED,
-            STATE_OMITTED if present else STATE_ABSENT,
-            f"{STATE_OMITTED if present else STATE_ABSENT}: the resolved path is {repo_side} and "
-            f"the archived truncation manifest says {cut_text} — {cause}",
+            STATE_ABSENT,
+            f"{STATE_ABSENT}: the resolved path is {repo_side} and the archived truncation "
+            f"manifest says {cut_text} — there was nothing in the repository to supply",
         )
     if path in supplied.diff_supplied:
         return (
@@ -617,35 +617,37 @@ def _visibility_verdict(
             "manifest records no truncation for it",
         )
     if path in supplied.changed_paths:
-        cause = (
-            "present in the repository, but the supplied patch has no section for it — a "
-            "review-input gap, see the diff-completeness findings"
-            if present
-            else "listed by no source, so nothing was there to supply"
-        )
+        if present:
+            return (
+                STATUS_UNCHECKED,
+                STATE_OMITTED,
+                f"{STATE_OMITTED}: changed by this task and {repo_side}, but the supplied patch "
+                "has no section for it — a review-input gap, see the diff-completeness findings; "
+                "this is not a Worker evidence gap",
+            )
         return (
             STATUS_CONFIRMED,
-            STATE_OMITTED if present else STATE_ABSENT,
-            f"{STATE_OMITTED if present else STATE_ABSENT}: changed by this task and {cause}",
+            STATE_ABSENT,
+            f"{STATE_ABSENT}: changed by this task but {repo_side}, so nothing was there to "
+            "supply",
         )
     if present:
         return (
             STATUS_UNCHECKED,
             STATE_UNDECIDED,
-            "the path exists in the worktree but is not part of this task's diff, so presence in "
-            "the supplied artifacts cannot be decided mechanically",
+            "the path is in the repository at the reviewed commit but is not part of this task's "
+            "diff, so presence in the supplied artifacts cannot be decided mechanically",
         )
     return (
         STATUS_CONFIRMED,
         STATE_ABSENT,
-        f"{STATE_ABSENT}: the resolved path is listed by none of the sources searched "
-        f"({universe.source_list()})"
+        f"{STATE_ABSENT}: the resolved path is {repo_side} and is listed by none of the sources "
+        f"searched ({universe.source_list()})"
         + (f" at commit {universe.head_sha}" if universe.head_sha else ""),
     )
 
 
 def _check_visibility(
-    cwd: Path | None,
     res: PathResolution,
     universe: PathUniverse,
     index: int,
@@ -660,7 +662,11 @@ def _check_visibility(
     if not res.resolved:
         return _unresolved_claim(res, universe, index, source)
     status, state, detail = _visibility_verdict(
-        res.path, _repo_present(cwd, universe, res.path), universe, supplied
+        res.path,
+        _repo_present(universe, res.path),
+        SOURCE_LS_TREE in universe.searched,
+        universe,
+        supplied,
     )
     return _judged(res, universe, index, source, status=status, state=state, detail=detail)
 
@@ -685,6 +691,25 @@ def _manifest_topic_checks(
         topic = item[5:] if is_path else item
         if not topic or topic.lower() not in low:
             continue
+        if is_path:
+            # A manifest record that names a path is judged at that path, with the same
+            # visibility rules as any other claim: a file the repository contains is never
+            # confirmed absent just because the budget dropped it (T-22 DoD 2).
+            res = resolve_claim_path(topic, universe)
+            if not res.resolved:
+                out.append(_unresolved_claim(res, universe, index, source))
+                continue
+            status, state, detail = _visibility_verdict(
+                res.path,
+                _repo_present(universe, res.path),
+                SOURCE_LS_TREE in universe.searched,
+                universe,
+                supplied,
+            )
+            out.append(
+                _judged(res, universe, index, source, status=status, state=state, detail=detail)
+            )
+            continue
         out.append(
             AbsenceCheck(
                 finding_index=index,
@@ -698,10 +723,10 @@ def _manifest_topic_checks(
                 ),
                 source=source,
                 state=STATE_OMITTED,
-                resolved_path=topic if is_path else "",
+                resolved_path="",
                 basis=BASIS_MANIFEST,
                 tried=topic,
-                found_in=universe.names(topic) if is_path else (),
+                found_in=(),
                 sources=tuple(s for s in ALL_SOURCES if s in universe.searched),
             )
         )
@@ -715,7 +740,8 @@ def _existence_verdict(
 
     Run 38 confirmed `capture.sh` because `<worktree>/capture.sh` does not exist, while
     `verify-evidence/T-19/capture.sh` was tracked the whole time, so the path has already been
-    resolved here (T-22 DoD 1/2).
+    resolved here (T-22 DoD 1/2). Repository presence means `git ls-tree HEAD`: a file that only
+    exists untracked in the worktree is not in the commit the reviewer saw (round-2 finding 3).
     """
     rel = res.path
     target = (root / rel).resolve()
@@ -728,7 +754,24 @@ def _existence_verdict(
             "path is outside the task worktree; not checked",
             raw,
         )
+    tracked = universe.in_repository(rel)
     line_match = _LINE.search(line_window)
+    if not tracked:
+        untracked_note = ""
+        if target.exists():
+            untracked_note = (
+                " (it exists in the worktree but is not tracked at the reviewed commit, so it is "
+                "not in the repository the reviewer was shown)"
+            )
+        return (
+            STATUS_CONFIRMED,
+            STATE_ABSENT,
+            f"{STATE_ABSENT}: {rel} is not in `git ls-tree HEAD` at the reviewed commit and is "
+            f"listed by none of the sources as present ({universe.source_list()})"
+            + (f" at commit {universe.head_sha}" if universe.head_sha else "")
+            + untracked_note,
+            raw,
+        )
     if target.is_file() and line_match:
         wanted = int(line_match.group("line"))
         count = _line_count(target)
@@ -737,47 +780,20 @@ def _existence_verdict(
             return (
                 STATUS_REFUTED,
                 STATE_PRESENT,
-                f"file exists in the task worktree at {rel} with {count} lines, so line {wanted} "
-                "is present",
+                f"file is tracked at {rel} with {count} lines, so line {wanted} is present",
                 claim,
             )
         return (
             STATUS_CONFIRMED,
             STATE_ABSENT,
-            f"{STATE_ABSENT}: the file is present at {rel} but has only {count} lines, so line "
+            f"{STATE_ABSENT}: the file is tracked at {rel} but has only {count} lines, so line "
             f"{wanted} does not exist",
             claim,
         )
-    if target.is_file():
-        return (
-            STATUS_REFUTED,
-            STATE_PRESENT,
-            f"file exists in the task worktree at {rel}",
-            raw,
-        )
-    if target.exists():
-        return (
-            STATUS_REFUTED,
-            STATE_PRESENT,
-            f"path exists in the task worktree at {rel} (not a regular file)",
-            raw,
-        )
-    if universe.has(rel):
-        # Named by a source (tracked at HEAD, or in the patch/diffstat) but gone from the disk:
-        # which of the two the claim meant is not decidable, so it is not confirmed either way.
-        return (
-            STATUS_UNCHECKED,
-            STATE_UNDECIDED,
-            f"{rel} is not on the worktree filesystem but is named by "
-            f"{', '.join(universe.names(rel))}; the harness cannot tell which the claim meant",
-            raw,
-        )
     return (
-        STATUS_CONFIRMED,
-        STATE_ABSENT,
-        f"{STATE_ABSENT}: the path named by the claim is listed by none of the sources searched "
-        f"({universe.source_list()})"
-        + (f" at commit {universe.head_sha}" if universe.head_sha else ""),
+        STATUS_REFUTED,
+        STATE_PRESENT,
+        f"file is tracked at the reviewed commit at {rel}",
         raw,
     )
 
@@ -843,7 +859,7 @@ def _check_claim_text(
         raw = match.group(1).strip().rstrip(".,;:)}]")
         res = resolve_claim_path(raw, universe)
         if visibility:
-            claims.append(_check_visibility(cwd, res, universe, index, source, supplied))
+            claims.append(_check_visibility(res, universe, index, source, supplied))
             continue
         claims.append(
             _check_existence_claim(
@@ -857,7 +873,7 @@ def _check_claim_text(
         if found and visibility and supplied is not None:
             claims.append(
                 _check_visibility(
-                    cwd, resolve_claim_path(found, universe), universe, index, source, supplied
+                    resolve_claim_path(found, universe), universe, index, source, supplied
                 )
             )
             continue
@@ -1011,10 +1027,12 @@ def render_absence_checks(checks: list[AbsenceCheck]) -> str:
     lines.append("")
     lines.append(
         "Status vocabulary (frozen): `refuted` = the repository or the archived input disproves "
-        "the claim. `confirmed` = the claim holds **and the claim resolved to a path**: a name "
-        "that no source lists, or an explicit path absent from every source. `unchecked` = no "
-        "mechanical decision was possible, so the finding keeps its normal weight "
-        "(fail closed).\n\n"
+        "the claim. `confirmed` = the claim names a path that was located **and the repository "
+        "does not contain it**: an explicit path absent from every source, or a resolved bare "
+        "name absent at the reviewed commit. A path the repository contains is never confirmed "
+        "absent, even when the diff budget withheld it. `unchecked` = no confirmed absence could "
+        "be established (the lookup found nothing, several candidates matched, or the path "
+        "exists), so the finding keeps its normal weight (fail closed).\n\n"
         "State labels (T-22) say WHICH thing the verdict means, because a bare `confirmed` used to "
         "cover both a review-input gap and a Worker evidence gap: "
         f"`{STATE_OMITTED}` = the file is in the repository but did not reach the reviewer — a "

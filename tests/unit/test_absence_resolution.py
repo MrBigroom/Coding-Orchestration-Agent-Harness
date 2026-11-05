@@ -83,7 +83,7 @@ def test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent(tmp_pa
     assert checks[0].resolved_path == f"{EVIDENCE_DIR}/capture.sh"
     assert checks[0].basis == review_audit.BASIS_RESOLUTION
     assert checks[0].detail == (
-        f"file exists in the task worktree at {EVIDENCE_DIR}/capture.sh"
+        f"file is tracked at the reviewed commit at {EVIDENCE_DIR}/capture.sh"
     )
 
 
@@ -171,7 +171,9 @@ def test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state(tmp_path):
     supplied = _supplied_for(repo, omitted=[f"{EVIDENCE_DIR}/lint.txt"])
     checks = review_audit.check_missing_artifacts(["lint.txt"], repo, supplied)
 
-    assert checks[0].status == "confirmed"
+    # DoD 2: the path was located AND the repository contains it, so the strongest label is not
+    # available. The state carries the budget meaning instead of a false confirmed absence.
+    assert checks[0].status == "unchecked"
     assert checks[0].state == review_audit.STATE_OMITTED
     assert "not a Worker evidence gap" in checks[0].detail
     assert review_audit.STATE_ABSENT not in checks[0].detail
@@ -183,7 +185,7 @@ def test_a_changed_file_with_no_patch_section_is_the_budget_state_too(tmp_path):
     supplied = review_audit.supplied_evidence("", [], {f"{EVIDENCE_DIR}/t19_tests.txt"})
     checks = review_audit.check_missing_artifacts(["t19_tests.txt"], repo, supplied)
 
-    assert checks[0].status == "confirmed"
+    assert checks[0].status == "unchecked"
     assert checks[0].state == review_audit.STATE_OMITTED
     assert "no section for it" in checks[0].detail
 
@@ -328,12 +330,15 @@ def test_run38_fixture_yields_the_corrected_mix_and_no_false_absence(tmp_path):
     checks, _supplied, _universe = _run38_checks(tmp_path)
     tally = review_audit.tally_verdicts(checks)
 
-    # reviews.28 reported "15 confirmed, 1 refuted, 2 unchecked". The correction moves the two
-    # buckets that were wrong: every confirmed verdict now names a resolved path, and the claims
-    # the checker could not place are reported as such instead of as confirmations.
-    assert tally.startswith("14 confirmed, 1 refuted, 3 unchecked ")
+    # reviews.28 reported "15 confirmed, 1 refuted, 2 unchecked". Every one of those confirmed
+    # verdicts was against a file the repository contained, so the corrected mix confirms none:
+    # the located files are the budget state, and README.md is ambiguous between the root file and
+    # verify-evidence/T-19/README.md, so it is unresolved with both candidates listed.
+    assert tally.startswith("0 confirmed, 1 refuted, 17 unchecked ")
     assert "from a failed lookup: 0" in tally
-    assert "by path-resolution: 14" in tally
+    assert "by path-resolution: 0" in tally
+    assert "11 omitted-from-review-input" in tally
+    assert "6 unresolvable-claim" in tally
     assert [
         c.claim for c in checks if c.status == "confirmed" and c.basis == "failed-lookup"
     ] == []
@@ -345,6 +350,21 @@ def test_run38_fixture_yields_the_corrected_mix_and_no_false_absence(tmp_path):
     )
 
 
+def test_run38_readme_ambiguity_is_unchecked_with_both_candidates(tmp_path):
+    """Round-2 finding 1: a root README must not silently hide the nested evidence README."""
+    checks, _supplied, _universe = _run38_checks(tmp_path)
+    rows = [c for c in checks if c.claim == "README.md"]
+
+    assert rows
+    assert all(c.status == "unchecked" for c in rows)
+    assert all(c.state == review_audit.STATE_UNRESOLVED for c in rows)
+    assert all(
+        set(c.candidates) == {"README.md", f"{EVIDENCE_DIR}/README.md"} for c in rows
+    )
+    rendered = review_audit.render_absence_checks(rows)
+    assert rendered.count("README.md") >= 2
+
+
 def test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved(tmp_path):
     """`absence check [confirmed] handoff.md` in run 38: the repo has no handoff.md at all."""
     checks, _supplied, _universe = _run38_checks(tmp_path)
@@ -353,3 +373,62 @@ def test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved(tmp_pa
     assert row.status == "unchecked"
     assert row.state == review_audit.STATE_UNRESOLVED
     assert row.resolved_path == ""
+
+
+# --- round-2 findings 1 and 3: ambiguity and the reviewed commit, not the worktree -------
+
+
+def test_a_bare_name_with_a_root_and_nested_match_is_ambiguous_not_root(tmp_path):
+    """A root file is just one candidate; it must not win by being an exact match."""
+    repo = make_repo(
+        tmp_path / "repo",
+        {"README.md": "# root\n", f"{EVIDENCE_DIR}/README.md": "# evidence\n"},
+    )
+    universe = review_audit.build_universe(repo, None)
+    res = review_audit.resolve_claim_path("README.md", universe)
+
+    assert res.path == ""
+    assert set(res.candidates) == {"README.md", f"{EVIDENCE_DIR}/README.md"}
+    assert "none was picked" in res.reason
+
+
+def test_an_untracked_worktree_file_is_absent_at_the_reviewed_commit(tmp_path):
+    """Round-2 finding 3: only `git ls-tree HEAD` says what the reviewed commit contains."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
+    untracked = repo / EVIDENCE_DIR / "uncommitted.txt"
+    untracked.parent.mkdir(parents=True, exist_ok=True)
+    untracked.write_text("not committed\n")
+    path = f"{EVIDENCE_DIR}/uncommitted.txt"
+
+    finding = ReviewFinding(file_or_area=path, issue=f"{path} is missing", violates="DoD 5")
+    checks = review_audit.check_findings([finding], repo)
+
+    assert checks[0].status == "confirmed"
+    assert checks[0].state == review_audit.STATE_ABSENT
+    assert "not tracked at the reviewed commit" in checks[0].detail
+
+
+def test_an_untracked_file_is_not_the_budget_state(tmp_path):
+    """The visibility half of the same rule: an uncommitted file cannot be "in the repository"."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
+    untracked = repo / EVIDENCE_DIR / "uncommitted.txt"
+    untracked.parent.mkdir(parents=True, exist_ok=True)
+    untracked.write_text("not committed\n")
+    supplied = review_audit.supplied_evidence("", [], set())
+
+    checks = review_audit.check_missing_artifacts(
+        [f"{EVIDENCE_DIR}/uncommitted.txt"], repo, supplied
+    )
+
+    assert checks[0].status == "confirmed"
+    assert checks[0].state == review_audit.STATE_ABSENT
+    assert "not in the repository at the reviewed commit" in checks[0].detail
+
+
+def test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain(tmp_path):
+    """DoD 2 as an invariant over the incident fixture, not just one example."""
+    checks, _supplied, _universe = _run38_checks(tmp_path)
+
+    confirmed = [c for c in checks if c.status == "confirmed"]
+    assert confirmed == []
+    assert all(c.state == review_audit.STATE_ABSENT for c in confirmed)

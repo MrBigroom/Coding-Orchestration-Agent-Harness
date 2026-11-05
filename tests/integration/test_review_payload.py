@@ -105,7 +105,7 @@ def test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval(
 
     payload = _payload(outcome)
     assert "| README.md | finding | **refuted** |" in payload
-    assert "file exists in the task worktree" in payload
+    assert "file is tracked at the reviewed commit" in payload
 
     events = _events(session, task, "review_absence_refuted")
     assert len(events) == 1
@@ -208,7 +208,9 @@ def test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absen
     monkeypatch.setattr(get_settings(), "max_diff_tokens", 1)
     task, outcome = _run(session, project, ["mock", "mock-visibility"])
     payload = _payload(outcome)
-    assert "| MOCK_CHANGE.md | finding | **confirmed** |" in payload
+    # DoD 2: the path is located but the repository contains it, so the strongest label is not
+    # available; the state carries the budget meaning instead of a false confirmed absence.
+    assert "| MOCK_CHANGE.md | finding | **unchecked** |" in payload
     assert "omitted-from-review-input" in payload
     assert "this is not a Worker evidence gap" in payload
     # The archived payload's diff shows the file was omitted by the budget, which is the cause.
