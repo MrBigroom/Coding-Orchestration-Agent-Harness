@@ -279,19 +279,20 @@ def command_allowed(project: Project, command: str) -> bool:
 def environment_summary(cwd: Path) -> str:
     """Name the world a verification command actually ran in (T-19 DoD 3).
 
-    A gate green and an operator-checkout red can both be true because `git worktree add` copies
-    tracked files only: a gated worktree has no `.env`, no `node_modules` and no `.venv`. Recording
-    that in `verification.json`'s existing check evidence lets a human compare the two runs without
-    inventing a new artifact or a new check-record field (the layout and the record shape are
-    frozen).
+    Recorded inside verification.json's existing `evidence` string because the check-record shape
+    and the runs/<run_id>/ layout are frozen. The "tracked-files-only" label is only claimed when
+    the cwd really is a linked worktree (`.git` is a file), not for every checkout without a .env.
     """
     cwd = Path(cwd)
+    linked_worktree = (cwd / ".git").is_file()
     has_env = (cwd / ".env").is_file()
     has_node_modules = any(
         (cwd / candidate).is_dir() for candidate in ("node_modules", "web/node_modules")
     )
     has_venv = (cwd / ".venv").exists()
-    env_state = "present" if has_env else "absent (tracked-files-only worktree)"
+    env_state = "present" if has_env else "absent"
+    if not has_env and linked_worktree:
+        env_state += " (tracked-files-only worktree)"
     return (
         f"cwd={cwd}; local .env {env_state}; "
         f"node_modules {'present' if has_node_modules else 'absent'}; "
@@ -416,6 +417,48 @@ def _tail(text: str, limit: int = 400) -> str:
     return flat[-limit:] if len(flat) > limit else flat
 
 
+def _marker_problems(rows: list[dict[str, str]], root: Path) -> list[str]:
+    """Why an ORCH_VERIFY marker does not prove this worktree was the code under test."""
+    problems: list[str] = []
+    for row in rows:
+        module_file = row.get("module_file", "")
+        worktree_root = row.get("worktree_root", "")
+        if not module_file or not worktree_root:
+            problems.append(f"incomplete marker: {row}")
+        elif not _under(module_file, str(root)):
+            problems.append(
+                f"{row.get('module', '?')} imported from {module_file}, outside the worktree"
+            )
+        elif not _same_dir(worktree_root, str(root)):
+            problems.append(f"wrapper root {worktree_root} is not the worktree {root}")
+    return problems
+
+
+def _drop_snapshots(project: Project, key: str, add, label: str, report_success: bool) -> None:
+    """Remove this project's proof worktrees for `key`, first unlinking any seeded `.env`.
+
+    A run killed between the copy and the cleanup would otherwise park a copy of the operator's
+    credentials in an untracked-dirty worktree that `cleanup` deliberately refuses to remove.
+    """
+    from orchestrator.services import git_service
+
+    try:
+        leftovers = [
+            m
+            for m in git_service.managed_worktrees()
+            if m["project_slug"] == project.slug and m["task_id"] == key
+        ]
+        for leftover in leftovers:
+            (leftover["path"] / ".env").unlink(missing_ok=True)
+            note = git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
+            if note.startswith("skip"):
+                add(label, False, f"{note}; run `orchestrator cleanup`")
+            elif report_success:
+                add(label, True, note)
+    except (OSError, GitError) as e:
+        add(label, False, f"{e}; run `orchestrator cleanup`")
+
+
 def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
     """Run each configured command in a throwaway worktree of the base branch and report
     whether it exits 0 and whether the import path resolved inside that worktree."""
@@ -481,19 +524,7 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
                     "import the main checkout — wrap it like scripts/orch_verify.sh",
                 )
                 continue
-            problems: list[str] = []
-            for row in rows:
-                module_file = row.get("module_file", "")
-                worktree_root = row.get("worktree_root", "")
-                if not module_file or not worktree_root:
-                    problems.append(f"incomplete marker: {row}")
-                elif not _under(module_file, str(info.path)):
-                    problems.append(
-                        f"{row.get('module', '?')} imported from {module_file}, outside the "
-                        "worktree (a false pass at the gate)"
-                    )
-                elif not _same_dir(worktree_root, str(info.path)):
-                    problems.append(f"wrapper root {worktree_root} is not the worktree {info.path}")
+            problems = _marker_problems(rows, info.path)
             add(
                 f"{label} resolves inside the worktree",
                 not problems,
@@ -503,29 +534,17 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
     finally:
         # Every exit path (green, red, timeout, spawn failure, unexpected error) lands here:
         # a doctor probe must not leave a worktree behind in ORCHESTRATOR_HOME.
-        try:
-            leftover = [
-                m
-                for m in git_service.managed_worktrees()
-                if m["project_slug"] == project.slug and m["task_id"] == DOCTOR_SNAPSHOT_KEY
-            ]
-            for m in leftover:
-                note = git_service.remove_worktree(repo, m, dry_run=False)
-                if note.startswith("skip"):
-                    add("throwaway worktree removed", False, f"{note}; run `orchestrator cleanup`")
-        except (OSError, GitError) as e:
-            add("throwaway worktree removed", False, f"{e}; run `orchestrator cleanup`")
+        _drop_snapshots(
+            project, DOCTOR_SNAPSHOT_KEY, add, "throwaway worktree removed", False
+        )
     return checks
 
 
 # --- opt-in environment-parity probe (`project doctor --env-parity`) -----------------
 #
-# The opposite check from the one above, and deliberately a DEVELOPER check, never a gate command:
-# it runs the project's TEST command in a throwaway worktree with a copy of the local `.env`, i.e.
-# the world the human actually works in. A gate green is a green in a clean environment; this is
-# how you ask "does my ambient configuration change that?". It is off by default, only reachable
-# from the CLI (the API/GUI doctor route keeps its static shape), and it seeds a copy of the env
-# file without ever reading, logging or committing its contents.
+# A DEVELOPER check, never a gate command: run the project's TEST command in a throwaway worktree
+# with a copy of the local `.env`, i.e. the world the human actually works in. Off by default and
+# CLI-only; it seeds a copy of the env file without reading, logging or committing its contents.
 
 def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     from orchestrator.services import git_service, process_service
@@ -536,6 +555,11 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
     repo = Path(project.path)
+    # Sweep leftovers from a killed run (and the seeded `.env`) before creating a new snapshot.
+    _drop_snapshots(
+        project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity stale worktree removed", True
+    )
+
     source_env = repo / ".env"
     if not source_env.is_file():
         add(
@@ -555,11 +579,10 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     except GitError as e:
         add("env-parity suite", False, f"throwaway worktree failed: {e}")
         return checks
-    add("env-parity worktree created", True, str(info.path))
     seeded = info.path / ".env"
     try:
-        # Copy only: never print or stage the contents. The file stays untracked and is removed
-        # before cleanup, because a dirty throwaway worktree is deliberately not auto-removed.
+        # Copy only: the file stays untracked and is unlinked before cleanup (a dirty throwaway
+        # worktree is deliberately not auto-removed).
         shutil.copyfile(source_env, seeded)
         add("env-parity .env seeded", True, f"copy of {source_env} (contents not logged)")
         try:
@@ -581,39 +604,8 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         if not ok:
             detail += f"; tail: {_tail(output) or 'no output'}"
         add("env-parity suite", ok, detail)
-        rows = parse_orch_verify(output)
-        if rows:
-            problems: list[str] = []
-            for row in rows:
-                module_file = row.get("module_file", "")
-                worktree_root = row.get("worktree_root", "")
-                if not module_file or not worktree_root:
-                    problems.append(f"incomplete marker: {row}")
-                elif not _under(module_file, str(info.path)):
-                    problems.append(
-                        f"{row.get('module', '?')} imported from {module_file}, outside the "
-                        "worktree"
-                    )
-                elif not _same_dir(worktree_root, str(info.path)):
-                    problems.append(f"wrapper root {worktree_root} is not the worktree {info.path}")
-            add(
-                "env-parity resolves inside the worktree",
-                not problems,
-                "; ".join(problems) or f"{rows[0].get('module', '?')} -> {module_file}",
-            )
     finally:
-        seeded.unlink(missing_ok=True)
-        try:
-            leftover = [
-                m
-                for m in git_service.managed_worktrees()
-                if m["project_slug"] == project.slug
-                and m["task_id"] == ENV_PARITY_SNAPSHOT_KEY
-            ]
-            for m in leftover:
-                note = git_service.remove_worktree(repo, m, dry_run=False)
-                if note.startswith("skip"):
-                    add("env-parity worktree removed", False, f"{note}; run `orchestrator cleanup`")
-        except (OSError, GitError) as e:
-            add("env-parity worktree removed", False, f"{e}; run `orchestrator cleanup`")
+        _drop_snapshots(
+            project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
+        )
     return checks

@@ -1,26 +1,19 @@
 #!/usr/bin/env bash
 # orch_env_parity.sh — DEVELOPER parity check, never the gate command.
 #
-# The gate runs the project's commands in a tracked-files-only worktree: no `.env`, no
-# node_modules, no `.venv`. That is deliberate (and T-19 records it in verification.json), but
-# it means a gate green and a red run in your own checkout can both be true. This script asks
-# the other question:
-#
-#     "does the suite still pass when my local .env is present?"
-#
-# It creates a THROWAWAY detached worktree of the current HEAD, copies the local `.env` into it
-# (contents are never printed, staged or committed), and runs the same path-independent wrapper
-# the gate uses. It never writes to the operator checkout and it is never part of
-# `make test`/`make verify` or a verification command.
+# The gate runs commands in a tracked-files-only worktree: no `.env`, node_modules or `.venv`.
+# That is deliberate (T-19 records it in verification.json), but it means a gate green and a red
+# run in your checkout can both be true. This asks the other question: does the suite still pass
+# with my local `.env` present? It creates a THROWAWAY detached worktree of the current HEAD,
+# copies the local `.env` in (never printed, staged or committed), and runs the same
+# path-independent wrapper the gate uses. It is never part of `make test`/`make verify`.
 #
 # Usage: scripts/orch_env_parity.sh [test|lint|all] [wrapper args...]
-#   Default mode is `test`. Extra args are passed to scripts/orch_verify.sh.
-#
-# Environment:
+#   Default mode is `test`; extra args go to scripts/orch_verify.sh.
 #   ORCH_PARITY_ENV_FILE   env file to seed (default <repo root>/.env)
 #
-# Exit codes: 0 parity run green · 4 no env file to seed / not a repository ·
-#             otherwise scripts/orch_verify.sh's own exit code.
+# Exit codes: 0 parity run green · 4 no env file to seed / not a repository · otherwise the
+# wrapper's own exit code.
 set -euo pipefail
 
 MODE="${1:-test}"

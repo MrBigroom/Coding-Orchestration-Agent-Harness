@@ -433,27 +433,34 @@ collection.
 Three things now keep that difference visible and harmless:
 
 1. **The test suite is hermetic by construction.** `tests/conftest.py` derives the clear-list
-   from the `Settings` model fields (`core.config.settings_env_names()`), so a new
-   `ORCHESTRATOR_*` setting is covered the moment it exists instead of waiting for someone to
-   remember it; a coverage test asserts that every env-visible field is in the list, and a
-   mutation check shows the old hand-kept list fails it. A session-scoped autouse fixture then
-   resets the settings cache and re-applies the hygiene **after collection imports have run**
-   (module-level app imports are the leak path), and a cwd-relative `.env` is never ambient
-   configuration for the rest of the session. An explicit path passed to `load_env_file()` is
-   still honoured, so the dotenv unit test is real.
+   from the `Settings` model (`core.config.settings_env_names()`), including `alias` /
+   `validation_alias`, `case_sensitive` and `env_prefix_target`, so an aliased field cannot escape
+   it either. A coverage test compares the derivation to pydantic-settings' own reader (an
+   independent oracle) and a mutation check shows the old hand-kept list fails it. A
+   session-scoped autouse fixture then **restores `os.environ` to its import-time snapshot and
+   resets the settings cache after collection imports have run**: every key a `.env` exported
+   (provider and proxy variables too), not just the hand-kept names. It also closes
+   pydantic-settings' own `env_file` reader, so a cwd-relative `.env` is never ambient for the
+   rest of the session; an explicit path passed to `load_env_file()` still works.
 2. **The gate record says which world it was.** `verification.json`'s existing `tests` check
    evidence ends with `environment: cwd=…; local .env absent (tracked-files-only worktree);
-   node_modules absent; .venv absent` (or `present` for whichever of those exists). The
-   check-record shape and the `runs/<run_id>/` layout are frozen, so this is recorded inside the
-   existing `evidence` string — no new field and no new artifact.
+   node_modules absent; .venv absent` (or `present` for whichever exists). The
+   `(tracked-files-only worktree)` label is only added when the cwd really is a linked worktree
+   (`.git` is a file); an ordinary checkout without a `.env` says just `absent`. The check-record
+   shape and the `runs/<run_id>/` layout are frozen, so this rides in the existing `evidence`
+   string — no new field and no new artifact.
 3. **There is an opt-in developer path, never a gate command.** To ask "does my local `.env`
    change the result?", run `make test-parity` (or `just test-parity`), or
-   `orchestrator project doctor <name> --env-parity`. Both copy the local `.env` into a
-   throwaway detached worktree of the current HEAD, run the configured **test** command there
-   with `scripts/orch_verify.sh`, never print or commit the file's contents, and remove the tree
-   on every exit path. `--env-parity` is off by default and CLI-only; the API/GUI doctor route
-   keeps its static shape. Neither is wired into `make test`, `make verify` or any project
-   `test_command` — a gate must stay env-free or its green stops meaning what it says.
+   `orchestrator project doctor <name> --env-parity`. **The two paths are not the same tree:**
+   `test-parity` creates a throwaway detached worktree of the **current HEAD** and runs it via
+   `scripts/orch_verify.sh`; `doctor --env-parity` snapshots the project's configured **base
+   branch** and runs the configured **test** command there, so a branch's own wrapper is not in
+   that snapshot (the same caveat as `--run-commands`). Both copy the local `.env` in, never
+   print or commit its contents, and remove the tree on every exit path; a run killed mid-copy is
+   swept (seeded `.env` deleted first) at the start of the next `--env-parity` run.
+   `--env-parity` is off by default and CLI-only; the API/GUI doctor route keeps its static
+   shape. Neither is wired into `make test`, `make verify` or any project `test_command` — a gate
+   must stay env-free or its green stops meaning what it says.
 
 The same tracked-only rule is why the TypeScript check needs the scratch-directory recipe
 (symlink the main checkout's `node_modules` and the worktree's web sources, run the local `tsc`):

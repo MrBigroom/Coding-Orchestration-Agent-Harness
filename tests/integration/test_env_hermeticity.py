@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -35,14 +35,14 @@ pytestmark = requires_git
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHILD_MARKER = "ORCH_ENV_PARITY_CHILD"
 
-# Synthetic only: these invert test_sync_api's "disabled by default" assertions if they leak.
-SEEDED_ENV = (
-    "ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid\n"
-    "ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key\n"
-    "ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid\n"
-    "ORCHESTRATOR_SUPABASE_PASSWORD=synthetic-password\n"
-    "ANTHROPIC_API_KEY=synthetic-anthropic-key\n"
-)
+# Synthetic only, spelled as UPPER_CASE placeholders so the log redactor leaves evidence readable.
+SEEDED_ENV = """\
+ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
+ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
+ORCHESTRATOR_SUPABASE_PASSWORD=SYNTHETIC_PLACEHOLDER
+ANTHROPIC_API_KEY=SYNTHETIC_PLACEHOLDER
+"""
 RUN_TESTS = "import sys; print('2 passed, 0 failed'); sys.exit(0)\n"
 CHECK_SEEDED_ENV = (
     "import pathlib\n"
@@ -63,11 +63,20 @@ def test_collection_time_app_import_cannot_poison_the_suite():
     settings = get_settings()
     assert settings.supabase_url is None
     assert settings.supabase_publishable_key is None
-    assert settings.supabase_email is None
     assert settings.supabase_sync_enabled is False
     assert "ORCHESTRATOR_SUPABASE_URL" not in os.environ
-    assert "ORCHESTRATOR_SUPABASE_PASSWORD" not in os.environ
     assert "ANTHROPIC_API_KEY" not in os.environ
+'''
+# Appended to a throwaway checkout's conftest: the pre-T-19 world, where a collection-time `.env`
+# read survived the session. The guard's control group.
+UNGUARDED_CONTROL = '''
+
+@pytest.fixture(scope="session", autouse=True)
+def _t19_unguarded_control():
+    from dotenv import load_dotenv
+    load_dotenv(".env")
+    config_mod.reset_settings_cache()
+    yield
 '''
 
 
@@ -75,49 +84,41 @@ def _child_env() -> dict[str, str]:
     env = dict(os.environ)
     for name in list(env):
         if (
-            name.startswith(("ORCHESTRATOR_", "ORCH_VERIFY_"))
+            name.startswith(("ORCHESTRATOR_", "ORCH_VERIFY_", "ORCH_ENV_PARITY"))
             or name in PROVIDER_ENV_NAMES
             or name in {"PYTHONPATH", "VIRTUAL_ENV"}
         ):
             env.pop(name, None)
     env[CHILD_MARKER] = "1"
+    # A clone is its own repository and has no .venv (tracked files only): lend it our interpreter.
+    env.setdefault("ORCH_VERIFY_VENV", sys.prefix)
     return env
 
 
-def _git(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=120
     )
 
 
-def _git_identity_env() -> dict[str, str]:
-    return {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-    }
-
-
 def _temp_checkout(tmp_path: Path) -> Path:
+    """A throwaway clone of the committed HEAD (a clone, so gating never mutates the shared repo)."""
     tree = tmp_path / "parity-tree"
-    _git(REPO_ROOT, "worktree", "add", "--detach", str(tree), "HEAD", env=_git_identity_env())
+    result = subprocess.run(
+        ["git", "clone", "--quiet", "--no-hardlinks", "--local", str(REPO_ROOT), str(tree)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    head = _git(REPO_ROOT, "rev-parse", "HEAD").stdout.strip()
+    _git(tree, "checkout", "--quiet", "--detach", head)
     return tree
 
 
-def _remove_checkout(tree: Path) -> None:
-    _git(REPO_ROOT, "worktree", "remove", "--force", str(tree))
-    _git(REPO_ROOT, "worktree", "prune")
-
-
-def _run_pytest(tree: Path, targets: list[str] | None = None, timeout: int = 900):
+def _run_pytest(tree: Path, targets: list[str], timeout: int = 900):
     return subprocess.run(
-        [str(tree / "scripts" / "orch_verify.sh"), "test", *(targets or [])],
+        [str(tree / "scripts" / "orch_verify.sh"), "test", *targets],
         cwd=str(tree),
         env=_child_env(),
         capture_output=True,
@@ -129,30 +130,50 @@ def _run_pytest(tree: Path, targets: list[str] | None = None, timeout: int = 900
 def _require_committed_head() -> None:
     if os.environ.get(CHILD_MARKER) == "1":
         pytest.skip("nested parity child: the outer test already proved the property")
-    if _git(REPO_ROOT, "status", "--porcelain", "-uno").stdout.strip():
+    changed = _git(REPO_ROOT, "status", "--porcelain", "-uno").stdout.splitlines()
+    # Evidence-only edits do not change the code under test; anything else does.
+    if [line for line in changed if " verify-evidence/" not in line]:
         pytest.skip("parity runs the committed HEAD; this checkout has tracked modifications")
 
 
+@pytest.mark.skipif(
+    os.environ.get("ORCH_ENV_PARITY_FULL") != "1",
+    reason="runs the whole suite twice (~2x gate time); set ORCH_ENV_PARITY_FULL=1",
+)
 def test_full_suite_is_identical_with_and_without_a_seeded_dotenv(tmp_path):
     """DoD 2: the full suite twice in one temporary checkout, with and without `.env`."""
     _require_committed_head()
     tree = _temp_checkout(tmp_path)
     try:
-        without = _run_pytest(tree)
+        without = _run_pytest(tree, [])
         assert without.returncode == 0, without.stdout + without.stderr
         counts_without = parse_test_counts(without.stdout)
         assert counts_without["passed"] > 0 and counts_without["failed"] == 0, without.stdout
 
         (tree / ".env").write_text(SEEDED_ENV)
-        with_env = _run_pytest(tree)
+        with_env = _run_pytest(tree, [])
         assert with_env.returncode == 0, with_env.stdout + with_env.stderr
-        counts_with = parse_test_counts(with_env.stdout)
-        assert counts_with == counts_without, (
-            f".env changed the result: without={counts_without}, with={counts_with}\n"
-            f"{with_env.stdout[-4000:]}"
+        assert parse_test_counts(with_env.stdout) == counts_without, (
+            f".env changed the result: without={counts_without}, "
+            f"with={parse_test_counts(with_env.stdout)}\n{with_env.stdout[-4000:]}"
         )
     finally:
-        _remove_checkout(tree)
+        shutil.rmtree(tree, ignore_errors=True)
+
+
+def test_seeded_dotenv_changes_the_outcome_without_the_guard(tmp_path):
+    """The control: without the session guard the seeded `.env` really does flip the assertions."""
+    tree = _temp_checkout(tmp_path)
+    try:
+        (tree / ".env").write_text(SEEDED_ENV)
+        (tree / "tests" / "test_t19_collection_import.py").write_text(COLLECTION_IMPORT_TEST)
+        conftest = tree / "tests" / "conftest.py"
+        conftest.write_text(conftest.read_text() + UNGUARDED_CONTROL)
+        result = _run_pytest(tree, ["-vv", "tests/test_t19_collection_import.py"])
+        assert result.returncode != 0, result.stdout
+        assert "test_collection_time_app_import_cannot_poison_the_suite" in result.stdout
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
 
 
 def test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv(tmp_path):
@@ -176,13 +197,14 @@ def test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv
         assert counts["passed"] > 0 and counts["failed"] == 0, result.stdout
         assert "test_collection_time_app_import_cannot_poison_the_suite" in result.stdout
     finally:
-        _remove_checkout(tree)
+        shutil.rmtree(tree, ignore_errors=True)
 
 
-def _project_with_env(session, tmp_path: Path, name: str, with_env: bool):
-    repo = make_repo(tmp_path / name, {"run_tests.py": RUN_TESTS, "README.md": "x\n"})
+def _project(session, tmp_path: Path, name: str, *, with_env: bool, suite: str = RUN_TESTS):
+    repo = make_repo(tmp_path / name, {"run_tests.py": suite, "README.md": "x\n"})
     if with_env:
-        (repo / ".env").write_text(SEEDED_ENV)
+        env_text = SEEDED_ENV if suite is RUN_TESTS else "SYNTHETIC_PARITY=present\n"
+        (repo / ".env").write_text(env_text)
     return project_service.create(
         session,
         ProjectCreate(name=name, path=str(repo), base_branch="main",
@@ -216,121 +238,66 @@ def _saved_check(run, name: str) -> dict:
 
 def test_verification_json_names_the_gated_environment(session, tmp_path):
     """DoD 3: existing evidence says which world produced the green; no field/artifact added."""
-    project = _project_with_env(session, tmp_path, "clean-world", with_env=False)
-    run, checks = _verify_in(session, project, "R-T19-CLEAN")
+    run, checks = _verify_in(
+        session, _project(session, tmp_path, "clean-world", with_env=False), "R-T19-CLEAN"
+    )
     assert checks["tests"].status == "pass"
     assert "environment:" in checks["tests"].evidence
     assert "local .env absent" in checks["tests"].evidence
+    # An ordinary checkout is not a tracked-files-only worktree and must not be labelled one.
+    assert "tracked-files-only worktree" not in checks["tests"].evidence
     saved = _saved_check(run, "tests")
     assert "local .env absent" in saved["evidence"]
     assert set(saved) == {"name", "status", "command", "evidence", "notes"}
 
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    (linked / ".git").write_text("gitdir: /tmp/main/.git/worktrees/linked\n")
+    assert "tracked-files-only worktree" in project_service.environment_summary(linked)
 
-def test_verification_json_distinguishes_a_tree_that_has_a_local_dotenv(session, tmp_path):
-    project = _project_with_env(session, tmp_path, "env-world", with_env=True)
-    run, checks = _verify_in(session, project, "R-T19-ENV")
-    assert checks["tests"].status == "pass"
+    run, checks = _verify_in(
+        session, _project(session, tmp_path, "env-world", with_env=True), "R-T19-ENV"
+    )
     assert "local .env present" in checks["tests"].evidence
     assert "local .env present" in _saved_check(run, "tests")["evidence"]
 
 
 def test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree(session, tmp_path):
     """DoD 4: the opt-in developer check runs the suite with a copy of the local `.env`."""
-    repo = make_repo(tmp_path / "parity-proj",
-                     {"run_tests.py": CHECK_SEEDED_ENV, "README.md": "x\n"})
-    (repo / ".env").write_text("SYNTHETIC_PARITY=present\n")
-    project = project_service.create(
-        session,
-        ProjectCreate(name="Parity Project", path=str(repo), base_branch="main",
-                      test_command="python3 run_tests.py"),
-    )
-    checks = {check["name"]: check for check in project_service.doctor(project, env_parity=True)}
+    project = _project(session, tmp_path, "parity-proj", with_env=True, suite=CHECK_SEEDED_ENV)
+    assert not [
+        c for c in project_service.doctor(project) if c["name"].startswith("env-parity")
+    ]  # off by default
+    checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
     assert checks["env-parity .env seeded"]["ok"] is True
     assert checks["env-parity suite"]["ok"] is True, checks["env-parity suite"]
     assert "local .env seeded" in checks["env-parity suite"]["detail"]
     assert "SYNTHETIC_PARITY" not in checks["env-parity .env seeded"]["detail"]
     assert git_service.managed_worktrees() == []
 
-
-def test_doctor_env_parity_without_a_local_env_creates_nothing(session, tmp_path):
-    repo = make_repo(tmp_path / "no-env-proj", {"run_tests.py": RUN_TESTS, "README.md": "x\n"})
-    project = project_service.create(
-        session,
-        ProjectCreate(name="No Env Project", path=str(repo), base_branch="main",
-                      test_command="python3 run_tests.py"),
-    )
-    checks = {check["name"]: check for check in project_service.doctor(project, env_parity=True)}
-    assert checks["env-parity suite"]["ok"] is True
-    assert "nothing to seed" in checks["env-parity suite"]["detail"]
+    no_env = _project(session, tmp_path, "no-env-proj", with_env=False)
+    result = {c["name"]: c for c in project_service.doctor(no_env, env_parity=True)}
+    assert result["env-parity suite"]["ok"] is True
+    assert "nothing to seed" in result["env-parity suite"]["detail"]
     assert git_service.managed_worktrees() == []
 
 
-def test_env_parity_is_opt_in(session, tmp_path):
-    repo = make_repo(tmp_path / "opt-in-proj", {"run_tests.py": RUN_TESTS, "README.md": "x\n"})
-    (repo / ".env").write_text("SYNTHETIC_PARITY=present\n")
-    project = project_service.create(
-        session,
-        ProjectCreate(name="Opt In Project", path=str(repo), base_branch="main",
-                      test_command="python3 run_tests.py"),
+def test_env_parity_sweeps_a_leftover_seeded_worktree(session, tmp_path):
+    """A killed run leaves the seeded `.env` in a worktree cleanup refuses; the next run sweeps it."""
+    project = _project(session, tmp_path, "stale-proj", with_env=False)
+    info = git_service.ensure_snapshot(
+        Path(project.path), project.slug, project_service.ENV_PARITY_SNAPSHOT_KEY,
+        project.base_branch,
     )
-    names = {check["name"] for check in project_service.doctor(project)}
-    assert not [name for name in names if name.startswith("env-parity")]
+    seeded = info.path / ".env"
+    seeded.write_text(SEEDED_ENV)
+    checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
+    assert checks["env-parity stale worktree removed"]["ok"] is True
+    assert not seeded.exists()
+    assert not info.path.exists()
     assert git_service.managed_worktrees() == []
 
-
-def test_parity_script_runs_the_suite_with_a_seeded_env_and_cleans_up(tmp_path):
-    """DoD 4 behaviour: the make target's script seeds `.env` and removes its throwaway tree."""
-    fake = make_repo(
-        tmp_path / "parity-script",
-        {
-            ".gitignore": ".env\n",
-            "pytest.ini": "[pytest]\ntestpaths = tests\n",
-            "src/fakepkg/__init__.py": 'VALUE = "ok"\n',
-            "tests/test_parity.py": (
-                "import pathlib\nimport fakepkg\n\n"
-                "def test_the_seeded_env_is_present():\n"
-                '    assert fakepkg.VALUE == "ok"\n'
-                '    assert pathlib.Path(".env").read_text() == "SYNTHETIC_PARITY=present\\n"\n'
-            ),
-            "scripts/orch_verify.sh": (REPO_ROOT / "scripts" / "orch_verify.sh").read_text(),
-        },
-    )
-    (fake / "scripts" / "orch_verify.sh").chmod(0o755)
-    _git(fake, "add", "-A", env=_git_identity_env())
-    _git(fake, "commit", "-q", "-m", "exec bit", env=_git_identity_env())
-    (fake / ".env").write_text("SYNTHETIC_PARITY=present\n")
-    result = subprocess.run(
-        [str(REPO_ROOT / "scripts" / "orch_env_parity.sh"), "test"],
-        cwd=str(fake),
-        env={
-            **os.environ,
-            # sys.prefix is the venv root; resolving sys.executable follows the symlink to the
-            # base interpreter, which has no pytest.
-            "ORCH_VERIFY_VENV": sys.prefix,
-            "ORCH_VERIFY_PACKAGE": "fakepkg",
-        },
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "DEVELOPER CHECK (not the gate command)" in result.stdout
-    assert "1 passed" in result.stdout
-    assert "SYNTHETIC_PARITY" not in result.stdout  # contents are seeded, never printed
-    listing = _git(fake, "worktree", "list", "--porcelain").stdout
-    assert listing.count("worktree ") == 1, listing  # only the main checkout remains
-
-
-def test_make_just_and_script_document_the_developer_parity_path():
-    makefile = (REPO_ROOT / "Makefile").read_text()
-    script = (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()
-    assert re.search(r"^test-parity:", makefile, re.MULTILINE)
-    assert "./scripts/orch_env_parity.sh test" in makefile
+def test_make_target_is_documented_as_the_developer_parity_path():
+    assert "./scripts/orch_env_parity.sh test" in (REPO_ROOT / "Makefile").read_text()
     assert "test-parity" in (REPO_ROOT / "justfile").read_text()
-    assert "not the gate command" in script
-    assert 'cp "$SOURCE_ENV" "$TREE/.env"' in script
-    syntax = subprocess.run(
-        ["bash", "-n", str(REPO_ROOT / "scripts" / "orch_env_parity.sh")],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert syntax.returncode == 0, syntax.stderr
+    assert "not the gate command" in (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()

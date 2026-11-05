@@ -1,13 +1,15 @@
-"""T-19 DoD 1: the hermeticity guard is derived from the settings surface, not hand-kept.
+"""T-19 DoD 1: the hermeticity clear-list is derived from what pydantic actually reads.
 
-The T-9 merge leaked `ORCHESTRATOR_SUPABASE_*` past conftest's tuple because a new settings field
-appeared and nobody remembered to add its env name. These tests pin the derivation and the
-coverage predicate, including the mutation that removing it must fail.
+Pinned against pydantic-settings' own reader (an independent oracle), including alias and
+case-sensitivity, plus the mutation that removing the derivation must fail.
 """
 
 from __future__ import annotations
 
 import os
+
+from pydantic import Field
+from pydantic_settings import EnvSettingsSource, SettingsConfigDict
 
 from orchestrator.core.config import (
     PROVIDER_ENV_NAMES,
@@ -18,22 +20,31 @@ from orchestrator.core.config import (
 )
 from tests import conftest
 
-# Synthetic only: these values exist to prove they cannot change an assertion outcome.
+# Synthetic only, spelled as UPPER_CASE placeholders so the log redactor leaves evidence readable.
 SEEDED_ENV = """\
 ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key
+ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=SYNTHETIC_PLACEHOLDER
 ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=synthetic-password
-ANTHROPIC_API_KEY=synthetic-anthropic-key
+ORCHESTRATOR_SUPABASE_PASSWORD=SYNTHETIC_PLACEHOLDER
+ANTHROPIC_API_KEY=SYNTHETIC_PLACEHOLDER
 """
 
 
-def test_settings_env_names_are_derived_from_every_model_field():
-    expected = {
-        f"{str(Settings.model_config['env_prefix']).upper()}{name.upper()}"
-        for name in Settings.model_fields
-    }
-    assert set(settings_env_names()) == expected
+def _pydantic_env_names(model: type[Settings]) -> set[str]:
+    """Oracle: pydantic-settings' own field->env-name extraction, not our derivation."""
+    source = EnvSettingsSource(model)
+    names: set[str] = set()
+    for field_name, field in model.model_fields.items():
+        for _key, env_name, _complex in source._extract_field_info(field, field_name):
+            names.add(env_name if source.case_sensitive else env_name.upper())
+    return names
+
+
+def test_secret_env_is_exactly_what_pydantic_reads():
+    """The clear-list must equal pydantic's reader, not a parallel reimplementation."""
+    assert set(settings_env_names()) == _pydantic_env_names(Settings)
+    assert set(conftest.AMBIENT_ENV) == set(PROVIDER_ENV_NAMES) | _pydantic_env_names(Settings)
+    assert conftest.env_names_not_covered() == set()
     # The names that actually leaked across the T-9 merge must be in the derived set.
     assert {
         "ORCHESTRATOR_SUPABASE_URL",
@@ -43,27 +54,54 @@ def test_settings_env_names_are_derived_from_every_model_field():
     } <= set(settings_env_names())
 
 
-def test_clear_list_covers_the_whole_env_visible_surface():
-    assert conftest.env_names_not_covered() == set()
-    assert set(PROVIDER_ENV_NAMES) <= set(conftest.SECRET_ENV)
-    assert set(settings_env_names()) <= set(conftest.SECRET_ENV)
+class AliasedSettings(Settings):
+    future_secret: str | None = Field(default=None, validation_alias="T19_FUTURE_SECRET")
 
 
-def test_removing_the_settings_derivation_makes_the_coverage_check_fail():
-    """Mutation check (DoD 5): the old hand-kept shape must be detected, not silently accepted."""
-    missing = conftest.env_names_not_covered(PROVIDER_ENV_NAMES)
-    assert "ORCHESTRATOR_SUPABASE_URL" in missing
-    assert "ORCHESTRATOR_SUPABASE_PASSWORD" in missing
-    assert "ORCHESTRATOR_TOKEN" in missing
+class CaseSensitiveSettings(Settings):
+    model_config = SettingsConfigDict(
+        env_prefix="ORCHESTRATOR_", case_sensitive=True, extra="ignore"
+    )
+    future_secret: str | None = None
+
+
+def test_alias_and_case_sensitivity_are_derived_like_pydantic():
+    """An aliased or case-sensitive field must not escape the guard."""
+    assert set(settings_env_names(AliasedSettings)) == _pydantic_env_names(AliasedSettings)
+    assert set(settings_env_names(CaseSensitiveSettings)) == _pydantic_env_names(
+        CaseSensitiveSettings
+    )
 
 
 def test_a_new_env_visible_field_that_is_not_covered_is_reported(monkeypatch):
-    """The drift-detection half of DoD 1: a field outside the clear-list is never silently OK."""
-    real = settings_env_names()
-    monkeypatch.setattr(
-        conftest, "settings_env_names", lambda: (*real, "ORCHESTRATOR_FUTURE_SECRET")
-    )
-    assert "ORCHESTRATOR_FUTURE_SECRET" in conftest.env_names_not_covered()
+    """Drift detection: a field added after AMBIENT_ENV was built is named."""
+    monkeypatch.setenv("T19_FUTURE_SECRET", "SYNTHETIC_PLACEHOLDER")
+    assert AliasedSettings().future_secret == "SYNTHETIC_PLACEHOLDER"  # pydantic reads that name
+    gaps = conftest.env_names_not_covered(clear_list=conftest.AMBIENT_ENV, model=AliasedSettings)
+    assert "T19_FUTURE_SECRET" in gaps
+    # The derivation itself does see it: only the stale clear-list is a gap.
+    assert conftest.env_names_not_covered(model=AliasedSettings) == set()
+
+
+def test_removing_the_settings_derivation_makes_the_coverage_check_fail(monkeypatch):
+    """Mutation check (DoD 5): the old hand-kept clear-list must be detected."""
+    monkeypatch.setattr(conftest, "AMBIENT_ENV", PROVIDER_ENV_NAMES)
+    missing = conftest.env_names_not_covered()
+    assert "ORCHESTRATOR_SUPABASE_URL" in missing
+    assert "ORCHESTRATOR_SUPABASE_PASSWORD" in missing
+    assert "ORCHESTRATOR_TOKEN" in missing
+    assert missing  # the whole derived surface is reported, not a single lucky key
+
+
+def test_restoring_the_import_environment_drops_arbitrary_dotenv_keys(monkeypatch):
+    """DoD 2: collection-time `.env` keys outside AMBIENT_ENV are removed too."""
+    monkeypatch.setenv("OPENAI_API_KEY", "SYNTHETIC_PLACEHOLDER")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://synthetic.invalid")
+    monkeypatch.setenv("HTTP_PROXY", "http://synthetic.invalid:8080")
+    conftest.restore_import_environment()
+    assert "OPENAI_API_KEY" not in os.environ
+    assert "ANTHROPIC_BASE_URL" not in os.environ
+    assert "HTTP_PROXY" not in os.environ
 
 
 def test_relative_dotenv_is_not_ambient_configuration_in_the_suite(tmp_path, monkeypatch):

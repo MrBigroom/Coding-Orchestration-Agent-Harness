@@ -10,7 +10,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, AliasPath, Field, model_validator
+from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -151,16 +152,55 @@ class Settings(BaseSettings):
             Path(p).mkdir(parents=True, exist_ok=True)
 
 
-def settings_env_names() -> tuple[str, ...]:
-    """Every environment variable pydantic-settings would read for :class:`Settings`.
+def _validation_alias_names(field: FieldInfo) -> list[str]:
+    """Env names a field's `validation_alias` accepts, flattened the way pydantic reads them."""
+    alias = field.validation_alias
+    if alias is None:
+        return []
+    if isinstance(alias, str):
+        return [alias]
+    if not isinstance(alias, (AliasChoices, AliasPath)):
+        return []
+    converted = alias.convert_to_aliases()
+    if not converted:
+        return []
+    if isinstance(converted[0], list):  # AliasChoices: one candidate per choice
+        return [str(choice[0]) for choice in converted if choice]
+    return [str(converted[0])]  # AliasPath: only the head names an env var
 
-    Derived from the model and its configured prefix — never hand-maintained. A new settings field
-    is therefore covered by the test hermeticity guard the moment it exists, which is the point of
-    T-19 DoD 1: the previous hand-kept list only knew the fields someone remembered to add, and the
-    T-9 merge's `ORCHESTRATOR_SUPABASE_*` leak proved that is a drift-prone shape.
+
+def settings_env_names(model: type[BaseSettings] | None = None) -> tuple[str, ...]:
+    """Every env var pydantic-settings would read for :class:`Settings` (or `model`).
+
+    Derived from the model's fields and config, never hand-maintained, including `validation_alias`,
+    `case_sensitive` and `env_prefix_target` — the previous prefix+UPPER shape ignored those, so an
+    aliased field escaped the guard entirely (T-19 DoD 1). Canonical names are upper-case when
+    matching is case-insensitive; with `case_sensitive=True` they are exactly what pydantic reads.
     """
-    prefix = str(Settings.model_config.get("env_prefix") or "").upper()
-    return tuple(f"{prefix}{name.upper()}" for name in Settings.model_fields)
+    cls = model or Settings
+    cfg = dict(cls.model_config)
+    prefix = str(cfg.get("env_prefix") or "")
+    target = cfg.get("env_prefix_target", "variable")
+    case_sensitive = bool(cfg.get("case_sensitive", False))
+    by_alias = cfg.get("validate_by_alias") is not False
+    by_name = cfg.get("validate_by_name")
+    if by_name is None:
+        by_name = cfg.get("populate_by_name")
+    if by_name is None:
+        by_name = cfg.get("validate_by_alias") is False
+    alias_prefix = prefix if target in ("alias", "all") else ""
+    var_prefix = prefix if target in ("variable", "all") else ""
+    names: list[str] = []
+    for field_name, field in cls.model_fields.items():
+        aliases = _validation_alias_names(field) if by_alias else []
+        candidates = [f"{alias_prefix}{alias}" for alias in aliases]
+        if not aliases or by_name:
+            candidates.append(f"{var_prefix}{field_name}")
+        for candidate in candidates:
+            canonical = candidate if case_sensitive else candidate.upper()
+            if canonical not in names:
+                names.append(canonical)
+    return tuple(names)
 
 
 def load_env_file(path: str | Path = ".env") -> None:
