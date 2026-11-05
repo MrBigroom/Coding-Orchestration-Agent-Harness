@@ -556,67 +556,39 @@ def _repo_present(cwd: Path | None, universe: PathUniverse, path: str) -> bool:
     return universe.in_repository(path)
 
 
-def _check_visibility(
-    cwd: Path | None,
-    res: PathResolution,
-    universe: PathUniverse,
-    index: int,
-    source: str,
-    supplied: SuppliedEvidence | None,
-) -> AbsenceCheck:
-    """Check a "was not supplied to the reviewer" claim against what was actually supplied.
+def _visibility_verdict(
+    path: str, present: bool, universe: PathUniverse, supplied: SuppliedEvidence | None
+) -> tuple[str, str, str]:
+    """Decide `(status, state, wording)` for a "was not supplied" claim.
 
     Existence in the worktree is deliberately NOT used to refute one of these: a file can exist on
     disk and still have had every hunk withheld from the reviewer (T-11 round-2 reviewer finding
     2). What existence CAN do is name the state (T-22 DoD 3): a resolved path that is in the
     repository but did not reach the reviewer is `omitted-from-review-input` — a diff-budget
     failure owned by T-16, not a Worker evidence gap — and only a path the repository itself does
-    not contain is `absent-at-reviewed-commit`. A name that resolves to nothing, or to several
-    paths, is `unchecked`: that is exactly the shape of run 38's 15 false confirmations.
+    not contain is `absent-at-reviewed-commit`.
     """
-    if not res.resolved:
-        return _unresolved_claim(res, universe, index, source)
-    path = res.path
-    present = _repo_present(cwd, universe, path)
+    repo_side = "in the repository" if present else "not in the repository at this commit"
     if supplied is None:
         if present:
-            return _judged(
-                res,
-                universe,
-                index,
-                source,
-                status=STATUS_UNCHECKED,
-                state=STATE_UNDECIDED,
-                detail=(
-                    "the path exists in the worktree, but presence in the supplied artifacts "
-                    "cannot be decided without the archived truncation manifest"
-                ),
+            return (
+                STATUS_UNCHECKED,
+                STATE_UNDECIDED,
+                "the path exists in the worktree, but presence in the supplied artifacts cannot "
+                "be decided without the archived truncation manifest",
             )
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_CONFIRMED,
-            state=STATE_ABSENT,
-            detail=(
-                "absent-at-reviewed-commit: the resolved path is not in the task worktree and no "
-                f"source lists it (no truncation manifest was available; searched: "
-                f"{universe.source_list()})"
-            ),
+        return (
+            STATUS_CONFIRMED,
+            STATE_ABSENT,
+            f"{STATE_ABSENT}: the resolved path is not in the task worktree and no source lists "
+            f"it (no truncation manifest was available; searched: {universe.source_list()})",
         )
     if supplied.section_cut:
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_UNCHECKED,
-            state=STATE_UNDECIDED,
-            detail=(
-                "the whole dynamic_state section was shaved by the aggregate context budget, so "
-                "per-file visibility cannot be decided from the archived manifest"
-            ),
+        return (
+            STATUS_UNCHECKED,
+            STATE_UNDECIDED,
+            "the whole dynamic_state section was shaved by the aggregate context budget, so "
+            "per-file visibility cannot be decided from the archived manifest",
         )
     if path in supplied.diff_cut:
         included, available = supplied.diff_cut[path]
@@ -625,82 +597,72 @@ def _check_visibility(
             if included == 0
             else f"only {included} of {available} bytes reached the reviewer"
         )
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_CONFIRMED,
-            state=STATE_OMITTED if present else STATE_ABSENT,
-            detail=(
-                f"{STATE_OMITTED if present else STATE_ABSENT}: the resolved path is "
-                f"{'in the repository' if present else 'not in the repository at this commit'} and "
-                f"the archived truncation manifest says {cut_text} — "
-                + (
-                    "the evidence exists, the review input did not carry it (diff budget, owned by "
-                    "T-16), so this is not a Worker evidence gap"
-                    if present
-                    else "there was nothing in the repository to supply"
-                )
-            ),
+        cause = (
+            "the evidence exists, the review input did not carry it (diff budget, owned by T-16), "
+            "so this is not a Worker evidence gap"
+            if present
+            else "there was nothing in the repository to supply"
+        )
+        return (
+            STATUS_CONFIRMED,
+            STATE_OMITTED if present else STATE_ABSENT,
+            f"{STATE_OMITTED if present else STATE_ABSENT}: the resolved path is {repo_side} and "
+            f"the archived truncation manifest says {cut_text} — {cause}",
         )
     if path in supplied.diff_supplied:
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_REFUTED,
-            state=STATE_SUPPLIED,
-            detail=(
-                "supplied to the reviewer in full: the patch has a section for it and the "
-                "archived manifest records no truncation for it"
-            ),
+        return (
+            STATUS_REFUTED,
+            STATE_SUPPLIED,
+            "supplied to the reviewer in full: the patch has a section for it and the archived "
+            "manifest records no truncation for it",
         )
     if path in supplied.changed_paths:
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_CONFIRMED,
-            state=STATE_OMITTED if present else STATE_ABSENT,
-            detail=(
-                f"{STATE_OMITTED if present else STATE_ABSENT}: changed by this task and "
-                + (
-                    "present in the repository, but the supplied patch has no section for it — a "
-                    "review-input gap, see the diff-completeness findings"
-                    if present
-                    else "listed by no source, so nothing was there to supply"
-                )
-            ),
+        cause = (
+            "present in the repository, but the supplied patch has no section for it — a "
+            "review-input gap, see the diff-completeness findings"
+            if present
+            else "listed by no source, so nothing was there to supply"
+        )
+        return (
+            STATUS_CONFIRMED,
+            STATE_OMITTED if present else STATE_ABSENT,
+            f"{STATE_OMITTED if present else STATE_ABSENT}: changed by this task and {cause}",
         )
     if present:
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_UNCHECKED,
-            state=STATE_UNDECIDED,
-            detail=(
-                "the path exists in the worktree but is not part of this task's diff, so presence "
-                "in the supplied artifacts cannot be decided mechanically"
-            ),
+        return (
+            STATUS_UNCHECKED,
+            STATE_UNDECIDED,
+            "the path exists in the worktree but is not part of this task's diff, so presence in "
+            "the supplied artifacts cannot be decided mechanically",
         )
-    return _judged(
-        res,
-        universe,
-        index,
-        source,
-        status=STATUS_CONFIRMED,
-        state=STATE_ABSENT,
-        detail=(
-            "absent-at-reviewed-commit: the resolved path is listed by none of the sources "
-            f"searched ({universe.source_list()})"
-            + (f" at commit {universe.head_sha}" if universe.head_sha else "")
-        ),
+    return (
+        STATUS_CONFIRMED,
+        STATE_ABSENT,
+        f"{STATE_ABSENT}: the resolved path is listed by none of the sources searched "
+        f"({universe.source_list()})"
+        + (f" at commit {universe.head_sha}" if universe.head_sha else ""),
     )
+
+
+def _check_visibility(
+    cwd: Path | None,
+    res: PathResolution,
+    universe: PathUniverse,
+    index: int,
+    source: str,
+    supplied: SuppliedEvidence | None,
+) -> AbsenceCheck:
+    """Check one "was not supplied to the reviewer" claim, after resolving it to a path.
+
+    A name that resolves to nothing, or to several paths, is `unchecked`: that is exactly the
+    shape of run 38's 15 false confirmations.
+    """
+    if not res.resolved:
+        return _unresolved_claim(res, universe, index, source)
+    status, state, detail = _visibility_verdict(
+        res.path, _repo_present(cwd, universe, res.path), universe, supplied
+    )
+    return _judged(res, universe, index, source, status=status, state=state, detail=detail)
 
 
 def _manifest_topic_checks(
@@ -746,6 +708,80 @@ def _manifest_topic_checks(
     return out
 
 
+def _existence_verdict(
+    raw: str, root: Path, res: PathResolution, universe: PathUniverse, line_window: str
+) -> tuple[str, str, str, str]:
+    """Decide `(status, state, wording, claim)` for an "X is not in the repository" claim.
+
+    Run 38 confirmed `capture.sh` because `<worktree>/capture.sh` does not exist, while
+    `verify-evidence/T-19/capture.sh` was tracked the whole time, so the path has already been
+    resolved here (T-22 DoD 1/2).
+    """
+    rel = res.path
+    target = (root / rel).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return (
+            STATUS_UNCHECKED,
+            STATE_UNDECIDED,
+            "path is outside the task worktree; not checked",
+            raw,
+        )
+    line_match = _LINE.search(line_window)
+    if target.is_file() and line_match:
+        wanted = int(line_match.group("line"))
+        count = _line_count(target)
+        claim = f"{raw}:{wanted}"
+        if count >= wanted:
+            return (
+                STATUS_REFUTED,
+                STATE_PRESENT,
+                f"file exists in the task worktree at {rel} with {count} lines, so line {wanted} "
+                "is present",
+                claim,
+            )
+        return (
+            STATUS_CONFIRMED,
+            STATE_ABSENT,
+            f"{STATE_ABSENT}: the file is present at {rel} but has only {count} lines, so line "
+            f"{wanted} does not exist",
+            claim,
+        )
+    if target.is_file():
+        return (
+            STATUS_REFUTED,
+            STATE_PRESENT,
+            f"file exists in the task worktree at {rel}",
+            raw,
+        )
+    if target.exists():
+        return (
+            STATUS_REFUTED,
+            STATE_PRESENT,
+            f"path exists in the task worktree at {rel} (not a regular file)",
+            raw,
+        )
+    if universe.has(rel):
+        # Named by a source (tracked at HEAD, or in the patch/diffstat) but gone from the disk:
+        # which of the two the claim meant is not decidable, so it is not confirmed either way.
+        return (
+            STATUS_UNCHECKED,
+            STATE_UNDECIDED,
+            f"{rel} is not on the worktree filesystem but is named by "
+            f"{', '.join(universe.names(rel))}; the harness cannot tell which the claim meant",
+            raw,
+        )
+    return (
+        STATUS_CONFIRMED,
+        STATE_ABSENT,
+        f"{STATE_ABSENT}: the path named by the claim is listed by none of the sources searched "
+        f"({universe.source_list()})"
+        + (f" at commit {universe.head_sha}" if universe.head_sha else ""),
+        raw,
+    )
+
+
 def _check_existence_claim(
     root: Path,
     raw: str,
@@ -755,111 +791,12 @@ def _check_existence_claim(
     source: str,
     line_window: str,
 ) -> AbsenceCheck:
-    """Judge "X is not in the repository" only after X has been resolved to a path.
-
-    Run 38 confirmed `capture.sh` because `<worktree>/capture.sh` does not exist, while
-    `verify-evidence/T-19/capture.sh` was tracked the whole time. Resolution comes first, and a
-    claim that cannot be resolved is `unchecked`, never `confirmed` (T-22 DoD 1/2).
-    """
+    """Judge one existence claim, only after resolving it to a path."""
     if not res.resolved:
         return _unresolved_claim(res, universe, index, source)
-    rel = res.path
-    target = (root / rel).resolve()
-    try:
-        target.relative_to(root.resolve())
-    except ValueError:
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_UNCHECKED,
-            state=STATE_UNDECIDED,
-            claim=raw,
-            detail="path is outside the task worktree; not checked",
-        )
-    if target.is_file():
-        line_match = _LINE.search(line_window)
-        if line_match:
-            wanted = int(line_match.group("line"))
-            count = _line_count(target)
-            if count >= wanted:
-                return _judged(
-                    res,
-                    universe,
-                    index,
-                    source,
-                    status=STATUS_REFUTED,
-                    state=STATE_PRESENT,
-                    claim=f"{raw}:{wanted}",
-                    detail=(
-                        f"file exists in the task worktree with {count} lines, so line {wanted} "
-                        "is present"
-                    ),
-                )
-            return _judged(
-                res,
-                universe,
-                index,
-                source,
-                status=STATUS_CONFIRMED,
-                state=STATE_ABSENT,
-                claim=f"{raw}:{wanted}",
-                detail=(
-                    f"absent-at-reviewed-commit: the file is present at {rel} but has only "
-                    f"{count} lines, so line {wanted} does not exist"
-                ),
-            )
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_REFUTED,
-            state=STATE_PRESENT,
-            claim=raw,
-            detail=f"file exists in the task worktree at {rel}",
-        )
-    if target.exists():
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_REFUTED,
-            state=STATE_PRESENT,
-            claim=raw,
-            detail=f"path exists in the task worktree at {rel} (not a regular file)",
-        )
-    if universe.has(rel):
-        # Named by a source (tracked at HEAD, or in the patch/diffstat) but gone from the disk:
-        # which of the two the claim meant is not decidable, so it is not confirmed either way.
-        return _judged(
-            res,
-            universe,
-            index,
-            source,
-            status=STATUS_UNCHECKED,
-            state=STATE_UNDECIDED,
-            claim=raw,
-            detail=(
-                f"{rel} is not on the worktree filesystem but is named by "
-                f"{', '.join(universe.names(rel))}; the harness cannot tell which the claim meant"
-            ),
-        )
+    status, state, detail, claim = _existence_verdict(raw, root, res, universe, line_window)
     return _judged(
-        res,
-        universe,
-        index,
-        source,
-        status=STATUS_CONFIRMED,
-        state=STATE_ABSENT,
-        claim=raw,
-        detail=(
-            "absent-at-reviewed-commit: the path named by the claim is listed by none of the "
-            f"sources searched ({universe.source_list()})"
-            + (f" at commit {universe.head_sha}" if universe.head_sha else "")
-        ),
+        res, universe, index, source, status=status, state=state, detail=detail, claim=claim
     )
 
 
