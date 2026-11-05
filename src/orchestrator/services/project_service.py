@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -455,20 +456,43 @@ def _drop_snapshots(project: Project, key: str, add, label: str, report_success:
         add(label, False, f"{e}; run `orchestrator cleanup`")
 
 
-def _seeded_env_copy(source: Path, dest: Path) -> None:
-    """Copy a real `.env` without ever widening its permissions.
+def _seeded_env_copy(source: Path, dest: Path) -> Path:
+    """Copy a real `.env` 0600, without clobbering one that already exists.
 
     A plain `shutil.copyfile` creates the destination with the process umask (typically 0644), so
-    the operator's credentials would be world-readable under ORCHESTRATOR_HOME. The destination
-    is created 0600 atomically and never truncated in place.
+    the operator's credentials would be world-readable under ORCHESTRATOR_HOME. Three properties
+    matter here, and each one has been a bug:
+
+    * the bytes are written to a UNIQUE per-invocation staging name and only then linked into
+      place, so a crash or a partial `os.write` never leaves a truncated `.env` that a later run
+      mistakes for a complete one;
+    * the link is create-only (`os.link`), never `os.replace`, so a destination this invocation
+      did not create — a tracked `.env` in the snapshot, a retry after a crash, a reused temp
+      path — is left byte-for-byte intact instead of being silently overwritten;
+    * the staging file is removed on every path, so a failed copy leaves no residue.
+
+    Returns the path this call created. Raises `OSError` (notably `FileExistsError` when `dest`
+    already exists, or the source is unreadable); callers turn that into a reported check because
+    `doctor` reports and never raises out.
     """
     data = source.read_bytes()
-    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    staging = dest.with_name(f"{dest.name}.{os.getpid()}-{uuid.uuid4().hex}.parity")
     try:
-        os.fchmod(fd, 0o600)
-        os.write(fd, data)
+        fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:  # pragma: no cover - a broken filesystem, not a code path
+                    raise OSError(f"short write to {staging}")
+                view = view[written:]
+        finally:
+            os.close(fd)
+        os.link(staging, dest)
     finally:
-        os.close(fd)
+        staging.unlink(missing_ok=True)
+    return dest
 
 
 def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
@@ -604,9 +628,21 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     except GitError as e:
         add("env-parity suite", False, f"throwaway worktree failed: {e}")
         return checks
-    seeded = info.path / ".env"
+    seeded: Path | None = None
     try:
-        _seeded_env_copy(source_env, seeded)
+        try:
+            seeded = _seeded_env_copy(source_env, info.path / ".env")
+        except OSError as e:
+            # `doctor` reports, it never raises out. A tracked `.env` already in
+            # the snapshot or an unreadable source is a finding about the parity probe, not a
+            # crash; nothing was created by this invocation, so `seeded` stays None and the
+            # cleanup below cannot unlink a foreign file.
+            add(
+                "env-parity .env seeded",
+                False,
+                f"could not seed a copy of {source_env}: {type(e).__name__}: {e}",
+            )
+            return checks
         add(
             "env-parity .env seeded",
             True,
@@ -646,7 +682,8 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     finally:
         # Remove ONLY the file this invocation created, so the throwaway tree is clean enough for
         # `remove_worktree` to delete it; a killed run's residue is T-20, above.
-        seeded.unlink(missing_ok=True)
+        if seeded is not None:
+            seeded.unlink(missing_ok=True)
         _drop_snapshots(
             project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
         )

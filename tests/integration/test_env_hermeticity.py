@@ -333,6 +333,64 @@ def test_env_parity_reports_a_leftover_worktree_instead_of_sweeping_it(session, 
     git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
 
 
+def test_env_parity_reports_a_preexisting_dotenv_instead_of_raising(session, tmp_path):
+    """A repo that TRACKS `.env` already has one in the snapshot: doctor reports, never raises.
+
+    Round-4 finding 4: `_seeded_env_copy` used to open the destination with `O_EXCL`, so the
+    `FileExistsError` escaped `doctor()` and broke this module's "reports, never raises" rule.
+    """
+    original = "SYNTHETIC_PARITY=tracked\n"
+    repo = make_repo(
+        tmp_path / "tracked-env", {"run_tests.py": RUN_TESTS, ".env": original}
+    )
+    project = project_service.create(
+        session,
+        ProjectCreate(name="tracked-env", path=str(repo), base_branch="main",
+                      test_command="python3 run_tests.py"),
+    )
+    checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
+    assert checks["env-parity .env seeded"]["ok"] is False
+    assert "FileExistsError" in checks["env-parity .env seeded"]["detail"]
+    assert "env-parity suite" not in checks  # nothing was run against an unseeded tree
+    # The operator's own file is never the copy destination and is left untouched.
+    assert (repo / ".env").read_text() == original
+    assert git_service.managed_worktrees() == []
+
+
+def test_env_parity_never_unlinks_a_dotenv_it_did_not_create(session, tmp_path, monkeypatch):
+    """Round-4 finding 4: cleanup is scoped to the file THIS invocation created.
+
+    The old finally block unlinked `info.path / ".env"` even when the copy had failed, deleting a
+    pre-existing file and leaving the tree tracked-dirty. Keep the throwaway tree (patch out the
+    snapshot drop) so the foreign file is observable after `doctor()` returns.
+    """
+    original = "SYNTHETIC_PARITY=tracked\n"
+    repo = make_repo(
+        tmp_path / "foreign-env", {"run_tests.py": RUN_TESTS, ".env": original}
+    )
+    project = project_service.create(
+        session,
+        ProjectCreate(name="foreign-env", path=str(repo), base_branch="main",
+                      test_command="python3 run_tests.py"),
+    )
+    monkeypatch.setattr(project_service, "_drop_snapshots", lambda *a, **k: None)
+    checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
+    assert checks["env-parity .env seeded"]["ok"] is False
+    leftover = next(
+        m
+        for m in git_service.managed_worktrees()
+        if m["task_id"] == project_service.ENV_PARITY_SNAPSHOT_KEY
+    )
+    seeded = leftover["path"] / ".env"
+    assert seeded.read_text() == original
+    # The unique staging name is cleaned up on the failure path too: no residue in the tree.
+    assert list(leftover["path"].glob(".env.*.parity")) == []
+    # This test created the snapshot; remove it so the throwaway home stays clean.
+    note = git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
+    assert note.startswith("removed"), note
+    assert git_service.managed_worktrees() == []
+
+
 def test_env_parity_rejects_a_command_without_an_orch_verify_marker(session, tmp_path):
     """DoD 4: a parity green cannot come from importing the main checkout unseen."""
     project = _project(
