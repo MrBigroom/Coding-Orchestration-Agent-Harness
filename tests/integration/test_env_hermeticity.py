@@ -35,14 +35,17 @@ pytestmark = requires_git
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHILD_MARKER = "ORCH_ENV_PARITY_CHILD"
 
-# Synthetic only, spelled as UPPER_CASE placeholders so the log redactor leaves evidence readable.
-SEEDED_ENV = """\
-ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=not-a-secret-0000
-ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=not-a-secret-0001
-ANTHROPIC_API_KEY=not-a-secret-0002
-"""
+# Synthetic only. Built from (name, value) pairs so no assignment-shaped literal is written
+# anywhere: the log redactor keys on the assignment NAME, so a flat seed line would reach the
+# reviewer masked even when the value is a harmless placeholder (round-3 finding 4).
+SEEDED_ENV_PAIRS = (
+    ("ORCHESTRATOR_SUPABASE_URL", "https://synthetic.invalid"),
+    ("ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY", "not-a-secret-0000"),
+    ("ORCHESTRATOR_SUPABASE_EMAIL", "synthetic@example.invalid"),
+    ("ORCHESTRATOR_SUPABASE_PASSWORD", "not-a-secret-0001"),
+    ("ANTHROPIC_API_KEY", "not-a-secret-0002"),
+)
+SEEDED_ENV = "".join(f"{name}={value}\n" for name, value in SEEDED_ENV_PAIRS)
 # Explicit node ids only: a spawned pytest run must never be a bare suite (T-19 DoD 2).
 AFFECTED_SUBSET = [
     "tests/unit/test_env_guard.py",
@@ -61,12 +64,20 @@ SPAWN_TESTS = pytest.mark.skipif(
     os.environ.get("ORCH_ENV_SPAWN_TESTS") != "1",
     reason="spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1",
 )
-RUN_TESTS = "import sys; print('2 passed, 0 failed'); sys.exit(0)\n"
+RUN_TESTS = (
+    "import os\n"
+    "root = os.getcwd()\n"
+    "print(f'ORCH_VERIFY|mode=test|module=demo|module_file={root}/demo.py|worktree_root={root}')\n"
+    "print('2 passed, 0 failed')\n"
+)
 CHECK_SEEDED_ENV = (
-    "import pathlib\n"
+    "import os, pathlib\n"
     'env_file = pathlib.Path(".env")\n'
     'assert env_file.is_file(), "not seeded"\n'
     'assert "SYNTHETIC_PARITY=present" in env_file.read_text()\n'
+    "assert env_file.stat().st_mode & 0o777 == 0o600, oct(env_file.stat().st_mode & 0o777)\n"
+    "root = os.getcwd()\n"
+    "print(f'ORCH_VERIFY|mode=test|module=demo|module_file={root}/demo.py|worktree_root={root}')\n"
     'print("1 passed, 0 failed, 0 skipped")\n'
 )
 COLLECTION_IMPORT_TEST = '''\
@@ -299,8 +310,8 @@ def test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree(session, tmp
     assert git_service.managed_worktrees() == []
 
 
-def test_env_parity_sweeps_a_leftover_seeded_worktree(session, tmp_path):
-    """A killed run leaves the seeded `.env` in a worktree cleanup refuses; the next run sweeps it."""
+def test_env_parity_reports_a_leftover_worktree_instead_of_sweeping_it(session, tmp_path):
+    """A killed run's seeded worktree is T-20 residue hygiene: T-19 only reports it."""
     project = _project(session, tmp_path, "stale-proj", with_env=False)
     info = git_service.ensure_snapshot(
         Path(project.path), project.slug, project_service.ENV_PARITY_SNAPSHOT_KEY,
@@ -309,10 +320,30 @@ def test_env_parity_sweeps_a_leftover_seeded_worktree(session, tmp_path):
     seeded = info.path / ".env"
     seeded.write_text(SEEDED_ENV)
     checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
-    assert checks["env-parity stale worktree removed"]["ok"] is True
-    assert not seeded.exists()
-    assert not info.path.exists()
+    assert checks["env-parity stale worktree"]["ok"] is False
+    assert "orchestrator cleanup" in checks["env-parity stale worktree"]["detail"]
+    assert seeded.exists()  # not swept: that is T-20, explicitly out of scope here
+    # This test created the residue; remove it so the throwaway home stays clean.
+    leftover = next(
+        m
+        for m in git_service.managed_worktrees()
+        if m["task_id"] == project_service.ENV_PARITY_SNAPSHOT_KEY
+    )
+    seeded.unlink()
+    git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
+
+
+def test_env_parity_rejects_a_command_without_an_orch_verify_marker(session, tmp_path):
+    """DoD 4: a parity green cannot come from importing the main checkout unseen."""
+    project = _project(
+        session, tmp_path, "unmarked-proj", with_env=True,
+        suite="print('2 passed, 0 failed')\n",
+    )
+    checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
+    assert checks["env-parity suite"]["ok"] is False
+    assert "no ORCH_VERIFY marker" in checks["env-parity suite"]["detail"]
     assert git_service.managed_worktrees() == []
+
 
 def test_make_target_is_documented_as_the_developer_parity_path():
     assert "./scripts/orch_env_parity.sh test" in (REPO_ROOT / "Makefile").read_text()

@@ -21,14 +21,17 @@ from orchestrator.core.config import (
 )
 from tests import conftest
 
-# Synthetic only, and deliberately shaped so the log redactor leaves evidence lines readable.
-SEEDED_ENV = """\
-ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=not-a-secret-0000
-ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=not-a-secret-0001
-ANTHROPIC_API_KEY=not-a-secret-0002
-"""
+# Synthetic only. Built from (name, value) pairs so no assignment-shaped literal is written
+# anywhere: the log redactor keys on the assignment NAME, so a flat seed line would reach the
+# reviewer masked even when the value is a harmless placeholder (round-3 finding 4).
+SEEDED_ENV_PAIRS = (
+    ("ORCHESTRATOR_SUPABASE_URL", "https://synthetic.invalid"),
+    ("ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY", "not-a-secret-0000"),
+    ("ORCHESTRATOR_SUPABASE_EMAIL", "synthetic@example.invalid"),
+    ("ORCHESTRATOR_SUPABASE_PASSWORD", "not-a-secret-0001"),
+    ("ANTHROPIC_API_KEY", "not-a-secret-0002"),
+)
+SEEDED_ENV = "".join(f"{name}={value}\n" for name, value in SEEDED_ENV_PAIRS)
 
 
 class FutureSettings(Settings):
@@ -44,6 +47,20 @@ class CaseSensitiveSettings(Settings):
         env_prefix="ORCHESTRATOR_", case_sensitive=True, extra="ignore"
     )
     future_secret: str | None = None
+
+
+def _coverage_is_clean() -> bool:
+    """The predicate the DoD-1 drift test pins: the shipped clear-list leaves no gaps."""
+    return conftest.env_names_not_covered() == set()
+
+
+def test_the_real_settings_surface_is_fully_covered():
+    """DoD 1: with the SHIPPED clear-list, no Settings-visible name is left ambient.
+
+    This is the test that fails if `AMBIENT_ENV` is reverted to the old hand-kept tuple, which is
+    exactly the drift DoD 1 exists to prevent (round-3 finding 1).
+    """
+    assert _coverage_is_clean(), conftest.env_names_not_covered()
 
 
 def test_the_leaked_supabase_names_are_covered(monkeypatch):
@@ -78,14 +95,18 @@ def test_alias_and_case_sensitivity_are_read_and_covered(monkeypatch):
     assert "ORCHESTRATOR_future_secret" in settings_env_names(CaseSensitiveSettings)
 
 
-def test_removing_the_settings_derivation_makes_the_coverage_check_fail(monkeypatch):
-    """Mutation check (DoD 5): the old hand-kept clear-list must be detected."""
+def test_removing_the_settings_derivation_fails_the_coverage_check(monkeypatch):
+    """Mutation check (DoD 5): the old hand-kept list must make the REAL coverage test fail.
+
+    It asserts against the same `_coverage_is_clean()` predicate as the test above, so this
+    mutation is not a separate tautology: if the derivation is removed, the green test goes red.
+    """
     monkeypatch.setattr(conftest, "AMBIENT_ENV", PROVIDER_ENV_NAMES)
+    assert _coverage_is_clean() is False
     missing = conftest.env_names_not_covered()
     assert "ORCHESTRATOR_SUPABASE_URL" in missing
     assert "ORCHESTRATOR_SUPABASE_PASSWORD" in missing
     assert "ORCHESTRATOR_TOKEN" in missing
-    assert missing  # the whole derived surface is reported, not a single lucky key
 
 
 def test_restoring_the_import_environment_drops_arbitrary_dotenv_keys(monkeypatch):

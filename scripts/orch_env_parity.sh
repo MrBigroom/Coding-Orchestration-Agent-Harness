@@ -48,7 +48,10 @@ printf 'orch-parity: seeded env file  %s (contents not logged)\n' "$SOURCE_ENV"
 printf 'orch-parity: throwaway tree   %s\n' "$TREE"
 
 git -C "$ROOT" worktree add --detach "$TREE" HEAD >/dev/null
-cp "$SOURCE_ENV" "$TREE/.env"
+# Copy the operator's real credentials with 0600: the shell umask must never make them
+# world-readable just because they landed under a throwaway tree.
+(umask 077 && cp "$SOURCE_ENV" "$TREE/.env")
+chmod 600 "$TREE/.env"
 
 cd "$TREE"
 rc=0

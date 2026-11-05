@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import shutil
@@ -435,11 +436,7 @@ def _marker_problems(rows: list[dict[str, str]], root: Path) -> list[str]:
 
 
 def _drop_snapshots(project: Project, key: str, add, label: str, report_success: bool) -> None:
-    """Remove this project's proof worktrees for `key`, first unlinking any seeded `.env`.
-
-    A run killed between the copy and the cleanup would otherwise park a copy of the operator's
-    credentials in an untracked-dirty worktree that `cleanup` deliberately refuses to remove.
-    """
+    """Remove this project's clean proof worktrees for `key` (branch kept)."""
     from orchestrator.services import git_service
 
     try:
@@ -449,7 +446,6 @@ def _drop_snapshots(project: Project, key: str, add, label: str, report_success:
             if m["project_slug"] == project.slug and m["task_id"] == key
         ]
         for leftover in leftovers:
-            (leftover["path"] / ".env").unlink(missing_ok=True)
             note = git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
             if note.startswith("skip"):
                 add(label, False, f"{note}; run `orchestrator cleanup`")
@@ -457,6 +453,22 @@ def _drop_snapshots(project: Project, key: str, add, label: str, report_success:
                 add(label, True, note)
     except (OSError, GitError) as e:
         add(label, False, f"{e}; run `orchestrator cleanup`")
+
+
+def _seeded_env_copy(source: Path, dest: Path) -> None:
+    """Copy a real `.env` without ever widening its permissions.
+
+    A plain `shutil.copyfile` creates the destination with the process umask (typically 0644), so
+    the operator's credentials would be world-readable under ORCHESTRATOR_HOME. The destination
+    is created 0600 atomically and never truncated in place.
+    """
+    data = source.read_bytes()
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, data)
+    finally:
+        os.close(fd)
 
 
 def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
@@ -555,10 +567,23 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
     repo = Path(project.path)
-    # Sweep leftovers from a killed run (and the seeded `.env`) before creating a new snapshot.
-    _drop_snapshots(
-        project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity stale worktree removed", True
-    )
+    # A worktree left by a killed run is REPORTED, not swept: residue hygiene for the parity path
+    # is T-20 and deliberately out of scope for T-19.
+    stale = [
+        m
+        for m in git_service.managed_worktrees()
+        if m["project_slug"] == project.slug
+        and m["task_id"] == ENV_PARITY_SNAPSHOT_KEY
+        and m["exists"]
+    ]
+    if stale:
+        add(
+            "env-parity stale worktree",
+            False,
+            f"{stale[0]['path']} is left over from an interrupted run; run `orchestrator cleanup` "
+            "(sweeping it is T-20)",
+        )
+        return checks
 
     source_env = repo / ".env"
     if not source_env.is_file():
@@ -581,10 +606,12 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         return checks
     seeded = info.path / ".env"
     try:
-        # Copy only: the file stays untracked and is unlinked before cleanup (a dirty throwaway
-        # worktree is deliberately not auto-removed).
-        shutil.copyfile(source_env, seeded)
-        add("env-parity .env seeded", True, f"copy of {source_env} (contents not logged)")
+        _seeded_env_copy(source_env, seeded)
+        add(
+            "env-parity .env seeded",
+            True,
+            f"copy of {source_env} (contents not logged, mode 0600)",
+        )
         try:
             argv = command_argv(project.test_command)
         except ProjectError as e:
@@ -601,10 +628,25 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         detail = f"exit {code} (cwd {info.path}, local .env seeded)"
         if timed_out:
             detail += f" after {RUN_TIMEOUT_SECONDS}s"
-        if not ok:
+        rows = parse_orch_verify(output)
+        if not rows:
+            ok = False
+            detail += (
+                "; no ORCH_VERIFY marker: the command is not path-independent and may import "
+                "the main checkout — wrap it like scripts/orch_verify.sh"
+            )
+        else:
+            problems = _marker_problems(rows, info.path)
+            if problems:
+                ok = False
+                detail += f"; {'; '.join(problems)}"
+        if code != 0 and not timed_out:
             detail += f"; tail: {_tail(output) or 'no output'}"
         add("env-parity suite", ok, detail)
     finally:
+        # Remove ONLY the file this invocation created, so the throwaway tree is clean enough for
+        # `remove_worktree` to delete it; a killed run's residue is T-20, above.
+        seeded.unlink(missing_ok=True)
         _drop_snapshots(
             project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
         )

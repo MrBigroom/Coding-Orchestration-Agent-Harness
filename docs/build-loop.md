@@ -459,12 +459,15 @@ Three things now keep that difference visible and harmless:
    `test-parity` creates a throwaway detached worktree of the **current HEAD** and runs it via
    `scripts/orch_verify.sh`; `doctor --env-parity` snapshots the project's configured **base
    branch** and runs the configured **test** command there, so a branch's own wrapper is not in
-   that snapshot (the same caveat as `--run-commands`). Both copy the local `.env` in, never
-   print or commit its contents, and remove the tree on every exit path; a run killed mid-copy is
-   swept (seeded `.env` deleted first) at the start of the next `--env-parity` run.
+   that snapshot (the same caveat as `--run-commands`). Both copy the local `.env` in with mode
+   `0600` (never world-readable), never print or commit its contents, and remove the tree on every
+   exit path. A run killed mid-copy leaves a seeded worktree behind: T-19 only **reports** it and
+   asks for `orchestrator cleanup` — sweeping that residue is T-20 and deliberately not here.
    `--env-parity` is off by default and CLI-only; the API/GUI doctor route keeps its static
    shape. Neither is wired into `make test`, `make verify` or any project `test_command` — a gate
-   must stay env-free or its green stops meaning what it says. The offline parity proof runs the
+   must stay env-free or its green stops meaning what it says. A parity green also requires the
+   command to emit the `ORCH_VERIFY|` marker, so it cannot come from importing the main checkout
+   unseen. The offline parity proof runs the
    affected env/config/settings/sync subset twice (once with a synthetic `.env`, once without) in
    a throwaway clone, behind `ORCH_ENV_SPAWN_TESTS=1`; it is not part of a gated run.
 

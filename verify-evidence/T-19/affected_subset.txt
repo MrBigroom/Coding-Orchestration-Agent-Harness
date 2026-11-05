@@ -1,5 +1,0 @@
-# HEAD=c3e114a tracked-dirty-entries=0
-# command: ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -vv -k affected_subset_is_identical
-ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
-tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv PASSED [100%]
-====================== 1 passed, 619 deselected in 15.24s ======================
