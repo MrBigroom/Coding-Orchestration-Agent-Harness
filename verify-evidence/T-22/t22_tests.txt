@@ -39,4 +39,4 @@ tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_arti
 tests/integration/test_review_payload.py::test_manifest_names_the_files_a_diff_budget_dropped PASSED [ 94%]
 tests/integration/test_review_payload.py::test_archived_payload_carries_the_resolution_evidence_for_each_verdict PASSED [ 97%]
 tests/integration/test_review_payload.py::test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absent PASSED [100%]
-============================== 38 passed in 4.55s ==============================
+============================== 38 passed in 4.62s ==============================

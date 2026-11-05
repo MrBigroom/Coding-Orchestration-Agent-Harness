@@ -1,5 +1,5 @@
 # HEAD=13535c3116873f1ef9b29129b4ae965ea52a4128 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=13535c3116873f1ef9b29129b4ae965ea52a4128
+# HEAD=bc374b7de0635889dbd65d4853db6823b142466f
 # command: python verify-evidence/T-22/extractor.py --index
 # every label a verdict can carry, and where each new function starts
 
