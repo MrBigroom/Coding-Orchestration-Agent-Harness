@@ -1,5 +1,5 @@
-# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e
+# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6
 # command: python verify-evidence/T-22/extractor.py --replay
 
 ## BEFORE - runs/38/review.json notes, verbatim (the false confirmations)
@@ -23,7 +23,7 @@
 
 ## AFTER - the same findings, missing_artifacts and manifest rows through T-22
 - path claims were resolved against: supplied patch (10), diffstat (20), truncation manifest (10), git ls-tree HEAD (20)
-- distinct paths in the universe: 20 at commit d48e83668924dc080b031872d6f98a2e34a7b25e
+- distinct paths in the universe: 20 at commit 0655bbfc4202c69cb91392990009bd1c97e30e35
 - a bare name matching exactly one path is resolved to it; matching several is reported with every candidate and left `unchecked`; matching nothing is `unchecked` too
 
   [unchecked/omitted-from-review-input/path-resolution] finding: docs/build-loop.md -> docs/build-loop.md
