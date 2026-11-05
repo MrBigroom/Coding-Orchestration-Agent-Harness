@@ -2,7 +2,6 @@
 # command: ./scripts/orch_verify.sh test -vv -k "(env_guard or env_hermeticity) and not full_suite_is_identical"
 PASSED (named): test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv
 PASSED (named): test_verification_json_names_the_gated_environment
-PASSED (named): test_verification_json_distinguishes_a_tree_that_has_a_local_dotenv
 PASSED (named): test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree
 PASSED (named): test_parity_script_runs_the_suite_with_a_seeded_env_and_cleans_up
 PASSED: 14 of 14 selected T-19 tests across test_env_hermeticity.py and test_env_guard.py
