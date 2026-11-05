@@ -1,8 +1,9 @@
-# HEAD=c3e114a tracked-dirty-entries=0
+# HEAD=b77a563 tracked-dirty-entries=0
 # command: PYTHONPATH=src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - <<'PY' (mutation: replace AMBIENT_ENV with the old provider tuple)
-derived settings env names: 47
-coverage gaps reported with the hand-kept list: 42
+derived settings env names: 42
+coverage clean with the derivation: True
+coverage clean after removing it: False
   ORCHESTRATOR_SUPABASE_URL in gaps: True
   ORCHESTRATOR_SUPABASE_PASSWORD in gaps: True
   ORCHESTRATOR_TOKEN in gaps: True
-MUTATION_DETECTED: removing the Settings derivation fails the coverage check
+MUTATION_DETECTED: removing the Settings derivation fails the coverage test
