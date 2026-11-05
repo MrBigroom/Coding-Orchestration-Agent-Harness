@@ -1,4 +1,4 @@
-# HEAD=b77a563 tracked-dirty-entries=0
+# HEAD=c812467 tracked-dirty-entries=0
 # command: PYTHONPATH=src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - <<'PY' (mutation: replace AMBIENT_ENV with the old provider tuple)
 derived settings env names: 42
 coverage clean with the derivation: True
