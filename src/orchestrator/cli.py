@@ -442,12 +442,21 @@ def project_doctor(
         "base branch and check they exit 0 AND resolve imports inside that worktree. Runs "
         "project code, so it is off by default and is never reachable from the API or GUI.",
     ),
+    env_parity: bool = typer.Option(
+        False,
+        "--env-parity",
+        help="Developer check, NOT the gate: run the configured TEST command in a throwaway "
+        "worktree with a copy of the local .env seeded in, so you can see whether ambient "
+        "configuration changes the result. Contents are never printed or committed.",
+    ),
 ) -> None:
     from orchestrator.services import project_service
 
     _ensure_ready()
     with _session() as s:
-        checks = project_service.doctor(project_service.get(s, project), run_commands=run_commands)
+        checks = project_service.doctor(
+            project_service.get(s, project), run_commands=run_commands, env_parity=env_parity
+        )
     bad = 0
     for c in checks:
         bad += 0 if c["ok"] else 1

@@ -276,7 +276,32 @@ def command_allowed(project: Project, command: str) -> bool:
     return command in project.allowed_commands or argv0 in project.allowed_commands
 
 
-def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]:
+def environment_summary(cwd: Path) -> str:
+    """Name the world a verification command actually ran in (T-19 DoD 3).
+
+    A gate green and an operator-checkout red can both be true because `git worktree add` copies
+    tracked files only: a gated worktree has no `.env`, no `node_modules` and no `.venv`. Recording
+    that in `verification.json`'s existing check evidence lets a human compare the two runs without
+    inventing a new artifact or a new check-record field (the layout and the record shape are
+    frozen).
+    """
+    cwd = Path(cwd)
+    has_env = (cwd / ".env").is_file()
+    has_node_modules = any(
+        (cwd / candidate).is_dir() for candidate in ("node_modules", "web/node_modules")
+    )
+    has_venv = (cwd / ".venv").exists()
+    env_state = "present" if has_env else "absent (tracked-files-only worktree)"
+    return (
+        f"cwd={cwd}; local .env {env_state}; "
+        f"node_modules {'present' if has_node_modules else 'absent'}; "
+        f".venv {'present' if has_venv else 'absent'}"
+    )
+
+
+def doctor(
+    project: Project, run_commands: bool = False, env_parity: bool = False
+) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str = "") -> None:
@@ -333,6 +358,8 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
             add(f"{label} command", False, str(e))
     if run_commands:
         checks.extend(run_in_worktree_checks(project))
+    if env_parity:
+        checks.extend(run_env_parity_checks(project))
     return checks
 
 
@@ -348,6 +375,7 @@ def doctor(project: Project, run_commands: bool = False) -> list[dict[str, Any]]
 # does not expose this at all.
 
 DOCTOR_SNAPSHOT_KEY = "doctor"
+ENV_PARITY_SNAPSHOT_KEY = "env-parity"
 RUN_TIMEOUT_SECONDS = 900
 MARKER_PREFIX = "ORCH_VERIFY|"
 
@@ -487,4 +515,105 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
                     add("throwaway worktree removed", False, f"{note}; run `orchestrator cleanup`")
         except (OSError, GitError) as e:
             add("throwaway worktree removed", False, f"{e}; run `orchestrator cleanup`")
+    return checks
+
+
+# --- opt-in environment-parity probe (`project doctor --env-parity`) -----------------
+#
+# The opposite check from the one above, and deliberately a DEVELOPER check, never a gate command:
+# it runs the project's TEST command in a throwaway worktree with a copy of the local `.env`, i.e.
+# the world the human actually works in. A gate green is a green in a clean environment; this is
+# how you ask "does my ambient configuration change that?". It is off by default, only reachable
+# from the CLI (the API/GUI doctor route keeps its static shape), and it seeds a copy of the env
+# file without ever reading, logging or committing its contents.
+
+def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
+    from orchestrator.services import git_service, process_service
+
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str = "") -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail})
+
+    repo = Path(project.path)
+    source_env = repo / ".env"
+    if not source_env.is_file():
+        add(
+            "env-parity suite",
+            True,
+            f"no .env at {source_env}; nothing to seed (the gate is already env-free)",
+        )
+        return checks
+    if not project.test_command:
+        add("env-parity suite", True, "no test command configured")
+        return checks
+
+    try:
+        info = git_service.ensure_snapshot(
+            repo, project.slug, ENV_PARITY_SNAPSHOT_KEY, project.base_branch
+        )
+    except GitError as e:
+        add("env-parity suite", False, f"throwaway worktree failed: {e}")
+        return checks
+    add("env-parity worktree created", True, str(info.path))
+    seeded = info.path / ".env"
+    try:
+        # Copy only: never print or stage the contents. The file stays untracked and is removed
+        # before cleanup, because a dirty throwaway worktree is deliberately not auto-removed.
+        shutil.copyfile(source_env, seeded)
+        add("env-parity .env seeded", True, f"copy of {source_env} (contents not logged)")
+        try:
+            argv = command_argv(project.test_command)
+        except ProjectError as e:
+            add("env-parity suite", False, str(e))
+            return checks
+        try:
+            code, output, timed_out = process_service.run_simple_sync(
+                argv, info.path, RUN_TIMEOUT_SECONDS
+            )
+        except Exception as e:  # noqa: BLE001 - doctor reports, it never raises out
+            add("env-parity suite", False, f"could not run: {type(e).__name__}: {e}")
+            return checks
+        ok = code == 0 and not timed_out
+        detail = f"exit {code} (cwd {info.path}, local .env seeded)"
+        if timed_out:
+            detail += f" after {RUN_TIMEOUT_SECONDS}s"
+        if not ok:
+            detail += f"; tail: {_tail(output) or 'no output'}"
+        add("env-parity suite", ok, detail)
+        rows = parse_orch_verify(output)
+        if rows:
+            problems: list[str] = []
+            for row in rows:
+                module_file = row.get("module_file", "")
+                worktree_root = row.get("worktree_root", "")
+                if not module_file or not worktree_root:
+                    problems.append(f"incomplete marker: {row}")
+                elif not _under(module_file, str(info.path)):
+                    problems.append(
+                        f"{row.get('module', '?')} imported from {module_file}, outside the "
+                        "worktree"
+                    )
+                elif not _same_dir(worktree_root, str(info.path)):
+                    problems.append(f"wrapper root {worktree_root} is not the worktree {info.path}")
+            add(
+                "env-parity resolves inside the worktree",
+                not problems,
+                "; ".join(problems) or f"{rows[0].get('module', '?')} -> {module_file}",
+            )
+    finally:
+        seeded.unlink(missing_ok=True)
+        try:
+            leftover = [
+                m
+                for m in git_service.managed_worktrees()
+                if m["project_slug"] == project.slug
+                and m["task_id"] == ENV_PARITY_SNAPSHOT_KEY
+            ]
+            for m in leftover:
+                note = git_service.remove_worktree(repo, m, dry_run=False)
+                if note.startswith("skip"):
+                    add("env-parity worktree removed", False, f"{note}; run `orchestrator cleanup`")
+        except (OSError, GitError) as e:
+            add("env-parity worktree removed", False, f"{e}; run `orchestrator cleanup`")
     return checks

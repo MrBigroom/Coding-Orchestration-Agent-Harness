@@ -5,7 +5,7 @@ VENV  := .venv/bin
 PORT  ?= $(or $(ORCHESTRATOR_BIND_PORT),8321)
 FILE  ?= memory-export.json
 
-.PHONY: setup dev start test lint verify format doctor demo build clean memory-export memory-import desktop desktop-install desktop-uninstall
+.PHONY: setup dev start test test-parity lint verify format doctor demo build clean memory-export memory-import desktop desktop-install desktop-uninstall
 
 setup:          ## venv + deps (+ npm if present), init home, alembic upgrade head
 	./scripts/setup.sh
@@ -18,6 +18,9 @@ start:          ## production backend on :8321 (serves web/dist or the fallback 
 
 test:           ## pytest via scripts/orch_verify.sh (works in the main checkout and in worktrees)
 	./scripts/orch_verify.sh test
+
+test-parity:    ## DEVELOPER check, not the gate: suite in a throwaway worktree with your local .env
+	./scripts/orch_env_parity.sh test
 
 lint:           ## ruff check via scripts/orch_verify.sh (same path-independence checks)
 	./scripts/orch_verify.sh lint

@@ -196,6 +196,12 @@ async def verify(
                     f"; passed {counts['passed']}, failed {counts['failed']},"
                     f" skipped {counts['skipped']}"
                 )
+        # T-19 DoD 3: say WHICH world produced this green. The runs/<run_id>/ layout and the
+        # verification check-record shape are frozen, so this rides in the existing `evidence`
+        # string rather than adding a new field or artifact. A gated worktree is tracked-files-only:
+        # no local `.env`, no node_modules. A human comparing a gate pass with a red operator
+        # checkout can see from verification.json that the two ran in different environments.
+        test_check.evidence += f"; environment: {project_service.environment_summary(cwd)}"
         checks.append(test_check)
         for label, cmd in (("lint", project.lint_command), ("build", project.build_command)):
             c, out = await _run_command(label, cmd, cwd, run.id)

@@ -420,6 +420,45 @@ rides straight through. Prefer a path-independent command over a null one; if a 
 cannot be verified, record it in `verification.json` as `not_applicable` and read the Worker's
 test claims as unverified.
 
+## Gated runs are environment-free — and the opt-in parity check
+
+`git worktree add` copies **tracked files only**, so a gated run is deliberately a different
+world from the operator checkout: no `.env` (`.gitignore` excludes it), no `.venv`, no
+`web/node_modules`, no built assets, and none of the checkout's untracked local configuration.
+That is the honest way to verify a branch, but it means a gate green and a local red can both
+be true — exactly what happened when the T-9 merge was green in three gated runs and red in the
+operator checkout because a module-level app import loaded the developer's `.env` during
+collection.
+
+Three things now keep that difference visible and harmless:
+
+1. **The test suite is hermetic by construction.** `tests/conftest.py` derives the clear-list
+   from the `Settings` model fields (`core.config.settings_env_names()`), so a new
+   `ORCHESTRATOR_*` setting is covered the moment it exists instead of waiting for someone to
+   remember it; a coverage test asserts that every env-visible field is in the list, and a
+   mutation check shows the old hand-kept list fails it. A session-scoped autouse fixture then
+   resets the settings cache and re-applies the hygiene **after collection imports have run**
+   (module-level app imports are the leak path), and a cwd-relative `.env` is never ambient
+   configuration for the rest of the session. An explicit path passed to `load_env_file()` is
+   still honoured, so the dotenv unit test is real.
+2. **The gate record says which world it was.** `verification.json`'s existing `tests` check
+   evidence ends with `environment: cwd=…; local .env absent (tracked-files-only worktree);
+   node_modules absent; .venv absent` (or `present` for whichever of those exists). The
+   check-record shape and the `runs/<run_id>/` layout are frozen, so this is recorded inside the
+   existing `evidence` string — no new field and no new artifact.
+3. **There is an opt-in developer path, never a gate command.** To ask "does my local `.env`
+   change the result?", run `make test-parity` (or `just test-parity`), or
+   `orchestrator project doctor <name> --env-parity`. Both copy the local `.env` into a
+   throwaway detached worktree of the current HEAD, run the configured **test** command there
+   with `scripts/orch_verify.sh`, never print or commit the file's contents, and remove the tree
+   on every exit path. `--env-parity` is off by default and CLI-only; the API/GUI doctor route
+   keeps its static shape. Neither is wired into `make test`, `make verify` or any project
+   `test_command` — a gate must stay env-free or its green stops meaning what it says.
+
+The same tracked-only rule is why the TypeScript check needs the scratch-directory recipe
+(symlink the main checkout's `node_modules` and the worktree's web sources, run the local `tsc`):
+a worktree has no `web/node_modules`, and it also has no `.git`-ignored local config of any kind.
+
 ## Handoff artifacts
 
 `runs/<run_id>/handoff.md` and `handoff.json` (schema in `frozen-contracts.md`). The

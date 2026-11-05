@@ -15,6 +15,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
+# Provider SDKs read their own variables directly (not through `Settings`), so these are the only
+# env names the hermeticity guard still has to keep by hand. Everything with the ORCHESTRATOR_
+# prefix is derived from the model below, because a hand-kept list drifted behind the settings
+# surface once already (T-19: the T-9 merge leaked ORCHESTRATOR_SUPABASE_* past SECRET_ENV).
+PROVIDER_ENV_NAMES: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
+    "QWEN_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GLM_API_KEY",
+    "HERMES_API_KEY",
+)
+
 
 def default_home() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
@@ -137,6 +149,18 @@ class Settings(BaseSettings):
             self.memory_root,
         ):
             Path(p).mkdir(parents=True, exist_ok=True)
+
+
+def settings_env_names() -> tuple[str, ...]:
+    """Every environment variable pydantic-settings would read for :class:`Settings`.
+
+    Derived from the model and its configured prefix — never hand-maintained. A new settings field
+    is therefore covered by the test hermeticity guard the moment it exists, which is the point of
+    T-19 DoD 1: the previous hand-kept list only knew the fields someone remembered to add, and the
+    T-9 merge's `ORCHESTRATOR_SUPABASE_*` leak proved that is a drift-prone shape.
+    """
+    prefix = str(Settings.model_config.get("env_prefix") or "").upper()
+    return tuple(f"{prefix}{name.upper()}" for name in Settings.model_fields)
 
 
 def load_env_file(path: str | Path = ".env") -> None:

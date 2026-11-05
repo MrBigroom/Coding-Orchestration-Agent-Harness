@@ -63,6 +63,8 @@ def test_project_doctor_run_commands_flag(home, tmp_path):
 
     h = runner.invoke(app, ["project", "doctor", "--help"])
     assert "--run-commands" in h.output
+    assert "--env-parity" in h.output
+    assert "NOT the gate" in h.output
 
     # no commands configured -> the opt-in check reports that and still exits 0
     r = runner.invoke(app, ["project", "doctor", "cli-repo", "--run-commands"])
