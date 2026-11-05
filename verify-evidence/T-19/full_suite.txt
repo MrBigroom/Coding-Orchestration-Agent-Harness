@@ -1,3 +1,4 @@
-# HEAD=1e2e522 tracked-dirty-entries=0
-# command: ./scripts/orch_verify.sh test (exit 0)
-615 passed, 6 skipped in 367.08s
+# HEAD=4276931 tracked-dirty-entries=0
+# command: ./scripts/orch_verify.sh test
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+613 passed, 7 skipped in 122.48s (0:02:02)

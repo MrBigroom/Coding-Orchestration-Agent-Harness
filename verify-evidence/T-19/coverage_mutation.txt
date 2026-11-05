@@ -1,6 +1,8 @@
-# HEAD=1e2e522 tracked-dirty-entries=0
-# Old hand-kept clear-list (provider keys only), i.e. the Settings derivation removed:
-derived settings env names: 42
-coverage gaps reported: 42, including ORCHESTRATOR_SUPABASE_URL, ORCHESTRATOR_SUPABASE_EMAIL,
-ORCHESTRATOR_SUPABASE_PASSWORD, ORCHESTRATOR_TOKEN
+# HEAD=4276931 tracked-dirty-entries=0
+# command: PYTHONPATH=src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - <<'PY' (mutation: replace SECRET_ENV with the old provider tuple)
+derived settings env names: 47
+coverage gaps reported with the hand-kept list: 42
+  ORCHESTRATOR_SUPABASE_URL in gaps: True
+  ORCHESTRATOR_SUPABASE_PASSWORD in gaps: True
+  ORCHESTRATOR_TOKEN in gaps: True
 MUTATION_DETECTED: removing the Settings derivation fails the coverage check
