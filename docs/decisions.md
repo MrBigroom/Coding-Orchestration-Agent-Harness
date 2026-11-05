@@ -379,7 +379,9 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `verify-evidence/<task>/README.md` is ambiguous and lists both candidates instead of silently
   picking the root (round-2 findings 1 and 3). Ambiguous and unplaceable names are `unchecked`
   (`unresolvable-claim`); `confirmed` survives only for a located path the repository does not
-  contain, and the tally prints `by path-resolution / by explicit-named-path / by manifest-record /
+  contain **and no consulted source names**, with `git ls-tree HEAD` actually searched at the
+  reviewed commit — an unavailable source, or a path the diffstat alone still names (a deletion),
+  is `unchecked` with the blocker named rather than a confident absence. The tally prints `by path-resolution / by explicit-named-path / by manifest-record /
   from a failed lookup` so a confident batch that rests on unresolved names is visible without
   re-auditing each row by hand. The three states a reviewer acts on are named in the existing
   notes/detail fields (`omitted-from-review-input` = budget failure owned by T-16 and therefore

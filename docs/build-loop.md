@@ -539,10 +539,13 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   resolved to the root one (round-2 finding 1). Exactly one match is judged at that path; several
   matches are `unchecked` with **every** candidate listed — the resolver never picks one; no match
   and the claim was only a name is `unchecked` with the reason `no path could be resolved from the
-  claim`. `confirmed` is reachable only for a claim that was located **and whose path the
-  repository does not contain** at the reviewed commit. A path the repository contains is never
-  confirmed absent, even when the diff budget withheld it; a failed lookup cannot reach
-  `confirmed` at all. That is the invariant the tally prints.
+  claim`. `confirmed` is reachable only for a claim that was located **and whose path every one
+  of the four sources denies**, with `git ls-tree HEAD` actually searched at the reviewed commit:
+  if a source was unavailable, or another source lists the path (a deletion that survives only in
+  the diffstat), the verdict is `unchecked` and names the blocker — a confident label is never
+  manufactured from a partial search. A path the repository contains is never confirmed absent,
+  even when the diff budget withheld it; a failed lookup cannot reach `confirmed` at all. That is
+  the invariant the tally prints.
 - **Three states, not one label (T-22 DoD 3).** `confirmed` alone conflated a review-input failure
   with a Worker evidence gap, so each verdict also carries a state in its detail, the table's
   `state` column and the review notes: `omitted-from-review-input` (present in the repository, but
@@ -560,8 +563,11 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   `by manifest-record`, `from a failed lookup` — so a human skimming `review.md` sees at a glance
   whether a confident batch rests on resolved evidence or on names the checker could not place. The
   last number is 0 by construction; if it ever is not, the resolver is broken. `review_payload.md`
-  also states the universe every verdict was resolved against (sources, counts, the commit SHA) and
-  gives each row its own `how it was resolved` and `where it was found` columns.
+  also states the universe every verdict was resolved against (sources and their counts, any
+  unavailable source and why, the commit SHA) and gives each row its own `how it was resolved` and
+  `where it was found` columns. A source that was consulted but contributed no entries (an empty
+  patch, a diffstat with no rows) is still listed as searched, so "searched" means consulted, not
+  "happened to name this path".
 - **Existence is not visibility.** A file that exists on disk does not refute "its hunks were not
   supplied". Visibility claims are compared with the supplied patch and the truncation manifest;
   `refuted` means the evidence was in fact supplied in full, `omitted-from-review-input` means the

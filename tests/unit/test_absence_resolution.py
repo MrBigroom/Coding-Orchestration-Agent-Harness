@@ -259,7 +259,7 @@ def test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_looku
         # unchecked: a bare name the lookup cannot place
         ReviewFinding(file_or_area="x", issue="mystery.txt is missing", violates=""),
     ]
-    checks = review_audit.check_findings(findings, repo)
+    checks = review_audit.check_findings(findings, repo, review_audit.SuppliedEvidence())
     tally = review_audit.tally_verdicts(checks)
 
     assert tally.startswith("1 confirmed, 1 refuted, 1 unchecked ")
@@ -401,7 +401,7 @@ def test_an_untracked_worktree_file_is_absent_at_the_reviewed_commit(tmp_path):
     path = f"{EVIDENCE_DIR}/uncommitted.txt"
 
     finding = ReviewFinding(file_or_area=path, issue=f"{path} is missing", violates="DoD 5")
-    checks = review_audit.check_findings([finding], repo)
+    checks = review_audit.check_findings([finding], repo, review_audit.SuppliedEvidence())
 
     assert checks[0].status == "confirmed"
     assert checks[0].state == review_audit.STATE_ABSENT
@@ -425,10 +425,102 @@ def test_an_untracked_file_is_not_the_budget_state(tmp_path):
     assert "not in the repository at the reviewed commit" in checks[0].detail
 
 
-def test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain(tmp_path):
-    """DoD 2 as an invariant over the incident fixture, not just one example."""
-    checks, _supplied, _universe = _run38_checks(tmp_path)
+def test_a_source_that_contributes_no_entries_is_still_reported_as_searched(tmp_path):
+    """Round-3 finding 4: 'searched' means consulted, not 'happened to name this path'."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
+    # Consulted, but it names no path at all: an empty patch, diffstat and manifest.
+    universe = review_audit.build_universe(repo, review_audit.SuppliedEvidence())
 
+    assert universe.source_list() == ", ".join(review_audit.ALL_SOURCES)
+    assert universe.unavailable_list() == ""
+    assert universe.counts()[review_audit.SOURCE_PATCH] == 0
+    assert universe.counts()[review_audit.SOURCE_DIFFSTAT] == 0
+    assert universe.counts()[review_audit.SOURCE_MANIFEST] == 0
+    rendered = review_audit.render_universe(universe)
+    for source in review_audit.ALL_SOURCES:
+        assert f"{source} (" in rendered
+
+
+def test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source(tmp_path):
+    """Round-3 finding 1: a failed `git ls-tree` is not a search that found nothing."""
+    not_a_repo = tmp_path / "plain-dir"
+    not_a_repo.mkdir()
+    supplied = review_audit.SuppliedEvidence()
+    path = f"{EVIDENCE_DIR}/gone.txt"
+
+    visibility = review_audit.check_missing_artifacts([path], not_a_repo, supplied)
+    # An existence claim used to have no repository-view guard at all, so this is the path that
+    # could return confirmed while `git ls-tree` had never run.
+    existence = review_audit.check_findings(
+        [ReviewFinding(file_or_area=path, issue=f"{path} is missing", violates="")],
+        not_a_repo,
+        supplied,
+    )
+
+    for checks in (visibility, existence):
+        assert checks[0].status == "unchecked"
+        assert checks[0].state == review_audit.STATE_UNDECIDED
+        assert "git ls-tree HEAD" in checks[0].detail
+        assert review_audit.SOURCE_LS_TREE not in checks[0].sources
+        assert checks[0].basis == review_audit.BASIS_EXPLICIT
+
+
+def test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent(tmp_path):
+    """The diffstat still names a deletion, so the path is not absent from every source."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
+    path = f"{EVIDENCE_DIR}/deleted.txt"
+    supplied = review_audit.supplied_evidence("", [], {path})
+
+    visibility = review_audit.check_missing_artifacts(["deleted.txt"], repo, supplied)
+    existence = review_audit.check_findings(
+        [ReviewFinding(file_or_area=path, issue=f"{path} is missing", violates="")],
+        repo,
+        supplied,
+    )
+
+    assert visibility[0].status == "unchecked"
+    assert visibility[0].resolved_path == path
+    assert "cannot confirm absence" in visibility[0].detail
+    assert review_audit.SOURCE_DIFFSTAT in visibility[0].detail
+    assert existence[0].status == "unchecked"
+    assert existence[0].state == review_audit.STATE_UNDECIDED
+    assert review_audit.SOURCE_DIFFSTAT in existence[0].detail
+
+
+def test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain(tmp_path):
+    """DoD 2 as an invariant over the rows that ARE confirmed, not an empty all()."""
+    repo = make_repo(
+        tmp_path / "repo",
+        {"README.md": "# project\n", f"{EVIDENCE_DIR}/present.txt": "tracked\n"},
+    )
+    supplied = review_audit.SuppliedEvidence()
+    findings = [
+        ReviewFinding(
+            file_or_area="a",
+            issue=f"{EVIDENCE_DIR}/gone_one.txt is missing",
+            violates="",
+        ),
+        ReviewFinding(file_or_area="b", issue="docs/gone_two.md is absent", violates=""),
+        ReviewFinding(
+            file_or_area="c",
+            issue=f"{EVIDENCE_DIR}/present.txt is missing",
+            violates="",
+        ),
+    ]
+    checks = review_audit.check_findings(findings, repo, supplied)
+    universe = review_audit.build_universe(repo, supplied)
     confirmed = [c for c in checks if c.status == "confirmed"]
-    assert confirmed == []
-    assert all(c.state == review_audit.STATE_ABSENT for c in confirmed)
+
+    # The invariant must be exercised on real confirmed rows, so assert the rows exist first.
+    assert {c.resolved_path for c in confirmed} == {
+        f"{EVIDENCE_DIR}/gone_one.txt",
+        "docs/gone_two.md",
+    }
+    for check in confirmed:
+        assert check.state == review_audit.STATE_ABSENT
+        assert not universe.in_repository(check.resolved_path)
+        assert check.found_in == ()
+        assert check.sources == review_audit.ALL_SOURCES
+    present = next(c for c in checks if c.claim == f"{EVIDENCE_DIR}/present.txt")
+    assert present.status == "refuted"
+    assert present.state == review_audit.STATE_PRESENT

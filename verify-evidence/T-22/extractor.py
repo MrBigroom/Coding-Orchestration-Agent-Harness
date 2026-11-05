@@ -39,6 +39,8 @@ RESOLVER_TARGETS = [
     ("class", "PathUniverse"),
     ("def", "build_universe"),
     ("def", "resolve_claim_path"),
+    ("def", "_confirmation_blockers"),
+    ("def", "_confirmed_or_unchecked"),
     ("def", "_repo_present"),
     ("def", "_visibility_verdict"),
     ("def", "_existence_verdict"),
@@ -208,6 +210,11 @@ def print_mutation() -> None:
         "test_run38_fixture_yields_the_corrected_mix_and_no_false_absence",
         "test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved",
         "test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup",
+        # round-3 findings 1 and 4
+        "test_a_source_that_contributes_no_entries_is_still_reported_as_searched",
+        "test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source",
+        "test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent",
+        "test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain",
     ]
 
     def run(name: str) -> str:
@@ -220,6 +227,9 @@ def print_mutation() -> None:
 
     orig_resolve = review_audit.resolve_claim_path
     orig_visibility = review_audit._check_visibility
+    orig_blockers = review_audit._confirmation_blockers
+    orig_mark_searched = review_audit.PathUniverse.mark_searched
+    orig_in_repo = review_audit.PathUniverse.in_repository
 
     def bare_as_explicit(raw: str, universe: review_audit.PathUniverse):
         tried = review_audit.normalize_claim_path(raw)
@@ -250,6 +260,16 @@ def print_mutation() -> None:
             res.claim, res.tried, res.tried, review_audit.BASIS_FAILED_LOOKUP, res.reason
         )
 
+    def no_confirmation_guard(path: str, universe: review_audit.PathUniverse) -> str:
+        return ""
+
+    def every_path_is_in_the_repository(self, path: str) -> bool:
+        return True
+
+    def only_found_paths_count_as_searched(self, source: str) -> None:
+        # The old behaviour: a source with no entries was invisible in "sources searched".
+        return None
+
     print(f"# HEAD={head()}")
     print("# command: python verify-evidence/T-22/extractor.py --mutation")
     print("# runtime patches only: the checkout is never edited. Each mutation re-breaks the")
@@ -259,20 +279,29 @@ def print_mutation() -> None:
         ("m1: no basename resolution - run 38's behaviour", len(cases)),
         ("m2: budget-omitted relabelled as absent", 3),
         ("m3: a failed lookup still gets a path (fail-open confidence)", 5),
+        ("m4: confirmed without every source denying the path", 2),
+        ("m5: the repository is assumed to contain every path", 1),
+        ("m6: a source with no entries is not reported as searched", 1),
     ]
     verdicts = []
     for label, expected in plan:
+        review_audit.resolve_claim_path = orig_resolve
+        review_audit._check_visibility = orig_visibility
+        review_audit._confirmation_blockers = orig_blockers
+        review_audit.PathUniverse.in_repository = orig_in_repo
+        review_audit.PathUniverse.mark_searched = orig_mark_searched
         if label.startswith("m1"):
             review_audit.resolve_claim_path = bare_as_explicit
         elif label.startswith("m2"):
-            review_audit.resolve_claim_path = orig_resolve
             review_audit._check_visibility = omitted_as_absent
         elif label.startswith("m3"):
             review_audit.resolve_claim_path = failed_lookup_gets_a_path
-            review_audit._check_visibility = orig_visibility
-        else:
-            review_audit.resolve_claim_path = orig_resolve
-            review_audit._check_visibility = orig_visibility
+        elif label.startswith("m4"):
+            review_audit._confirmation_blockers = no_confirmation_guard
+        elif label.startswith("m5"):
+            review_audit.PathUniverse.in_repository = every_path_is_in_the_repository
+        elif label.startswith("m6"):
+            review_audit.PathUniverse.mark_searched = only_found_paths_count_as_searched
         results = {name: run(name) for name in cases}
         red = sum(1 for v in results.values() if v == "RED")
         ok = red >= expected
@@ -283,8 +312,11 @@ def print_mutation() -> None:
             print(f"    {value:>3}  {name}")
     review_audit.resolve_claim_path = orig_resolve
     review_audit._check_visibility = orig_visibility
+    review_audit._confirmation_blockers = orig_blockers
+    review_audit.PathUniverse.in_repository = orig_in_repo
+    review_audit.PathUniverse.mark_searched = orig_mark_searched
     print()
-    print("all four cases behave as claimed: " + str(all(verdicts)))
+    print("all mutations detected: " + str(all(verdicts)))
 
 
 if __name__ == "__main__":

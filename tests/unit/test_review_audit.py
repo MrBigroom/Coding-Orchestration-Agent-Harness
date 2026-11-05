@@ -49,7 +49,9 @@ def test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked(tmp_pa
         file_or_area="src/never_there.py", issue="src/never_there.py is missing", violates=""
     )
     vague = ReviewFinding(file_or_area="tests", issue="tests are not visible", violates="")
-    checks = review_audit.check_findings([absent, vague], repo)
+    checks = review_audit.check_findings(
+        [absent, vague], repo, review_audit.SuppliedEvidence()
+    )
     assert review_audit.finding_status(checks, 0) == "confirmed"
     assert review_audit.finding_status(checks, 1) == "unchecked"
 
@@ -57,7 +59,9 @@ def test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked(tmp_pa
 def test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim(tmp_path):
     """Existence does NOT refute a "was not supplied" claim (round-2 reviewer finding 2)."""
     repo = make_repo(tmp_path / "repo", {"docs/present.md": "# here\n"})
-    checks = review_audit.check_missing_artifacts(["docs/present.md", "docs/absent.md"], repo)
+    checks = review_audit.check_missing_artifacts(
+        ["docs/present.md", "docs/absent.md"], repo, review_audit.SuppliedEvidence()
+    )
     # present on disk but not part of the supplied artifacts -> unchecked, never refuted;
     # absent everywhere -> confirmed.
     assert [c.status for c in checks] == ["unchecked", "confirmed"]

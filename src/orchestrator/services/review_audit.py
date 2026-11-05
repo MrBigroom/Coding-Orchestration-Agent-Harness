@@ -32,13 +32,15 @@ of them: an untracked or gitignored file is not part of the commit the reviewer 
     EVERY candidate; one is never picked;
   - no match and the claim gave only a bare name -> `unchecked` / `unresolvable-claim` with the
     reason `no path could be resolved from the claim`;
-  - no match and the claim itself named a directory-qualified path -> `confirmed`, because that
-    path is now shown absent from the repository, and the row names the sources searched.
+  - no match and the claim itself named a directory-qualified path -> the claim was located, and
+    it may only be `confirmed` when **every** source was consulted and none of them lists that
+    path; if a source was unavailable or another source lists it (a diffstat-only deletion, for
+    example), the verdict is `unchecked` and names the blocker.
 
-`confirmed` therefore requires a located path **that the repository does not contain**; a failed
-lookup, or a path the repository does contain, can only ever produce `unchecked` (or, when the
-archived patch supplied it in full, `refuted`). The three states a reviewer acts on are labelled
-separately (DoD 3):
+`confirmed` therefore requires a located path **that every searched source denies and the
+repository does not contain**; a failed lookup, a path another source lists, or a path the
+repository does contain can only ever produce `unchecked` (or, when the archived patch supplied
+it in full, `refuted`). The three states a reviewer acts on are labelled separately (DoD 3):
 `omitted-from-review-input` (present in the repository, withheld by the diff budget — T-16's
 problem, not the Worker's), `absent-at-reviewed-commit` (a real evidence gap) and
 `unresolvable-claim` (the checker cannot judge). The frozen `confirmed | refuted | unchecked`
@@ -152,19 +154,34 @@ def claim_is_explicit(normalized: str) -> bool:
 
 @dataclass
 class PathUniverse:
-    """Every path a reviewer claim could refer to, tagged with the source that names it."""
+    """Every path a reviewer claim could refer to, tagged with the source that names it.
+
+    `searched` records every source that was *consulted*, including one that contributed no
+    entries (an empty patch, a diffstat with no changed files, a manifest with no rows). A source
+    that was unavailable is recorded in `unavailable` with the reason, so a verdict can name it
+    rather than silently treating "found nothing" as "not there" (round-3 finding 4).
+    """
 
     head_sha: str = ""
     entries: dict[str, set[str]] = field(default_factory=dict)
     searched: list[str] = field(default_factory=list)
+    unavailable: dict[str, str] = field(default_factory=dict)
+
+    def mark_searched(self, source: str) -> None:
+        if source not in self.searched:
+            self.searched.append(source)
+        self.unavailable.pop(source, None)
+
+    def mark_unavailable(self, source: str, reason: str) -> None:
+        if source not in self.searched:
+            self.unavailable[source] = reason
 
     def add(self, path: str, source: str) -> None:
+        self.mark_searched(source)
         path = normalize_claim_path(path)
         if not path:
             return
         self.entries.setdefault(path, set()).add(source)
-        if source not in self.searched:
-            self.searched.append(source)
 
     def has(self, path: str) -> bool:
         return normalize_claim_path(path) in self.entries
@@ -182,6 +199,14 @@ class PathUniverse:
 
     def source_list(self) -> str:
         return ", ".join(s for s in ALL_SOURCES if s in self.searched) or "no source available"
+
+    def unavailable_list(self) -> str:
+        """The sources that could not be consulted, with why — named in an unchecked verdict."""
+        return ", ".join(
+            f"{source} ({self.unavailable.get(source, 'unavailable')})"
+            for source in ALL_SOURCES
+            if source not in self.searched
+        )
 
     def counts(self) -> dict[str, int]:
         out = {s: 0 for s in ALL_SOURCES}
@@ -209,6 +234,10 @@ def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathU
     """
     universe = PathUniverse()
     if supplied is not None:
+        # Consulted even when empty: an empty patch is evidence that nothing was supplied, and
+        # "contributed no entries" must not read as "was not searched" (round-3 finding 4).
+        for source in (SOURCE_PATCH, SOURCE_DIFFSTAT, SOURCE_MANIFEST):
+            universe.mark_searched(source)
         for path in supplied.diff_supplied:
             universe.add(path, SOURCE_PATCH)
         for path in supplied.changed_paths:
@@ -217,11 +246,20 @@ def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathU
             item = str(record.get("item", ""))
             if item.startswith("diff:"):
                 universe.add(item[5:], SOURCE_MANIFEST)
+    else:
+        for source in (SOURCE_PATCH, SOURCE_DIFFSTAT, SOURCE_MANIFEST):
+            universe.mark_unavailable(source, "no archived review input was available")
     if cwd is not None and cwd.is_dir():
         tracked, head = _tracked_paths(cwd)
         universe.head_sha = head
+        if head:
+            universe.mark_searched(SOURCE_LS_TREE)
+        else:
+            universe.mark_unavailable(SOURCE_LS_TREE, "git ls-tree HEAD failed")
         for path in tracked:
             universe.add(path, SOURCE_LS_TREE)
+    else:
+        universe.mark_unavailable(SOURCE_LS_TREE, "no task worktree was available")
     return universe
 
 
@@ -264,14 +302,15 @@ def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
                 "the claim's own path is listed by the sources searched",
                 found_in=universe.names(tried),
             )
-        # A directory-qualified path that nothing lists: the claim names its own location, so the
-        # lookup did not fail — the path is genuinely absent, and every source says so.
+        # A directory-qualified path that nothing lists: the claim names its own location. The
+        # verdict guard still has to show every source was searched; the resolver only records
+        # that the lookup was conclusive for this claim.
         return PathResolution(
             raw,
             tried,
             tried,
             BASIS_EXPLICIT,
-            "the claim itself names this path and no source lists it anywhere",
+            "the claim itself names this path and none of the sources consulted lists it",
         )
     matches = universe.by_basename(tried)
     if len(matches) == 1:
@@ -538,6 +577,47 @@ def _repo_present(universe: PathUniverse, path: str) -> bool:
     return universe.in_repository(path)
 
 
+def _confirmation_blockers(path: str, universe: PathUniverse) -> str:
+    """Why `confirmed` is not available for this path — empty string when it is.
+
+    A confirmed absence needs more than "git ls-tree HEAD does not list it" (round-3 finding 1).
+    It needs every one of the four sources to have been consulted, and every one of them to say
+    nothing about the path: a path the diffstat names but the commit no longer contains (a
+    deletion) is not absent from all four sources, so the checker must not call it absent. When a
+    source was unavailable, the blocker names it and the verdict stays `unchecked` (fail closed).
+    """
+    if not universe.head_sha:
+        return (
+            "cannot confirm absence: `git ls-tree HEAD` was unavailable, so no reviewed commit "
+            "was searched"
+        )
+    missing = [s for s in ALL_SOURCES if s not in universe.searched]
+    if missing:
+        return (
+            "cannot confirm absence: not every source could be searched (unavailable: "
+            + universe.unavailable_list()
+            + ")"
+        )
+    listed = universe.names(path)
+    if listed:
+        return (
+            "cannot confirm absence: the path is listed by "
+            + ", ".join(listed)
+            + " and the repository does not contain it at the reviewed commit"
+        )
+    return ""
+
+
+def _confirmed_or_unchecked(
+    path: str, universe: PathUniverse, state: str, detail: str
+) -> tuple[str, str, str]:
+    """Return `confirmed` only when the claim was resolved and every source denies the path."""
+    blocker = _confirmation_blockers(path, universe)
+    if blocker:
+        return STATUS_UNCHECKED, STATE_UNDECIDED, f"{blocker}; {detail}"
+    return STATUS_CONFIRMED, state, detail
+
+
 def _visibility_verdict(
     path: str,
     present: bool,
@@ -575,8 +655,9 @@ def _visibility_verdict(
                 "the path is in the repository at the reviewed commit, but presence in the "
                 "supplied artifacts cannot be decided without the archived truncation manifest",
             )
-        return (
-            STATUS_CONFIRMED,
+        return _confirmed_or_unchecked(
+            path,
+            universe,
             STATE_ABSENT,
             f"{STATE_ABSENT}: the resolved path is {repo_side} and no source lists it as present "
             f"(no truncation manifest was available; searched: {universe.source_list()})",
@@ -603,8 +684,9 @@ def _visibility_verdict(
                 f"manifest says {cut_text} — the evidence exists, the review input did not carry "
                 "it (diff budget, owned by T-16), so this is not a Worker evidence gap",
             )
-        return (
-            STATUS_CONFIRMED,
+        return _confirmed_or_unchecked(
+            path,
+            universe,
             STATE_ABSENT,
             f"{STATE_ABSENT}: the resolved path is {repo_side} and the archived truncation "
             f"manifest says {cut_text} — there was nothing in the repository to supply",
@@ -625,8 +707,9 @@ def _visibility_verdict(
                 "has no section for it — a review-input gap, see the diff-completeness findings; "
                 "this is not a Worker evidence gap",
             )
-        return (
-            STATUS_CONFIRMED,
+        return _confirmed_or_unchecked(
+            path,
+            universe,
             STATE_ABSENT,
             f"{STATE_ABSENT}: changed by this task but {repo_side}, so nothing was there to "
             "supply",
@@ -638,8 +721,9 @@ def _visibility_verdict(
             "the path is in the repository at the reviewed commit but is not part of this task's "
             "diff, so presence in the supplied artifacts cannot be decided mechanically",
         )
-    return (
-        STATUS_CONFIRMED,
+    return _confirmed_or_unchecked(
+        path,
+        universe,
         STATE_ABSENT,
         f"{STATE_ABSENT}: the resolved path is {repo_side} and is listed by none of the sources "
         f"searched ({universe.source_list()})"
@@ -763,15 +847,15 @@ def _existence_verdict(
                 " (it exists in the worktree but is not tracked at the reviewed commit, so it is "
                 "not in the repository the reviewer was shown)"
             )
-        return (
-            STATUS_CONFIRMED,
+        return _confirmed_or_unchecked(
+            rel,
+            universe,
             STATE_ABSENT,
             f"{STATE_ABSENT}: {rel} is not in `git ls-tree HEAD` at the reviewed commit and is "
             f"listed by none of the sources as present ({universe.source_list()})"
             + (f" at commit {universe.head_sha}" if universe.head_sha else "")
             + untracked_note,
-            raw,
-        )
+        ) + (raw,)
     if target.is_file() and line_match:
         wanted = int(line_match.group("line"))
         count = _line_count(target)
@@ -1027,12 +1111,15 @@ def render_absence_checks(checks: list[AbsenceCheck]) -> str:
     lines.append("")
     lines.append(
         "Status vocabulary (frozen): `refuted` = the repository or the archived input disproves "
-        "the claim. `confirmed` = the claim names a path that was located **and the repository "
-        "does not contain it**: an explicit path absent from every source, or a resolved bare "
-        "name absent at the reviewed commit. A path the repository contains is never confirmed "
-        "absent, even when the diff budget withheld it. `unchecked` = no confirmed absence could "
-        "be established (the lookup found nothing, several candidates matched, or the path "
-        "exists), so the finding keeps its normal weight (fail closed).\n\n"
+        "the claim. `confirmed` = the claim names a path that was located **and every source was "
+        "searched, none of them lists it, and the repository does not contain it**: an explicit "
+        "path absent from all four sources, or a resolved bare name absent at the reviewed "
+        "commit. A path the repository contains is never confirmed absent, even when the diff "
+        "budget withheld it; a path another source lists (a diffstat-only deletion) or a claim "
+        "whose sources were unavailable is `unchecked`, never confirmed. `unchecked` = no "
+        "confirmed absence could be established (the lookup found nothing, several candidates "
+        "matched, the path exists, or a source could not be searched), so the finding keeps its "
+        "normal weight (fail closed).\n\n"
         "State labels (T-22) say WHICH thing the verdict means, because a bare `confirmed` used to "
         "cover both a review-input gap and a Worker evidence gap: "
         f"`{STATE_OMITTED}` = the file is in the repository but did not reach the reviewer — a "
@@ -1090,9 +1177,11 @@ def render_universe(universe: PathUniverse) -> str:
     listed = ", ".join(
         f"{name} ({counts.get(name, 0)})" for name in ALL_SOURCES if name in universe.searched
     )
+    unavailable = universe.unavailable_list()
     return (
         f"- path claims were resolved against: {listed or 'no source was available'}\n"
-        f"- distinct paths in the universe: {len(universe.entries)}"
+        + (f"- unavailable sources: {unavailable}\n" if unavailable else "")
+        + f"- distinct paths in the universe: {len(universe.entries)}"
         + (f" at commit {universe.head_sha}" if universe.head_sha else " (commit unknown)")
         + "\n- a bare name matching exactly one path is resolved to it; matching several is "
         "reported with every candidate and left `unchecked`; matching nothing is `unchecked` too"
