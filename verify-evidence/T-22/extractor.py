@@ -276,7 +276,7 @@ def print_mutation() -> None:
     print("# behaviour one DoD 5 test guards, and the row says whether that test goes red.\n")
     plan = [
         ("baseline (unmutated)", 0),
-        ("m1: no basename resolution - run 38's behaviour", len(cases)),
+        ("m1: no basename resolution - run 38's behaviour", 9),
         ("m2: budget-omitted relabelled as absent", 3),
         ("m3: a failed lookup still gets a path (fail-open confidence)", 5),
         ("m4: confirmed without every source denying the path", 2),
