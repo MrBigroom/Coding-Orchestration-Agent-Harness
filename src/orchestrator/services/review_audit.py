@@ -1114,9 +1114,6 @@ def tally_verdicts(checks: list[AbsenceCheck]) -> str:
     def n(value: str) -> int:
         return by_status.get(value, 0)
 
-    def state(value: str) -> int:
-        return by_state.get(value, 0)
-
     def basis(value: str) -> int:
         return by_basis.get(value, 0)
 
