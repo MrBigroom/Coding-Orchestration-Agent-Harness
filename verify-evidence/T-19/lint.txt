@@ -1,11 +1,3 @@
-# HEAD=f9e3248e7295b8898c4ed1822d785f6c1f5987c5 tracked-dirty-entries=0 captured=2026-11-05T07:45:07Z
-# command: ./scripts/orch_verify.sh lint
-orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
-orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
-orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
-orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src
-orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/tests
-orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py
-ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
-orch-verify: lint target  ruff check src tests
+# HEAD=1e2e522c84d571552b616e4b27e20182472dfdcf tracked-dirty-entries=0 captured=2026-11-05T08:01:19Z
+# command: ./scripts/orch_verify.sh lint   (exit 0)
 All checks passed!
