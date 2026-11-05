@@ -1,7 +1,7 @@
 # T-19 evidence
 
-Source `1e2e522`; this commit changes only evidence. `full_suite.txt`: `615 passed, 6 skipped`;
-`lint.txt`: `All checks passed!`. Full map + excerpts: `.orchestrator/handoff.md`.
+Source `1e2e522`; evidence-only commit. `full_suite.txt`: `615 passed, 6 skipped`; `lint.txt`:
+`All checks passed!`. Full map + excerpts: `.orchestrator/handoff.md`.
 
 - DoD 1 derived clear-list: `config.py:154`, `tests/conftest.py:22`, `test_env_guard.py:31,46,52,60`;
   mutation `coverage_mutation.txt`.
