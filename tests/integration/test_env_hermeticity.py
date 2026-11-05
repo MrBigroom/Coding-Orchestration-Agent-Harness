@@ -192,6 +192,9 @@ def test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv
         result = _run_pytest(
             tree,
             [
+                # -vv cancels pyproject's -q so the generated collection-time test is named in
+                # the output: 9 green tests alone would not prove THAT module was collected.
+                "-vv",
                 "tests/test_t19_collection_import.py",
                 "tests/integration/test_notifications.py",
                 "tests/integration/test_sync_api.py",
