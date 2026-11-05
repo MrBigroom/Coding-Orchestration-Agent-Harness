@@ -1,0 +1,22 @@
+# HEAD=f9e3248e7295b8898c4ed1822d785f6c1f5987c5 tracked-dirty-entries=0 captured=2026-11-05T07:45:18Z
+# command: ./scripts/orch_verify.sh test -vv -k "full_suite_is_identical"
+# The test itself runs the full suite twice in a throwaway worktree of HEAD: once clean, once with a seeded synthetic .env, and asserts identical counts.
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/tests -vv -k full_suite_is_identical
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 624 items / 623 deselected / 1 selected
+
+tests/integration/test_env_hermeticity.py::test_full_suite_is_identical_with_and_without_a_seeded_dotenv PASSED [100%]
+
+================ 1 passed, 623 deselected in 243.10s (0:04:03) =================

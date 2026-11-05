@@ -1,0 +1,37 @@
+# HEAD=f9e3248e7295b8898c4ed1822d785f6c1f5987c5 tracked-dirty-entries=0 captured=2026-11-05T07:45:07Z
+# command: ./scripts/orch_verify.sh test -vv -k "(env_guard or env_hermeticity) and not full_suite_is_identical"
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19/tests -vv -k (env_guard or env_hermeticity) and not full_suite_is_identical
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 624 items / 607 deselected / 17 selected
+
+tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv PASSED [  5%]
+tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment PASSED [ 11%]
+tests/integration/test_env_hermeticity.py::test_verification_json_distinguishes_a_tree_that_has_a_local_dotenv PASSED [ 17%]
+tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree PASSED [ 23%]
+tests/integration/test_env_hermeticity.py::test_doctor_env_parity_without_a_local_env_creates_nothing PASSED [ 29%]
+tests/integration/test_env_hermeticity.py::test_env_parity_is_opt_in PASSED [ 35%]
+tests/integration/test_env_hermeticity.py::test_parity_script_runs_the_suite_with_a_seeded_env_and_cleans_up PASSED [ 41%]
+tests/integration/test_env_hermeticity.py::test_make_just_and_script_document_the_developer_parity_path PASSED [ 47%]
+tests/unit/test_env_guard.py::test_settings_env_names_are_derived_from_every_model_field PASSED [ 52%]
+tests/unit/test_env_guard.py::test_clear_list_covers_the_whole_env_visible_surface PASSED [ 58%]
+tests/unit/test_env_guard.py::test_removing_the_settings_derivation_makes_the_coverage_check_fail PASSED [ 64%]
+tests/unit/test_env_guard.py::test_a_new_env_visible_field_that_is_not_covered_is_reported PASSED [ 70%]
+tests/unit/test_env_guard.py::test_relative_dotenv_is_not_ambient_configuration_in_the_suite PASSED [ 76%]
+tests/unit/test_env_guard.py::test_explicit_env_file_path_is_still_loadable PASSED [ 82%]
+tests/unit/test_env_guard.py::test_home_fixture_clears_the_derived_names_after_collection[ORCHESTRATOR_HOME] PASSED [ 88%]
+tests/unit/test_env_guard.py::test_home_fixture_clears_the_derived_names_after_collection[ORCHESTRATOR_SUPABASE_PASSWORD] PASSED [ 94%]
+tests/unit/test_env_guard.py::test_env_file_path_default_is_unchanged PASSED [100%]
+
+====================== 17 passed, 607 deselected in 5.11s ======================
