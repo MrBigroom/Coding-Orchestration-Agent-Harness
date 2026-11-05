@@ -1,5 +1,5 @@
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e
 # command: python verify-evidence/T-22/extractor.py --replay
 
 ## BEFORE - runs/38/review.json notes, verbatim (the false confirmations)
@@ -22,30 +22,30 @@
   verify-evidence/T-19/t19_tests.txt   (claimed absent as `t19_tests.txt`)
 
 ## AFTER - the same findings, missing_artifacts and manifest rows through T-22
-- path claims were resolved against: supplied patch (10), diffstat (20), truncation manifest (10), git ls-tree HEAD (20), worktree filesystem (20)
-- distinct paths in the universe: 20 at commit a9f90a99faccbf5f66006f256e55273bdadb2d3e
+- path claims were resolved against: supplied patch (10), diffstat (20), truncation manifest (10), git ls-tree HEAD (20)
+- distinct paths in the universe: 20 at commit d48e83668924dc080b031872d6f98a2e34a7b25e
 - a bare name matching exactly one path is resolved to it; matching several is reported with every candidate and left `unchecked`; matching nothing is `unchecked` too
 
-  [confirmed/omitted-from-review-input/path-resolution] finding: docs/build-loop.md -> docs/build-loop.md
-  [confirmed/omitted-from-review-input/path-resolution] finding: README.md -> README.md
-  [confirmed/omitted-from-review-input/path-resolution] finding: scripts/orch_env_parity.sh -> scripts/orch_env_parity.sh
+  [unchecked/omitted-from-review-input/path-resolution] finding: docs/build-loop.md -> docs/build-loop.md
+  [unchecked/unresolvable-claim/failed-lookup] finding: README.md -> -
+  [unchecked/omitted-from-review-input/path-resolution] finding: scripts/orch_env_parity.sh -> scripts/orch_env_parity.sh
   [refuted/supplied-in-full/path-resolution] finding: tests/integration/test_env_hermeticity.py -> tests/integration/test_env_hermeticity.py
-  [confirmed/omitted-from-review-input/path-resolution] finding: t19_tests.txt -> verify-evidence/T-19/t19_tests.txt
+  [unchecked/omitted-from-review-input/path-resolution] finding: t19_tests.txt -> verify-evidence/T-19/t19_tests.txt
   [unchecked/unresolvable-claim/failed-lookup] finding: handoff.md -> -
   [unchecked/unresolvable-claim/failed-lookup] finding: test_env_hermeticity -> -
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: docs/build-loop.md -> docs/build-loop.md
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: README.md -> README.md
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: scripts/orch_env_parity.sh -> scripts/orch_env_parity.sh
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: README.md -> README.md
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: capture.sh -> verify-evidence/T-19/capture.sh
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: t19_tests.txt -> verify-evidence/T-19/t19_tests.txt
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: coverage_mutation.txt -> verify-evidence/T-19/coverage_mutation.txt
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: make_test_parity.txt -> verify-evidence/T-19/make_test_parity.txt
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: full_suite.txt -> verify-evidence/T-19/full_suite.txt
-  [confirmed/omitted-from-review-input/path-resolution] missing_artifact: lint.txt -> verify-evidence/T-19/lint.txt
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: docs/build-loop.md -> docs/build-loop.md
+  [unchecked/unresolvable-claim/failed-lookup] missing_artifact: README.md -> -
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: scripts/orch_env_parity.sh -> scripts/orch_env_parity.sh
+  [unchecked/unresolvable-claim/failed-lookup] missing_artifact: README.md -> -
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: capture.sh -> verify-evidence/T-19/capture.sh
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: t19_tests.txt -> verify-evidence/T-19/t19_tests.txt
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: coverage_mutation.txt -> verify-evidence/T-19/coverage_mutation.txt
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: make_test_parity.txt -> verify-evidence/T-19/make_test_parity.txt
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: full_suite.txt -> verify-evidence/T-19/full_suite.txt
+  [unchecked/omitted-from-review-input/path-resolution] missing_artifact: lint.txt -> verify-evidence/T-19/lint.txt
   [unchecked/unresolvable-claim/not-a-path-claim] missing_artifact: any gate-executed run of the three ORCH_ENV_SPAWN_TESTS tests is missing -> -
 
-  TALLY: 14 confirmed, 1 refuted, 3 unchecked [states: 14 omitted-from-review-input, 1 supplied-in-full, 3 unresolvable-claim; confirmed by path-resolution: 14, by explicit-named-path: 0, by manifest-record: 0, from a failed lookup: 0 - a claim that resolves to no path is reported as unresolvable-claim, never confirmed]
-  STATE COUNTS: confirmed/omitted-from-review-input=14, refuted/supplied-in-full=1, unchecked/unresolvable-claim=3
+  TALLY: 0 confirmed, 1 refuted, 17 unchecked [states: 11 omitted-from-review-input, 1 supplied-in-full, 6 unresolvable-claim; confirmed by path-resolution: 0, by explicit-named-path: 0, by manifest-record: 0, from a failed lookup: 0 - a claim that resolves to no path is reported as unresolvable-claim, never confirmed]
+  STATE COUNTS: refuted/supplied-in-full=1, unchecked/omitted-from-review-input=11, unchecked/unresolvable-claim=6
   run 38's old wording absent from every row: True
   no confirmed verdict from a failed lookup: True

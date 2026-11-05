@@ -1,5 +1,5 @@
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e
 # command: python verify-evidence/T-22/extractor.py --mutation
 # runtime patches only: the checkout is never edited. Each mutation re-breaks the
 # behaviour one DoD 5 test guards, and the row says whether that test goes red.

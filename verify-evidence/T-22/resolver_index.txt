@@ -1,40 +1,39 @@
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e
 # command: python verify-evidence/T-22/extractor.py --index
 # every label a verdict can carry, and where each new function starts
 
 ----- review_audit.py label vocabulary -----
-   82 | SOURCE_PATCH = "supplied patch"
-   83 | SOURCE_DIFFSTAT = "diffstat"
-   84 | SOURCE_MANIFEST = "truncation manifest"
-   85 | SOURCE_LS_TREE = "git ls-tree HEAD"
-   86 | SOURCE_WORKTREE = "worktree filesystem"
-   88 | ALL_SOURCES = (
-  116 | STATUS_CONFIRMED = "confirmed"
-  117 | STATUS_REFUTED = "refuted"
-  118 | STATUS_UNCHECKED = "unchecked"
-  123 | STATE_ABSENT = "absent-at-reviewed-commit"
-  124 | STATE_OMITTED = "omitted-from-review-input"
-  125 | STATE_UNRESOLVED = "unresolvable-claim"
-  126 | STATE_UNDECIDED = "undecided"
-  127 | STATE_PRESENT = "present-in-repository"
-  128 | STATE_SUPPLIED = "supplied-in-full"
-  139 | BASIS_RESOLUTION = "path-resolution"
-  140 | BASIS_EXPLICIT = "explicit-named-path"
-  141 | BASIS_MANIFEST = "manifest-record"
-  142 | BASIS_FAILED_LOOKUP = "failed-lookup"
-  143 | BASIS_NOT_A_PATH = "not-a-path-claim"
+   87 | SOURCE_PATCH = "supplied patch"
+   88 | SOURCE_DIFFSTAT = "diffstat"
+   89 | SOURCE_MANIFEST = "truncation manifest"
+   90 | SOURCE_LS_TREE = "git ls-tree HEAD"
+   92 | ALL_SOURCES = (
+  103 | STATUS_CONFIRMED = "confirmed"
+  104 | STATUS_REFUTED = "refuted"
+  105 | STATUS_UNCHECKED = "unchecked"
+  110 | STATE_ABSENT = "absent-at-reviewed-commit"
+  111 | STATE_OMITTED = "omitted-from-review-input"
+  112 | STATE_UNRESOLVED = "unresolvable-claim"
+  113 | STATE_UNDECIDED = "undecided"
+  114 | STATE_PRESENT = "present-in-repository"
+  115 | STATE_SUPPLIED = "supplied-in-full"
+  126 | BASIS_RESOLUTION = "path-resolution"
+  127 | BASIS_EXPLICIT = "explicit-named-path"
+  128 | BASIS_MANIFEST = "manifest-record"
+  129 | BASIS_FAILED_LOOKUP = "failed-lookup"
+  130 | BASIS_NOT_A_PATH = "not-a-path-claim"
 
 ----- new functions, with their line counts (read them in the diff at these lines) -----
-  166 | src/orchestrator/services/review_audit.py class PathUniverse (39 lines)
-  229 | src/orchestrator/services/review_audit.py def build_universe (25 lines)
-  273 | src/orchestrator/services/review_audit.py def resolve_claim_path (52 lines)
-  550 | src/orchestrator/services/review_audit.py def _repo_present (7 lines)
-  559 | src/orchestrator/services/review_audit.py def _visibility_verdict (86 lines)
-  711 | src/orchestrator/services/review_audit.py def _existence_verdict (72 lines)
- 1032 | src/orchestrator/services/review_audit.py def tally_verdicts (35 lines)
- 1069 | src/orchestrator/services/review_audit.py def render_universe (13 lines)
-  501 | src/orchestrator/services/review_audit.py def _unresolved_claim
-  520 | src/orchestrator/services/review_audit.py def _judged
-  647 | src/orchestrator/services/review_audit.py def _check_visibility
-  785 | src/orchestrator/services/review_audit.py def _check_existence_claim
+  153 | src/orchestrator/services/review_audit.py class PathUniverse (39 lines)
+  203 | src/orchestrator/services/review_audit.py def build_universe (23 lines)
+  245 | src/orchestrator/services/review_audit.py def resolve_claim_path (59 lines)
+  529 | src/orchestrator/services/review_audit.py def _repo_present (10 lines)
+  541 | src/orchestrator/services/review_audit.py def _visibility_verdict (107 lines)
+  736 | src/orchestrator/services/review_audit.py def _existence_verdict (63 lines)
+ 1050 | src/orchestrator/services/review_audit.py def tally_verdicts (35 lines)
+ 1087 | src/orchestrator/services/review_audit.py def render_universe (13 lines)
+  480 | src/orchestrator/services/review_audit.py def _unresolved_claim
+  499 | src/orchestrator/services/review_audit.py def _judged
+  650 | src/orchestrator/services/review_audit.py def _check_visibility
+  801 | src/orchestrator/services/review_audit.py def _check_existence_claim
