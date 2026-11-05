@@ -269,17 +269,6 @@ class PathResolution:
     def resolved(self) -> bool:
         return bool(self.path)
 
-    def resolution_note(self) -> str:
-        """How this claim became a path (or why it could not), spelled out for the archive."""
-        if not self.resolved:
-            return self.reason
-        where = (
-            f" (found in: {', '.join(self.found_in)})"
-            if self.found_in
-            else " (listed by no source)"
-        )
-        return f"{self.tried} -> {self.path} via {self.basis}{where}: {self.reason}"
-
 
 def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
     """Resolve one claimed path against every source, never guessing between candidates."""
