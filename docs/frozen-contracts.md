@@ -86,19 +86,26 @@ change in its Definition of Done.
   to an existing `/api` response is additive and allowed; changing or removing an existing key, or
   adding a new route, requires its own contract-change request. Approved from CCR-T8-02 (T-8) by the
   operator, 2026-11-04.
+- **Notification records**: `notifications` is an additive SQLModel table created by revision
+  `0010_notifications`; `GET /api/notifications` reads it newest first. `status` is one of
+  `pending | delivered | failed | skipped | coalesced`, with `skipped` ("not attempted because the
+  channel was off") distinct from `failed` ("attempted and failed"). No existing table, route,
+  response key or error shape changed. Approved from CCR-T9-01 (T-9) by the operator, 2026-11-04.
 - **Build-log events**: the line shape `{timestamp, phase, task_id, run_id, role, event, details,
   commit_sha}` is frozen. A run's terminal status is one of `completed | failed | timeout |
-  cancelled`, and **three of those four** have a named terminal event: `run_completed` (normal
-  completion), `run_failed`, `run_timeout`. A `cancelled` run has **no** named event today — it is
-  observable only as a `task_status` line reading `run cancelled` — and `run_cancelled` is not an
-  event name yet; adding it is a T-9 requirement, deliberately not frozen here as if it existed.
+  cancelled`, and **all four have a named terminal event**: `run_completed` (normal completion),
+  `run_failed`, `run_timeout` and `run_cancelled` (added by T-9). The 2026-11-04 revision of this
+  entry that said only three of the four had an event was true of its own commit and went stale the
+  moment T-9 landed `run_cancelled` — the lesson recorded in docs/build-loop.md is that a frozen
+  sentence about an absence must be restated as a positive list once the absence is filled.
   `run_error` is not a terminal status: it labels an unexpected exception inside the harness, after
   which the run still ends as `failed`. Event names are additive — a phase may add one, never rename
   or remove one. Where a machine consumer needs structure, `details` may carry a final segment
   ` | findings_json=<json object>`; the segment is always last, `json.loads` of the remainder is the
   payload, its absence means no payload, and no payload may contradict the human summary in the same
   string. Approved from CCR-T8-build-log-events (T-8) by the operator, 2026-11-04, after correcting
-  its original overclaim that every terminal status already had an event.
+  its original overclaim that every terminal status already had an event; the fourth event
+  `run_cancelled` is approved from CCR-T9-01 (T-9), 2026-11-04.
 
 ## Out of scope
 

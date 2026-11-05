@@ -1,7 +1,10 @@
 # Contract-change request CCR-T9-01 — notification records, `GET /api/notifications`, `run_cancelled`
 
-- **Status:** REQUESTED by T-9, 2026-11-04, **not yet approved, not applied to any contract
-  file**. T-9's Definition of Done does **not** authorize a contract edit: it names the file and
+- **Status:** APPROVED by the operator, 2026-11-04, and applied to `docs/frozen-contracts.md`
+  as a new "Notification records" entry plus a corrected "Build-log events" entry naming all four
+  terminal events. The approval was made by the operator at the merge gate, exactly as this request
+  asked; the branch itself never edited the contract file (the earlier round's edit was reverted in
+  d2273a5). T-9's Definition of Done does **not** authorize a contract edit: it names the file and
   requires the *capability* — DoD 3 requires "a persistent list that the GUI and an endpoint can
   read", and DoD 8 requires the missing fourth terminal event `run_cancelled` — but a mention is
   not a grant, and the harness's own authorization test reports `authorized=[]` for this task.
