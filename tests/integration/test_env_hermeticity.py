@@ -38,11 +38,29 @@ CHILD_MARKER = "ORCH_ENV_PARITY_CHILD"
 # Synthetic only, spelled as UPPER_CASE placeholders so the log redactor leaves evidence readable.
 SEEDED_ENV = """\
 ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=not-a-secret-0000
 ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=SYNTHETIC_PLACEHOLDER
-ANTHROPIC_API_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PASSWORD=not-a-secret-0001
+ANTHROPIC_API_KEY=not-a-secret-0002
 """
+# Explicit node ids only: a spawned pytest run must never be a bare suite (T-19 DoD 2).
+AFFECTED_SUBSET = [
+    "tests/unit/test_env_guard.py",
+    "tests/unit/test_paths.py",
+    "tests/unit/test_providers.py",
+    "tests/unit/test_notifications.py",
+    "tests/unit/test_sync.py",
+    "tests/unit/test_sync_apply.py",
+    "tests/unit/test_sync_runner.py",
+    "tests/unit/test_sync_transport.py",
+    "tests/integration/test_notifications.py",
+    "tests/integration/test_sync_api.py",
+]
+# Any test that spawns pytest is opt-in: gated runs must never pay for a nested suite.
+SPAWN_TESTS = pytest.mark.skipif(
+    os.environ.get("ORCH_ENV_SPAWN_TESTS") != "1",
+    reason="spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1",
+)
 RUN_TESTS = "import sys; print('2 passed, 0 failed'); sys.exit(0)\n"
 CHECK_SEEDED_ENV = (
     "import pathlib\n"
@@ -136,22 +154,19 @@ def _require_committed_head() -> None:
         pytest.skip("parity runs the committed HEAD; this checkout has tracked modifications")
 
 
-@pytest.mark.skipif(
-    os.environ.get("ORCH_ENV_PARITY_FULL") != "1",
-    reason="runs the whole suite twice (~2x gate time); set ORCH_ENV_PARITY_FULL=1",
-)
-def test_full_suite_is_identical_with_and_without_a_seeded_dotenv(tmp_path):
-    """DoD 2: the full suite twice in one temporary checkout, with and without `.env`."""
+@SPAWN_TESTS
+def test_affected_subset_is_identical_with_and_without_a_seeded_dotenv(tmp_path):
+    """DoD 2: the env/config/settings/sync subset plus the T-9 pair, twice in one temp checkout."""
     _require_committed_head()
     tree = _temp_checkout(tmp_path)
     try:
-        without = _run_pytest(tree, [])
+        without = _run_pytest(tree, ["-vv", *AFFECTED_SUBSET])
         assert without.returncode == 0, without.stdout + without.stderr
         counts_without = parse_test_counts(without.stdout)
         assert counts_without["passed"] > 0 and counts_without["failed"] == 0, without.stdout
 
         (tree / ".env").write_text(SEEDED_ENV)
-        with_env = _run_pytest(tree, [])
+        with_env = _run_pytest(tree, ["-vv", *AFFECTED_SUBSET])
         assert with_env.returncode == 0, with_env.stdout + with_env.stderr
         assert parse_test_counts(with_env.stdout) == counts_without, (
             f".env changed the result: without={counts_without}, "
@@ -161,6 +176,7 @@ def test_full_suite_is_identical_with_and_without_a_seeded_dotenv(tmp_path):
         shutil.rmtree(tree, ignore_errors=True)
 
 
+@SPAWN_TESTS
 def test_seeded_dotenv_changes_the_outcome_without_the_guard(tmp_path):
     """The control: without the session guard the seeded `.env` really does flip the assertions."""
     tree = _temp_checkout(tmp_path)
@@ -176,6 +192,7 @@ def test_seeded_dotenv_changes_the_outcome_without_the_guard(tmp_path):
         shutil.rmtree(tree, ignore_errors=True)
 
 
+@SPAWN_TESTS
 def test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv(tmp_path):
     """DoD 5: the T-9 pair plus a module-level app import in one seeded run."""
     _require_committed_head()

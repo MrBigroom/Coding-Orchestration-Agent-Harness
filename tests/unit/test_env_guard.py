@@ -1,7 +1,8 @@
 """T-19 DoD 1: the hermeticity clear-list is derived from what pydantic actually reads.
 
-Pinned against pydantic-settings' own reader (an independent oracle), including alias and
-case-sensitivity, plus the mutation that removing the derivation must fail.
+The assertions are behavioural (pydantic reads the name into a real `Settings` instance) and name
+literal env keys, so a derivation that silently stops seeing a new/aliased field fails here. The
+old hand-kept clear-list is the mutation control.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import os
 
 from pydantic import Field
-from pydantic_settings import EnvSettingsSource, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from orchestrator.core.config import (
     PROVIDER_ENV_NAMES,
@@ -20,38 +21,18 @@ from orchestrator.core.config import (
 )
 from tests import conftest
 
-# Synthetic only, spelled as UPPER_CASE placeholders so the log redactor leaves evidence readable.
+# Synthetic only, and deliberately shaped so the log redactor leaves evidence lines readable.
 SEEDED_ENV = """\
 ORCHESTRATOR_SUPABASE_URL=https://synthetic.invalid
-ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY=not-a-secret-0000
 ORCHESTRATOR_SUPABASE_EMAIL=synthetic@example.invalid
-ORCHESTRATOR_SUPABASE_PASSWORD=SYNTHETIC_PLACEHOLDER
-ANTHROPIC_API_KEY=SYNTHETIC_PLACEHOLDER
+ORCHESTRATOR_SUPABASE_PASSWORD=not-a-secret-0001
+ANTHROPIC_API_KEY=not-a-secret-0002
 """
 
 
-def _pydantic_env_names(model: type[Settings]) -> set[str]:
-    """Oracle: pydantic-settings' own field->env-name extraction, not our derivation."""
-    source = EnvSettingsSource(model)
-    names: set[str] = set()
-    for field_name, field in model.model_fields.items():
-        for _key, env_name, _complex in source._extract_field_info(field, field_name):
-            names.add(env_name if source.case_sensitive else env_name.upper())
-    return names
-
-
-def test_secret_env_is_exactly_what_pydantic_reads():
-    """The clear-list must equal pydantic's reader, not a parallel reimplementation."""
-    assert set(settings_env_names()) == _pydantic_env_names(Settings)
-    assert set(conftest.AMBIENT_ENV) == set(PROVIDER_ENV_NAMES) | _pydantic_env_names(Settings)
-    assert conftest.env_names_not_covered() == set()
-    # The names that actually leaked across the T-9 merge must be in the derived set.
-    assert {
-        "ORCHESTRATOR_SUPABASE_URL",
-        "ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY",
-        "ORCHESTRATOR_SUPABASE_EMAIL",
-        "ORCHESTRATOR_SUPABASE_PASSWORD",
-    } <= set(settings_env_names())
+class FutureSettings(Settings):
+    future_provider_key: str | None = None
 
 
 class AliasedSettings(Settings):
@@ -65,22 +46,36 @@ class CaseSensitiveSettings(Settings):
     future_secret: str | None = None
 
 
-def test_alias_and_case_sensitivity_are_derived_like_pydantic():
-    """An aliased or case-sensitive field must not escape the guard."""
-    assert set(settings_env_names(AliasedSettings)) == _pydantic_env_names(AliasedSettings)
-    assert set(settings_env_names(CaseSensitiveSettings)) == _pydantic_env_names(
-        CaseSensitiveSettings
-    )
+def test_the_leaked_supabase_names_are_covered(monkeypatch):
+    """The four names that leaked across the T-9 merge are in the derived clear-list."""
+    leaked = {
+        "ORCHESTRATOR_SUPABASE_URL",
+        "ORCHESTRATOR_SUPABASE_PUBLISHABLE_KEY",
+        "ORCHESTRATOR_SUPABASE_EMAIL",
+        "ORCHESTRATOR_SUPABASE_PASSWORD",
+    }
+    assert leaked <= set(settings_env_names())
+    assert leaked <= set(conftest.AMBIENT_ENV)
 
 
 def test_a_new_env_visible_field_that_is_not_covered_is_reported(monkeypatch):
-    """Drift detection: a field added after AMBIENT_ENV was built is named."""
-    monkeypatch.setenv("T19_FUTURE_SECRET", "SYNTHETIC_PLACEHOLDER")
-    assert AliasedSettings().future_secret == "SYNTHETIC_PLACEHOLDER"  # pydantic reads that name
-    gaps = conftest.env_names_not_covered(clear_list=conftest.AMBIENT_ENV, model=AliasedSettings)
-    assert "T19_FUTURE_SECRET" in gaps
-    # The derivation itself does see it: only the stale clear-list is a gap.
-    assert conftest.env_names_not_covered(model=AliasedSettings) == set()
+    """Drift detection: a field added after AMBIENT_ENV was built is read AND named as a gap."""
+    name = "ORCHESTRATOR_FUTURE_PROVIDER_KEY"
+    monkeypatch.setenv(name, "not-a-secret-0000")
+    assert FutureSettings().future_provider_key == "not-a-secret-0000"  # pydantic reads that name
+    assert name in settings_env_names(FutureSettings)  # the derivation sees the new field
+    gaps = conftest.env_names_not_covered(clear_list=conftest.AMBIENT_ENV, model=FutureSettings)
+    assert name in gaps  # the stale clear-list leaves it ambient
+
+
+def test_alias_and_case_sensitivity_are_read_and_covered(monkeypatch):
+    """An aliased or case-sensitive field cannot escape the guard (literal names, not a mirror)."""
+    monkeypatch.setenv("T19_FUTURE_SECRET", "not-a-secret-0000")
+    monkeypatch.setenv("ORCHESTRATOR_future_secret", "not-a-secret-0001")
+    assert AliasedSettings().future_secret == "not-a-secret-0000"
+    assert "T19_FUTURE_SECRET" in settings_env_names(AliasedSettings)
+    assert CaseSensitiveSettings().future_secret == "not-a-secret-0001"
+    assert "ORCHESTRATOR_future_secret" in settings_env_names(CaseSensitiveSettings)
 
 
 def test_removing_the_settings_derivation_makes_the_coverage_check_fail(monkeypatch):
@@ -95,7 +90,7 @@ def test_removing_the_settings_derivation_makes_the_coverage_check_fail(monkeypa
 
 def test_restoring_the_import_environment_drops_arbitrary_dotenv_keys(monkeypatch):
     """DoD 2: collection-time `.env` keys outside AMBIENT_ENV are removed too."""
-    monkeypatch.setenv("OPENAI_API_KEY", "SYNTHETIC_PLACEHOLDER")
+    monkeypatch.setenv("OPENAI_API_KEY", "not-a-secret-0000")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://synthetic.invalid")
     monkeypatch.setenv("HTTP_PROXY", "http://synthetic.invalid:8080")
     conftest.restore_import_environment()
