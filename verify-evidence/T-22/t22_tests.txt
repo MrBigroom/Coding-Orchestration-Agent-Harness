@@ -1,4 +1,4 @@
-# HEAD=13535c3116873f1ef9b29129b4ae965ea52a4128 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=54cf4ab51dd7905e78d0affb68a329597e798216 tracked-and-untracked-entries-outside-this-dir=0
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_absence_resolution.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22
 tests/unit/test_absence_resolution.py::test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent PASSED [  2%]
@@ -39,4 +39,4 @@ tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_arti
 tests/integration/test_review_payload.py::test_manifest_names_the_files_a_diff_budget_dropped PASSED [ 94%]
 tests/integration/test_review_payload.py::test_archived_payload_carries_the_resolution_evidence_for_each_verdict PASSED [ 97%]
 tests/integration/test_review_payload.py::test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absent PASSED [100%]
-============================== 38 passed in 4.62s ==============================
+============================== 38 passed in 4.72s ==============================
