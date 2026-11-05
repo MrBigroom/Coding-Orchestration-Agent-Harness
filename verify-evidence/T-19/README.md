@@ -14,5 +14,4 @@ Source `1e2e522`; this commit changes only evidence. `full_suite.txt`: `615 pass
 - DoD 5: synthetic `.env` `test_env_hermeticity.py:39`; T-9 pair + collection import `:158`;
   mutation `test_env_guard.py:52`.
 - DoD 6: `docs/build-loop.md:423`, `README.md:270`.
-
 No contract, dependency, artifact name or check-field changed.
