@@ -11,7 +11,12 @@ from sqlmodel import select
 from orchestrator.adapters.chat.mock import OPTIONS, MockDriver
 from orchestrator.core.db import session_scope
 from orchestrator.core.models import ChatSession, Schedule, StandaloneRun, Task
-from orchestrator.services import git_service, standalone_service, sync_service
+from orchestrator.services import (
+    git_service,
+    notification_service,
+    standalone_service,
+    sync_service,
+)
 from orchestrator.services.standalone_service import decide
 from orchestrator.utils.git import run_git
 from tests.conftest import make_repo, requires_git
@@ -128,6 +133,63 @@ def test_off_by_default_and_recorded_as_skipped(client, project):
     run = run_now(client, make_schedule(client, agent))
     assert run["status"] == "skipped" and "allow_unattended_sessions" in run["error"]
     assert run["chat_id"] is None
+
+
+def test_a_completed_standalone_run_writes_one_notification_row(client, project):
+    agent = make_agent(client, project)
+    run_now(client, make_schedule(client, agent))
+    run = finished(client, agent)
+    assert run["status"] == "completed"
+    rows = [
+        r for r in client.get("/api/notifications").json() if r["trigger"] == "standalone_run"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["run_id"] is None and rows[0]["task_id"] is None
+    assert "reporter" in rows[0]["title"]
+    assert Path(run["report_path"]).name in rows[0]["body"]
+    assert rows[0]["link"].endswith("/agents") and "/tasks/" not in rows[0]["link"]
+
+
+def test_the_fanout_runs_only_after_the_report_exists_and_the_row_is_committed(
+    client, project, monkeypatch
+):
+    seen = {}
+
+    def spy(*, event, details="", task_id=None, run_id=None, standalone_run_id=None):
+        if event != "standalone_run":
+            return None
+        seen["standalone_run_id"] = standalone_run_id
+        seen["run_id"] = run_id
+        with session_scope() as s:  # a separate session sees only a committed row
+            row = s.get(StandaloneRun, standalone_run_id)
+            seen["status"] = row.status if row else None
+            seen["report_path"] = row.report_path if row else None
+            seen["report_exists"] = bool(
+                row and row.report_path and Path(row.report_path).is_file()
+            )
+        return None
+
+    monkeypatch.setattr(notification_service, "notify_event", spy)
+    agent = make_agent(client, project)
+    run_now(client, make_schedule(client, agent))
+    run = finished(client, agent)
+    assert run["status"] == "completed"
+    assert seen["standalone_run_id"] == run["id"] and seen["run_id"] is None
+    assert seen["status"] == "completed"
+    assert seen["report_path"] == run["report_path"] and seen["report_exists"] is True
+
+
+def test_a_skipped_standalone_run_is_notified_as_skipped(client, project):
+    client.patch("/api/settings", json={"values": {"allow_unattended_sessions": False}})
+    agent = make_agent(client, project)
+    run = run_now(client, make_schedule(client, agent))
+    assert run["status"] == "skipped"
+    rows = [
+        r for r in client.get("/api/notifications").json() if r["trigger"] == "standalone_run"
+    ]
+    assert len(rows) == 1
+    assert "Run: standalone #" in rows[0]["body"] and "(skipped)" in rows[0]["body"]
+    assert rows[0]["run_id"] is None
 
 
 def test_standalone_needs_an_agent(client):
