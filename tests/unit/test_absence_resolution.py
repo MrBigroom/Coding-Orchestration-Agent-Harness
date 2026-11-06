@@ -121,6 +121,58 @@ def test_a_genuinely_missing_nested_path_is_confirmed_with_the_sources_searched(
     assert ", ".join(review_audit.ALL_SOURCES) in checks[0].detail
 
 
+def test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked(tmp_path):
+    """Round-4 finding 1: `T-19/capture.sh` must not be confirmed while its nested file is tracked.
+
+    The claim names a directory, so a naive resolver treats the exact miss as conclusive and the
+    file at `verify-evidence/T-19/capture.sh` becomes a confident false absence — the run-38
+    failure class again, one path shape over.
+    """
+    repo = make_repo(
+        tmp_path / "repo",
+        {
+            "README.md": "# project\n",
+            f"{EVIDENCE_DIR}/capture.sh": "#!/bin/sh\necho captured\n",
+        },
+    )
+    universe = review_audit.build_universe(repo, None)
+    res = review_audit.resolve_claim_path("T-19/capture.sh", universe)
+
+    assert res.path == ""
+    assert res.basis == review_audit.BASIS_FAILED_LOOKUP
+    assert res.candidates == (f"{EVIDENCE_DIR}/capture.sh",)
+
+    finding = ReviewFinding(
+        file_or_area="T-19/capture.sh",
+        issue="T-19/capture.sh is missing from the evidence directory",
+        violates="DoD 1",
+    )
+    checks = review_audit.check_findings(
+        [finding], repo, review_audit.SuppliedEvidence(), universe
+    )
+
+    assert checks[0].status == "unchecked"
+    assert checks[0].state == review_audit.STATE_UNRESOLVED
+    assert f"{EVIDENCE_DIR}/capture.sh" in checks[0].detail
+
+
+def test_an_explicit_miss_lists_every_candidate_of_that_name(tmp_path):
+    """The same rule for several candidates: every one is reported, none is picked."""
+    repo = make_repo(
+        tmp_path / "repo",
+        {
+            f"{EVIDENCE_DIR}/capture.sh": "# one\n",
+            "scripts/capture.sh": "# two\n",
+        },
+    )
+    universe = review_audit.build_universe(repo, None)
+    res = review_audit.resolve_claim_path("T-19/capture.sh", universe)
+
+    assert res.path == ""
+    assert set(res.candidates) == {f"{EVIDENCE_DIR}/capture.sh", "scripts/capture.sh"}
+    assert "none was picked" in res.reason
+
+
 def test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed(tmp_path):
     """DoD 2: a lookup that found nothing is a failed lookup, not an absent file."""
     repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
@@ -463,6 +515,32 @@ def test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source(tmp_pat
         assert "git ls-tree HEAD" in checks[0].detail
         assert review_audit.SOURCE_LS_TREE not in checks[0].sources
         assert checks[0].basis == review_audit.BASIS_EXPLICIT
+
+
+def test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source(tmp_path, monkeypatch):
+    """Round-4 finding 4: `ls-tree` succeeding is not the same as a reviewed commit.
+
+    If `rev-parse HEAD` fails the source has no commit to anchor a verdict to, so the tracked
+    paths must not be added: `add()` marks the source searched and would undo the unavailable
+    record, letting `confirmed` rest on a repository view with no SHA.
+    """
+    repo = make_repo(tmp_path / "repo", {"README.md": "# project\n"})
+    monkeypatch.setattr(review_audit, "_tracked_paths", lambda cwd: (["README.md"], ""))
+    universe = review_audit.build_universe(repo, review_audit.SuppliedEvidence())
+
+    assert universe.head_sha == ""
+    assert review_audit.SOURCE_LS_TREE not in universe.searched
+    assert review_audit.SOURCE_LS_TREE in universe.unavailable
+    assert universe.entries == {}
+
+    finding = ReviewFinding(
+        file_or_area="docs/gone.md", issue="docs/gone.md is missing", violates=""
+    )
+    checks = review_audit.check_findings(
+        [finding], repo, review_audit.SuppliedEvidence(), universe
+    )
+    assert checks[0].status == "unchecked"
+    assert "git ls-tree HEAD" in checks[0].detail
 
 
 def test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent(tmp_path):

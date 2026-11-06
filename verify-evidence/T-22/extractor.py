@@ -38,7 +38,9 @@ REPO = EVIDENCE_DIR.parent.parent
 RESOLVER_TARGETS = [
     ("class", "PathUniverse"),
     ("def", "build_universe"),
+    ("def", "_add_tracked_paths"),
     ("def", "resolve_claim_path"),
+    ("def", "_name_candidates"),
     ("def", "_confirmation_blockers"),
     ("def", "_confirmed_or_unchecked"),
     ("def", "_repo_present"),
@@ -215,6 +217,10 @@ def print_mutation() -> None:
         "test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source",
         "test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent",
         "test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain",
+        # round-4 findings 1 and 4
+        "test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked",
+        "test_an_explicit_miss_lists_every_candidate_of_that_name",
+        "test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source",
     ]
 
     def run(name: str) -> str:
@@ -230,12 +236,35 @@ def print_mutation() -> None:
     orig_blockers = review_audit._confirmation_blockers
     orig_mark_searched = review_audit.PathUniverse.mark_searched
     orig_in_repo = review_audit.PathUniverse.in_repository
+    orig_add_tracked = review_audit._add_tracked_paths
 
     def bare_as_explicit(raw: str, universe: review_audit.PathUniverse):
         tried = review_audit.normalize_claim_path(raw)
         return review_audit.PathResolution(
             raw, tried, tried, review_audit.BASIS_EXPLICIT, "unresolved: claimed name"
         )
+
+    def explicit_miss_is_conclusive(raw: str, universe: review_audit.PathUniverse):
+        # m7: the pre-round-4 behaviour — an exact miss on a directory-qualified claim is called
+        # located without asking whether a nested path carries the same name.
+        res = orig_resolve(raw, universe)
+        tried = review_audit.normalize_claim_path(raw)
+        if res.resolved or not review_audit.claim_is_explicit(tried):
+            return res
+        return review_audit.PathResolution(
+            raw,
+            tried,
+            tried,
+            review_audit.BASIS_EXPLICIT,
+            "the claim itself names this path and none of the sources consulted lists it",
+        )
+
+    def add_tracked_ignoring_head(universe, tracked, head):
+        # m8: ls-tree output is added even without a resolvable HEAD, so add() undoes the
+        # unavailable record and the source reads as searched with no commit.
+        universe.mark_searched(review_audit.SOURCE_LS_TREE)
+        for path in tracked:
+            universe.add(path, review_audit.SOURCE_LS_TREE)
 
     def omitted_as_absent(res, universe, index, source, supplied):
         if res.resolved and supplied is not None and res.path in supplied.diff_cut:
@@ -282,6 +311,8 @@ def print_mutation() -> None:
         ("m4: confirmed without every source denying the path", 2),
         ("m5: the repository is assumed to contain every path", 1),
         ("m6: a source with no entries is not reported as searched", 1),
+        ("m7: an explicit miss is conclusive without a name search (round-4 finding 1)", 2),
+        ("m8: tracked paths count without a reviewed commit SHA (round-4 finding 4)", 1),
     ]
     verdicts = []
     for label, expected in plan:
@@ -290,6 +321,7 @@ def print_mutation() -> None:
         review_audit._confirmation_blockers = orig_blockers
         review_audit.PathUniverse.in_repository = orig_in_repo
         review_audit.PathUniverse.mark_searched = orig_mark_searched
+        review_audit._add_tracked_paths = orig_add_tracked
         if label.startswith("m1"):
             review_audit.resolve_claim_path = bare_as_explicit
         elif label.startswith("m2"):
@@ -302,6 +334,10 @@ def print_mutation() -> None:
             review_audit.PathUniverse.in_repository = every_path_is_in_the_repository
         elif label.startswith("m6"):
             review_audit.PathUniverse.mark_searched = only_found_paths_count_as_searched
+        elif label.startswith("m7"):
+            review_audit.resolve_claim_path = explicit_miss_is_conclusive
+        elif label.startswith("m8"):
+            review_audit._add_tracked_paths = add_tracked_ignoring_head
         results = {name: run(name) for name in cases}
         red = sum(1 for v in results.values() if v == "RED")
         ok = red >= expected
@@ -315,6 +351,7 @@ def print_mutation() -> None:
     review_audit._confirmation_blockers = orig_blockers
     review_audit.PathUniverse.in_repository = orig_in_repo
     review_audit.PathUniverse.mark_searched = orig_mark_searched
+    review_audit._add_tracked_paths = orig_add_tracked
     print()
     print("all mutations detected: " + str(all(verdicts)))
 

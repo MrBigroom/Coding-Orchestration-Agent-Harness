@@ -225,6 +225,22 @@ def _tracked_paths(cwd: Path) -> tuple[list[str], str]:
     return [p for p in res.stdout.split("\0") if p.strip()], sha.stdout.strip()
 
 
+def _add_tracked_paths(universe: PathUniverse, tracked: list[str], head: str) -> None:
+    """Add the ls-tree view, but only when it names a commit (round-4 finding 4).
+
+    `ls-tree` can succeed while `rev-parse HEAD` fails (a detached/partial repository view), and
+    `add()` calls `mark_searched()`, which would silently undo the `mark_unavailable()` that the
+    caller just recorded. A path set with no reviewed commit cannot be a searched source, because
+    `confirmed` is anchored to the SHA; skipping the add keeps the source unavailable and the
+    verdict fail-closed.
+    """
+    if not head:
+        return
+    universe.mark_searched(SOURCE_LS_TREE)
+    for path in tracked:
+        universe.add(path, SOURCE_LS_TREE)
+
+
 def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathUniverse:
     """Collect the paths the reviewer was supplied, the diffstat, the manifest and git.
 
@@ -252,12 +268,9 @@ def build_universe(cwd: Path | None, supplied: SuppliedEvidence | None) -> PathU
     if cwd is not None and cwd.is_dir():
         tracked, head = _tracked_paths(cwd)
         universe.head_sha = head
-        if head:
-            universe.mark_searched(SOURCE_LS_TREE)
-        else:
+        if not head:
             universe.mark_unavailable(SOURCE_LS_TREE, "git ls-tree HEAD failed")
-        for path in tracked:
-            universe.add(path, SOURCE_LS_TREE)
+        _add_tracked_paths(universe, tracked, head)
     else:
         universe.mark_unavailable(SOURCE_LS_TREE, "no task worktree was available")
     return universe
@@ -280,14 +293,40 @@ class PathResolution:
         return bool(self.path)
 
 
+def _name_candidates(tried: str, universe: PathUniverse) -> list[str]:
+    """Every path a missed claim could mean, by basename and by path suffix.
+
+    Used only after the claim's own path has been shown to match nothing, so the candidates are
+    the other places the same name lives (round-4 finding 1). `T-19/capture.sh` must find
+    `verify-evidence/T-19/capture.sh` here; otherwise the miss would be called a confirmed
+    absence while the file is tracked, which is run 38's false-confirmation class again.
+    """
+    basename = tried.rsplit("/", 1)[-1]
+    suffix = "/" + tried
+    out: set[str] = set()
+    for path in universe.entries:
+        if path == tried:
+            continue
+        if path.rsplit("/", 1)[-1] == basename or path.endswith(suffix):
+            out.add(path)
+    return sorted(out)
+
+
 def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
     """Resolve one claimed path against every source, never guessing between candidates.
 
-    A directory-qualified claim names its own location, so an exact miss is conclusive. A bare
-    name does not, and it is matched by basename against the whole universe *before* any exact
-    root match is accepted: run 38's `README.md` had a root file and a
-    `verify-evidence/T-19/README.md`, and silently picking the root one turned a real evidence
-    file into a confident false refutation (T-22 round-2 finding 1).
+    A directory-qualified claim names its own location, so an exact hit is conclusive. A bare
+    name is matched by basename against the whole universe *before* any exact root match is
+    accepted: run 38's `README.md` had a root file and a `verify-evidence/T-19/README.md`, and
+    silently picking the root one turned a real evidence file into a confident false refutation
+    (T-22 round-2 finding 1).
+
+    A directory-qualified claim that misses is NOT conclusive either (round-4 finding 1): a
+    partial path like `T-19/capture.sh` can name a file that exists at
+    `verify-evidence/T-19/capture.sh`, and confirming its absence was the same confidence error
+    as the bare-name batch. Any path sharing the name or the tail of the claim makes the verdict
+    `unchecked` with every candidate listed; only a miss with no candidate at all is a located
+    path the sources can be asked to deny.
     """
     tried = normalize_claim_path(raw)
     if not tried:
@@ -302,9 +341,21 @@ def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
                 "the claim's own path is listed by the sources searched",
                 found_in=universe.names(tried),
             )
-        # A directory-qualified path that nothing lists: the claim names its own location. The
-        # verdict guard still has to show every source was searched; the resolver only records
-        # that the lookup was conclusive for this claim.
+        candidates = _name_candidates(tried, universe)
+        if candidates:
+            return PathResolution(
+                raw,
+                tried,
+                "",
+                BASIS_FAILED_LOOKUP,
+                f"the claim's own path is listed by none of the sources searched, but "
+                f"{len(candidates)} path(s) share its name; none was picked: "
+                + ", ".join(candidates),
+                candidates=tuple(candidates),
+            )
+        # A directory-qualified path that nothing lists, and whose name matches nothing at all:
+        # the claim names its own location. The verdict guard still has to show every source was
+        # searched; the resolver only records that the lookup was conclusive for this claim.
         return PathResolution(
             raw,
             tried,

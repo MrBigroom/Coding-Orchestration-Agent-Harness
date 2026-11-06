@@ -533,13 +533,21 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   diffstat, the truncation manifest, and `git ls-tree -r HEAD` at the reviewed commit. The
   worktree filesystem is deliberately **not** a source: an untracked or gitignored file is not in
   the commit the reviewer saw, so counting it let a file missing from the commit be labelled a
-  review-input omission instead of an evidence gap (round-2 finding 3). A bare name is matched by
+  review-input omission instead of an evidence gap (round-2 finding 3). `git ls-tree` with no
+  resolvable `HEAD` SHA is recorded as unavailable and contributes no paths (round-4 finding 4):
+  a repository view with no commit can never support a `confirmed` verdict. A bare name is matched by
   basename against the whole universe *before* any exact root match is accepted, so `README.md`
   with both a root file and `verify-evidence/T-19/README.md` is ambiguous rather than silently
   resolved to the root one (round-2 finding 1). Exactly one match is judged at that path; several
   matches are `unchecked` with **every** candidate listed — the resolver never picks one; no match
   and the claim was only a name is `unchecked` with the reason `no path could be resolved from the
-  claim`. `confirmed` is reachable only for a claim that was located **and whose path every one
+  claim`. A directory-qualified claim that misses is not automatically conclusive either
+  (round-4 finding 1): a partial path such as `T-19/capture.sh` is searched by basename and path
+  suffix too, and **any** candidate — `verify-evidence/T-19/capture.sh` — makes the verdict
+  `unchecked` with every candidate listed, instead of a confirmed absence for a path shape one
+  step away from run 38's. Only a directory-qualified miss whose name matches nothing at all is a
+  located path the four sources can be asked to deny. `confirmed` is reachable only for a claim
+  that was located **and whose path every one
   of the four sources denies**, with `git ls-tree HEAD` actually searched at the reviewed commit:
   if a source was unavailable, or another source lists the path (a deletion that survives only in
   the diffstat), the verdict is `unchecked` and names the blocker — a confident label is never

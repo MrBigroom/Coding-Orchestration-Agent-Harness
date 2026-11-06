@@ -377,7 +377,13 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   so it cannot turn an evidence gap into a budget omission. A bare name is matched by basename
   *before* any exact root match is accepted, so `README.md` with a root and a nested
   `verify-evidence/<task>/README.md` is ambiguous and lists both candidates instead of silently
-  picking the root (round-2 findings 1 and 3). Ambiguous and unplaceable names are `unchecked`
+  picking the root (round-2 findings 1 and 3). A directory-qualified claim that misses is not
+  conclusive either (round-4 finding 1): a partial path like `T-19/capture.sh` is also searched by
+  basename and path suffix, and any candidate (`verify-evidence/T-19/capture.sh`) makes the
+  verdict `unchecked` with every candidate listed rather than a confirmed absence one path shape
+  away from run 38. `git ls-tree HEAD` that returns tracked paths but no resolvable SHA counts as
+  unavailable, never as a searched source (round-4 finding 4), because `confirmed` is anchored to
+  the reviewed commit. Ambiguous and unplaceable names are `unchecked`
   (`unresolvable-claim`); `confirmed` survives only for a located path the repository does not
   contain **and no consulted source names**, with `git ls-tree HEAD` actually searched at the
   reviewed commit — an unavailable source, or a path the diffstat alone still names (a deletion),
