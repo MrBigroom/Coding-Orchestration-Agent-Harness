@@ -22,7 +22,7 @@ so none of them is one of the 9 skips. It sorts last so it survives a mid-diff t
 1. **Never copy the real `.env`.**
    - `src/orchestrator/services/project_service.py:462` `_env_variable_names` returns names only;
      `:503` `_synthetic_env_text` emits placeholders; `:513` `_synthetic_env_file` writes them
-     0600/create-only. The doctor path calls it at `:710`.
+     0600/create-only. The doctor path calls it at `:704`.
    - `scripts/orch_env_parity.sh:70` `parity_value`, `:85` synthesise from the names emitted by
      the sed expression; there is no `cp` of the source file.
    - Offline proof: `tests/integration/test_env_hermeticity.py:744`
@@ -35,7 +35,7 @@ so none of them is one of the 9 skips. It sorts last so it survives a mid-diff t
    - Round-2 findings 1/2 (the deletion surface): `:385` `_untrusted_parity_root` `lstat`s the
      root, so a symlinked `orch-env-parity.*` is refused instead of followed, and a foreign uid or
      group/world-writable root is refused; a symlinked `root/tree` is unlinked, never `rmtree`d
-     through (`:427`). `:297` `_registered_in` runs `git worktree remove` only for a LINKED
+     through (`:428`). `:297` `_registered_in` runs `git worktree remove` only for a LINKED
      worktree git lists, never a main checkout. `.repo` (`:368`) scopes the shared-tempdir sweep to
      the asking checkout, and every `OSError` becomes a reported `skip` line.
    - Proofs: `tests/integration/test_env_hermeticity.py:500`
@@ -58,8 +58,8 @@ so none of them is one of the 9 skips. It sorts last so it survives a mid-diff t
 3. **Cleanup knows parity files are not worker dirt.**
    - `src/orchestrator/services/git_service.py:540` `status_split` filters untracked parity
      `.env`/`.env.*.parity` only inside a parity worktree; `:631` `recovery_commit_info` REMOVES the
-     residue before staging (`:663`) and excludes it from the staged set independently of
-     `is_sensitive_path` (`:672`); `remove_worktree` removes it before the dirty check.
+     residue before staging (`:644`) and excludes it from the staged set independently of
+     `is_sensitive_path` (`:652`); `remove_worktree` removes it before the dirty check.
    - Proofs: `:692` `test_recovery_commit_never_stages_parity_residue` (round-2 finding 3 adds the
      control that git really sees `?? .env` and `?? .env.999-dead.parity`, so the assertion cannot
      pass because the file is invisible, plus the `.env.*.parity` case) and `:729`
