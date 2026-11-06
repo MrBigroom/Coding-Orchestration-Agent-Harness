@@ -1,5 +1,6 @@
-HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
-dirty_entries_outside_this_evidence_dir=0
+HEAD=318bd660664c496f95950d7144759f4fd8c60a5d
+dirty_entries=0 (outside this evidence dir)
+command: ./scripts/orch_verify.sh test
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -9,7 +10,7 @@ orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchest
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
 orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests
 ........................................................................ [ 10%]
-.........................................sss.................ssssss..... [ 21%]
+.........................................sss..................ssssss.... [ 21%]
 ........................................................................ [ 32%]
 ........................................................................ [ 42%]
 ........................................................................ [ 53%]
@@ -17,6 +18,6 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 74%]
 ........................................................................ [ 85%]
 ........................................................................ [ 96%]
-.........................                                                [100%]
-664 passed, 9 skipped in 118.85s (0:01:58)
+..........................                                               [100%]
+665 passed, 9 skipped in 119.17s (0:01:59)
 EXIT=0

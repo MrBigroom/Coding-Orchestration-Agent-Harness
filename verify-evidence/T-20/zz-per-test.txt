@@ -1,27 +1,35 @@
-HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
+HEAD=318bd660664c496f95950d7144759f4fd8c60a5d
 dirty_entries=0 (outside this evidence dir)
-command: scripts/orch_verify.sh test -vv -k "<the four DoD-4 tests>"
+command: ./scripts/orch_verify.sh test -vv -k "<T-20 per-test selection>"
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
-collecting ... collected 673 items / 668 deselected / 5 selected
-tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree PASSED [ 20%]
-tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue PASSED [ 40%]
-tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue PASSED [ 60%]
-tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value PASSED [ 80%]
-tests/integration/test_git_worktree.py::test_recovery_commit_never_stages_secrets PASSED [100%]
-====================== 5 passed, 668 deselected in 1.27s =======================
-EXIT=0
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests -vv -k test_a_killed_shell_parity_run_leaves_no_registered_worktree or test_recovery_commit_never_stages_parity_residue or test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch or test_remove_worktree_succeeds_with_parity_residue or test_parity_synthesis_never_writes_a_real_credential_value or test_parity_sweep_refuses_untrusted_temp_roots or test_parity_sweep_is_project_scoped_and_reports_unopenable_roots or test_parity_sweep_never_touches_a_tree_a_live_run_is_using or test_parity_sweep_reclaims_an_orphaned_shell_script_tree or test_parity_sweep_does_not_remove_an_unregistered_tree or test_parity_placeholder_matches_between_the_python_and_shell_paths or test_make_target_is_documented_as_the_developer_parity_path or test_cleanup_sweeps_orphaned_parity_residue
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 674 items / 661 deselected / 13 selected
 
-round-2 regression tests (findings 1,2,5,6,7,8):
-command: scripts/orch_verify.sh test -vv -k "<round-2 tests>" at HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
-collecting ... collected 673 items / 664 deselected / 9 selected
-tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED [ 11%]
-tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run PASSED [ 22%]
-tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 33%]
-tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using PASSED [ 44%]
-tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree PASSED [ 55%]
-tests/integration/test_env_hermeticity.py::test_parity_sweep_refuses_untrusted_temp_roots PASSED [ 66%]
-tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_remove_an_unregistered_tree PASSED [ 77%]
-tests/integration/test_env_hermeticity.py::test_parity_sweep_is_project_scoped_and_reports_unopenable_roots PASSED [ 88%]
-tests/integration/test_env_hermeticity.py::test_parity_placeholder_matches_between_the_python_and_shell_paths PASSED [100%]
-====================== 9 passed, 664 deselected in 1.59s =======================
+tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED [  7%]
+tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 15%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using PASSED [ 23%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree PASSED [ 30%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_refuses_untrusted_temp_roots PASSED [ 38%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_remove_an_unregistered_tree PASSED [ 46%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_is_project_scoped_and_reports_unopenable_roots PASSED [ 53%]
+tests/integration/test_env_hermeticity.py::test_parity_placeholder_matches_between_the_python_and_shell_paths PASSED [ 61%]
+tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree PASSED [ 69%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue PASSED [ 76%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch PASSED [ 84%]
+tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue PASSED [ 92%]
+tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value PASSED [100%]
+
+====================== 13 passed, 661 deselected in 1.63s ======================
 EXIT=0
