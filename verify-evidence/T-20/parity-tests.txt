@@ -1,0 +1,38 @@
+HEAD=31bc1820cc94270ee64430216caca8be21e29083
+dirty_entries_outside_this_evidence_dir=0
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+orch-verify: pytest target tests/integration/test_env_hermeticity.py tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 17 items
+
+tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv SKIPPED [  5%]
+tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard SKIPPED [ 11%]
+tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv SKIPPED [ 17%]
+tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment PASSED [ 23%]
+tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree PASSED [ 29%]
+tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run PASSED [ 35%]
+tests/integration/test_env_hermeticity.py::test_env_parity_reports_a_preexisting_dotenv_instead_of_raising PASSED [ 41%]
+tests/integration/test_env_hermeticity.py::test_env_parity_never_unlinks_a_dotenv_it_did_not_create PASSED [ 47%]
+tests/integration/test_env_hermeticity.py::test_env_parity_rejects_a_command_without_an_orch_verify_marker PASSED [ 52%]
+tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 58%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using PASSED [ 64%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree PASSED [ 70%]
+tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree PASSED [ 76%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue PASSED [ 82%]
+tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue PASSED [ 88%]
+tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value PASSED [ 94%]
+tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED [100%]
+
+======================== 14 passed, 3 skipped in 1.25s =========================
+EXIT=0
