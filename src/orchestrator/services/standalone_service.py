@@ -191,7 +191,11 @@ def _end(session: Session, run: StandaloneRun, status: str, error: str | None) -
     session.add(run)
     session.commit()
     detail = f"{run.title}: {status}" + (f" ({run.error})" if run.error else "")
-    log_service.log_event(session, "standalone_run", detail)
+    # The row is committed and (for a completed run) the report file is written before this
+    # fan-out, so a notification can never name a report that does not exist yet.
+    log_service.log_event(
+        session, "standalone_run", detail, standalone_run_id=run.id
+    )
     return run
 
 

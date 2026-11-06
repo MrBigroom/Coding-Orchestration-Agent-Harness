@@ -40,6 +40,10 @@ TRIGGERS: dict[str, NotificationTrigger] = {
     "run_cancelled": _t(
         "run_cancelled", "Run cancelled", "Decide whether to retry or block.", terminal=True,
     ),
+    "standalone_run": _t(
+        "standalone_run", "Standalone report ready",
+        "Open the report named in the notification.", terminal=True,
+    ),
     "task_review": _t("task_review", "Task awaiting review", "Accept it or request changes."),
     "task_blocked": _t("task_blocked", "Task blocked", "Unblock, retry, or accept."),
     "escalated": _t("escalated", "Task escalated", "Open the task for an Architect review."),
