@@ -1,5 +1,5 @@
-HEAD=31bc1820cc94270ee64430216caca8be21e29083
-dirty_entries_outside_this_evidence_dir=0
+HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
+dirty_entries=0 (outside this evidence dir)
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python

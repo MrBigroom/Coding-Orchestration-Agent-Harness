@@ -1,0 +1,27 @@
+HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
+dirty_entries=0 (outside this evidence dir)
+command: scripts/orch_verify.sh test -vv -k "<the four DoD-4 tests>"
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+collecting ... collected 673 items / 668 deselected / 5 selected
+tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree PASSED [ 20%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue PASSED [ 40%]
+tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue PASSED [ 60%]
+tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value PASSED [ 80%]
+tests/integration/test_git_worktree.py::test_recovery_commit_never_stages_secrets PASSED [100%]
+====================== 5 passed, 668 deselected in 1.27s =======================
+EXIT=0
+
+round-2 regression tests (findings 1,2,5,6,7,8):
+command: scripts/orch_verify.sh test -vv -k "<round-2 tests>" at HEAD=49242d18b2ef7e47af0bf0871714fd92a3f0295f
+collecting ... collected 673 items / 664 deselected / 9 selected
+tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED [ 11%]
+tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run PASSED [ 22%]
+tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 33%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using PASSED [ 44%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree PASSED [ 55%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_refuses_untrusted_temp_roots PASSED [ 66%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_remove_an_unregistered_tree PASSED [ 77%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_is_project_scoped_and_reports_unopenable_roots PASSED [ 88%]
+tests/integration/test_env_hermeticity.py::test_parity_placeholder_matches_between_the_python_and_shell_paths PASSED [100%]
+====================== 9 passed, 664 deselected in 1.59s =======================
+EXIT=0
