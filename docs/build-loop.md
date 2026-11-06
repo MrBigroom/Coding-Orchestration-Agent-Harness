@@ -471,9 +471,12 @@ Three things now keep that difference visible and harmless:
    removed on every normal exit path. A SIGKILL can still leave the synthetic tree behind, which
    is residue but not a secret: `orchestrator cleanup`, and the start of the next
    `doctor --env-parity`, reclaim orphaned `env-parity` worktrees and
-   `<tmpdir>/orch-env-parity.*` roots. The sweep takes each destination's lock first, so a tree a
-   live parity run is still using is reported and skipped, never deleted. Recovery commits and
-   worktree removal also treat untracked parity files as harness residue (removed, never staged)
+   `<tmpdir>/orch-env-parity.*` roots (each root records its checkout in `.repo`, so another
+   repository's run is not this project's failure). The sweep takes each destination's lock first,
+   so a tree a live parity run is still using is reported and skipped, never deleted; a root that
+   is a symlink, owned by another user, or group/world-writable is refused rather than followed,
+   and `git worktree remove` runs only for a linked worktree git itself lists. Recovery commits and
+   worktree removal also treat untracked parity files as harness residue (removed before staging)
    rather than worker dirt.
    `--env-parity` is off by default and CLI-only; the API/GUI doctor route keeps its static
    shape. Neither is wired into `make test`, `make verify` or any project `test_command` — a gate

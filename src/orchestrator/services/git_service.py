@@ -23,6 +23,7 @@ import fcntl
 import os
 import re
 import shutil
+import stat
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -55,6 +56,10 @@ ORCH_DIR = ".orchestrator"  # per-worktree scratch (handoff file); git-excluded
 PARITY_TASK_ID = "env-parity"
 PARITY_TMP_PREFIX = "orch-env-parity."
 PARITY_LOCK_NAME = ".lock"
+# `<tmpdir>/orch-env-parity.*/.repo` records the checkout the root belongs to, so a project-scoped
+# probe ignores another repo's parity run instead of being blocked by it (T-20 review round 2).
+PARITY_REPO_MARKER = ".repo"
+PARITY_BUSY = "parity run in progress"
 _PARITY_ENV_NAMES = (".env",)
 
 
@@ -247,7 +252,7 @@ def _is_parity_residue_name(name: str) -> bool:
 
 def _parity_residue_paths(path: Path) -> list[Path]:
     """Untracked synthetic parity files in a parity worktree (never a versioned/tracked one)."""
-    if not path.is_dir() or not is_parity_worktree(path):
+    if path.is_symlink() or not path.is_dir() or not is_parity_worktree(path):
         return []
     found: list[Path] = []
     candidates = [path / name for name in _PARITY_ENV_NAMES]
@@ -278,7 +283,7 @@ def _remove_parity_residue(path: Path) -> list[str]:
 
 def _repo_of_worktree(path: Path) -> Path | None:
     """The main checkout owning a linked worktree, or None when the metadata is gone."""
-    if not path.is_dir():
+    if path.is_symlink() or not path.is_dir():
         return None
     common = run_git(
         ["rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False
@@ -289,81 +294,194 @@ def _repo_of_worktree(path: Path) -> Path | None:
     return common_path.parent if common_path.name == ".git" else None
 
 
+def _registered_in(tree: Path) -> Path | None:
+    """The repo that REGISTERS `tree` as a LINKED worktree, or None.
+
+    `git worktree remove` is a mutation on someone's git metadata, so it only runs for a path git
+    lists as a linked worktree — never for the repo's own main checkout, which a `tree/` that is
+    an unrelated clone would be. An unregistered directory is deleted with rmtree alone
+    (T-20 review 2).
+    """
+    repo = _repo_of_worktree(tree)
+    if repo is None:
+        return None
+    listed = run_git(["worktree", "list", "--porcelain"], repo, check=False)
+    if listed.code != 0:
+        return None
+    target = os.path.realpath(tree)
+    main = os.path.realpath(repo)
+    for line in listed.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        entry = os.path.realpath(line[len("worktree ") :].strip())
+        if entry == target and entry != main:
+            return repo
+    return None
+
+
 def _sweep_managed_parity(project_slug: str | None, dry_run: bool) -> list[str]:
     actions: list[str] = []
-    for info in managed_worktrees():
+    try:
+        infos = managed_worktrees()
+    except OSError as exc:  # an unreadable ORCHESTRATOR_HOME is reported, never raised
+        return [f"skip managed parity sweep: {type(exc).__name__}: {exc}"]
+    for info in infos:
         if info["task_id"] != PARITY_TASK_ID:
             continue
         if project_slug and info["project_slug"] != project_slug:
             continue
         path: Path = info["path"]
-        with _parity_lock_at(parity_lock_path(info["project_slug"])) as acquired:
-            if not acquired:
-                actions.append(f"skip {path}: parity run in progress")
-                continue
-            if not path.exists():
-                if dry_run:
-                    actions.append(f"would remove stale parity marker {info['marker']}")
-                else:
-                    info["marker"].unlink(missing_ok=True)
-                    actions.append(f"removed stale parity marker {info['marker']}")
-                continue
-            repo = _repo_of_worktree(path)
-            residue = _parity_residue_paths(path)
-            if dry_run:
-                detail = (
-                    "would remove parity residue " + ", ".join(str(p) for p in residue) + "; "
-                    if residue
-                    else ""
-                )
-                actions.append(f"{detail}{remove_worktree(repo, info, dry_run=True)}")
-                continue
-            removed = _remove_parity_residue(path)
-            note = remove_worktree(repo, info, dry_run=False)
-            detail = f"removed parity residue {', '.join(removed)}; " if removed else ""
-            actions.append(f"{detail}{note}")
+        try:
+            with _parity_lock_at(parity_lock_path(info["project_slug"])) as acquired:
+                if not acquired:
+                    actions.append(f"skip {path}: {PARITY_BUSY}")
+                    continue
+                actions.extend(_sweep_one_managed_parity(info, dry_run))
+        except OSError as exc:
+            actions.append(f"skip {path}: {type(exc).__name__}: {exc}")
     return actions
+
+
+def _sweep_one_managed_parity(info: dict, dry_run: bool) -> list[str]:
+    """Reclaim one managed `env-parity` snapshot, holding its lock."""
+    path: Path = info["path"]
+    if not path.exists():
+        if dry_run:
+            return [f"would remove stale parity marker {info['marker']}"]
+        info["marker"].unlink(missing_ok=True)
+        return [f"removed stale parity marker {info['marker']}"]
+    repo = _repo_of_worktree(path)
+    residue = _parity_residue_paths(path)
+    if dry_run:
+        detail = (
+            "would remove parity residue " + ", ".join(str(p) for p in residue) + "; "
+            if residue
+            else ""
+        )
+        return [f"{detail}{remove_worktree(repo, info, dry_run=True)}"]
+    removed = _remove_parity_residue(path)
+    note = remove_worktree(repo, info, dry_run=False)
+    detail = f"removed parity residue {', '.join(removed)}; " if removed else ""
+    return [f"{detail}{note}"]
+
+
+def _parity_root_owner(root: Path) -> Path | None:
+    """The checkout recorded in `<root>/.repo`, or None when the marker is missing/unreadable."""
+    marker = root / PARITY_REPO_MARKER
+    if marker.is_symlink() or not marker.is_file():
+        return None
+    try:
+        first = marker.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+    except OSError:
+        return None
+    if not first:
+        return None
+    try:
+        return Path(first[0]).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _untrusted_parity_root(root: Path) -> str | None:
+    """Why `root` must be left alone, or None when it is a root this harness created.
+
+    A name match is not authority to delete (T-20 review round 2). `glob` yields whatever sits
+    in a shared /tmp, so the root must be a REAL directory (lstat, never followed: a symlink
+    named `orch-env-parity.x` would otherwise let a sweep delete `root/tree` anywhere on disk),
+    owned by this uid, and not group/world writable by someone else.
+    """
+    try:
+        st = root.lstat()
+    except OSError as exc:
+        return f"skip {root}: could not inspect: {type(exc).__name__}: {exc}"
+    if stat.S_ISLNK(st.st_mode):
+        return f"skip {root}: symlink, not a parity root this harness created"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"skip {root}: not a directory"
+    if st.st_uid != os.getuid():
+        return f"skip {root}: owned by uid {st.st_uid}, not {os.getuid()}"
+    if st.st_mode & 0o022:
+        return f"skip {root}: group/world writable (mode {oct(st.st_mode & 0o777)})"
+    return None
 
 
 def _sweep_temp_parity(temp_root: Path, dry_run: bool) -> list[str]:
     """Reclaim one <tmpdir>/orch-env-parity.* root created by scripts/orch_env_parity.sh."""
     actions: list[str] = []
     lock = temp_root / PARITY_LOCK_NAME
-    with _parity_lock_at(lock) as acquired:
-        if not acquired:
-            return [f"skip {temp_root}: parity run in progress"]
-        tree = temp_root / "tree"
-        if dry_run:
-            if tree.exists():
-                return [f"would remove orphaned parity tree {tree}"]
-            return [f"would remove orphaned parity root {temp_root}"]
-        if tree.exists():
-            repo = _repo_of_worktree(tree)
-            if repo:
-                run_git(["worktree", "remove", "--force", str(tree)], repo, check=False)
-                run_git(["worktree", "prune"], repo, check=False)
-            if tree.exists():
-                shutil.rmtree(tree, ignore_errors=True)
-            actions.append(f"removed orphaned parity tree {tree}")
-        # The lock is inside the root and this process holds it open; POSIX unlink is safe.
-        shutil.rmtree(temp_root, ignore_errors=True)
+    try:
+        with _parity_lock_at(lock) as acquired:
+            if not acquired:
+                return [f"skip {temp_root}: {PARITY_BUSY}"]
+            tree = temp_root / "tree"
+            tree_link = tree.is_symlink()
+            has_tree = not tree_link and tree.exists()
+            if dry_run:
+                if tree_link:
+                    actions.append(f"would remove orphaned parity symlink {tree}")
+                elif has_tree:
+                    actions.append(f"would remove orphaned parity tree {tree}")
+                actions.append(f"would remove orphaned parity root {temp_root}")
+                return actions
+            if tree_link:
+                # Unlink the LINK only: never rmtree through it.
+                tree.unlink(missing_ok=True)
+                actions.append(f"removed orphaned parity symlink {tree}")
+            elif has_tree:
+                repo = _registered_in(tree)
+                if repo is not None:
+                    run_git(["worktree", "remove", "--force", str(tree)], repo, check=False)
+                    run_git(["worktree", "prune"], repo, check=False)
+                if tree.exists():
+                    shutil.rmtree(tree, ignore_errors=True)
+                actions.append(f"removed orphaned parity tree {tree}")
+            # The lock is inside the root and this process holds it open; POSIX unlink is safe.
+            shutil.rmtree(temp_root, ignore_errors=True)
+            actions.append(
+                f"removed orphaned parity root {temp_root}"
+                if not temp_root.exists()
+                else f"could not remove orphaned parity root {temp_root}"
+            )
+    except OSError as exc:
+        # A shared /tmp may hold a root this process cannot open. `doctor` reports, never raises.
+        return [f"skip {temp_root}: {type(exc).__name__}: {exc}"]
     return actions
 
 
-def sweep_parity_residue(project_slug: str | None = None, dry_run: bool = False) -> list[str]:
+def sweep_parity_residue(
+    project_slug: str | None = None,
+    repo: Path | str | None = None,
+    dry_run: bool = False,
+) -> list[str]:
     """Reclaim orphaned parity trees and their worktree registrations.
 
     Called at the start of `orchestrator cleanup` and of the doctor parity probe (T-20). A tree
-    whose parity lock is held by a live process is skipped and reported, never swept. When
-    `project_slug` is given only that project's managed `env-parity` snapshot is considered; the
-    shell-script trees live under the shared tempdir and are always considered. `dry_run` only
-    reports what would be removed.
+    whose parity lock is held by a live process is skipped and reported, never swept.
+
+    `project_slug` narrows the managed `env-parity` snapshot to one project. `repo` narrows the
+    shell-script roots under the shared tempdir to the checkout recorded in their `.repo` marker,
+    because another repo's live parity run is not this project's check to fail on. With neither,
+    every root this uid owns is considered (`orchestrator cleanup`). `dry_run` only reports.
     """
     actions: list[str] = []
-    temp_root = Path(tempfile.gettempdir())
-    for root in sorted(temp_root.glob(f"{PARITY_TMP_PREFIX}*")):
-        if root.is_dir():
-            actions.extend(_sweep_temp_parity(root, dry_run))
+    try:
+        roots = sorted(Path(tempfile.gettempdir()).glob(f"{PARITY_TMP_PREFIX}*"))
+    except OSError as exc:
+        roots = []
+        actions.append(f"skip tempdir sweep: {type(exc).__name__}: {exc}")
+    wanted = Path(repo).resolve() if repo is not None else None
+    for root in roots:
+        reason = _untrusted_parity_root(root)
+        if reason is not None:
+            # Only surface a refusal for a root this project would otherwise have considered.
+            if wanted is None or _parity_root_owner(root) == wanted:
+                actions.append(reason)
+            continue
+        owner = _parity_root_owner(root)
+        if wanted is not None and owner != wanted:
+            # Another checkout's tree (or an unmarked pre-T-20 root): not ours to judge here.
+            continue
+        actions.extend(_sweep_temp_parity(root, dry_run))
     actions.extend(_sweep_managed_parity(project_slug, dry_run))
     return actions
 
@@ -519,13 +637,27 @@ def recovery_commit_info(
     Deliberately uses the inclusive predicate: untracked worker output is committed (never
     discarded) but reported separately from tracked modifications, so a reviewer can tell real
     edits from scratch files instead of guessing from one flat commit. Sensitive files (.env,
-    keys, credentials) are never staged; they stay untracked."""
+    keys, credentials) are never staged; they stay untracked. In a PARITY worktree the synthetic
+    env is removed before staging at all: it is harness residue, not worker output (T-20 DoD 3)."""
+    parity = is_parity_worktree(path)
+    if parity:
+        _remove_parity_residue(path)
     split = status_split(path)
     if not split.dirty:
         return None
     run_git(["add", "-A"], path)
     staged = run_git(["diff", "--cached", "--name-only", "-z"], path).stdout.split("\0")
-    sensitive = [f for f in staged if f and is_sensitive_path(f)]
+    # Two independent nets: `is_sensitive_path` keys on the file shape, the parity name check keys
+    # on the destination, so neither alone decides whether residue can reach a commit.
+    sensitive = [
+        f
+        for f in staged
+        if f
+        and (
+            is_sensitive_path(f)
+            or (parity and _is_parity_residue_name(Path(f).name))
+        )
+    ]
     if sensitive:
         run_git(["reset", "-q", "--", *sensitive], path)
     staged_now = _staged_name_status(path)

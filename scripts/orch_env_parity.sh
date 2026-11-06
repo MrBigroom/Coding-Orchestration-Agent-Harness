@@ -9,8 +9,9 @@
 # the same path-independent wrapper the gate uses. It is never part of `make test`/`make verify`.
 #
 # T-20: no credential value is ever written into the harness-managed tree. The throwaway root is
-# `<tmpdir>/orch-env-parity.XXXXXX` and holds a `.lock`; `orchestrator cleanup` (and the doctor
-# parity probe) reclaims roots whose lock is free, and never touches one a live run holds.
+# `<tmpdir>/orch-env-parity.XXXXXX` and holds a `.lock` and a `.repo` marker (the checkout it
+# belongs to). `orchestrator cleanup` (and the doctor parity probe) reclaims roots whose lock is
+# free, and never touches one a live run holds or one that is not a real root this harness created.
 #
 # Usage: scripts/orch_env_parity.sh [test|lint|all] [wrapper args...]
 #   Default mode is `test`; extra args go to scripts/orch_verify.sh.
@@ -38,8 +39,11 @@ SOURCE_ENV="${ORCH_PARITY_ENV_FILE:-$ROOT/.env}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/orch-env-parity.XXXXXX")"
 TREE="$TMP/tree"
 # The lock is what lets a sweep tell an orphaned tree (lock free after SIGKILL) from one another
-# parity run is using. It is created before the worktree so the root is never unowned.
+# parity run is using. It is created before the worktree so the root is never unowned. `.repo`
+# records which checkout this root belongs to, so another project's probe ignores it instead of
+# reporting a busy lock that is none of its business.
 LOCK="$TMP/.lock"
+printf '%s\n' "$ROOT" > "$TMP/.repo"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   fail "another parity run is using $TMP"
@@ -60,7 +64,9 @@ printf 'orch-parity: throwaway tree   %s\n' "$TREE"
 
 git -C "$ROOT" worktree add --detach "$TREE" HEAD >/dev/null
 
-# Placeholder for one variable NAME. Never derived from the value in the source file.
+# Placeholder for one variable NAME. Never derived from the value in the source file. The
+# classification is by substring and MUST agree with project_service._synthetic_env_value: the two
+# parity paths write the same seed for the same name list.
 parity_value() {
   local upper="${1^^}"
   case "$upper" in
@@ -73,18 +79,28 @@ parity_value() {
 
 # Synthesise the parity environment from NAMES only (T-20 DoD 1). The sed expression emits the
 # name before the first `=`; values never leave the source file, are never printed, and are never
-# written into the worktree. 0600 keeps the synthetic file from being world-readable anyway.
+# written into the worktree.
+# Sorted so a re-run writes the same file; the per-name placeholder below is compared against the
+# Python path by tests/integration/test_env_hermeticity.py.
 names="$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' "$SOURCE_ENV" | sort -u)"
+# A tracked `.env` in the throwaway tree is never overwritten (the Python path is create-only for
+# the same reason); `noclobber` below is the race-safe backstop for this pre-check.
+[ ! -e "$TREE/.env" ] || fail "$TREE/.env already exists; refusing to overwrite it"
 (
+  # `umask 077` must be in force when the file is CREATED, so the redirect lives INSIDE this
+  # subshell. Attaching `> ...` to the group from outside would have the PARENT shell open it at
+  # the parent umask (typically 0644) and chmod afterwards, which is not the T-19 property the
+  # docs claim. `noclobber` makes the create exclusive, matching the Python `O_EXCL` path.
   umask 077
+  set -o noclobber
+  exec > "$TREE/.env"
   printf '# Synthetic parity environment: variable NAMES from the operator env file.\n'
   printf '# Values are placeholders; no credential value is copied (T-20).\n'
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     printf '%s=%s\n' "$name" "$(parity_value "$name")"
   done <<< "$names"
-) > "$TREE/.env"
-chmod 600 "$TREE/.env"
+)
 
 cd "$TREE"
 rc=0

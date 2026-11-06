@@ -484,9 +484,14 @@ def _env_variable_names(source: Path) -> list[str]:
 
 
 def _synthetic_env_value(name: str) -> str:
-    """A benign placeholder for `name`; never the real value and never a valid secret."""
+    """A benign placeholder for `name`; never the real value and never a valid secret.
+
+    The classification is by SUBSTRING, matching `parity_value` in scripts/orch_env_parity.sh: the
+    two parity paths must agree, and a suffix-only rule here made `SUPABASE_URL_*` a `synthetic`
+    string in one path and a URL in the other (T-20 review round 2).
+    """
     upper = name.upper()
-    if "URL" in upper or upper.endswith(("_URI", "_ENDPOINT")):
+    if any(word in upper for word in ("URL", "URI", "ENDPOINT")):
         return "https://synthetic.invalid"
     if "EMAIL" in upper:
         return "synthetic@example.invalid"
@@ -627,8 +632,9 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
 # --- opt-in environment-parity probe (`project doctor --env-parity`) -----------------
 #
 # A DEVELOPER check, never a gate command: run the project's TEST command in a throwaway worktree
-# with a copy of the local `.env`, i.e. the world the human actually works in. Off by default and
-# CLI-only; it seeds a copy of the env file without reading, logging or committing its contents.
+# with a SYNTHETIC `.env` (variable names from the local file, placeholder values), i.e. the
+# configuration surface the human works in without their credentials. Off by default and CLI-only;
+# it never copies a value, never logs or commits the contents, and `0600`s what it writes.
 
 def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     from orchestrator.services import git_service
@@ -641,15 +647,18 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     repo = Path(project.path)
     # T-20: reclaim anything an interrupted parity run left behind BEFORE looking at staleness.
     # The sweep takes each destination's lock, so a tree another parity process is actively using
-    # is reported and skipped, never deleted.
-    swept = git_service.sweep_parity_residue(project.slug)
+    # is reported and skipped, never deleted. It is scoped to THIS checkout on both sides, so an
+    # unrelated repo's live run cannot fail this project's probe, and a root the process cannot
+    # open is reported instead of raised out of doctor().
+    swept = git_service.sweep_parity_residue(project.slug, repo=repo)
     for action in swept:
         add("env-parity residue", not action.startswith("skip"), action)
-    if any(action.startswith("skip") for action in swept):
+    if any(git_service.PARITY_BUSY in action for action in swept):
         add(
             "env-parity suite",
             False,
-            "another parity run is active; wait for it or run `orchestrator cleanup` afterwards",
+            "another parity run on this checkout is active; wait for it or run "
+            "`orchestrator cleanup` afterwards",
         )
         return checks
 
@@ -675,8 +684,11 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
 
 def _run_env_parity_locked(
     project: Project, repo: Path, source_env: Path, add
-) -> list[dict[str, Any]]:
-    """The body of the parity probe, run while holding that project's parity lock."""
+) -> None:
+    """The body of the parity probe, run while holding that project's parity lock.
+
+    Reports through `add`; returns nothing. The caller's `checks` list is the only output.
+    """
     from orchestrator.services import git_service, process_service
 
     try:
@@ -685,7 +697,7 @@ def _run_env_parity_locked(
         )
     except GitError as e:
         add("env-parity suite", False, f"throwaway worktree failed: {e}")
-        return []
+        return
     seeded: Path | None = None
     try:
         try:
@@ -700,7 +712,7 @@ def _run_env_parity_locked(
                 False,
                 f"could not write a synthetic env from {source_env}: {type(e).__name__}: {e}",
             )
-            return []
+            return
         names = _env_variable_names(source_env)
         add(
             "env-parity .env seeded",
@@ -712,14 +724,14 @@ def _run_env_parity_locked(
             argv = command_argv(project.test_command)
         except ProjectError as e:
             add("env-parity suite", False, str(e))
-            return []
+            return
         try:
             code, output, timed_out = process_service.run_simple_sync(
                 argv, info.path, RUN_TIMEOUT_SECONDS
             )
         except Exception as e:  # noqa: BLE001 - doctor reports, it never raises out
             add("env-parity suite", False, f"could not run: {type(e).__name__}: {e}")
-            return []
+            return
         ok = code == 0 and not timed_out
         detail = f"exit {code} (cwd {info.path}, synthetic .env seeded)"
         if timed_out:
@@ -748,4 +760,3 @@ def _run_env_parity_locked(
         _drop_snapshots(
             project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
         )
-    return []
