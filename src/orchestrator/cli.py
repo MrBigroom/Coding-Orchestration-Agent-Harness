@@ -327,7 +327,7 @@ def cleanup(
     # (as well as at the start of the parity probe) means a SIGKILLed run is reclaimable without
     # waiting for the next doctor invocation.
     for action in git_service.sweep_parity_residue(dry_run=dry_run):
-        console.print(action)
+        console.print(action.detail)
     with _session() as s:
         projects = {p.slug: p for p in s.exec(select(Project))}
         for info in git_service.managed_worktrees():

@@ -313,6 +313,11 @@ def test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree(session, tmp
     assert git_service.managed_worktrees() == []
 
 
+def _details(actions) -> list[str]:
+    """Operator-facing text of sweep results; `ok` is asserted separately, never parsed."""
+    return [a.detail for a in actions]
+
+
 def _registered_worktrees(repo: Path) -> set[str]:
     out = subprocess.run(
         ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
@@ -459,11 +464,11 @@ def test_parity_sweep_never_touches_a_tree_a_live_run_is_using(session, tmp_path
     (info.path / ".env").write_text(SEEDED_ENV)
     with git_service.parity_lock(project.slug):
         actions = git_service.sweep_parity_residue(project.slug)
-        assert any("parity run in progress" in action for action in actions), actions
+        assert any("parity run in progress" in a for a in _details(actions)), actions
         assert info.path.exists() and (info.path / ".env").exists()
         assert str(info.path) in _registered_worktrees(Path(project.path))
     actions = git_service.sweep_parity_residue(project.slug)
-    assert any("removed parity residue" in action for action in actions), actions
+    assert any("removed parity residue" in a for a in _details(actions)), actions
     assert not info.path.exists()
     assert str(info.path) not in _registered_worktrees(Path(project.path))
     assert git_service.managed_worktrees() == []
@@ -483,7 +488,7 @@ def test_parity_sweep_reclaims_an_orphaned_shell_script_tree(tmp_path, monkeypat
     (tree / ".env").write_text(SEEDED_ENV)
     assert str(tree) in _registered_worktrees(repo)
     actions = git_service.sweep_parity_residue()
-    assert any("removed orphaned parity tree" in action for action in actions), actions
+    assert any("removed orphaned parity tree" in a for a in _details(actions)), actions
     assert not root.exists() and not tree.exists()
     assert str(tree) not in _registered_worktrees(repo)
     # A root with no tree (killed before `worktree add` finished) is reported in BOTH modes:
@@ -491,9 +496,9 @@ def test_parity_sweep_reclaims_an_orphaned_shell_script_tree(tmp_path, monkeypat
     empty = temp_root / "orch-env-parity.EMPTY"
     empty.mkdir()
     dry = git_service.sweep_parity_residue(dry_run=True)
-    assert any(f"would remove orphaned parity root {empty}" in a for a in dry), dry
+    assert any(f"would remove orphaned parity root {empty}" in d for d in _details(dry)), dry
     actions = git_service.sweep_parity_residue()
-    assert any(f"removed orphaned parity root {empty}" in a for a in actions), actions
+    assert any(f"removed orphaned parity root {empty}" in d for d in _details(actions)), actions
     assert not empty.exists()
 
 
@@ -516,8 +521,8 @@ def test_parity_sweep_refuses_untrusted_temp_roots(tmp_path, monkeypatch):
     (writable / "tree").mkdir()
 
     actions = git_service.sweep_parity_residue()
-    assert any("symlink" in action for action in actions), actions
-    assert any("group/world writable" in action for action in actions), actions
+    assert any("symlink" in a for a in _details(actions)), actions
+    assert any("group/world writable" in a for a in _details(actions)), actions
     assert (victim / "tree" / "keep.txt").exists()
     assert link.is_symlink()
     assert (writable / "tree").exists() and writable.exists()
@@ -543,7 +548,7 @@ def test_parity_sweep_does_not_remove_an_unregistered_tree(tmp_path, monkeypatch
 
     monkeypatch.setattr(git_service, "run_git", recording)
     actions = git_service.sweep_parity_residue()
-    assert any("removed orphaned parity tree" in action for action in actions), actions
+    assert any("removed orphaned parity tree" in a for a in _details(actions)), actions
     assert not any(argv[:2] == ["worktree", "remove"] for argv in calls), calls
     assert not root.exists()
 
@@ -562,7 +567,7 @@ def test_parity_sweep_is_project_scoped_and_reports_unopenable_roots(
     (foreign / ".repo").write_text(str(other) + "\n")
     with git_service._parity_lock_at(foreign / ".lock"):
         actions = git_service.sweep_parity_residue("scope-mine", repo=mine.path, dry_run=True)
-    assert not [a for a in actions if "in progress" in a], actions
+    assert not [a for a in _details(actions) if "in progress" in a], actions
     assert foreign.exists()
 
     # A root of OUR checkout that cannot be opened: `.lock` is a directory here.
@@ -571,7 +576,7 @@ def test_parity_sweep_is_project_scoped_and_reports_unopenable_roots(
     (broken / ".repo").write_text(str(mine.path) + "\n")
     (broken / ".lock").mkdir()
     actions = git_service.sweep_parity_residue("scope-mine", repo=mine.path)
-    assert any("IsADirectoryError" in action for action in actions), actions
+    assert any("IsADirectoryError" in a for a in _details(actions)), actions
     assert broken.exists()
 
     checks = {c["name"]: c for c in project_service.doctor(mine, env_parity=True)}
@@ -607,6 +612,117 @@ def test_parity_placeholder_matches_between_the_python_and_shell_paths(tmp_path)
         capture_output=True, text=True, timeout=60, check=True,
     ).stdout.splitlines()
     assert out == [project_service._synthetic_env_value(name) for name in names]
+
+
+def test_parity_env_name_order_matches_the_shell_path(tmp_path):
+    """Review round 3: Python and the shell seed the SAME name sequence, not just the same set.
+
+    The script uses `sed … | sort -u`, so the Python reader must sort too. The expression is
+    extracted from the script itself, so this pins the shipped pipeline rather than a copy of it.
+    """
+    if shutil.which("bash") is None:  # pragma: no cover - bash runs the parity script
+        pytest.skip("bash not installed")
+    script = (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()
+    line = next(ln for ln in script.splitlines() if ln.startswith('names="$(sed'))
+    expr = line[len('names="$(') : -len(')"')]
+    source = tmp_path / "operator.env"
+    source.write_text(
+        "# operator file, deliberately not alphabetical\n"
+        "ZULU_FLAG=real-value\nexport ALPHA_KEY=real-value\n"
+        "MIKE_URL=https://real.invalid\nALPHA_KEY=duplicate\n"
+        "not a declaration line\n"
+    )
+    out = subprocess.run(
+        ["bash", "-c", f'SOURCE_ENV="{source}"; {expr}'],
+        capture_output=True, text=True, timeout=60, check=True,
+    ).stdout.splitlines()
+    names = project_service._env_variable_names(source)
+    assert names == ["ALPHA_KEY", "MIKE_URL", "ZULU_FLAG"]
+    assert names == out
+
+
+def test_parity_lock_is_the_managed_marker_not_a_new_directory(home):
+    """Review round 3: no `.locks` tree is invented inside the frozen worktree layout."""
+    slug = "lock-layout"
+    lock = git_service.parity_lock_path(slug)
+    assert lock.name == git_service.PARITY_TASK_ID
+    assert lock.parent.name == ".managed"
+    assert lock.parent.parent.name == slug
+    assert ".locks" not in lock.parts
+    # Holding the lock creates the marker (the file `ensure_snapshot` records) and nothing else,
+    # and the frozen marker semantics still hold: the marker is a sibling of the worktree path.
+    with git_service.parity_lock(slug):
+        assert lock.is_file()
+        assert set(p.name for p in lock.parent.parent.iterdir()) == {".managed"}
+
+
+def test_parity_sweep_reports_a_surviving_tree_as_not_reclaimed(home, tmp_path):
+    """Review round 3 finding 2: `ok` comes from what survives, never from the message prefix.
+
+    `remove_worktree` refuses a parity snapshot that holds an untracked NON-parity file. The old
+    shape `removed parity residue …; skip …: has uncommitted changes` read as success because it
+    did not start with "skip"; here the residue removal is real AND the reclaim failed, so the
+    action must be ok=False with the tree still present.
+    """
+    repo = make_repo(tmp_path / "parity-survives")
+    snapshot = git_service.ensure_snapshot(repo, "parity-survives", "env-parity", "main")
+    (snapshot.path / ".env").write_text(SEEDED_ENV)
+    (snapshot.path / "notes.txt").write_text("worker note, not parity residue\n")
+
+    actions = git_service.sweep_parity_residue("parity-survives")
+    assert len(actions) == 1, actions
+    action = actions[0]
+    assert action.ok is False
+    assert action.detail.startswith(f"could not remove parity worktree {snapshot.path}")
+    assert "has uncommitted changes" in action.detail
+    # The residue WAs removed; the tree and its registration survive for a human/next run.
+    assert not (snapshot.path / ".env").exists()
+    assert snapshot.path.exists()
+    assert str(snapshot.path) in _registered_worktrees(repo)
+
+    # Control: with the non-parity file gone the same sweep reclaims it and reports ok=True.
+    (snapshot.path / "notes.txt").unlink()
+    (snapshot.path / ".env").write_text(SEEDED_ENV)
+    actions = git_service.sweep_parity_residue("parity-survives")
+    assert [a.ok for a in actions] == [True], actions
+    assert not snapshot.path.exists()
+    assert git_service.managed_worktrees() == []
+
+
+def test_parity_sweep_does_not_claim_a_removal_rmtree_did_not_do(tmp_path, monkeypatch):
+    """Review round 3 finding 2: `rmtree(ignore_errors=True)` is not evidence of removal."""
+    temp_root = _isolated_tempdir(monkeypatch, tmp_path)
+    root = temp_root / "orch-env-parity.STUCK"
+    root.mkdir()
+    monkeypatch.setattr(git_service.shutil, "rmtree", lambda *a, **k: None)
+
+    actions = git_service.sweep_parity_residue()
+    assert len(actions) == 1, actions
+    assert actions[0].ok is False
+    assert actions[0].detail == f"could not remove orphaned parity root {root}"
+    assert root.exists()
+
+
+def test_git_service_keeps_the_posix_lock_import_lazy():
+    """Review round 3 nit: `fcntl` is POSIX-only, so it must not load with the module."""
+    import ast
+
+    tree = ast.parse((REPO_ROOT / "src" / "orchestrator" / "services" / "git_service.py")
+                     .read_text())
+    module_level = [
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    assert "fcntl" not in module_level
+    local = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import) and node not in tree.body
+        for alias in node.names
+    ]
+    assert local.count("fcntl") == 2, local  # parity_lock + _parity_lock_at
 
 
 def test_a_killed_shell_parity_run_leaves_no_registered_worktree(tmp_path, monkeypatch):
@@ -667,7 +783,7 @@ def test_a_killed_shell_parity_run_leaves_no_registered_worktree(tmp_path, monke
 
         # The live run holds the lock: this sweep must report and skip it.
         actions = git_service.sweep_parity_residue()
-        assert any("parity run in progress" in action for action in actions), actions
+        assert any("parity run in progress" in a for a in _details(actions)), actions
         assert tree.exists() and str(tree) in _registered_worktrees(repo)
 
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -679,7 +795,7 @@ def test_a_killed_shell_parity_run_leaves_no_registered_worktree(tmp_path, monke
         assert "ANTHROPIC_API_KEY=synthetic-not-a-secret" in observed.read_text()
 
         actions = git_service.sweep_parity_residue()
-        assert any("removed orphaned parity tree" in action for action in actions), actions
+        assert any("removed orphaned parity tree" in a for a in _details(actions)), actions
         assert not root.exists() and not tree.exists()
         assert str(tree) not in _registered_worktrees(repo)
     finally:

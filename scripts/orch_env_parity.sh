@@ -84,9 +84,11 @@ parity_value() {
 # Synthesise the parity environment from NAMES only (T-20 DoD 1). The sed expression emits the
 # name before the first `=`; values never leave the source file, are never printed, and are never
 # written into the worktree.
-# Sorted so a re-run writes the same file; the per-name placeholder below is compared against the
-# Python path by tests/integration/test_env_hermeticity.py.
-names="$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' "$SOURCE_ENV" | sort -u)"
+# Sorted under LC_ALL=C so a re-run writes the same file AND the sequence matches Python's
+# `sorted()` in project_service._env_variable_names byte for byte (T-20 review round 3); the
+# per-name placeholder below is compared against the Python path by
+# tests/integration/test_env_hermeticity.py.
+names="$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' "$SOURCE_ENV" | LC_ALL=C sort -u)"
 # A tracked `.env` in the throwaway tree is never overwritten (the Python path is create-only for
 # the same reason); `noclobber` below is the race-safe backstop for this pre-check.
 [ ! -e "$TREE/.env" ] || fail "$TREE/.env already exists; refusing to overwrite it"

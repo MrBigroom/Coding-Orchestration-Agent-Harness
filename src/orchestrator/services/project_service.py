@@ -460,14 +460,16 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _env_variable_names(source: Path) -> list[str]:
-    """The variable NAMES declared in an env file, in first-seen order, values never parsed.
+    """The SORTED variable NAMES declared in an env file; values are never parsed.
 
     The parity probe must reproduce the operator's *configuration surface* without ever writing a
     credential value into a harness-managed directory (T-20 DoD 1). Only the name before the first
-    `=` leaves this function; comments, blank lines and `export` prefixes are handled.
+    `=` leaves this function; comments, blank lines and `export` prefixes are handled. The order is
+    sorted, matching `sed ... | sort -u` in scripts/orch_env_parity.sh, so the two paths write the
+    same name sequence for the same file (T-20 review round 3); first-seen order would silently
+    differ whenever the operator's file is not alphabetical.
     """
-    names: list[str] = []
-    seen: set[str] = set()
+    names: set[str] = set()
     for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -476,11 +478,10 @@ def _env_variable_names(source: Path) -> list[str]:
             line = line[len("export ") :].lstrip()
         name, sep, _value = line.partition("=")
         name = name.strip()
-        if not sep or not _ENV_NAME_RE.match(name) or name in seen:
+        if not sep or not _ENV_NAME_RE.match(name):
             continue
-        seen.add(name)
-        names.append(name)
-    return names
+        names.add(name)
+    return sorted(names)
 
 
 def _synthetic_env_value(name: str) -> str:
@@ -652,8 +653,10 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
     # open is reported instead of raised out of doctor().
     swept = git_service.sweep_parity_residue(project.slug, repo=repo)
     for action in swept:
-        add("env-parity residue", not action.startswith("skip"), action)
-    if any(git_service.PARITY_BUSY in action for action in swept):
+        # `ok` is the sweep's own verified outcome (T-20 review round 3), never a parse of the
+        # message: a tree or registration that survived is reported as a failed reclaim.
+        add("env-parity residue", action.ok, action.detail)
+    if any(action.busy for action in swept):
         add(
             "env-parity suite",
             False,

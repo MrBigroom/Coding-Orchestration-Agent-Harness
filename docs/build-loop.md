@@ -473,11 +473,15 @@ Three things now keep that difference visible and harmless:
    `doctor --env-parity`, reclaim orphaned `env-parity` worktrees and
    `<tmpdir>/orch-env-parity.*` roots (each root records its checkout in `.repo`, so another
    repository's run is not this project's failure). The sweep takes each destination's lock first,
-   so a tree a live parity run is still using is reported and skipped, never deleted; a root that
+   so a tree a live parity run is still using is reported and skipped, never deleted; the doctor
+   path locks the managed `.managed/env-parity` marker itself (giving the parity probe no
+   directory of its own inside the frozen `<project_slug>/<task_id>` layout), and the shell path
+   locks `<tmpdir>/orch-env-parity.*/.lock`. A root that
    is a symlink, owned by another user, or group/world-writable is refused rather than followed,
-   and `git worktree remove` runs only for a linked worktree git itself lists. Recovery commits and
-   worktree removal also treat untracked parity files as harness residue (removed before staging)
-   rather than worker dirt.
+   and `git worktree remove` runs only for a linked worktree git itself lists. Every removal is
+   re-checked afterwards, so a tree or registration that survived is reported as not reclaimed.
+   Recovery commits and worktree removal also treat untracked parity files as harness residue
+   (removed before staging) rather than worker dirt.
    `--env-parity` is off by default and CLI-only; the API/GUI doctor route keeps its static
    shape. Neither is wired into `make test`, `make verify` or any project `test_command` — a gate
    must stay env-free or its green stops meaning what it says. A parity green also requires the
