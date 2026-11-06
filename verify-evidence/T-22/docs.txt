@@ -1,5 +1,5 @@
-# HEAD=d7e35fd744d1db12509de913ac9cbd35db3ed26e tracked-and-untracked-entries-outside-this-dir=0
-# command: git show HEAD:docs/build-loop.md | nl -ba | sed -n '531,610p'; git show HEAD:docs/decisions.md | nl -ba | sed -n '369,390p'
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# command: git show HEAD:docs/build-loop.md | nl -ba | sed -n '531,621p'; git show HEAD:docs/decisions.md | nl -ba | sed -n '369,403p'
 
 ## docs/build-loop.md (line numbers are source lines, not this file's lines)
    531	- **Resolve before judging (T-22 DoD 1/2).** Every path claim is first resolved against a
@@ -7,81 +7,92 @@
    533	  diffstat, the truncation manifest, and `git ls-tree -r HEAD` at the reviewed commit. The
    534	  worktree filesystem is deliberately **not** a source: an untracked or gitignored file is not in
    535	  the commit the reviewer saw, so counting it let a file missing from the commit be labelled a
-   536	  review-input omission instead of an evidence gap (round-2 finding 3). A bare name is matched by
-   537	  basename against the whole universe *before* any exact root match is accepted, so `README.md`
-   538	  with both a root file and `verify-evidence/T-19/README.md` is ambiguous rather than silently
-   539	  resolved to the root one (round-2 finding 1). Exactly one match is judged at that path; several
-   540	  matches are `unchecked` with **every** candidate listed — the resolver never picks one; no match
-   541	  and the claim was only a name is `unchecked` with the reason `no path could be resolved from the
-   542	  claim`. `confirmed` is reachable only for a claim that was located **and whose path the
-   543	  repository does not contain** at the reviewed commit. A path the repository contains is never
-   544	  confirmed absent, even when the diff budget withheld it; a failed lookup cannot reach
-   545	  `confirmed` at all. That is the invariant the tally prints.
-   546	- **Three states, not one label (T-22 DoD 3).** `confirmed` alone conflated a review-input failure
-   547	  with a Worker evidence gap, so each verdict also carries a state in its detail, the table's
-   548	  `state` column and the review notes: `omitted-from-review-input` (present in the repository, but
-   549	  the archived manifest says the diff budget did not carry it — the budget's problem, owned by
-   550	  T-16, and not a reason to send work back to the Worker), `absent-at-reviewed-commit` (nothing to
-   551	  supply, because nothing is in the repository at that commit — a real evidence gap),
-   552	  `unresolvable-claim` (the checker cannot judge it), plus `undecided`, `present-in-repository` and
-   553	  `supplied-in-full` for the other refuted/unchecked reasons. The statuses stay inside the frozen
-   554	  `confirmed | refuted | unchecked` vocabulary: `omitted-from-review-input` is `unchecked` (the
-   555	  repository contains the file, so absence cannot be confirmed), `absent-at-reviewed-commit` is
-   556	  `confirmed`, and a failed lookup is `unchecked`. The states are extra wording inside the existing
-   557	  notes/detail fields, which is the only route a label has without a contract-change request.
-   558	- **The tally audits itself (T-22 DoD 4).** `review.json`'s summary line and the payload's
-   559	  `Tally:` line break `confirmed` down by basis — `by path-resolution`, `by explicit-named-path`,
-   560	  `by manifest-record`, `from a failed lookup` — so a human skimming `review.md` sees at a glance
-   561	  whether a confident batch rests on resolved evidence or on names the checker could not place. The
-   562	  last number is 0 by construction; if it ever is not, the resolver is broken. `review_payload.md`
-   563	  also states the universe every verdict was resolved against (sources, counts, the commit SHA) and
-   564	  gives each row its own `how it was resolved` and `where it was found` columns.
-   565	- **Existence is not visibility.** A file that exists on disk does not refute "its hunks were not
-   566	  supplied". Visibility claims are compared with the supplied patch and the truncation manifest;
-   567	  `refuted` means the evidence was in fact supplied in full, `omitted-from-review-input` means the
-   568	  repository contains it but the budget withheld it (`unchecked`, because DoD 2 reserves
-   569	  `confirmed` for absence), `absent-at-reviewed-commit` is `confirmed` because there was nothing to
-   570	  supply, and `unchecked` is used whenever neither can decide it (fail closed). A `refuted` claim
-   571	  removes the finding and is logged (`review_absence_refuted`), but a verdict is never upgraded on
-   572	  it: the round goes to `NEEDS_HUMAN`, not to `APPROVED`.
-   573	- **Diff completeness.** Before the review ships, the harness compares the git diffstat with the
-   574	  supplied patch (`git diff --numstat` vs the archived `patch.diff`): every changed file must
-   575	  have a hunk body, and `git check-attr -a` is run for `-diff` / `export-ignore` on every changed
-   576	  path. A hiding attribute this task introduced is a harness finding (and an additive
-   577	  `review_diff_incomplete` build-log event); one that predates the merge-base is reported as
-   578	  pre-existing and is not a reason to fail the run. A Worker cannot opt out of review by
-   579	  configuring `.gitattributes`.
-   580	
-   581	Measured motivation: reviews.7 (T-8 round 5) asserted three required proofs were missing; all
-   582	three existed on the branch, and the reviewer had also received a handoff block cut off at DoD 5.
-   583	The void finding requeued a 45-minute paid round (run 15).
-   584	
-   585	The opposite failure is measured too, and is why a machine verdict is only as trustworthy as its
-   586	resolver: reviews.28 (run 38, T-19) reported `15 confirmed, 1 refuted, 2 unchecked`, and the
-   587	confirmed rows read
-   588	
-   589	    absence check [confirmed] capture.sh: path is absent from the task worktree, the supplied patch
-   590	    and the truncation manifest
-   591	
-   592	while `ls verify-evidence/T-19/` showed all seven files tracked at the reviewed commit. The claims
-   593	had arrived as bare filenames inside one brace-expanded `missing_artifacts` item, and the checker
-   594	had looked for the literal name at the repository root. T-22's regression tests replay that exact
-   595	fixture as data (`tests/fixtures/absence_run38.py`): the same input now yields `0 confirmed, 1
-   596	refuted, 17 unchecked` with `from a failed lookup: 0`. Eleven of the located files are
-   597	`omitted-from-review-input` (the budget dropped them, so absence is `unchecked`, never
-   598	`confirmed`); `README.md` is `unresolvable-claim` because both the root file and
-   599	`verify-evidence/T-19/README.md` carry that name, and the row lists both candidates; the real
-   600	absence claims (`handoff.md`, a test name) are `unchecked` because the lookup found nothing to
-   601	place. The point of T-11 was never to make harness claims unquestionable — a `confirmed` from a
-   602	check that could not find the path is worse than no check, because the operator stops auditing.
-   603	The operator-facing rule: **a machine verdict is only as trustworthy as its resolver.** When a
-   604	run's absence tally is not credible, read the `state` and `how it was resolved` columns before
-   605	believing any `confirmed`, and treat a reviewer note that says "the harness confirmed it" as
-   606	unverified until the row's resolution evidence backs it up.
-   607	
-   608	## Verification artifacts
-   609	
-   610	`runs/<run_id>/verification.md` + `verification.json`, plus `test.log`,
+   536	  review-input omission instead of an evidence gap (round-2 finding 3). `git ls-tree` with no
+   537	  resolvable `HEAD` SHA is recorded as unavailable and contributes no paths (round-4 finding 4):
+   538	  a repository view with no commit can never support a `confirmed` verdict. A bare name is matched by
+   539	  basename against the whole universe *before* any exact root match is accepted, so `README.md`
+   540	  with both a root file and `verify-evidence/T-19/README.md` is ambiguous rather than silently
+   541	  resolved to the root one (round-2 finding 1). Exactly one match is judged at that path; several
+   542	  matches are `unchecked` with **every** candidate listed — the resolver never picks one; no match
+   543	  and the claim was only a name is `unchecked` with the reason `no path could be resolved from the
+   544	  claim`. A directory-qualified claim that misses is not automatically conclusive either
+   545	  (round-4 finding 1): a partial path such as `T-19/capture.sh` is searched by basename and path
+   546	  suffix too, and **any** candidate — `verify-evidence/T-19/capture.sh` — makes the verdict
+   547	  `unchecked` with every candidate listed, instead of a confirmed absence for a path shape one
+   548	  step away from run 38's. Only a directory-qualified miss whose name matches nothing at all is a
+   549	  located path the four sources can be asked to deny. `confirmed` is reachable only for a claim
+   550	  that was located **and whose path every one
+   551	  of the four sources denies**, with `git ls-tree HEAD` actually searched at the reviewed commit:
+   552	  if a source was unavailable, or another source lists the path (a deletion that survives only in
+   553	  the diffstat), the verdict is `unchecked` and names the blocker — a confident label is never
+   554	  manufactured from a partial search. A path the repository contains is never confirmed absent,
+   555	  even when the diff budget withheld it; a failed lookup cannot reach `confirmed` at all. That is
+   556	  the invariant the tally prints.
+   557	- **Three states, not one label (T-22 DoD 3).** `confirmed` alone conflated a review-input failure
+   558	  with a Worker evidence gap, so each verdict also carries a state in its detail, the table's
+   559	  `state` column and the review notes: `omitted-from-review-input` (present in the repository, but
+   560	  the archived manifest says the diff budget did not carry it — the budget's problem, owned by
+   561	  T-16, and not a reason to send work back to the Worker), `absent-at-reviewed-commit` (nothing to
+   562	  supply, because nothing is in the repository at that commit — a real evidence gap),
+   563	  `unresolvable-claim` (the checker cannot judge it), plus `undecided`, `present-in-repository` and
+   564	  `supplied-in-full` for the other refuted/unchecked reasons. The statuses stay inside the frozen
+   565	  `confirmed | refuted | unchecked` vocabulary: `omitted-from-review-input` is `unchecked` (the
+   566	  repository contains the file, so absence cannot be confirmed), `absent-at-reviewed-commit` is
+   567	  `confirmed`, and a failed lookup is `unchecked`. The states are extra wording inside the existing
+   568	  notes/detail fields, which is the only route a label has without a contract-change request.
+   569	- **The tally audits itself (T-22 DoD 4).** `review.json`'s summary line and the payload's
+   570	  `Tally:` line break `confirmed` down by basis — `by path-resolution`, `by explicit-named-path`,
+   571	  `by manifest-record`, `from a failed lookup` — so a human skimming `review.md` sees at a glance
+   572	  whether a confident batch rests on resolved evidence or on names the checker could not place. The
+   573	  last number is 0 by construction; if it ever is not, the resolver is broken. `review_payload.md`
+   574	  also states the universe every verdict was resolved against (sources and their counts, any
+   575	  unavailable source and why, the commit SHA) and gives each row its own `how it was resolved` and
+   576	  `where it was found` columns. A source that was consulted but contributed no entries (an empty
+   577	  patch, a diffstat with no rows) is still listed as searched, so "searched" means consulted, not
+   578	  "happened to name this path".
+   579	- **Existence is not visibility.** A file that exists on disk does not refute "its hunks were not
+   580	  supplied". Visibility claims are compared with the supplied patch and the truncation manifest;
+   581	  `refuted` means the evidence was in fact supplied in full, `omitted-from-review-input` means the
+   582	  repository contains it but the budget withheld it (`unchecked`, because DoD 2 reserves
+   583	  `confirmed` for absence), `absent-at-reviewed-commit` is `confirmed` because there was nothing to
+   584	  supply, and `unchecked` is used whenever neither can decide it (fail closed). A `refuted` claim
+   585	  removes the finding and is logged (`review_absence_refuted`), but a verdict is never upgraded on
+   586	  it: the round goes to `NEEDS_HUMAN`, not to `APPROVED`.
+   587	- **Diff completeness.** Before the review ships, the harness compares the git diffstat with the
+   588	  supplied patch (`git diff --numstat` vs the archived `patch.diff`): every changed file must
+   589	  have a hunk body, and `git check-attr -a` is run for `-diff` / `export-ignore` on every changed
+   590	  path. A hiding attribute this task introduced is a harness finding (and an additive
+   591	  `review_diff_incomplete` build-log event); one that predates the merge-base is reported as
+   592	  pre-existing and is not a reason to fail the run. A Worker cannot opt out of review by
+   593	  configuring `.gitattributes`.
+   594	
+   595	Measured motivation: reviews.7 (T-8 round 5) asserted three required proofs were missing; all
+   596	three existed on the branch, and the reviewer had also received a handoff block cut off at DoD 5.
+   597	The void finding requeued a 45-minute paid round (run 15).
+   598	
+   599	The opposite failure is measured too, and is why a machine verdict is only as trustworthy as its
+   600	resolver: reviews.28 (run 38, T-19) reported `15 confirmed, 1 refuted, 2 unchecked`, and the
+   601	confirmed rows read
+   602	
+   603	    absence check [confirmed] capture.sh: path is absent from the task worktree, the supplied patch
+   604	    and the truncation manifest
+   605	
+   606	while `ls verify-evidence/T-19/` showed all seven files tracked at the reviewed commit. The claims
+   607	had arrived as bare filenames inside one brace-expanded `missing_artifacts` item, and the checker
+   608	had looked for the literal name at the repository root. T-22's regression tests replay that exact
+   609	fixture as data (`tests/fixtures/absence_run38.py`): the same input now yields `0 confirmed, 1
+   610	refuted, 17 unchecked` with `from a failed lookup: 0`. Eleven of the located files are
+   611	`omitted-from-review-input` (the budget dropped them, so absence is `unchecked`, never
+   612	`confirmed`); `README.md` is `unresolvable-claim` because both the root file and
+   613	`verify-evidence/T-19/README.md` carry that name, and the row lists both candidates; the real
+   614	absence claims (`handoff.md`, a test name) are `unchecked` because the lookup found nothing to
+   615	place. The point of T-11 was never to make harness claims unquestionable — a `confirmed` from a
+   616	check that could not find the path is worse than no check, because the operator stops auditing.
+   617	The operator-facing rule: **a machine verdict is only as trustworthy as its resolver.** When a
+   618	run's absence tally is not credible, read the `state` and `how it was resolved` columns before
+   619	believing any `confirmed`, and treat a reviewer note that says "the harness confirmed it" as
+   620	unverified until the row's resolution evidence backs it up.
+   621	
 
 ## docs/decisions.md
    369	- **2026-11-06 — T-22: an absence claim is resolved to a path before the harness judges it, and
@@ -95,14 +106,27 @@
    377	  so it cannot turn an evidence gap into a budget omission. A bare name is matched by basename
    378	  *before* any exact root match is accepted, so `README.md` with a root and a nested
    379	  `verify-evidence/<task>/README.md` is ambiguous and lists both candidates instead of silently
-   380	  picking the root (round-2 findings 1 and 3). Ambiguous and unplaceable names are `unchecked`
-   381	  (`unresolvable-claim`); `confirmed` survives only for a located path the repository does not
-   382	  contain, and the tally prints `by path-resolution / by explicit-named-path / by manifest-record /
-   383	  from a failed lookup` so a confident batch that rests on unresolved names is visible without
-   384	  re-auditing each row by hand. The three states a reviewer acts on are named in the existing
-   385	  notes/detail fields (`omitted-from-review-input` = budget failure owned by T-16 and therefore
-   386	  `unchecked`, because DoD 2 reserves `confirmed` for absence; `absent-at-reviewed-commit` = real
-   387	  evidence gap and the only `confirmed`; `unresolvable-claim` = checker cannot judge) because
-   388	  `review.json`'s shape and the `confirmed | refuted | unchecked` provenance vocabulary are frozen
-   389	  contracts and no DoD here grants a change: new labels go inside existing fields, not beside
-   390	  them. Rejected alternative: a contract-change request adding `omitted`/`absent` as statuses — it
+   380	  picking the root (round-2 findings 1 and 3). A directory-qualified claim that misses is not
+   381	  conclusive either (round-4 finding 1): a partial path like `T-19/capture.sh` is also searched by
+   382	  basename and path suffix, and any candidate (`verify-evidence/T-19/capture.sh`) makes the
+   383	  verdict `unchecked` with every candidate listed rather than a confirmed absence one path shape
+   384	  away from run 38. `git ls-tree HEAD` that returns tracked paths but no resolvable SHA counts as
+   385	  unavailable, never as a searched source (round-4 finding 4), because `confirmed` is anchored to
+   386	  the reviewed commit. Ambiguous and unplaceable names are `unchecked`
+   387	  (`unresolvable-claim`); `confirmed` survives only for a located path the repository does not
+   388	  contain **and no consulted source names**, with `git ls-tree HEAD` actually searched at the
+   389	  reviewed commit — an unavailable source, or a path the diffstat alone still names (a deletion),
+   390	  is `unchecked` with the blocker named rather than a confident absence. The tally prints `by path-resolution / by explicit-named-path / by manifest-record /
+   391	  from a failed lookup` so a confident batch that rests on unresolved names is visible without
+   392	  re-auditing each row by hand. The three states a reviewer acts on are named in the existing
+   393	  notes/detail fields (`omitted-from-review-input` = budget failure owned by T-16 and therefore
+   394	  `unchecked`, because DoD 2 reserves `confirmed` for absence; `absent-at-reviewed-commit` = real
+   395	  evidence gap and the only `confirmed`; `unresolvable-claim` = checker cannot judge) because
+   396	  `review.json`'s shape and the `confirmed | refuted | unchecked` provenance vocabulary are frozen
+   397	  contracts and no DoD here grants a change: new labels go inside existing fields, not beside
+   398	  them. Rejected alternative: a contract-change request adding `omitted`/`absent` as statuses — it
+   399	  would widen a frozen vocabulary for wording that the notes already carry, and a machine check
+   400	  whose vocabulary only the harness can edit is how run 38 got audited by hand instead of by rule.
+   401	  The operator-facing rule is recorded in `docs/build-loop.md`: a machine verdict is only as
+   402	  trustworthy as its resolver, so read the row's resolution evidence before believing a
+   403	  `confirmed`.

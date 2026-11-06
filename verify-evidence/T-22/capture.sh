@@ -40,6 +40,24 @@ for mode in index wiring replay mutation; do
 done
 mv "$STAGE/index.txt" "$STAGE/resolver_index.txt"
 
+# docs.txt: the DoD 6 sections, read from the committed docs at this HEAD. Ranges are found by
+# marker so a docs edit that shifts line numbers cannot silently leave a stale excerpt behind.
+B1=$(git show HEAD:docs/build-loop.md | grep -n '^- \*\*Resolve before judging' | cut -d: -f1)
+B2=$(git show HEAD:docs/build-loop.md | grep -n '^## Verification artifacts' | cut -d: -f1)
+D1=$(git show HEAD:docs/decisions.md | grep -n '2026-11-06' | cut -d: -f1)
+D2=$(git show HEAD:docs/decisions.md | wc -l | tr -d ' ')
+{
+  echo "$STAMP"
+  echo "# command: git show HEAD:docs/build-loop.md | nl -ba | sed -n '${B1},$((B2 - 1))p';" \
+       "git show HEAD:docs/decisions.md | nl -ba | sed -n '${D1},${D2}p'"
+  echo
+  echo "## docs/build-loop.md (line numbers are source lines, not this file's lines)"
+  git show HEAD:docs/build-loop.md | nl -ba | sed -n "${B1},$((B2 - 1))p"
+  echo
+  echo "## docs/decisions.md"
+  git show HEAD:docs/decisions.md | nl -ba | sed -n "${D1},${D2}p"
+} > "$STAGE/docs.txt"
+
 cp "$STAGE"/*.txt "$OUT/"
 echo "wrote: $(ls "$OUT" | tr '\n' ' ')"
 echo "# done at $SHORT"

@@ -1,5 +1,5 @@
-# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=cf417519e866914213adc4b88518499ac7101e72
 # command: python verify-evidence/T-22/extractor.py --wiring
 # review_service.py lines that put the resolver and the evidence into the artifacts
   320 | universe = review_audit.build_universe(cwd, supplied)
@@ -12,12 +12,12 @@
   235 | Tally: {review_audit.tally_verdicts(absence_checks)}
 
 # review_audit.py: the table columns carrying the resolution evidence
- 1097 | | claim | source | status | checked against / evidence | state | how it was resolved | 
-  415 | def found_note(self) -> str:
-  423 | def claim_note(self) -> str:
- 1137 | def tally_verdicts(checks: list[AbsenceCheck]) -> str:
- 1174 | def render_universe(universe: PathUniverse) -> str:
-  283 | def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
+ 1148 | | claim | source | status | checked against / evidence | state | how it was resolved | 
+  466 | def found_note(self) -> str:
+  474 | def claim_note(self) -> str:
+ 1188 | def tally_verdicts(checks: list[AbsenceCheck]) -> str:
+ 1225 | def render_universe(universe: PathUniverse) -> str:
+  315 | def resolve_claim_path(raw: str, universe: PathUniverse) -> PathResolution:
 
 # the frozen runs/<run_id>/ artifact names this evidence lands in (no new file)
   477 | artifact_service.write_text(

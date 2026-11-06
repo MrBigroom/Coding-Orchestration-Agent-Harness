@@ -1,5 +1,5 @@
-# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6 tracked-and-untracked-entries-outside-this-dir=0
-# HEAD=f45cf1fbc84da6d90fa4d3b3649c7900c90d26e6
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=cf417519e866914213adc4b88518499ac7101e72
 # command: python verify-evidence/T-22/extractor.py --index
 # every label a verdict can carry, and where each new function starts
 
@@ -26,16 +26,18 @@
 
 ----- new functions, with their line counts (read them in the diff at these lines) -----
   155 | src/orchestrator/services/review_audit.py class PathUniverse (62 lines)
-  228 | src/orchestrator/services/review_audit.py def build_universe (36 lines)
-  283 | src/orchestrator/services/review_audit.py def resolve_claim_path (60 lines)
-  580 | src/orchestrator/services/review_audit.py def _confirmation_blockers (29 lines)
-  611 | src/orchestrator/services/review_audit.py def _confirmed_or_unchecked (8 lines)
-  568 | src/orchestrator/services/review_audit.py def _repo_present (10 lines)
-  621 | src/orchestrator/services/review_audit.py def _visibility_verdict (111 lines)
-  820 | src/orchestrator/services/review_audit.py def _existence_verdict (63 lines)
- 1137 | src/orchestrator/services/review_audit.py def tally_verdicts (35 lines)
- 1174 | src/orchestrator/services/review_audit.py def render_universe (15 lines)
-  519 | src/orchestrator/services/review_audit.py def _unresolved_claim
-  538 | src/orchestrator/services/review_audit.py def _judged
-  734 | src/orchestrator/services/review_audit.py def _check_visibility
-  885 | src/orchestrator/services/review_audit.py def _check_existence_claim
+  244 | src/orchestrator/services/review_audit.py def build_universe (33 lines)
+  228 | src/orchestrator/services/review_audit.py def _add_tracked_paths (14 lines)
+  315 | src/orchestrator/services/review_audit.py def resolve_claim_path (79 lines)
+  296 | src/orchestrator/services/review_audit.py def _name_candidates (17 lines)
+  631 | src/orchestrator/services/review_audit.py def _confirmation_blockers (29 lines)
+  662 | src/orchestrator/services/review_audit.py def _confirmed_or_unchecked (8 lines)
+  619 | src/orchestrator/services/review_audit.py def _repo_present (10 lines)
+  672 | src/orchestrator/services/review_audit.py def _visibility_verdict (111 lines)
+  871 | src/orchestrator/services/review_audit.py def _existence_verdict (63 lines)
+ 1188 | src/orchestrator/services/review_audit.py def tally_verdicts (35 lines)
+ 1225 | src/orchestrator/services/review_audit.py def render_universe (15 lines)
+  570 | src/orchestrator/services/review_audit.py def _unresolved_claim
+  589 | src/orchestrator/services/review_audit.py def _judged
+  785 | src/orchestrator/services/review_audit.py def _check_visibility
+  936 | src/orchestrator/services/review_audit.py def _check_existence_claim

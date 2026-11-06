@@ -225,11 +225,23 @@ def print_mutation() -> None:
 
     def run(name: str) -> str:
         tmp = Path(tempfile.mkdtemp())
+        fn = getattr(target, name)
+        kwargs: dict[str, object] = {}
+        if "monkeypatch" in inspect.signature(fn).parameters:
+            # The round-4 head-SHA test replaces `_tracked_paths` to simulate ls-tree without a
+            # commit; pytest supplies that fixture, so this harness has to as well.
+            from _pytest.monkeypatch import MonkeyPatch
+
+            kwargs["monkeypatch"] = MonkeyPatch()
         try:
-            getattr(target, name)(tmp)
+            fn(tmp, **kwargs)
             return "pass"
         except AssertionError:
             return "RED"
+        finally:
+            patcher = kwargs.get("monkeypatch")
+            if patcher is not None:
+                patcher.undo()
 
     orig_resolve = review_audit.resolve_claim_path
     orig_visibility = review_audit._check_visibility
