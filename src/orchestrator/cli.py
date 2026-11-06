@@ -323,9 +323,17 @@ def cleanup(
 
     _ensure_ready()
     done = {"accepted", "archived", "rejected"}
+    # T-20: parity residue is not a task worktree and has its own lock-aware sweep. Doing it here
+    # (as well as at the start of the parity probe) means a SIGKILLed run is reclaimable without
+    # waiting for the next doctor invocation.
+    for action in git_service.sweep_parity_residue(dry_run=dry_run):
+        console.print(action)
     with _session() as s:
         projects = {p.slug: p for p in s.exec(select(Project))}
         for info in git_service.managed_worktrees():
+            if info["task_id"] == git_service.PARITY_TASK_ID:
+                # Already handled above; a live parity snapshot was skipped there on purpose.
+                continue
             task = s.get(Task, int(info["task_id"])) if info["task_id"].isdigit() else None
             if task and task.status not in done and not include_active:
                 console.print(f"skip {info['path']}: task {task.short_id} is {task.status}")

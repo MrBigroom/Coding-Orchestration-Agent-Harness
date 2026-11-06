@@ -270,6 +270,9 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 - **A gate green is a green in a clean environment, not in your checkout.** Gated runs execute in
   a tracked-files-only worktree: no `.env`, no `node_modules`, no `.venv`. The suite itself is
   hermetic against a repo-level `.env`, and `verification.json` records which world the gate used;
-  `make test-parity` runs the suite again with a copy of your local `.env` as a developer check
-  (never as the gate command). See `docs/build-loop.md`, "Gated runs are environment-free".
+  `make test-parity` runs the suite again with a **synthetic** `.env` derived from your local
+  variable names (never your values), as a developer check and never as the gate command. A parity
+  run killed with SIGKILL can leave that synthetic throwaway tree behind; `orchestrator cleanup`
+  reclaims it, and never touches one a live parity run holds. See `docs/build-loop.md`,
+  "Gated runs are environment-free".
 - Single-user and local only, by design.

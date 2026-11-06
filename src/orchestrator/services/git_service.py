@@ -18,7 +18,13 @@ Two dirty predicates exist because two different decisions are made with them (T
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import os
 import re
+import shutil
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +44,22 @@ from orchestrator.utils.paths import is_within
 from orchestrator.utils.redaction import is_sensitive_path
 
 ORCH_DIR = ".orchestrator"  # per-worktree scratch (handoff file); git-excluded
+
+# The environment-parity probe (T-20) is the one harness path that deliberately creates a
+# throwaway worktree with an env file in it. Its directory name is part of the cleanup contract:
+#   * `doctor --env-parity` uses the managed snapshot <worktree_root>/<slug>/env-parity;
+#   * scripts/orch_env_parity.sh uses <tmpdir>/orch-env-parity.XXXXXX/tree.
+# The parity file is synthetic (variable names only, never the operator's values), but it is still
+# residue no worker produced, and a killed run must not leave either the file or the worktree
+# registration behind.
+PARITY_TASK_ID = "env-parity"
+PARITY_TMP_PREFIX = "orch-env-parity."
+PARITY_LOCK_NAME = ".lock"
+_PARITY_ENV_NAMES = (".env",)
+
+
+class ParityBusy(GitError):
+    """Another parity run holds the lock for this destination; never sweep its tree."""
 
 # Recovery commits keep their historical subject prefix (tests, docs and GUI displays match on
 # it) and gain a git trailer so they are machine-identifiable WITHOUT subject string matching.
@@ -158,6 +180,194 @@ def _ensure_excluded(repo: Path) -> None:
             )
 
 
+def parity_lock_path(project_slug: str) -> Path:
+    """Lock for the doctor parity destination of one project (outside the worktree itself).
+
+    Deliberately NOT under `.managed/`: `managed_worktrees()` treats every entry there as a
+    worktree marker, and a lock file would then be reported as a stale worktree.
+    """
+    return (
+        worktree_path(project_slug, PARITY_TASK_ID).parent
+        / ".locks"
+        / f"{PARITY_TASK_ID}{PARITY_LOCK_NAME}"
+    )
+
+
+@contextlib.contextmanager
+def parity_lock(project_slug: str) -> Iterator[None]:
+    """Hold the doctor parity lock for the lifetime of a parity run.
+
+    An interrupted run releases the lock with the process, so a later sweep can tell an orphaned
+    tree (lock free) from one another process is still using (lock busy). The lock path lives
+    beside the managed marker, never inside the throwaway worktree, because the whole worktree is
+    deleted by cleanup.
+    """
+    path = parity_lock_path(project_slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ParityBusy(f"another parity run holds {path}") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _parity_lock_at(path: Path) -> Iterator[bool]:
+    """Non-blocking lock used by the sweeper: yields False (and touches nothing) when busy."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def is_parity_worktree(path: Path | str) -> bool:
+    """True for the two parity destinations the harness creates (never a task worktree)."""
+    p = Path(path)
+    if p.name == PARITY_TASK_ID and (p.parent / ".managed" / PARITY_TASK_ID).exists():
+        return True
+    return p.name == "tree" and p.parent.name.startswith(PARITY_TMP_PREFIX)
+
+
+def _is_parity_residue_name(name: str) -> bool:
+    return name in _PARITY_ENV_NAMES or (
+        name.startswith(".env.") and name.endswith(".parity")
+    )
+
+
+def _parity_residue_paths(path: Path) -> list[Path]:
+    """Untracked synthetic parity files in a parity worktree (never a versioned/tracked one)."""
+    if not path.is_dir() or not is_parity_worktree(path):
+        return []
+    found: list[Path] = []
+    candidates = [path / name for name in _PARITY_ENV_NAMES]
+    candidates.extend(path.glob(".env.*.parity"))
+    for candidate in candidates:
+        if not (candidate.is_file() or candidate.is_symlink()):
+            continue
+        tracked = run_git(
+            ["ls-files", "--error-unmatch", "--", candidate.name], path, check=False
+        ).code == 0
+        if not tracked:
+            found.append(candidate)
+    return found
+
+
+def _remove_parity_residue(path: Path) -> list[str]:
+    """Delete untracked parity files from a parity worktree; never a versioned/tracked file.
+
+    `.env` is gitignored in this repository, so `git status` does not even list it; the residue
+    check is filesystem-based on purpose. Returns the removed paths.
+    """
+    removed: list[str] = []
+    for candidate in _parity_residue_paths(path):
+        candidate.unlink(missing_ok=True)
+        removed.append(str(candidate))
+    return removed
+
+
+def _repo_of_worktree(path: Path) -> Path | None:
+    """The main checkout owning a linked worktree, or None when the metadata is gone."""
+    if not path.is_dir():
+        return None
+    common = run_git(
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"], path, check=False
+    )
+    if common.code != 0 or not common.stdout.strip():
+        return None
+    common_path = Path(common.stdout.strip())
+    return common_path.parent if common_path.name == ".git" else None
+
+
+def _sweep_managed_parity(project_slug: str | None, dry_run: bool) -> list[str]:
+    actions: list[str] = []
+    for info in managed_worktrees():
+        if info["task_id"] != PARITY_TASK_ID:
+            continue
+        if project_slug and info["project_slug"] != project_slug:
+            continue
+        path: Path = info["path"]
+        with _parity_lock_at(parity_lock_path(info["project_slug"])) as acquired:
+            if not acquired:
+                actions.append(f"skip {path}: parity run in progress")
+                continue
+            if not path.exists():
+                if dry_run:
+                    actions.append(f"would remove stale parity marker {info['marker']}")
+                else:
+                    info["marker"].unlink(missing_ok=True)
+                    actions.append(f"removed stale parity marker {info['marker']}")
+                continue
+            repo = _repo_of_worktree(path)
+            residue = _parity_residue_paths(path)
+            if dry_run:
+                detail = (
+                    "would remove parity residue " + ", ".join(str(p) for p in residue) + "; "
+                    if residue
+                    else ""
+                )
+                actions.append(f"{detail}{remove_worktree(repo, info, dry_run=True)}")
+                continue
+            removed = _remove_parity_residue(path)
+            note = remove_worktree(repo, info, dry_run=False)
+            detail = f"removed parity residue {', '.join(removed)}; " if removed else ""
+            actions.append(f"{detail}{note}")
+    return actions
+
+
+def _sweep_temp_parity(temp_root: Path, dry_run: bool) -> list[str]:
+    """Reclaim one <tmpdir>/orch-env-parity.* root created by scripts/orch_env_parity.sh."""
+    actions: list[str] = []
+    lock = temp_root / PARITY_LOCK_NAME
+    with _parity_lock_at(lock) as acquired:
+        if not acquired:
+            return [f"skip {temp_root}: parity run in progress"]
+        tree = temp_root / "tree"
+        if dry_run:
+            if tree.exists():
+                return [f"would remove orphaned parity tree {tree}"]
+            return [f"would remove orphaned parity root {temp_root}"]
+        if tree.exists():
+            repo = _repo_of_worktree(tree)
+            if repo:
+                run_git(["worktree", "remove", "--force", str(tree)], repo, check=False)
+                run_git(["worktree", "prune"], repo, check=False)
+            if tree.exists():
+                shutil.rmtree(tree, ignore_errors=True)
+            actions.append(f"removed orphaned parity tree {tree}")
+        # The lock is inside the root and this process holds it open; POSIX unlink is safe.
+        shutil.rmtree(temp_root, ignore_errors=True)
+    return actions
+
+
+def sweep_parity_residue(project_slug: str | None = None, dry_run: bool = False) -> list[str]:
+    """Reclaim orphaned parity trees and their worktree registrations.
+
+    Called at the start of `orchestrator cleanup` and of the doctor parity probe (T-20). A tree
+    whose parity lock is held by a live process is skipped and reported, never swept. When
+    `project_slug` is given only that project's managed `env-parity` snapshot is considered; the
+    shell-script trees live under the shared tempdir and are always considered. `dry_run` only
+    reports what would be removed.
+    """
+    actions: list[str] = []
+    temp_root = Path(tempfile.gettempdir())
+    for root in sorted(temp_root.glob(f"{PARITY_TMP_PREFIX}*")):
+        if root.is_dir():
+            actions.extend(_sweep_temp_parity(root, dry_run))
+    actions.extend(_sweep_managed_parity(project_slug, dry_run))
+    return actions
+
+
 def ensure_snapshot(
     repo: Path, project_slug: str, key: int | str, base_branch: str
 ) -> WorktreeInfo:
@@ -210,10 +420,19 @@ def ensure_worktree(
 
 
 def status_split(path: Path) -> DirtyStatus:
-    """Split the uncommitted state into tracked changes vs. untracked new files."""
+    """Split the uncommitted state into tracked changes vs. untracked new files.
+
+    Untracked synthetic parity files (`.env`, `.env.*.parity`) in a parity worktree are NOT worker
+    dirt: the harness created them and cleanup removes them (T-20 DoD 3). They are filtered here,
+    so recovery_commit never stages one and remove_worktree does not refuse the tree. A TRACKED
+    `.env` still counts: only paths the harness added are exempt.
+    """
+    parity = is_parity_worktree(path)
     tracked: list[str] = []
     untracked: list[str] = []
     for xy, p in status_entries(path):
+        if parity and xy == "??" and _is_parity_residue_name(Path(p).name):
+            continue
         (untracked if xy == "??" else tracked).append(p)
     return DirtyStatus(tracked_modified=tracked, untracked_added=untracked)
 
@@ -221,8 +440,11 @@ def status_split(path: Path) -> DirtyStatus:
 def is_dirty(path: Path) -> bool:
     """Anything uncommitted at all, INCLUDING untracked paths (scratch files, local tool
     directories). Use it only where losing an untracked file would be the damage —
-    recovery_commit and cleanup. Merge/refuse and cleanliness verdicts want `tracked_dirty`."""
-    return bool(status_porcelain(path).strip())
+    recovery_commit and cleanup. Merge/refuse and cleanliness verdicts want `tracked_dirty`.
+
+    Parity residue is excluded by `status_split` for parity destinations only; a task worktree
+    keeps the inclusive predicate, so worker output is still never discarded."""
+    return status_split(path).dirty
 
 
 def tracked_dirty(path: Path) -> bool:
@@ -353,8 +575,6 @@ def parse_recovery_event_details(details: str) -> dict | None:
 
 
 def _git_env() -> dict[str, str]:
-    import os
-
     s = get_settings()
     return {
         **os.environ,
@@ -524,6 +744,12 @@ def remove_worktree(repo: Path | None, info: dict, dry_run: bool = True) -> str:
     marker: Path = info["marker"]
     if not marker.exists() or not is_within(root, path):
         return f"skip {path}: not managed"
+    # Parity files are harness residue, not worker output: remove them explicitly before the
+    # dirty check so a leaked .env can never make cleanup refuse the tree (T-20 DoD 3). A
+    # dry-run must not delete, and `status_split` already exempts parity residue from the
+    # dirty predicate.
+    if not dry_run:
+        _remove_parity_residue(path)
     if path.exists() and is_repo(path) and is_dirty(path):
         return f"skip {path}: has uncommitted changes"
     if dry_run:

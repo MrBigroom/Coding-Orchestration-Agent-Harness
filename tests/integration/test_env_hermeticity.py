@@ -11,8 +11,10 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -74,7 +76,7 @@ CHECK_SEEDED_ENV = (
     "import os, pathlib\n"
     'env_file = pathlib.Path(".env")\n'
     'assert env_file.is_file(), "not seeded"\n'
-    'assert "SYNTHETIC_PARITY=present" in env_file.read_text()\n'
+    'assert "SYNTHETIC_PARITY=synthetic" in env_file.read_text()\n'
     "assert env_file.stat().st_mode & 0o777 == 0o600, oct(env_file.stat().st_mode & 0o777)\n"
     "root = os.getcwd()\n"
     "print(f'ORCH_VERIFY|mode=test|module=demo|module_file={root}/demo.py|worktree_root={root}')\n"
@@ -299,8 +301,9 @@ def test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree(session, tmp
     checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
     assert checks["env-parity .env seeded"]["ok"] is True
     assert checks["env-parity suite"]["ok"] is True, checks["env-parity suite"]
-    assert "local .env seeded" in checks["env-parity suite"]["detail"]
+    assert "synthetic .env seeded" in checks["env-parity suite"]["detail"]
     assert "SYNTHETIC_PARITY" not in checks["env-parity .env seeded"]["detail"]
+    assert "values never copied" in checks["env-parity .env seeded"]["detail"]
     assert git_service.managed_worktrees() == []
 
     no_env = _project(session, tmp_path, "no-env-proj", with_env=False)
@@ -310,33 +313,43 @@ def test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree(session, tmp
     assert git_service.managed_worktrees() == []
 
 
-def test_env_parity_reports_a_leftover_worktree_instead_of_sweeping_it(session, tmp_path):
-    """A killed run's seeded worktree is T-20 residue hygiene: T-19 only reports it."""
-    project = _project(session, tmp_path, "stale-proj", with_env=False)
+def _registered_worktrees(repo: Path) -> set[str]:
+    out = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, timeout=60,
+    )
+    return {
+        line[len("worktree "):].strip()
+        for line in out.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+
+
+def test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run(session, tmp_path):
+    """T-20 DoD 2/3/4a: an interrupted run's synthetic worktree and registration are reclaimed."""
+    project = _project(session, tmp_path, "stale-proj", with_env=True, suite=CHECK_SEEDED_ENV)
     info = git_service.ensure_snapshot(
         Path(project.path), project.slug, project_service.ENV_PARITY_SNAPSHOT_KEY,
         project.base_branch,
     )
     seeded = info.path / ".env"
     seeded.write_text(SEEDED_ENV)
+    staging = info.path / ".env.999-dead.parity"
+    staging.write_text("partial synthetic write")
+    assert str(info.path) in _registered_worktrees(Path(project.path))
     checks = {c["name"]: c for c in project_service.doctor(project, env_parity=True)}
-    assert checks["env-parity stale worktree"]["ok"] is False
-    assert "orchestrator cleanup" in checks["env-parity stale worktree"]["detail"]
-    assert seeded.exists()  # not swept: that is T-20, explicitly out of scope here
-    # This test created the residue; remove it so the throwaway home stays clean.
-    leftover = next(
-        m
-        for m in git_service.managed_worktrees()
-        if m["task_id"] == project_service.ENV_PARITY_SNAPSHOT_KEY
-    )
-    seeded.unlink()
-    git_service.remove_worktree(Path(project.path), leftover, dry_run=False)
+    assert checks["env-parity residue"]["ok"] is True
+    assert "removed parity residue" in checks["env-parity residue"]["detail"]
+    assert checks["env-parity suite"]["ok"] is True, checks["env-parity suite"]
+    assert not info.path.exists() and not seeded.exists() and not staging.exists()
+    assert str(info.path) not in _registered_worktrees(Path(project.path))
+    assert git_service.managed_worktrees() == []
 
 
 def test_env_parity_reports_a_preexisting_dotenv_instead_of_raising(session, tmp_path):
     """A repo that TRACKS `.env` already has one in the snapshot: doctor reports, never raises.
 
-    Round-4 finding 4: `_seeded_env_copy` used to open the destination with `O_EXCL`, so the
+    Round-4 finding 4: the parity writer opens the destination with `O_EXCL`, so the
     `FileExistsError` escaped `doctor()` and broke this module's "reports, never raises" rule.
     """
     original = "SYNTHETIC_PARITY=tracked\n"
@@ -404,6 +417,216 @@ def test_env_parity_rejects_a_command_without_an_orch_verify_marker(session, tmp
 
 
 def test_make_target_is_documented_as_the_developer_parity_path():
+    script = (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()
     assert "./scripts/orch_env_parity.sh test" in (REPO_ROOT / "Makefile").read_text()
     assert "test-parity" in (REPO_ROOT / "justfile").read_text()
-    assert "not the gate command" in (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()
+    assert "not the gate command" in script
+    # T-20 DoD 1/5: the path is documented and implemented as synthetic, never a real copy.
+    assert "SYNTHETIC `.env`" in script and "cp \"$SOURCE_ENV\"" not in script
+    docs = (REPO_ROOT / "docs" / "build-loop.md").read_text()
+    assert "synthetic" in docs and "reclaim orphaned" in docs
+    assert "synthetic" in (REPO_ROOT / "README.md").read_text()
+
+
+def _isolated_tempdir(monkeypatch, tmp_path: Path) -> Path:
+    """Keep a sweep test away from the machine's real /tmp parity leftovers."""
+    root = tmp_path / "sys-tmp"
+    root.mkdir()
+    monkeypatch.setattr(git_service.tempfile, "gettempdir", lambda: str(root))
+    return root
+
+
+def test_parity_sweep_never_touches_a_tree_a_live_run_is_using(session, tmp_path, monkeypatch):
+    """T-20 DoD 2/4: the lock distinguishes an orphan from a live parity run."""
+    _isolated_tempdir(monkeypatch, tmp_path)
+    project = _project(session, tmp_path, "locked-proj", with_env=False)
+    info = git_service.ensure_snapshot(
+        Path(project.path), project.slug, project_service.ENV_PARITY_SNAPSHOT_KEY,
+        project.base_branch,
+    )
+    (info.path / ".env").write_text(SEEDED_ENV)
+    with git_service.parity_lock(project.slug):
+        actions = git_service.sweep_parity_residue(project.slug)
+        assert any("parity run in progress" in action for action in actions), actions
+        assert info.path.exists() and (info.path / ".env").exists()
+        assert str(info.path) in _registered_worktrees(Path(project.path))
+    actions = git_service.sweep_parity_residue(project.slug)
+    assert any("removed parity residue" in action for action in actions), actions
+    assert not info.path.exists()
+    assert str(info.path) not in _registered_worktrees(Path(project.path))
+    assert git_service.managed_worktrees() == []
+
+
+def test_parity_sweep_reclaims_an_orphaned_shell_script_tree(tmp_path, monkeypatch):
+    """The shell script's <tmpdir>/orch-env-parity.*/tree is reclaimed with its registration."""
+    repo = make_repo(tmp_path / "shell-orphan")
+    temp_root = _isolated_tempdir(monkeypatch, tmp_path)
+    root = temp_root / "orch-env-parity.ORPHAN"
+    tree = root / "tree"
+    added = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(tree), "HEAD"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert added.returncode == 0, added.stdout + added.stderr
+    (tree / ".env").write_text(SEEDED_ENV)
+    assert str(tree) in _registered_worktrees(repo)
+    actions = git_service.sweep_parity_residue()
+    assert any("removed orphaned parity tree" in action for action in actions), actions
+    assert not root.exists() and not tree.exists()
+    assert str(tree) not in _registered_worktrees(repo)
+
+
+def test_a_killed_shell_parity_run_leaves_no_registered_worktree(tmp_path, monkeypatch):
+    """T-20 DoD 4a: SIGKILL skips the shell trap; the lock-aware sweep still reclaims the tree."""
+    repo = make_repo(
+        tmp_path / "shell-kill",
+        {
+            "scripts/orch_verify.sh": (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                'cp .env "$ORCH_PARITY_OBSERVE"\n'
+                "sleep 30\n"
+            ),
+        },
+    )
+    verify = repo / "scripts" / "orch_verify.sh"
+    verify.chmod(0o755)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-q", "-am", "executable parity wrapper"],
+        check=True, capture_output=True, text=True, timeout=120,
+    )
+
+    secret_name, secret_value = "OPERATOR_API_KEY", "REAL-SECRET-MARKER-20"
+    source = tmp_path / "operator.env"
+    source.write_text(
+        "".join(
+            f"{name}={value}\n"
+            for name, value in (
+                (secret_name, secret_value),
+                ("ANTHROPIC_API_KEY", secret_value),
+                ("OPERATOR_SUPABASE_URL", "https://real.invalid"),
+            )
+        )
+    )
+    temp_root = _isolated_tempdir(monkeypatch, tmp_path)
+    observed = tmp_path / "observed.env"
+    env = {**os.environ, "TMPDIR": str(temp_root), "ORCH_PARITY_ENV_FILE": str(source),
+           "ORCH_PARITY_OBSERVE": str(observed)}
+    proc = subprocess.Popen(
+        [str(REPO_ROOT / "scripts" / "orch_env_parity.sh"), "test"],
+        cwd=str(repo), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not observed.exists():
+            time.sleep(0.05)
+        assert observed.exists(), proc.stdout.read() if proc.stdout else ""
+        roots = list(temp_root.glob("orch-env-parity.*"))
+        assert len(roots) == 1, roots
+        root = roots[0]
+        tree = root / "tree"
+        assert tree.exists() and str(tree) in _registered_worktrees(repo)
+
+        # The live run holds the lock: this sweep must report and skip it.
+        actions = git_service.sweep_parity_residue()
+        assert any("parity run in progress" in action for action in actions), actions
+        assert tree.exists() and str(tree) in _registered_worktrees(repo)
+
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.wait(timeout=20)
+        assert tree.exists() and root.exists()  # SIGKILL really skipped the trap
+        assert str(tree) in _registered_worktrees(repo)
+        assert secret_value not in observed.read_text()
+        assert f"{secret_name}=synthetic-not-a-secret" in observed.read_text()
+        assert "ANTHROPIC_API_KEY=synthetic-not-a-secret" in observed.read_text()
+
+        actions = git_service.sweep_parity_residue()
+        assert any("removed orphaned parity tree" in action for action in actions), actions
+        assert not root.exists() and not tree.exists()
+        assert str(tree) not in _registered_worktrees(repo)
+    finally:
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait(timeout=20)
+        git_service.sweep_parity_residue()
+
+
+def test_recovery_commit_never_stages_parity_residue(home, tmp_path):
+    """T-20 DoD 3/4b: a parity `.env` is harness residue, not worker output."""
+    repo = make_repo(tmp_path / "parity-recovery")
+    snapshot = git_service.ensure_snapshot(repo, "parity-recovery", "env-parity", "main")
+    info = next(
+        m for m in git_service.managed_worktrees() if m["task_id"] == "env-parity"
+    )
+    (snapshot.path / ".env").write_text(SEEDED_ENV)
+    assert git_service.recovery_commit(snapshot.path, "parity residue only") is None
+    (snapshot.path / "code.py").write_text("x = 1\n")
+    sha = git_service.recovery_commit(snapshot.path, "real work plus residue")
+    assert sha
+    files = subprocess.run(
+        ["git", "-C", str(snapshot.path), "show", "--name-only", "--format=", "HEAD"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.split()
+    assert files == ["code.py"]
+    assert (snapshot.path / ".env").exists()
+    git_service.remove_worktree(repo, info, dry_run=False)
+
+
+def test_remove_worktree_succeeds_with_parity_residue(home, tmp_path):
+    """T-20 DoD 3/4c: cleanup removes the residue instead of refusing the tree."""
+    repo = make_repo(tmp_path / "parity-remove")
+    snapshot = git_service.ensure_snapshot(repo, "parity-remove", "env-parity", "main")
+    info = next(
+        m for m in git_service.managed_worktrees() if m["task_id"] == "env-parity"
+    )
+    (snapshot.path / ".env").write_text(SEEDED_ENV)
+    (snapshot.path / ".env.999-dead.parity").write_text("partial")
+    note = git_service.remove_worktree(repo, info, dry_run=False)
+    assert note.startswith("removed"), note
+    assert not snapshot.path.exists()
+    assert git_service.managed_worktrees() == []
+
+
+def test_parity_synthesis_never_writes_a_real_credential_value(home, tmp_path, monkeypatch):
+    """T-20 DoD 1/4d: only names leave the source; every byte written is synthetic."""
+    repo = make_repo(tmp_path / "parity-synthesis")
+    snapshot = git_service.ensure_snapshot(repo, "parity-synthesis", "env-parity", "main")
+    info = next(
+        m for m in git_service.managed_worktrees() if m["task_id"] == "env-parity"
+    )
+    secret = "REAL-CREDENTIAL-VALUE-20"
+    source = tmp_path / "operator.env"
+    source.write_text(
+        "".join(
+            f"{name}={value}\n"
+            for name, value in (
+                ("OPERATOR_API_KEY", secret),
+                ("OPERATOR_SUPABASE_URL", "https://real.invalid"),
+                ("OPERATOR_EMAIL", "real@example.invalid"),
+            )
+        )
+    )
+    writes: list[bytes] = []
+    real_write = project_service.os.write
+
+    def recording_write(fd: int, data: bytes) -> int:
+        writes.append(bytes(data))
+        return real_write(fd, data)
+
+    monkeypatch.setattr(project_service.os, "write", recording_write)
+    try:
+        dest = project_service._synthetic_env_file(source, snapshot.path / ".env")
+        assert str(dest).startswith(str(snapshot.path))
+        payload = b"".join(writes)
+        text = dest.read_text()
+        mode = dest.stat().st_mode & 0o777
+    finally:
+        git_service.remove_worktree(repo, info, dry_run=False)
+    assert secret.encode() not in payload
+    assert secret not in text and "real.invalid" not in text
+    assert "OPERATOR_API_KEY=synthetic-not-a-secret" in text
+    assert "OPERATOR_SUPABASE_URL=https://synthetic.invalid" in text
+    assert "OPERATOR_EMAIL=synthetic@example.invalid" in text
+    assert mode == 0o600

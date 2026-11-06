@@ -80,6 +80,30 @@ def test_demo_and_cleanup_dry_run(home):
     assert r.exit_code == 0 and "would remove" in r.output
 
 
+@requires_git
+def test_cleanup_sweeps_orphaned_parity_residue(home, tmp_path):
+    """T-20 DoD 2/3: `orchestrator cleanup` reclaims a killed parity run's tree."""
+    from orchestrator.services import git_service
+    from tests.conftest import make_repo
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    repo = make_repo(tmp_path / "cleanup-parity")
+    snapshot = git_service.ensure_snapshot(repo, "cleanup-parity", "env-parity", "main")
+    (snapshot.path / ".env").write_text("SYNTHETIC_PARITY=synthetic\n")
+    (snapshot.path / ".env.999-dead.parity").write_text("partial\n")
+
+    dry = runner.invoke(app, ["cleanup", "--dry-run"])
+    assert dry.exit_code == 0, dry.output
+    assert "would remove parity residue" in dry.output
+    assert snapshot.path.exists() and (snapshot.path / ".env").exists()
+
+    real = runner.invoke(app, ["cleanup", "--no-dry-run"])
+    assert real.exit_code == 0, real.output
+    assert "removed parity residue" in real.output
+    assert not snapshot.path.exists()
+    assert git_service.managed_worktrees() == []
+
+
 def test_reset_requires_flag(home):
     runner.invoke(app, ["init"])
     assert runner.invoke(app, ["reset"]).exit_code == 2
