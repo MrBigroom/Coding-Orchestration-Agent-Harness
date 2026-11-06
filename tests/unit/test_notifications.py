@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 from sqlmodel import col, select
 
-from orchestrator.core.models import BuildLogEntry, Notification, Run, TaskStatus
+from orchestrator.core.models import (
+    Agent,
+    BuildLogEntry,
+    Notification,
+    Run,
+    StandaloneRun,
+    StandaloneStatus,
+    TaskStatus,
+)
 from orchestrator.core.notification_vocab import (
     CORE_TRIGGERS,
     DIRECT_EVENTS,
@@ -323,6 +331,118 @@ def test_an_event_arriving_mid_flush_rearms_the_timer(session, monkeypatch):
     assert timer_while_delivering["timer"] is None  # cleared before delivery
     assert len(FakeTimer.instances) == 2  # the mid-flush event re-armed the timer
     assert [r.status for r in _rows(session)] == ["delivered", "pending"]
+
+
+def test_standalone_run_trigger_is_subscribed_by_default_and_maps_directly():
+    trigger = trigger_for_event("standalone_run")
+    assert trigger is not None and trigger.key == "standalone_run"
+    assert not trigger.noisy and trigger.key in CORE_TRIGGERS
+    assert trigger.setting == "notification_standalone_run"
+    assert settings_service.defaults()["notification_standalone_run"] is True
+
+
+def _standalone_run(
+    session, tmp_path, *, status=StandaloneStatus.completed, title="[reporter] summarise"
+):
+    agent = Agent(name="reporter", instructions="")
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    report = tmp_path / "reports" / "2026-11-05-1200-run7.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# report\n", encoding="utf-8")
+    run = StandaloneRun(
+        agent_id=agent.id or 0,
+        title=title,
+        status=status,
+        report_path=str(report) if status == StandaloneStatus.completed else None,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return run, report
+
+
+def test_a_completed_standalone_run_writes_one_row_naming_agent_and_report(
+    session, sent, tmp_path
+):
+    run, report = _standalone_run(session, tmp_path)
+    settings_service.update(session, {MASTER_SETTING: True})
+    notification_service.notify_event(
+        event="standalone_run", details=f"{run.title}: completed", standalone_run_id=run.id
+    )
+    rows = _rows(session)
+    assert len(rows) == 1
+    assert rows[0].trigger == "standalone_run" and rows[0].status == "delivered"
+    assert rows[0].run_id is None and rows[0].task_id is None
+    assert rows[0].dedupe_key == f"standalone:{run.id}:standalone_run"
+    assert "reporter" in sent[0]["title"]
+    assert "standalone #" in sent[0]["body"] and "(completed)" in sent[0]["body"]
+    assert report.name in sent[0]["body"]
+    assert sent[0]["link"].endswith("/agents") and "/tasks/" not in sent[0]["link"]
+    # Same run, same trigger: at most one record, exactly as for task runs.
+    notification_service.notify_event(
+        event="standalone_run", details="again", standalone_run_id=run.id
+    )
+    assert len(_rows(session)) == 1
+
+
+def test_standalone_trigger_off_delivers_nothing(session, sent, tmp_path):
+    run, _ = _standalone_run(session, tmp_path)
+    settings_service.update(
+        session, {MASTER_SETTING: True, "notification_standalone_run": False}
+    )
+    notification_service.notify_event(
+        event="standalone_run", details="done", standalone_run_id=run.id
+    )
+    assert sent == []
+    row = _rows(session)[0]
+    assert (row.trigger, row.status, row.reason) == (
+        "standalone_run",
+        "skipped",
+        "trigger_disabled",
+    )
+
+
+def test_a_skipped_standalone_run_is_reported_as_skipped(session, sent, tmp_path):
+    run, _ = _standalone_run(session, tmp_path, status=StandaloneStatus.skipped)
+    settings_service.update(session, {MASTER_SETTING: True})
+    notification_service.notify_event(
+        event="standalone_run",
+        details=f"{run.title}: skipped (standalone runs are off)",
+        standalone_run_id=run.id,
+    )
+    assert "Run: standalone #" in sent[0]["body"] and "(skipped)" in sent[0]["body"]
+    assert "Outcome: standalone run skipped" in sent[0]["body"]
+    assert _rows(session)[0].trigger == "standalone_run"
+
+
+def test_a_failed_standalone_run_reports_its_error(session, sent, tmp_path):
+    run, _ = _standalone_run(session, tmp_path, status=StandaloneStatus.failed)
+    run.error = "no harness here"
+    session.add(run)
+    session.commit()
+    settings_service.update(session, {MASTER_SETTING: True})
+    notification_service.notify_event(
+        event="standalone_run", details=f"{run.title}: failed", standalone_run_id=run.id
+    )
+    assert (f"Run: standalone #{run.id} (failed)") in sent[0]["body"]
+    assert "Outcome: standalone run failed: no harness here" in sent[0]["body"]
+    assert "Report file: no report file saved" in sent[0]["body"]
+
+
+def test_two_task_less_events_of_one_trigger_produce_two_rows(session, sent):
+    settings_service.update(
+        session, {MASTER_SETTING: True, "notification_schedule_fired": True}
+    )
+    log_service.log_event(session, "schedule_fired", "nightly -> task A")
+    log_service.log_event(session, "schedule_fired", "nightly -> task B")
+    rows = _rows(session)
+    assert [r.trigger for r in rows] == ["schedule_fired", "schedule_fired"]
+    assert len({r.dedupe_key for r in rows}) == 2
+    assert all(r.dedupe_key != "task:None:schedule_fired" for r in rows)
+    assert len(sent) == 2
+    assert "task A" in sent[0]["body"] and "task B" in sent[1]["body"]
 
 
 def test_flush_never_raises_and_never_poisons_a_caller_session(session, monkeypatch):

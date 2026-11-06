@@ -26,6 +26,7 @@ def log_event(
     task_id: int | None = None,
     run_id: int | None = None,
     commit_sha: str | None = None,
+    standalone_run_id: int | None = None,
 ) -> BuildLogEntry:
     now = utcnow()
     details = redact(details)
@@ -67,9 +68,12 @@ def log_event(
     try:
         from orchestrator.services import notification_service
 
-        notification_service.notify_event(
-            event=event, details=details, task_id=task_id, run_id=run_id
-        )
+        fanout = {"event": event, "details": details, "task_id": task_id, "run_id": run_id}
+        if standalone_run_id is not None:
+            # Only present for standalone runs; omitted otherwise so existing callers and
+            # test doubles with the four-argument shape keep working.
+            fanout["standalone_run_id"] = standalone_run_id
+        notification_service.notify_event(**fanout)
     except Exception as e:  # noqa: BLE001 - notification is best-effort by contract
         # The fan-out opens its own session, so this normally cannot fail here at all. If it
         # does, the caller's session may have been left mid-transaction (SQLAlchemy then

@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import threading
+import uuid
 from contextlib import nullcontext
 from typing import Any
 
@@ -16,7 +17,7 @@ from sqlmodel import Session, col, select
 
 from orchestrator.core.config import get_settings
 from orchestrator.core.db import session_scope
-from orchestrator.core.models import Notification, Run, Task
+from orchestrator.core.models import Agent, Notification, Run, StandaloneRun, Task
 from orchestrator.core.notification_vocab import (
     MASTER_SETTING,
     NotificationTrigger,
@@ -67,15 +68,29 @@ def duration_details(run: Run | None) -> dict[str, Any]:
     return out
 
 
+def _base_url() -> str:
+    s = get_settings()
+    host = s.bind_host if s.bind_host not in ("0.0.0.0", "::") else "127.0.0.1"  # noqa: S104
+    return f"http://{host}:{s.bind_port}"
+
+
 def _task_link(task: Task | None) -> str:
     if task is None or task.id is None:
         return ""
-    s = get_settings()
-    host = s.bind_host if s.bind_host not in ("0.0.0.0", "::") else "127.0.0.1"  # noqa: S104
-    return f"http://{host}:{s.bind_port}/tasks/{task.id}"
+    return f"{_base_url()}/tasks/{task.id}"
 
 
-def _outcome(trigger: NotificationTrigger, run: Run | None, details: str) -> str:
+def _agent_link() -> str:
+    """Standalone runs have no task; their report lives in the agent Outputs view."""
+    return f"{_base_url()}/agents"
+
+
+def _outcome(
+    trigger: NotificationTrigger,
+    run: Run | None,
+    details: str,
+    standalone: StandaloneRun | None = None,
+) -> str:
     code = run.exit_code if run else "unknown"
     error = f": {run.error}" if run and run.error else ""
     key = trigger.key
@@ -87,6 +102,10 @@ def _outcome(trigger: NotificationTrigger, run: Run | None, details: str) -> str
         return f"run hit the adapter timeout{error}"
     if key == "run_cancelled":
         return f"run cancelled (exit {code})"
+    if key == "standalone_run":
+        status = standalone.status if standalone else "unknown"
+        standalone_error = f": {standalone.error}" if standalone and standalone.error else ""
+        return f"standalone run {status}{standalone_error}"
     if key == "task_review":
         return "task is in review and waiting for a human decision"
     if key == "task_blocked":
@@ -101,35 +120,58 @@ def _outcome(trigger: NotificationTrigger, run: Run | None, details: str) -> str
 
 
 def _payload(
-    trigger: NotificationTrigger, task: Task | None, run: Run | None, details: str
+    trigger: NotificationTrigger,
+    task: Task | None,
+    run: Run | None,
+    details: str,
+    *,
+    standalone: StandaloneRun | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
-    label = f"{task.short_id} {task.title}" if task else "orchestrator"
-    outcome = _outcome(trigger, run, details)
-    lines = [
-        f"Task: {label}",
-        f"Run: {run.short_id if run else 'no run'} ({run.status if run else 'n/a'})",
-        f"Outcome: {outcome}",
-        f"Next: {trigger.action}",
-    ]
+    outcome = _outcome(trigger, run, details, standalone)
     duration = duration_details(run) if trigger.terminal_run else {}
+    if standalone is not None:
+        label = agent_name or standalone.title or f"agent {standalone.agent_id}"
+        report = standalone.report_path or "no report file saved"
+        lines = [
+            f"Agent: {label}",
+            f"Report: {standalone.title or report}",
+            f"Run: standalone #{standalone.id} ({standalone.status})",
+            f"Outcome: {outcome}",
+            f"Report file: {report}",
+            f"Next: {trigger.action}",
+        ]
+        link = _agent_link()
+    else:
+        label = f"{task.short_id} {task.title}" if task else "orchestrator"
+        lines = [
+            f"Task: {label}",
+            f"Run: {run.short_id if run else 'no run'} ({run.status if run else 'n/a'})",
+            f"Outcome: {outcome}",
+            f"Next: {trigger.action}",
+        ]
+        link = _task_link(task)
     if duration.get("text"):
         lines.append(f"Duration: {duration['text']}")
-    link = _task_link(task)
     if link:
         lines.append(f"Open: {link}")
     detail = " ".join((details or "").split())
     if detail:
         lines.append(f"Detail: {detail[:400]}")
+    details_json: dict[str, Any] = {
+        "trigger": trigger.key,
+        "outcome": redact(outcome),
+        "duration": duration,
+        "detail": redact(detail[:400]),
+    }
+    if standalone is not None:
+        details_json["standalone_run_id"] = standalone.id
+        details_json["report_path"] = redact(standalone.report_path or "")
     return {
         "title": redact(f"{label} — {trigger.label}"),
         "body": redact("\n".join(lines)),
         "link": redact(link),
-        "details": {
-            "trigger": trigger.key,
-            "outcome": redact(outcome),
-            "duration": duration,
-            "detail": redact(detail[:400]),
-        },
+        "details": details_json,
     }
 
 
@@ -288,28 +330,58 @@ def record_failure(
 
 
 def notify_event(
-    *, event: str, details: str = "", task_id: int | None = None, run_id: int | None = None
+    *,
+    event: str,
+    details: str = "",
+    task_id: int | None = None,
+    run_id: int | None = None,
+    standalone_run_id: int | None = None,
 ) -> Notification | None:
-    """Fan one event out to the desktop and the persistent list, in its own session."""
+    """Fan one event out to the desktop and the persistent list, in its own session.
+
+    A standalone run is a different table from `Run`, so its id never goes into
+    `Notification.run_id` (the Notifications page would deep-link it as a task); it is used
+    only for the payload and the dedupe identity.
+    """
     try:
         trigger = trigger_for_event(event, details)
         if trigger is None:
             return None
         with session_scope() as session:
-            task = session.get(Task, task_id) if task_id else None
-            if run_id:
-                run = session.get(Run, run_id)
-            elif task_id:
-                run = session.exec(
-                    select(Run).where(Run.task_id == task_id).order_by(col(Run.id).desc())
-                ).first()
-            else:
+            standalone = (
+                session.get(StandaloneRun, standalone_run_id) if standalone_run_id else None
+            )
+            if standalone is not None:
+                task = None
                 run = None
-            if task is None and run is not None:
-                task = session.get(Task, run.task_id)
-            tid = task.id if task else task_id
-            rid = run.id if run else run_id
-            dedupe_key = f"{rid if rid is not None else f'task:{tid}'}:{trigger.key}"
+                tid = None
+                rid = None
+                agent = session.get(Agent, standalone.agent_id)
+                agent_name = agent.name if agent else None
+                dedupe_key = f"standalone:{standalone.id}:{trigger.key}"
+            else:
+                agent_name = None
+                task = session.get(Task, task_id) if task_id else None
+                if run_id:
+                    run = session.get(Run, run_id)
+                elif task_id:
+                    run = session.exec(
+                        select(Run).where(Run.task_id == task_id).order_by(col(Run.id).desc())
+                    ).first()
+                else:
+                    run = None
+                if task is None and run is not None:
+                    task = session.get(Task, run.task_id)
+                tid = task.id if task else task_id
+                rid = run.id if run else run_id
+                if rid is not None:
+                    dedupe_key = f"{rid}:{trigger.key}"
+                elif tid is not None:
+                    dedupe_key = f"task:{tid}:{trigger.key}"
+                else:
+                    # Nothing identifies the event's owner (e.g. schedule_fired): a constant
+                    # key would let the first such event silence every later one forever.
+                    dedupe_key = f"event:{event}:{uuid.uuid4().hex}:{trigger.key}"
             existing = session.exec(
                 select(Notification).where(Notification.dedupe_key == dedupe_key)
             ).first()
@@ -317,7 +389,9 @@ def notify_event(
                 return existing
             master = bool(settings_service.get(session, MASTER_SETTING))
             subscribed = bool(settings_service.get(session, trigger.setting))
-            payload = _payload(trigger, task, run, details)
+            payload = _payload(
+                trigger, task, run, details, standalone=standalone, agent_name=agent_name
+            )
             enabled = master and subscribed
             row = Notification(
                 task_id=tid, run_id=rid, trigger=trigger.key, event=event,

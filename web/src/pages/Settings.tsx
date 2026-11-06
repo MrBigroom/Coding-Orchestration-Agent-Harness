@@ -45,6 +45,7 @@ const NOTIFICATION_TRIGGERS: [string, string, boolean][] = [
   ["notification_run_failed", "Run failed", false],
   ["notification_run_timeout", "Run timed out", false],
   ["notification_run_cancelled", "Run cancelled", false],
+  ["notification_standalone_run", "Standalone report ready", false],
   ["notification_task_review", "Task reached review / awaiting acceptance", false],
   ["notification_task_blocked", "Task blocked", false],
   ["notification_escalated", "Task escalated", false],
