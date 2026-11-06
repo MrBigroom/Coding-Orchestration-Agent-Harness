@@ -1,90 +1,78 @@
-# T-20 evidence: synthetic parity env, sweepable residue, no credential on a branch
+# T-20 evidence — synthetic parity env, reclaimable residue, verified sweep claims
 
-Code HEAD these logs ran at: `318bd660664c496f95950d7144759f4fd8c60a5d`.
-The evidence commit that follows this file changes only `verify-evidence/T-20/`. Every log
-below stamps that HEAD itself, so a later evidence commit does not move the claimed run.
+Code HEAD these logs ran at: `135b0b9b4870998e0355bb3e2c2b794de10d0e76` (round 3 code commit).
+The evidence commit after it changes only `verify-evidence/T-20/`. Every log stamps the HEAD it
+ran at, so the later evidence commit does not move the claimed run.
 
-## Commands and counts
+## Commands and counts (all at the stamped HEAD)
 
 | file | command | result |
 |---|---|---|
-| `full-test.txt` | `./scripts/orch_verify.sh test` | `665 passed, 9 skipped`, exit 0 |
-| `zz-per-test.txt` | `./scripts/orch_verify.sh test -vv -k "<T-20 selection>"` | `13 passed, 661 deselected`, exit 0 |
+| `full-test.txt` | `./scripts/orch_verify.sh test` | **670 passed, 9 skipped, 0 failed**, exit 0 |
+| `zz-per-test.txt` | `./scripts/orch_verify.sh test -vv -k "<T-20 selection>"` | **23 passed, 656 deselected**, exit 0 |
 | `lint.txt` | `./scripts/orch_verify.sh lint` | `All checks passed!`, exit 0 |
+| `zz-final-source.txt` | generated from the committed files | FINAL SOURCE slices, numbered at that HEAD |
 
-`zz-per-test.txt` names each DoD-critical test with `PASSED` at the stamped HEAD and sorts last,
-so it survives the review harness's mid-diff truncation. The 9 skips are the opt-in
-spawned-suite tests (`ORCH_ENV_SPAWN_TESTS`), not any T-20 test.
+The 9 skips are the pre-existing opt-in spawned-suite tests (`ORCH_ENV_SPAWN_TESTS`), not T-20.
+
+**Review-budget note.** The branch diff is ~96 KB (≈24k tokens) against `max_diff_tokens=12000`, so
+the harness cannot supply every file whole. `zz-final-source.txt` is the budget-sized extract the
+round-3 review asked for: it is written last alphabetically so it sorts last, and it carries the
+final source of exactly the areas the review named — the lock path, the sweep result type, both
+sweep bodies, the residue decision in `run_env_parity_checks`, the DoD 4a–4d test assertions, the
+README Known-limitations block and the shell name pipeline — each prefixed with `file:start-end` at
+the stamped HEAD. The same decisive excerpts are repeated in `handoff.md`, which is supplied whole.
 
 ## DoD mapping
 
-1. **Never copy the real `.env`.**
-   - `project_service.py:462` `_env_variable_names` reads only the name before `=` (comments,
-     blank lines and `export` handled); `:503` `_synthetic_env_text` emits placeholders;
-     `:513` `_synthetic_env_file` writes them create-only with mode 0600. The doctor probe calls
-     it at `:704`.
-   - `scripts/orch_env_parity.sh:89` derives names with `sed`, `:74` `parity_value` maps a name
-     to a placeholder, `:98-100` creates the file inside the `umask 077` + `noclobber` subshell;
-     there is no copy of the source file.
-   - Proof: `test_parity_synthesis_never_writes_a_real_credential_value`
-     (`test_env_hermeticity.py:784`) intercepts every `os.write` and asserts the credential value
-     is absent from the written bytes and the resulting file; the shell path is checked by the
-     SIGKILL test at `:612` (`secret not in observed` and the synthetic line is present).
+1. **Never copy the real `.env`.** `project_service._env_variable_names`
+   (`zz-final-source.txt`: `project_service.py:462-484`) parses only the name before `=`;
+   `_synthetic_env_file` writes placeholders 0600/create-only; `scripts/orch_env_parity.sh:91`
+   derives names with `sed` and creates the file inside the `umask 077` + `noclobber` subshell.
+   Proof: `test_parity_synthesis_never_writes_a_real_credential_value` (assertions in
+   `zz-final-source.txt`, `test_env_hermeticity.py:900-940`) intercepts every `os.write` and asserts
+   the credential value never reaches the written bytes or the file; the shell path is checked by
+   the SIGKILL test's `secret not in observed` assertions.
+2. **Crash-safe residue reclaim.** `git_service.sweep_parity_residue` reclaims managed `env-parity`
+   snapshots (`_sweep_one_managed_parity`, `:395-436`) and `<tmpdir>/orch-env-parity.*` roots
+   (`_sweep_temp_parity`, `:479-554`). Refusals: `_untrusted_parity_root` lstat-checks the root
+   (symlink/foreign-uid/group-writable), a symlinked `root/tree` is unlinked not followed, and
+   `git worktree remove` runs only for a worktree git lists. A killed shell run is reclaimed by
+   `test_a_killed_shell_parity_run_leaves_no_registered_worktree`
+   (`test_env_hermeticity.py:728-805`).
+3. **Cleanup knows parity files are residue.** `status_split` filters parity names for parity
+   destinations only; `recovery_commit_info` removes residue before staging and resets sensitive
+   names; `remove_worktree` removes residue before the dirty check. Proof:
+   `test_recovery_commit_never_stages_parity_residue` (`:808-842`),
+   `test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch` (`:845-882`, the
+   phase-branch half, with a git-visible `?? .env` control),
+   `test_remove_worktree_succeeds_with_parity_residue` (`:885-897`).
+4. **Offline tests.** (a) SIGKILL: `:728-805`; (b) recovery x2: `:808-842`, `:845-882`;
+   (c) worktree removal: `:885-897`; (d) write interception: `:900-940`. No network, no real
+   credentials; fixtures are built from name/value pairs so no assignment-shaped literal is stored.
+5. **Docs.** `docs/build-loop.md` states the parity environment is synthetic, that a SIGKILL can
+   leave residue, and that the sweep (not assumption) reclaims it; `README.md:273-276`
+   (`zz-final-source.txt`) states the synthetic `.env` and the remaining SIGKILL residue risk.
+   Pinned by `test_make_target_is_documented_as_the_developer_parity_path`.
 
-2. **Crash-safe residue reclaim.**
-   - `git_service.py:451` `sweep_parity_residue` reclaims managed `env-parity` snapshots (`:322`)
-     and `<tmpdir>/orch-env-parity.*` roots (`:408`).
-   - Refusal before deletion: `_untrusted_parity_root` (`:385`) lstat-checks the root (symlink,
-     owner uid, group/world-writable are refused); a symlinked `root/tree` is unlinked, not
-     followed (`:426-429`); `_registered_in` (`:297`) runs `git worktree remove` only for a LINKED
-     worktree git itself lists. `.repo` scopes a shared-tempdir sweep to the asking checkout;
-     every `OSError` becomes a reported `skip` line.
-   - `scripts/orch_env_parity.sh:50-62` now takes the lock before writing `.repo` and installs
-     the cleanup trap before any failure, so a sweep never sees a half-created root.
-   - Proofs: `test_parity_sweep_refuses_untrusted_temp_roots` (`:500`),
-     `test_parity_sweep_does_not_remove_an_unregistered_tree` (`:526`),
-     `test_parity_sweep_is_project_scoped_and_reports_unopenable_roots` (`:551`),
-     `test_parity_sweep_never_touches_a_tree_a_live_run_is_using` (`:451`), and the SIGKILL test
-     at `:612` (real script, live lock blocks the sweep, kill, sweep removes tree and
-     `git worktree list` registration).
+## Round-3 review dispositions
 
-3. **Cleanup knows parity files are harness residue.**
-   - `git_service.py:552` `status_split` filters untracked parity names in a parity worktree;
-     `recovery_commit_info` removes residue before staging (`:644`) and independently resets
-     anything matching `_is_parity_residue_name` or `is_sensitive_path` (`:657`);
-     `remove_worktree` removes it before the dirty check (`:884`).
-   - Proofs: `test_recovery_commit_never_stages_parity_residue` (`:692`) adds the git-visible
-     control `?? .env` / `?? .env.999-dead.parity`; the new
-     `test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch` (`:729`) proves the
-     same for an ordinary task worktree, so a leak cannot ride a recovery commit onto a phase
-     branch; `test_remove_worktree_succeeds_with_parity_residue` (`:769`) proves cleanup still
-     deletes the tree. `tests/integration/test_cli.py:84` covers the CLI wiring.
-
-4. **Offline tests, no network or real credentials.**
-   - (a) kill/residue: `:612`; (b) recovery: `:692` and the phase-branch case `:729`;
-     (c) remove worktree: `:769`; (d) no real credential written: `:784` plus the shell
-     assertions in `:612`. All 13 selected tests are in `zz-per-test.txt` as `PASSED`; none
-     uses the network or a real key.
-
-5. **Docs.**
-   - `docs/build-loop.md:462-481`: the parity environment is synthetic, both paths read names
-     only, a killed run's residue is swept rather than assumed absent, the sweep is lock-aware
-     and scoped, and a symlink/foreign root is refused ("residue but not a secret").
-   - `README.md:273-276` Known limitations states the remaining SIGKILL residue risk and that
-     `orchestrator cleanup` reclaims it. `test_make_target_is_documented_as_the_developer_parity_path`
-     (`:419`) pins the exact Known-limitations sentence and the shell `umask 077`/`noclobber`/
-     `exec > "$TREE/.env"` block.
-
-## Reviewer round-2 findings: disposition
-
-| finding | disposition in this branch |
-|---|---|
-| 1 symlinked root followed / arbitrary deletion | refused with `lstat`/uid/mode; linked-tree removal only via `_registered_in`; tested at `:500` and `:526` |
-| 2 cross-project lock blocks doctor / unopenable root raises | `.repo` scoping and reported `skip`; unopenable `.lock` reported, probe still answers; `:551` |
-| 3 recovery test had no `?? .env` control / missed `.env.*.parity` | control added at `:692`; phase-branch case added at `:729` |
-| 4 per-test evidence omitted by the review budget | `zz-per-test.txt` names all 13 tests with `PASSED`, sorts last |
-| 5 README hunk truncated / bare-`synthetic` pin | exact Known-limitations sentence and shell block pinned at `:419` |
-| 6 shell redirect outside `umask 077` | redirect moved inside the subshell; locked before `.repo`; pinned at `:419` |
-| 7 tree-less root removed silently | real run reports `removed orphaned parity root ...`; asserted in `:472` |
-| 8 placeholder classification differed | substring classification shared by both paths; asserted in `:584` |
-| 9 `_run_env_parity_locked` returned an ignored list | returns `None`; callers only read `add` |
+1. **Lock path inside `worktrees/`** — removed. `parity_lock_path` (`git_service.py:207-217`) is now
+   the frozen managed marker itself (`.managed/env-parity`); no `.locks/` directory is created and no
+   path scheme is added. `parity_lock` (`:221-241`) holds `flock` on that marker, so the lock
+   disappears with the marker. Test: `test_parity_lock_is_the_managed_marker_not_a_new_directory`.
+2. **`ok` derived from prose / unverified removal claims** — replaced by
+   `ParitySweepAction(detail, ok, busy)` (`:70-86`). `ok` is set by re-checking the tree, the git
+   worktree listing (`_listed_worktree`) and the marker afterwards; a refused `remove_worktree`, an
+   rmtree that left the root, or a surviving registration reports `ok=False` with a `could not
+   remove …` detail. Tests: `test_parity_sweep_reports_a_surviving_tree_as_not_reclaimed` (the old
+   `removed residue …; skip …: has uncommitted changes` shape), and
+   `test_parity_sweep_does_not_claim_a_removal_rmtree_did_not_do`.
+3. **Test/evidence outside the diff budget** — `zz-final-source.txt` (this README's note above).
+4. **README Known-limitations cut** — `README.md:273-276` quoted above and in the section extract.
+5. **Top-level `fcntl`** — imported lazily inside `parity_lock` and `_parity_lock_at`; pinned by
+   `test_git_service_keeps_the_posix_lock_import_lazy`.
+6. **Name order (`sort -u` vs first-seen)** — Python now returns `sorted(names)`
+   (`project_service.py:462-484`) and the script sorts with `LC_ALL=C`, so both write the same
+   sequence. Pinned by `test_parity_env_name_order_matches_the_shell_path`, which extracts the sed
+   pipeline from the shipped script instead of copying it.

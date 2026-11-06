@@ -1,0 +1,331 @@
+# T-20 FINAL SOURCE slices (budget-sized; verbatim, numbered at the stamped HEAD)
+# HEAD 135b0b9b4870998e0355bb3e2c2b794de10d0e76 | dirty-entries 0 | 2026-11-06T22:26:53Z
+# Generated from the committed files, so every line number below is the reviewed one.
+
+## src/orchestrator/services/git_service.py:70-86  ParitySweepAction
+   70| class ParitySweepAction:
+   71|     """One outcome of a parity sweep, with `ok` computed from what was VERIFIED afterwards.
+   72| 
+   73|     T-20 review round 3: `ok` must never be derived from the wording of `detail`. A `skip` or a
+   74|     `removed parity residue …; skip …: has uncommitted changes` line used to read as success
+   75|     because it did not start with "skip", while the tree or its worktree registration survived.
+   76|     `ok` is therefore set by the code that checked the filesystem/git afterwards, and it is False
+   77|     whenever residue, a registration, or a marker is still present. `busy` distinguishes "a live
+   78|     parity run holds this destination" from "the reclaim was attempted and failed".
+   79|     """
+   80| 
+   81|     detail: str
+   82|     ok: bool = True
+   83|     busy: bool = False
+   84| 
+   85|     def __str__(self) -> str:  # operator-facing text stays exactly what it was
+   86|         return self.detail
+
+## src/orchestrator/services/git_service.py:207-217  parity_lock_path
+  207| def parity_lock_path(project_slug: str) -> Path:
+  208|     """Lock handle for the doctor parity destination of one project.
+  209| 
+  210|     This is the managed-marker path itself (`.managed/env-parity`), NOT a new directory: the
+  211|     frozen layout is `worktrees/<project_slug>/<task_id>` plus the `.managed` markers, so a
+  212|     sibling `.locks/` tree would invent a path scheme the contract does not grant (T-20 review
+  213|     round 3). Holding an exclusive `flock` on the marker changes what the marker RECORDS not at
+  214|     all — `ensure_snapshot` still writes `<path>\n(detached)\n` to it — and it means the lock
+  215|     disappears together with the marker, so no lock file of its own can be left behind.
+  216|     """
+  217|     return _marker(project_slug, PARITY_TASK_ID)
+
+## src/orchestrator/services/git_service.py:221-241  parity_lock
+  221| def parity_lock(project_slug: str) -> Iterator[None]:
+  222|     """Hold the doctor parity lock for the lifetime of a parity run.
+  223| 
+  224|     An interrupted run releases the lock with the process, so a later sweep can tell an orphaned
+  225|     tree (lock free) from one another process is still using (lock busy). The lock path lives
+  226|     beside the managed marker, never inside the throwaway worktree, because the whole worktree is
+  227|     deleted by cleanup.
+  228|     """
+  229|     import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
+  230| 
+  231|     path = parity_lock_path(project_slug)
+  232|     path.parent.mkdir(parents=True, exist_ok=True)
+  233|     with path.open("a+") as fh:
+  234|         try:
+  235|             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  236|         except BlockingIOError as exc:
+  237|             raise ParityBusy(f"another parity run holds {path}") from exc
+  238|         try:
+  239|             yield
+  240|         finally:
+  241|             fcntl.flock(fh, fcntl.LOCK_UN)
+
+## src/orchestrator/services/git_service.py:395-436  _sweep_one_managed_parity
+  395| def _sweep_one_managed_parity(info: dict, dry_run: bool) -> list[ParitySweepAction]:
+  396|     """Reclaim one managed `env-parity` snapshot, holding its lock.
+  397| 
+  398|     The action's `ok` is decided by re-checking the tree and the marker afterwards, so a
+  399|     `remove_worktree` that refused the tree ("has uncommitted changes") is reported as a failure
+  400|     rather than being folded behind a successful-looking "removed parity residue" prefix.
+  401|     """
+  402|     path: Path = info["path"]
+  403|     marker: Path = info["marker"]
+  404|     if not path.exists():
+  405|         if dry_run:
+  406|             return [ParitySweepAction(f"would remove stale parity marker {marker}")]
+  407|         marker.unlink(missing_ok=True)
+  408|         gone = not marker.exists()
+  409|         return [
+  410|             ParitySweepAction(
+  411|                 f"removed stale parity marker {marker}"
+  412|                 if gone
+  413|                 else f"could not remove stale parity marker {marker}",
+  414|                 ok=gone,
+  415|             )
+  416|         ]
+  417|     repo = _repo_of_worktree(path)
+  418|     residue = _parity_residue_paths(path)
+  419|     if dry_run:
+  420|         detail = (
+  421|             "would remove parity residue " + ", ".join(str(p) for p in residue) + "; "
+  422|             if residue
+  423|             else ""
+  424|         )
+  425|         return [ParitySweepAction(f"{detail}{remove_worktree(repo, info, dry_run=True)}")]
+  426|     removed = _remove_parity_residue(path)
+  427|     note = remove_worktree(repo, info, dry_run=False)
+  428|     residue_note = f"removed parity residue {', '.join(removed)}; " if removed else ""
+  429|     if path.exists() or marker.exists():
+  430|         after = f" and {len(removed)} residue file(s)" if removed else ""
+  431|         return [
+  432|             ParitySweepAction(
+  433|                 f"could not remove parity worktree {path}{after}: {note}", ok=False
+  434|             )
+  435|         ]
+  436|     return [ParitySweepAction(f"{residue_note}{note}")]
+
+## src/orchestrator/services/git_service.py:479-554  _sweep_temp_parity
+  479| def _sweep_temp_parity(temp_root: Path, dry_run: bool) -> list[ParitySweepAction]:
+  480|     """Reclaim one <tmpdir>/orch-env-parity.* root created by scripts/orch_env_parity.sh.
+  481| 
+  482|     Every removal is verified afterwards: `worktree remove` runs with `check=False`, rmtree with
+  483|     `ignore_errors=True`, so "removed ..." is claimed only when the tree, the git registration
+  484|     and the root are all gone (T-20 review round 3).
+  485|     """
+  486|     actions: list[ParitySweepAction] = []
+  487|     lock = temp_root / PARITY_LOCK_NAME
+  488|     try:
+  489|         with _parity_lock_at(lock) as acquired:
+  490|             if not acquired:
+  491|                 return [
+  492|                     ParitySweepAction(
+  493|                         f"skip {temp_root}: {PARITY_BUSY}", ok=False, busy=True
+  494|                     )
+  495|                 ]
+  496|             tree = temp_root / "tree"
+  497|             tree_link = tree.is_symlink()
+  498|             has_tree = not tree_link and tree.exists()
+  499|             if dry_run:
+  500|                 if tree_link:
+  501|                     actions.append(
+  502|                         ParitySweepAction(f"would remove orphaned parity symlink {tree}")
+  503|                     )
+  504|                 elif has_tree:
+  505|                     actions.append(
+  506|                         ParitySweepAction(f"would remove orphaned parity tree {tree}")
+  507|                     )
+  508|                 actions.append(ParitySweepAction(f"would remove orphaned parity root {temp_root}"))
+  509|                 return actions
+  510|             if tree_link:
+  511|                 # Unlink the LINK only: never rmtree through it.
+  512|                 tree.unlink(missing_ok=True)
+  513|                 gone = not tree.is_symlink()
+  514|                 actions.append(
+  515|                     ParitySweepAction(
+  516|                         f"removed orphaned parity symlink {tree}"
+  517|                         if gone
+  518|                         else f"could not remove orphaned parity symlink {tree}",
+  519|                         ok=gone,
+  520|                     )
+  521|                 )
+  522|             elif has_tree:
+  523|                 repo = _registered_in(tree)
+  524|                 if repo is not None:
+  525|                     run_git(["worktree", "remove", "--force", str(tree)], repo, check=False)
+  526|                     run_git(["worktree", "prune"], repo, check=False)
+  527|                 if tree.exists():
+  528|                     shutil.rmtree(tree, ignore_errors=True)
+  529|                 clean = not tree.exists() and not (
+  530|                     repo is not None and _listed_worktree(repo, tree)
+  531|                 )
+  532|                 actions.append(
+  533|                     ParitySweepAction(
+  534|                         f"removed orphaned parity tree {tree}"
+  535|                         if clean
+  536|                         else f"could not remove orphaned parity tree {tree}",
+  537|                         ok=clean,
+  538|                     )
+  539|                 )
+  540|             # The lock is inside the root and this process holds it open; POSIX unlink is safe.
+  541|             shutil.rmtree(temp_root, ignore_errors=True)
+  542|             gone = not temp_root.exists()
+  543|             actions.append(
+  544|                 ParitySweepAction(
+  545|                     f"removed orphaned parity root {temp_root}"
+  546|                     if gone
+  547|                     else f"could not remove orphaned parity root {temp_root}",
+  548|                     ok=gone,
+  549|                 )
+  550|             )
+  551|     except OSError as exc:
+  552|         # A shared /tmp may hold a root this process cannot open. `doctor` reports, never raises.
+  553|         return [ParitySweepAction(f"skip {temp_root}: {type(exc).__name__}: {exc}", ok=False)]
+  554|     return actions
+
+## src/orchestrator/services/project_service.py:462-484  _env_variable_names
+  462| def _env_variable_names(source: Path) -> list[str]:
+  463|     """The SORTED variable NAMES declared in an env file; values are never parsed.
+  464| 
+  465|     The parity probe must reproduce the operator's *configuration surface* without ever writing a
+  466|     credential value into a harness-managed directory (T-20 DoD 1). Only the name before the first
+  467|     `=` leaves this function; comments, blank lines and `export` prefixes are handled. The order is
+  468|     sorted, matching `sed ... | sort -u` in scripts/orch_env_parity.sh, so the two paths write the
+  469|     same name sequence for the same file (T-20 review round 3); first-seen order would silently
+  470|     differ whenever the operator's file is not alphabetical.
+  471|     """
+  472|     names: set[str] = set()
+  473|     for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
+  474|         line = raw.strip()
+  475|         if not line or line.startswith("#"):
+  476|             continue
+  477|         if line.startswith("export "):
+  478|             line = line[len("export ") :].lstrip()
+  479|         name, sep, _value = line.partition("=")
+  480|         name = name.strip()
+  481|         if not sep or not _ENV_NAME_RE.match(name):
+  482|             continue
+  483|         names.add(name)
+  484|     return sorted(names)
+
+## src/orchestrator/services/project_service.py:640-666  run_env_parity_checks (residue decision excerpt; body 640-685)
+  640| def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
+  641|     from orchestrator.services import git_service
+  642| 
+  643|     checks: list[dict[str, Any]] = []
+  644| 
+  645|     def add(name: str, ok: bool, detail: str = "") -> None:
+  646|         checks.append({"name": name, "ok": ok, "detail": detail})
+  647| 
+  648|     repo = Path(project.path)
+  649|     # T-20: reclaim anything an interrupted parity run left behind BEFORE looking at staleness.
+  650|     # The sweep takes each destination's lock, so a tree another parity process is actively using
+  651|     # is reported and skipped, never deleted. It is scoped to THIS checkout on both sides, so an
+  652|     # unrelated repo's live run cannot fail this project's probe, and a root the process cannot
+  653|     # open is reported instead of raised out of doctor().
+  654|     swept = git_service.sweep_parity_residue(project.slug, repo=repo)
+  655|     for action in swept:
+  656|         # `ok` is the sweep's own verified outcome (T-20 review round 3), never a parse of the
+  657|         # message: a tree or registration that survived is reported as a failed reclaim.
+  658|         add("env-parity residue", action.ok, action.detail)
+  659|     if any(action.busy for action in swept):
+  660|         add(
+  661|             "env-parity suite",
+  662|             False,
+  663|             "another parity run on this checkout is active; wait for it or run "
+  664|             "`orchestrator cleanup` afterwards",
+  665|         )
+  666|         return checks
+
+# --- DoD 4 test assertions (bodies selected: assert lines + test docstring) ---
+
+## tests/integration/test_env_hermeticity.py:424-445  test_make_target_is_documented_as_the_developer_parity_path (assertions selected)
+  424| def test_make_target_is_documented_as_the_developer_parity_path():
+  426|     assert "./scripts/orch_env_parity.sh test" in (REPO_ROOT / "Makefile").read_text()
+  427|     assert "test-parity" in (REPO_ROOT / "justfile").read_text()
+  428|     assert "not the gate command" in script
+  430|     assert "SYNTHETIC `.env`" in script and 'cp "$SOURCE_ENV"' not in script
+  432|     assert "synthetic" in docs and "reclaim orphaned" in docs
+  433|     assert "residue but not a secret" in docs
+  437|     assert (
+  440|     assert "reclaims it, and never touches one a live parity run holds." in readme
+  443|     assert '  umask 077\n  set -o noclobber\n  exec > "$TREE/.env"\n' in script
+  444|     assert 'printf \'%s\\n\' "$ROOT" > "$TMP/.repo"' in script
+  445|     assert "chmod 600" not in script
+
+## tests/integration/test_env_hermeticity.py:456-474  test_parity_sweep_never_touches_a_tree_a_live_run_is_using (assertions selected)
+  456| def test_parity_sweep_never_touches_a_tree_a_live_run_is_using(session, tmp_path, monkeypatch):
+  457|     """T-20 DoD 2/4: the lock distinguishes an orphan from a live parity run."""
+  467|         assert any("parity run in progress" in a for a in _details(actions)), actions
+  468|         assert info.path.exists() and (info.path / ".env").exists()
+  469|         assert str(info.path) in _registered_worktrees(Path(project.path))
+  471|     assert any("removed parity residue" in a for a in _details(actions)), actions
+  472|     assert not info.path.exists()
+  473|     assert str(info.path) not in _registered_worktrees(Path(project.path))
+  474|     assert git_service.managed_worktrees() == []
+
+## tests/integration/test_env_hermeticity.py:728-805  test_a_killed_shell_parity_run_leaves_no_registered_worktree (assertions selected)
+  728| def test_a_killed_shell_parity_run_leaves_no_registered_worktree(tmp_path, monkeypatch):
+  729|     """T-20 DoD 4a: SIGKILL skips the shell trap; the lock-aware sweep still reclaims the tree."""
+  774|         assert observed.exists(), proc.stdout.read() if proc.stdout else ""
+  776|         assert len(roots) == 1, roots
+  779|         assert tree.exists() and str(tree) in _registered_worktrees(repo)
+  781|         assert (tree / ".env").stat().st_mode & 0o777 == 0o600
+  782|         assert (root / ".repo").read_text().strip() == str(repo)
+  786|         assert any("parity run in progress" in a for a in _details(actions)), actions
+  787|         assert tree.exists() and str(tree) in _registered_worktrees(repo)
+  791|         assert tree.exists() and root.exists()  # SIGKILL really skipped the trap
+  792|         assert str(tree) in _registered_worktrees(repo)
+  793|         assert secret_value not in observed.read_text()
+  794|         assert f"{secret_name}=synthetic-not-a-secret" in observed.read_text()
+  795|         assert "ANTHROPIC_API_KEY=synthetic-not-a-secret" in observed.read_text()
+  798|         assert any("removed orphaned parity tree" in a for a in _details(actions)), actions
+  799|         assert not root.exists() and not tree.exists()
+  800|         assert str(tree) not in _registered_worktrees(repo)
+
+## tests/integration/test_env_hermeticity.py:808-842  test_recovery_commit_never_stages_parity_residue (assertions selected)
+  808| def test_recovery_commit_never_stages_parity_residue(home, tmp_path):
+  809|     """T-20 DoD 3/4b: a parity `.env` is harness residue, not worker output."""
+  824|     assert "?? .env\n" in status, status
+  825|     assert "?? .env.999-dead.parity\n" in status, status
+  826|     assert git_service.recovery_commit(snapshot.path, "parity residue only") is None
+  828|     assert not (snapshot.path / ".env").exists()
+  829|     assert not (snapshot.path / ".env.999-dead.parity").exists()
+  834|     assert sha
+  839|     assert files == ["code.py"]
+  840|     assert not (snapshot.path / ".env").exists()
+  841|     assert not (snapshot.path / ".env.999-dead.parity").exists()
+
+## tests/integration/test_env_hermeticity.py:845-882  test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch (assertions selected)
+  845| def test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch(home, tmp_path):
+  846|     """T-20 DoD 3/4b: the recovery sweep cannot carry a parity file onto a task branch.
+  852|     """
+  864|     assert "?? .env\n" in status, status
+  865|     assert "?? .env.999-dead.parity\n" in status, status
+  869|     assert record is not None
+  870|     assert set(record.skipped_sensitive) == {".env", ".env.999-dead.parity"}
+  875|     assert files == ["code.py"]
+  877|         assert path.exists(), path  # left untracked, never silently deleted
+
+## tests/integration/test_env_hermeticity.py:885-897  test_remove_worktree_succeeds_with_parity_residue (assertions selected)
+  885| def test_remove_worktree_succeeds_with_parity_residue(home, tmp_path):
+  886|     """T-20 DoD 3/4c: cleanup removes the residue instead of refusing the tree."""
+  895|     assert note.startswith("removed"), note
+  896|     assert not snapshot.path.exists()
+  897|     assert git_service.managed_worktrees() == []
+
+## tests/integration/test_env_hermeticity.py:900-940  test_parity_synthesis_never_writes_a_real_credential_value (assertions selected)
+  900| def test_parity_synthesis_never_writes_a_real_credential_value(home, tmp_path, monkeypatch):
+  901|     """T-20 DoD 1/4d: only names leave the source; every byte written is synthetic."""
+  929|         assert str(dest).startswith(str(snapshot.path))
+  935|     assert secret.encode() not in payload
+  936|     assert secret not in text and "real.invalid" not in text
+  937|     assert "OPERATOR_API_KEY=synthetic-not-a-secret" in text
+  938|     assert "OPERATOR_SUPABASE_URL=https://synthetic.invalid" in text
+  939|     assert "OPERATOR_EMAIL=synthetic@example.invalid" in text
+  940|     assert mode == 0o600
+
+## README.md:273-276  (Known limitations, DoD 5 residue risk)
+  273|   `make test-parity` runs the suite again with a **synthetic** `.env` derived from your local
+  274|   variable names (never your values), as a developer check and never as the gate command. A parity
+  275|   run killed with SIGKILL can leave that synthetic throwaway tree behind; `orchestrator cleanup`
+  276|   reclaims it, and never touches one a live parity run holds. See `docs/build-loop.md`,
+
+## scripts/orch_env_parity.sh:91  (synthetic names, LC_ALL=C sort)
+   91| names="$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' "$SOURCE_ENV" | LC_ALL=C sort -u)"
