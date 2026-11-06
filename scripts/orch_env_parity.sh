@@ -43,11 +43,11 @@ TREE="$TMP/tree"
 # records which checkout this root belongs to, so another project's probe ignores it instead of
 # reporting a busy lock that is none of its business.
 LOCK="$TMP/.lock"
-printf '%s\n' "$ROOT" > "$TMP/.repo"
+# Acquire the lock BEFORE writing `.repo` and install the cleanup trap BEFORE any failure can
+# exit: a sweep that sees this root while the run is still starting must find a held lock, not a
+# half-created directory it may delete, and a failure before the worktree exists must not leave
+# the new root behind either.
 exec 9>"$LOCK"
-if ! flock -n 9; then
-  fail "another parity run is using $TMP"
-fi
 cleanup() {
   # --force: the seeded .env is intentionally untracked, and this tree is disposable. No branch
   # is created, so nothing of the operator's is deleted.
@@ -56,6 +56,10 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
+if ! flock -n 9; then
+  fail "another parity run is using $TMP"
+fi
+printf '%s\n' "$ROOT" > "$TMP/.repo"
 
 printf 'orch-parity: DEVELOPER CHECK (not the gate command)\n'
 printf 'orch-parity: source checkout %s\n' "$ROOT"

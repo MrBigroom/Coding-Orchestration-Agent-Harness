@@ -726,6 +726,46 @@ def test_recovery_commit_never_stages_parity_residue(home, tmp_path):
     git_service.remove_worktree(repo, info, dry_run=False)
 
 
+def test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch(home, tmp_path):
+    """T-20 DoD 3/4b: the recovery sweep cannot carry a parity file onto a task branch.
+
+    The parity worktree test above proves the harness REMOVES its own residue. This one is the
+    other half of the DoD: even in an ordinary task worktree, where no parity-target filter
+    applies, a leaked `.env` (or a half-written `.env.*.parity`) is still never staged by
+    recovery_commit. The git-visible control keeps the assertion from passing vacuously.
+    """
+    repo = make_repo(tmp_path / "phase-dotenv")
+    info = git_service.ensure_worktree(
+        repo, "phase-dotenv", 7, "task-7-leaked-dotenv", "main"
+    )
+    leaked = [info.path / ".env", info.path / ".env.999-dead.parity"]
+    for path in leaked:
+        path.write_text(SEEDED_ENV)
+    status = subprocess.run(
+        ["git", "-C", str(info.path), "status", "--porcelain", "-uall"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout
+    assert "?? .env\n" in status, status
+    assert "?? .env.999-dead.parity\n" in status, status
+
+    (info.path / "code.py").write_text("x = 1\n")
+    record = git_service.recovery_commit_info(info.path, "phase branch work")
+    assert record is not None
+    assert set(record.skipped_sensitive) == {".env", ".env.999-dead.parity"}
+    files = subprocess.run(
+        ["git", "-C", str(info.path), "show", "--name-only", "--format=", "HEAD"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.split()
+    assert files == ["code.py"]
+    for path in leaked:
+        assert path.exists(), path  # left untracked, never silently deleted
+
+    for path in leaked:
+        path.unlink()
+    managed = next(m for m in git_service.managed_worktrees() if m["task_id"] == "7")
+    git_service.remove_worktree(repo, managed, dry_run=False)
+
+
 def test_remove_worktree_succeeds_with_parity_residue(home, tmp_path):
     """T-20 DoD 3/4c: cleanup removes the residue instead of refusing the tree."""
     repo = make_repo(tmp_path / "parity-remove")
