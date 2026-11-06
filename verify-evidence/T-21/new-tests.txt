@@ -1,0 +1,76 @@
+HEAD=318829854c08cb0df461035970f71dec49f9f842
+dirty_entries=0
+command=./scripts/orch_verify.sh test tests/unit/test_notifications.py tests/integration/test_standalone.py -vv
+captured_utc=2026-11-06T14:57:03Z
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21
+orch-verify: pytest target tests/unit/test_notifications.py tests/integration/test_standalone.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 54 items
+
+tests/unit/test_notifications.py::test_off_by_default_records_skip_and_delivers_nothing PASSED [  1%]
+tests/unit/test_notifications.py::test_trigger_selection_against_the_real_event_vocabulary PASSED [  3%]
+tests/unit/test_notifications.py::test_payload_shape_link_and_redaction PASSED [  5%]
+tests/unit/test_notifications.py::test_parallel_runs_coalesce_and_a_trigger_is_deduped PASSED [  7%]
+tests/unit/test_notifications.py::test_failures_never_lose_the_build_log_or_poison_the_session PASSED [  9%]
+tests/unit/test_notifications.py::test_a_bug_inside_the_fanout_leaves_one_durable_failed_row PASSED [ 11%]
+tests/unit/test_notifications.py::test_noisy_events_are_silent_until_enabled PASSED [ 12%]
+tests/unit/test_notifications.py::test_duration_reports_compute_and_wall_and_only_names_a_large_freeze PASSED [ 14%]
+tests/unit/test_notifications.py::test_channel_actions_markup_and_no_client PASSED [ 16%]
+tests/unit/test_notifications.py::test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded PASSED [ 18%]
+tests/unit/test_notifications.py::test_a_failing_fanout_rolls_back_a_poisoned_caller_session PASSED [ 20%]
+tests/unit/test_notifications.py::test_an_event_arriving_mid_flush_rearms_the_timer PASSED [ 22%]
+tests/unit/test_notifications.py::test_standalone_run_trigger_is_subscribed_by_default_and_maps_directly PASSED [ 24%]
+tests/unit/test_notifications.py::test_a_completed_standalone_run_writes_one_row_naming_agent_and_report PASSED [ 25%]
+tests/unit/test_notifications.py::test_standalone_trigger_off_delivers_nothing PASSED [ 27%]
+tests/unit/test_notifications.py::test_a_skipped_standalone_run_is_reported_as_skipped PASSED [ 29%]
+tests/unit/test_notifications.py::test_a_failed_standalone_run_reports_its_error PASSED [ 31%]
+tests/unit/test_notifications.py::test_two_task_less_events_of_one_trigger_produce_two_rows PASSED [ 33%]
+tests/unit/test_notifications.py::test_flush_never_raises_and_never_poisons_a_caller_session PASSED [ 35%]
+tests/integration/test_standalone.py::test_decide[read-action0-True] PASSED [ 37%]
+tests/integration/test_standalone.py::test_decide[read-action1-False] PASSED [ 38%]
+tests/integration/test_standalone.py::test_decide[read-None-False] PASSED [ 40%]
+tests/integration/test_standalone.py::test_decide[read-action3-False] PASSED [ 42%]
+tests/integration/test_standalone.py::test_decide[read-action4-False] PASSED [ 44%]
+tests/integration/test_standalone.py::test_decide[read-action5-True] PASSED [ 46%]
+tests/integration/test_standalone.py::test_decide[read-action6-False] PASSED [ 48%]
+tests/integration/test_standalone.py::test_decide[read-action7-False] PASSED [ 50%]
+tests/integration/test_standalone.py::test_decide[write-action8-True] PASSED [ 51%]
+tests/integration/test_standalone.py::test_decide[write-action9-True] PASSED [ 53%]
+tests/integration/test_standalone.py::test_decide[write-action10-False] PASSED [ 55%]
+tests/integration/test_standalone.py::test_decide[write-action11-True] PASSED [ 57%]
+tests/integration/test_standalone.py::test_decide[write-None-True] PASSED [ 59%]
+tests/integration/test_standalone.py::test_decide_follows_symlinks_out_of_the_folder PASSED [ 61%]
+tests/integration/test_standalone.py::test_permission_settings_stay_on_each_device PASSED [ 62%]
+tests/integration/test_standalone.py::test_off_by_default_and_recorded_as_skipped PASSED [ 64%]
+tests/integration/test_standalone.py::test_a_completed_standalone_run_writes_one_notification_row PASSED [ 66%]
+tests/integration/test_standalone.py::test_the_fanout_runs_only_after_the_report_exists_and_the_row_is_committed PASSED [ 68%]
+tests/integration/test_standalone.py::test_a_skipped_standalone_run_is_notified_as_skipped PASSED [ 70%]
+tests/integration/test_standalone.py::test_standalone_needs_an_agent PASSED [ 72%]
+tests/integration/test_standalone.py::test_read_access_denies_changes_and_saves_a_report PASSED [ 74%]
+tests/integration/test_standalone.py::test_write_access_keeps_changes_on_a_branch PASSED [ 75%]
+tests/integration/test_standalone.py::test_a_turn_that_ends_on_a_denial_is_told_to_continue PASSED [ 77%]
+tests/integration/test_standalone.py::test_approvals_are_answered_while_a_prompt_is_in_progress PASSED [ 79%]
+tests/integration/test_standalone.py::test_nudges_are_limited PASSED     [ 81%]
+tests/integration/test_standalone.py::test_no_project_works_in_the_output_folder PASSED [ 83%]
+tests/integration/test_standalone.py::test_a_failed_start_is_recorded PASSED [ 85%]
+tests/integration/test_standalone.py::test_no_supported_harness_is_recorded PASSED [ 87%]
+tests/integration/test_standalone.py::test_overlapping_runs_are_skipped PASSED [ 88%]
+tests/integration/test_standalone.py::test_stop_ends_a_run PASSED        [ 90%]
+tests/integration/test_standalone.py::test_the_time_limit_stops_a_run PASSED [ 92%]
+tests/integration/test_standalone.py::test_a_standalone_run_takes_no_instructions PASSED [ 94%]
+tests/integration/test_standalone.py::test_one_time_standalone_schedule_turns_off PASSED [ 96%]
+tests/integration/test_standalone.py::test_recover_marks_cut_off_runs PASSED [ 98%]
+tests/integration/test_standalone.py::test_snapshot_is_detached_and_leaves_no_branch PASSED [100%]
+
+============================= 54 passed in 12.39s ==============================
