@@ -181,12 +181,17 @@ def render_review_payload(
     absence_checks: list[review_audit.AbsenceCheck],
     diff_issues: list[review_audit.DiffIssue],
     supplied: review_audit.SuppliedEvidence,
+    universe: review_audit.PathUniverse | None = None,
 ) -> str:
     """The archived reviewer input plus the provenance of every absence/truncation claim.
 
     `input_text` is written verbatim: it is `static_text() + dynamic_text()` exactly as the
     provider received it. The post-review sections exist because an absence claim needs a
     provenance label, and a truncation needs to be named next to the text it removed.
+
+    T-22 DoD 4: the absence section also carries the *resolution* evidence — which path was tried,
+    where it was found, which sources were searched — because a mechanical verdict is only as
+    trustworthy as its resolver, and run 38 proved a resolver can be wrong 15 times in one review.
     """
     harness_list = "\n".join(f"- {m}" for m in harness_missing) or "- none"
     reviewer_list = "\n".join(f"- {m}" for m in reviewer_missing) or "- none"
@@ -205,7 +210,7 @@ def render_review_payload(
 
 ## What the reviewer was actually given
 
-{review_audit.render_supplied_summary(supplied)}
+{review_audit.render_supplied_summary(supplied, universe)}
 
 ## Harness-detected missing artifacts
 
@@ -222,7 +227,12 @@ cost a round.
 
 ## Absence checks (existence claims vs visibility claims)
 
+Each row states how the claim was resolved to a path before it was judged, and lists every
+candidate when a bare name matched more than one file.
+
 {review_audit.render_absence_checks(absence_checks)}
+
+Tally: {review_audit.tally_verdicts(absence_checks)}
 
 ## Diff completeness (git diffstat vs the supplied patch)
 
@@ -305,9 +315,12 @@ async def architect_review(
         prompt.truncations,
         review_audit.changed_paths(cwd, base_branch),
     )
+    # T-22 DoD 1: one repository view for the whole round, so a bare filename in a finding and a
+    # bare filename in `missing_artifacts` resolve against the same paths.
+    universe = review_audit.build_universe(cwd, supplied)
     absence_checks = review_audit.check_findings(
-        result.findings, cwd, supplied
-    ) + review_audit.check_missing_artifacts(model_missing, cwd, supplied)
+        result.findings, cwd, supplied, universe
+    ) + review_audit.check_missing_artifacts(model_missing, cwd, supplied, universe)
     kept: list[ReviewFinding] = []
     refuted: list[ReviewFinding] = []
     for i, finding in enumerate(result.findings):
@@ -323,7 +336,8 @@ async def architect_review(
     result.findings = kept
     for check in absence_checks:
         result.notes.append(
-            f"absence check [{check.status}] {check.claim}: {check.detail} (source: {check.source})"
+            f"absence check [{check.status}] {check.claim}: {check.detail} "
+            f"({check.claim_note()})"
         )
     for finding in refuted:
         result.notes.append(
@@ -438,16 +452,15 @@ async def architect_review(
         )
 
     # DoD 2: review.json must say which findings the harness can confirm mechanically. Absence
-    # provenance is recorded above; this is the one-line summary an auditor reads first.
-    by_status = {"confirmed": 0, "refuted": 0, "unchecked": 0}
-    for check in absence_checks:
-        by_status[check.status] = by_status.get(check.status, 0) + 1
+    # provenance is recorded above; this is the one-line summary an auditor reads first, and since
+    # T-22 DoD 4 it also breaks `confirmed` down by how the path was resolved, so a confident batch
+    # resting on unresolvable names is visible without re-reading every row.
     if absence_checks:
         result.notes.append(
             "mechanical absence checks: "
-            f"{by_status['confirmed']} confirmed, {by_status['refuted']} refuted, "
-            f"{by_status['unchecked']} unchecked (of {len(result.findings)} finding(s) kept, "
-            f"{len(refuted)} refuted finding(s) removed)"
+            + review_audit.tally_verdicts(absence_checks)
+            + f" (of {len(result.findings)} finding(s) kept, {len(refuted)} refuted finding(s) "
+            "removed)"
         )
 
     if _EXEC_CLAIM.search(raw):
@@ -472,6 +485,7 @@ async def architect_review(
             absence_checks=absence_checks,
             diff_issues=diff_issues,
             supplied=supplied,
+            universe=universe,
         ),
         redact_content=False,
     )

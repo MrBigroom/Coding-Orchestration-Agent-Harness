@@ -25,7 +25,7 @@ def test_existing_file_refutes_a_missing_file_claim(tmp_path):
     checks = review_audit.check_findings([finding], repo)
     assert review_audit.finding_status(checks, 0) == "refuted"
     assert checks[0].claim == "src/pkg/mod.py"
-    assert "exists in the task worktree" in checks[0].detail
+    assert "file is tracked at the reviewed commit at src/pkg/mod.py" in checks[0].detail
 
 
 def test_existing_test_name_refutes_a_missing_test_claim(tmp_path):
@@ -49,7 +49,9 @@ def test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked(tmp_pa
         file_or_area="src/never_there.py", issue="src/never_there.py is missing", violates=""
     )
     vague = ReviewFinding(file_or_area="tests", issue="tests are not visible", violates="")
-    checks = review_audit.check_findings([absent, vague], repo)
+    checks = review_audit.check_findings(
+        [absent, vague], repo, review_audit.SuppliedEvidence()
+    )
     assert review_audit.finding_status(checks, 0) == "confirmed"
     assert review_audit.finding_status(checks, 1) == "unchecked"
 
@@ -57,7 +59,9 @@ def test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked(tmp_pa
 def test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim(tmp_path):
     """Existence does NOT refute a "was not supplied" claim (round-2 reviewer finding 2)."""
     repo = make_repo(tmp_path / "repo", {"docs/present.md": "# here\n"})
-    checks = review_audit.check_missing_artifacts(["docs/present.md", "docs/absent.md"], repo)
+    checks = review_audit.check_missing_artifacts(
+        ["docs/present.md", "docs/absent.md"], repo, review_audit.SuppliedEvidence()
+    )
     # present on disk but not part of the supplied artifacts -> unchecked, never refuted;
     # absent everywhere -> confirmed.
     assert [c.status for c in checks] == ["unchecked", "confirmed"]
@@ -73,20 +77,22 @@ def test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim(tmp_pa
     assert "supplied to the reviewer in full" in checks[0].detail
 
 
-def test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence():
-    """An existing file whose hunks were withheld is a CONFIRMED claim, not a refuted one."""
+def test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence(tmp_path):
+    """A withheld file that the repository contains is never confirmed absent (DoD 2)."""
     supplied = review_audit.SuppliedEvidence(
         diff_supplied={"src/app.py", "src/cut.py"},
         diff_cut={"src/cut.py": (0, 4000)},
         changed_paths={"src/app.py", "src/cut.py"},
     )
+    repo = make_repo(tmp_path / "repo", {"src/app.py": "x = 1\n", "src/cut.py": "y = 2\n"})
     finding = ReviewFinding(
         file_or_area="src/cut.py",
         issue="src/cut.py is truncated in the supplied diff",
         violates="DoD 4",
     )
-    checks = review_audit.check_findings([finding], None, supplied)
-    assert review_audit.finding_status(checks, 0) == "confirmed"
+    checks = review_audit.check_findings([finding], repo, supplied)
+    assert review_audit.finding_status(checks, 0) == "unchecked"
+    assert checks[0].state == review_audit.STATE_OMITTED
     assert "omitted entirely (0 of 4000 bytes" in checks[0].detail
 
     full = ReviewFinding(
@@ -94,22 +100,24 @@ def test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence():
         issue="src/app.py is not visible in the supplied diff",
         violates="DoD 4",
     )
-    checks = review_audit.check_findings([full], None, supplied)
+    checks = review_audit.check_findings([full], repo, supplied)
     assert review_audit.finding_status(checks, 0) == "refuted"
     assert "supplied to the reviewer in full" in checks[0].detail
 
 
-def test_a_partially_supplied_file_confirms_a_truncation_claim():
+def test_a_partially_supplied_file_is_the_omitted_state_not_a_confirmed_absence(tmp_path):
     supplied = review_audit.SuppliedEvidence(
         diff_supplied={"src/big.py"},
         diff_cut={"src/big.py": (900, 5000)},
         changed_paths={"src/big.py"},
     )
+    repo = make_repo(tmp_path / "repo", {"src/big.py": "x = 1\n"})
     finding = ReviewFinding(
         file_or_area="src/big.py", issue="src/big.py is truncated", violates="DoD 4"
     )
-    checks = review_audit.check_findings([finding], None, supplied)
-    assert review_audit.finding_status(checks, 0) == "confirmed"
+    checks = review_audit.check_findings([finding], repo, supplied)
+    assert review_audit.finding_status(checks, 0) == "unchecked"
+    assert checks[0].state == review_audit.STATE_OMITTED
     assert "only 900 of 5000 bytes" in checks[0].detail
 
 

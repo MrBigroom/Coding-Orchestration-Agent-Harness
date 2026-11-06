@@ -1,0 +1,4 @@
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# command: ./scripts/orch_verify.sh test
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22
+644 passed, 9 skipped in 118.00s (0:01:58)

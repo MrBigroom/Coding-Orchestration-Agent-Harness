@@ -1,0 +1,43 @@
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=cf417519e866914213adc4b88518499ac7101e72
+# command: python verify-evidence/T-22/extractor.py --index
+# every label a verdict can carry, and where each new function starts
+
+----- review_audit.py label vocabulary -----
+   89 | SOURCE_PATCH = "supplied patch"
+   90 | SOURCE_DIFFSTAT = "diffstat"
+   91 | SOURCE_MANIFEST = "truncation manifest"
+   92 | SOURCE_LS_TREE = "git ls-tree HEAD"
+   94 | ALL_SOURCES = (
+  105 | STATUS_CONFIRMED = "confirmed"
+  106 | STATUS_REFUTED = "refuted"
+  107 | STATUS_UNCHECKED = "unchecked"
+  112 | STATE_ABSENT = "absent-at-reviewed-commit"
+  113 | STATE_OMITTED = "omitted-from-review-input"
+  114 | STATE_UNRESOLVED = "unresolvable-claim"
+  115 | STATE_UNDECIDED = "undecided"
+  116 | STATE_PRESENT = "present-in-repository"
+  117 | STATE_SUPPLIED = "supplied-in-full"
+  128 | BASIS_RESOLUTION = "path-resolution"
+  129 | BASIS_EXPLICIT = "explicit-named-path"
+  130 | BASIS_MANIFEST = "manifest-record"
+  131 | BASIS_FAILED_LOOKUP = "failed-lookup"
+  132 | BASIS_NOT_A_PATH = "not-a-path-claim"
+
+----- new functions, with their line counts (read them in the diff at these lines) -----
+  155 | src/orchestrator/services/review_audit.py class PathUniverse (62 lines)
+  244 | src/orchestrator/services/review_audit.py def build_universe (33 lines)
+  228 | src/orchestrator/services/review_audit.py def _add_tracked_paths (14 lines)
+  315 | src/orchestrator/services/review_audit.py def resolve_claim_path (79 lines)
+  296 | src/orchestrator/services/review_audit.py def _name_candidates (17 lines)
+  631 | src/orchestrator/services/review_audit.py def _confirmation_blockers (29 lines)
+  662 | src/orchestrator/services/review_audit.py def _confirmed_or_unchecked (8 lines)
+  619 | src/orchestrator/services/review_audit.py def _repo_present (10 lines)
+  672 | src/orchestrator/services/review_audit.py def _visibility_verdict (111 lines)
+  871 | src/orchestrator/services/review_audit.py def _existence_verdict (63 lines)
+ 1188 | src/orchestrator/services/review_audit.py def tally_verdicts (35 lines)
+ 1225 | src/orchestrator/services/review_audit.py def render_universe (15 lines)
+  570 | src/orchestrator/services/review_audit.py def _unresolved_claim
+  589 | src/orchestrator/services/review_audit.py def _judged
+  785 | src/orchestrator/services/review_audit.py def _check_visibility
+  936 | src/orchestrator/services/review_audit.py def _check_existence_claim

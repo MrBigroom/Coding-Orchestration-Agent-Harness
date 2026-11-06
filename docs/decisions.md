@@ -366,3 +366,38 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   Terminal-run durations quote both `run.json.process_ms` and the DB wall duration, naming a
   clock freeze only when the gap is large — informational, never an alert. New installs stay
   silent (`notifications_enabled=false`).
+- **2026-11-06 — T-22: an absence claim is resolved to a path before the harness judges it, and
+  a `confirmed` verdict carries the resolution that earned it.** The T-11 mechanical checker
+  reported `15 confirmed` on reviews.28 (run 38) for bare filenames whose tracked paths were
+  `verify-evidence/T-19/<name>`: the resolver looked for the literal name at the worktree root,
+  found nothing, and returned its strongest label. Now every path claim is matched against a
+  `PathUniverse` — supplied patch, diffstat, truncation manifest, `git ls-tree -r HEAD` at the
+  reviewed commit — and a unique basename match is judged at the nested path. The worktree
+  filesystem is not a source: an untracked or gitignored file is not the commit the reviewer saw,
+  so it cannot turn an evidence gap into a budget omission. A bare name is matched by basename
+  *before* any exact root match is accepted, so `README.md` with a root and a nested
+  `verify-evidence/<task>/README.md` is ambiguous and lists both candidates instead of silently
+  picking the root (round-2 findings 1 and 3). A directory-qualified claim that misses is not
+  conclusive either (round-4 finding 1): a partial path like `T-19/capture.sh` is also searched by
+  basename and path suffix, and any candidate (`verify-evidence/T-19/capture.sh`) makes the
+  verdict `unchecked` with every candidate listed rather than a confirmed absence one path shape
+  away from run 38. `git ls-tree HEAD` that returns tracked paths but no resolvable SHA counts as
+  unavailable, never as a searched source (round-4 finding 4), because `confirmed` is anchored to
+  the reviewed commit. Ambiguous and unplaceable names are `unchecked`
+  (`unresolvable-claim`); `confirmed` survives only for a located path the repository does not
+  contain **and no consulted source names**, with `git ls-tree HEAD` actually searched at the
+  reviewed commit — an unavailable source, or a path the diffstat alone still names (a deletion),
+  is `unchecked` with the blocker named rather than a confident absence. The tally prints `by path-resolution / by explicit-named-path / by manifest-record /
+  from a failed lookup` so a confident batch that rests on unresolved names is visible without
+  re-auditing each row by hand. The three states a reviewer acts on are named in the existing
+  notes/detail fields (`omitted-from-review-input` = budget failure owned by T-16 and therefore
+  `unchecked`, because DoD 2 reserves `confirmed` for absence; `absent-at-reviewed-commit` = real
+  evidence gap and the only `confirmed`; `unresolvable-claim` = checker cannot judge) because
+  `review.json`'s shape and the `confirmed | refuted | unchecked` provenance vocabulary are frozen
+  contracts and no DoD here grants a change: new labels go inside existing fields, not beside
+  them. Rejected alternative: a contract-change request adding `omitted`/`absent` as statuses — it
+  would widen a frozen vocabulary for wording that the notes already carry, and a machine check
+  whose vocabulary only the harness can edit is how run 38 got audited by hand instead of by rule.
+  The operator-facing rule is recorded in `docs/build-loop.md`: a machine verdict is only as
+  trustworthy as its resolver, so read the row's resolution evidence before believing a
+  `confirmed`.

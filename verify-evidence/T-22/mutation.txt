@@ -1,0 +1,152 @@
+# HEAD=cf417519e866914213adc4b88518499ac7101e72 tracked-and-untracked-entries-outside-this-dir=0
+# HEAD=cf417519e866914213adc4b88518499ac7101e72
+# command: python verify-evidence/T-22/extractor.py --mutation
+# runtime patches only: the checkout is never edited. Each mutation re-breaks the
+# behaviour one DoD 5 test guards, and the row says whether that test goes red.
+
+baseline (unmutated): 0 RED of 15 (expected at least 0) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    pass  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    pass  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    pass  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m1: no basename resolution - run 38's behaviour: 11 RED of 15 (expected at least 9) -> MUTATION_DETECTED
+    RED  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    RED  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    RED  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    RED  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    RED  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    RED  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    RED  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    RED  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    RED  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    RED  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    RED  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m2: budget-omitted relabelled as absent: 3 RED of 15 (expected at least 3) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    RED  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    RED  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    RED  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    pass  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    pass  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m3: a failed lookup still gets a path (fail-open confidence): 7 RED of 15 (expected at least 5) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    RED  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    RED  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    RED  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    RED  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    RED  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    pass  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    RED  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    RED  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m4: confirmed without every source denying the path: 3 RED of 15 (expected at least 2) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    pass  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    pass  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    RED  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    RED  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    RED  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m5: the repository is assumed to contain every path: 5 RED of 15 (expected at least 1) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    pass  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    RED  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    RED  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    RED  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    RED  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    RED  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m6: a source with no entries is not reported as searched: 7 RED of 15 (expected at least 1) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    RED  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    RED  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    RED  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    RED  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    RED  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    RED  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    RED  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m7: an explicit miss is conclusive without a name search (round-4 finding 1): 2 RED of 15 (expected at least 2) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    pass  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    pass  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    pass  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    pass  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    RED  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    RED  test_an_explicit_miss_lists_every_candidate_of_that_name
+    pass  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+m8: tracked paths count without a reviewed commit SHA (round-4 finding 4): 2 RED of 15 (expected at least 1) -> MUTATION_DETECTED
+    pass  test_a_bare_name_that_exists_at_a_nested_path_is_not_confirmed_absent
+    pass  test_a_bare_name_that_matches_nothing_is_unchecked_never_confirmed
+    pass  test_an_ambiguous_bare_name_lists_every_candidate_and_is_unchecked
+    pass  test_a_file_omitted_by_the_budget_is_reported_as_the_budget_state
+    pass  test_run38_bare_evidence_names_resolve_to_their_tracked_paths
+    pass  test_run38_fixture_yields_the_corrected_mix_and_no_false_absence
+    pass  test_run38_handoff_md_claim_was_a_false_absence_and_is_now_unresolved
+    pass  test_the_tally_splits_confirmed_by_resolution_from_confirmed_by_failed_lookup
+    pass  test_a_source_that_contributes_no_entries_is_still_reported_as_searched
+    RED  test_an_unavailable_ls_tree_blocks_confirmation_and_names_the_source
+    pass  test_a_path_listed_only_by_the_diffstat_is_not_confirmed_absent
+    pass  test_every_confirmed_verdict_names_a_path_the_repository_does_not_contain
+    pass  test_an_explicit_path_that_misses_but_shares_a_nested_suffix_is_unchecked
+    pass  test_an_explicit_miss_lists_every_candidate_of_that_name
+    RED  test_a_tracked_list_without_a_commit_sha_is_not_a_searched_source
+
+all mutations detected: True

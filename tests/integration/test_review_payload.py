@@ -105,7 +105,7 @@ def test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval(
 
     payload = _payload(outcome)
     assert "| README.md | finding | **refuted** |" in payload
-    assert "file exists in the task worktree" in payload
+    assert "file is tracked at the reviewed commit" in payload
 
     events = _events(session, task, "review_absence_refuted")
     assert len(events) == 1
@@ -171,3 +171,53 @@ def test_manifest_names_the_files_a_diff_budget_dropped(session, project, monkey
     # The exact input shows the omission instead of an empty diff.
     assert "omitted (1): MOCK_CHANGE.md" in payload
     assert "files the truncation manifest records as cut: MOCK_CHANGE.md (0/" in payload
+
+
+def test_archived_payload_carries_the_resolution_evidence_for_each_verdict(session, project):
+    """T-22 DoD 4: review_payload.md states which path was tried, where it was found, and which
+    sources were searched — a verdict without that provenance is not auditable."""
+    task, outcome = _run(session, project, ["mock", "mock-assert-missing-artifact"])
+    payload = _payload(outcome)
+    # The reviewer asserted `docs/not-in-repo.md`: an explicit path, absent from every source, so
+    # it is the one state that deserves the strongest label — with its resolution shown next to it.
+    assert "| docs/not-in-repo.md | missing_artifact | **confirmed** |" in payload
+    assert "absent-at-reviewed-commit" in payload
+    assert "explicit-named-path (tried: docs/not-in-repo.md)" in payload
+    assert "listed by none of these sources" in payload
+    # The universe the whole round was resolved against is stated once, with the commit it covers.
+    assert "path claims were resolved against:" in payload
+    assert "git ls-tree HEAD" in payload
+    assert "a bare name matching exactly one path is resolved to it" in payload
+    # And the tally in review.json says no confirmation came from a lookup that found nothing.
+    review_json = artifact_service.read_json(outcome["run_id"], "review.json") or {}
+    tally = next(
+        n for n in review_json["notes"] if n.startswith("mechanical absence checks:")
+    )
+    assert "from a failed lookup: 0" in tally
+
+
+def test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absent(
+    session, project, monkeypatch
+):
+    """T-22 DoD 3/5(d) end to end: present in the worktree, omitted by the diff budget.
+
+    This is run 38's confusion. The reviewer's claim is true about its own input and false about
+    the repository, and the archive has to say which of the two it is — the second is a Worker
+    evidence gap, the first is the diff budget's (T-16).
+    """
+    monkeypatch.setattr(get_settings(), "max_diff_tokens", 1)
+    task, outcome = _run(session, project, ["mock", "mock-visibility"])
+    payload = _payload(outcome)
+    # DoD 2: the path is located but the repository contains it, so the strongest label is not
+    # available; the state carries the budget meaning instead of a false confirmed absence.
+    assert "| MOCK_CHANGE.md | finding | **unchecked** |" in payload
+    assert "omitted-from-review-input" in payload
+    assert "this is not a Worker evidence gap" in payload
+    # The archived payload's diff shows the file was omitted by the budget, which is the cause.
+    assert "omitted (1): MOCK_CHANGE.md" in payload
+    review_json = artifact_service.read_json(outcome["run_id"], "review.json") or {}
+    tally = next(
+        n for n in review_json["notes"] if n.startswith("mechanical absence checks:")
+    )
+    assert "omitted-from-review-input" in tally
+    assert "absent-at-reviewed-commit" not in tally
