@@ -579,8 +579,8 @@ _BUDGET_MANIFEST_HEADER = (
     "|---|---|---:|---:|---|---|",
 )
 _REDACTION_MANIFEST_HEADER = (
-    "| section | file / item | pattern class | substitutions | bytes before | bytes after |",
-    "|---|---|---|---:|---:|---:|",
+    "| section | file / item | pattern class | substitutions | bytes before | bytes after | note |",
+    "|---|---|---|---:|---:|---:|---|",
 )
 
 
@@ -589,11 +589,12 @@ def _manifest_table(records: list[dict[str, Any]], redaction: bool = False) -> s
     for r in records:
         item = str(r.get("item", "")).replace("|", "\\|")
         if redaction:
+            note = str(r.get("reason", "")).replace("|", "\\|")
             rows.append(
                 f"| {r.get('section', '')} | {item} | "
                 f"{str(r.get('pattern_class', '')).replace('|', '\\|')} | "
                 f"{int(r.get('substitutions') or 0)} | {r.get('bytes_available', 0)} | "
-                f"{r.get('bytes_included', 0)} |"
+                f"{r.get('bytes_included', 0)} | {note} |"
             )
             continue
         budget = str(r.get("budget", "")).replace("|", "\\|")
@@ -615,8 +616,10 @@ def render_truncation_manifest(
 
     T-16: the table is split by `kind` so a reader can tell withheld-as-a-secret from a budget cut
     from a rewrite in place. A redaction row names the pattern class and the substitution count and
-    nothing else. When the evidence could not be delivered, the manifest states that shortfall in
-    the same section, so it is not left for the reviewer to infer from an absent file.
+    nothing else; its `note` column says whether the aggregate context budget later shrank the
+    section it describes (T-16 review round 3, finding 5), never what was matched. When the
+    evidence could not be delivered, the manifest states that shortfall in the same section, so it
+    is not left for the reviewer to infer from an absent file.
     """
     if not records:
         undelivered_only = undelivered_compensation([], rendered=rendered, patch=patch)
@@ -1014,6 +1017,30 @@ def build_prompt(
     return prompt
 
 
+def _mark_redactions_later_cut(
+    recorder: TruncationRecorder | None, section: str, limit: int
+) -> None:
+    """Truthfully flag redaction rows whose enclosing section the context budget then shrank.
+
+    `record_redactions` runs while a section is being built, i.e. BEFORE `enforce_budget`, so a
+    row can describe a rewrite in text the aggregate context budget later removed (T-16 review
+    round 3, finding 5). The row cannot say precisely whether the redacted bytes survived the
+    cut, so it says exactly that: the section was reduced afterwards and the described text may
+    not have reached the reviewer. Claiming nothing is worse -- a reader would take the row as
+    proof the reviewer saw a `[REDACTED]` where they may have seen nothing at all.
+    """
+    if recorder is None:
+        return
+    note = (
+        "the enclosing section was afterwards reduced by the aggregate context budget "
+        f"(max_prompt_context_tokens={limit}); the text described here may not have reached "
+        "the reviewer"
+    )
+    for record in recorder.records:
+        if record.kind == "redaction" and record.section == section and note not in record.reason:
+            record.reason = f"{record.reason}; {note}"
+
+
 def enforce_budget(prompt: BuiltPrompt, recorder: TruncationRecorder | None = None) -> BuiltPrompt:
     """If over the max context, shrink dynamic sections into a structured summary."""
     limit = get_settings().max_prompt_context_tokens
@@ -1040,6 +1067,9 @@ def enforce_budget(prompt: BuiltPrompt, recorder: TruncationRecorder | None = No
                     f"max_prompt_context_tokens={limit} tokens; per-section={per} tokens",
                     "aggregate prompt context budget (prompt_builder.enforce_budget)",
                 )
+            # T-16 review round 3, finding 5: a redaction row recorded before this cut must not
+            # read as if the reviewer saw the rewritten text.
+            _mark_redactions_later_cut(recorder, s.name, limit)
     return prompt
 
 

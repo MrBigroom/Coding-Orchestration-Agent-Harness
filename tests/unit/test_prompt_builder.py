@@ -245,3 +245,40 @@ def test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff(sess
     dynamic = next(s.content for s in built.sections if s.name == "dynamic_state")
     assert forged in dynamic
     assert prompt_builder.extract_rendered_diff(built) == built.rendered_diff
+
+
+def test_a_redaction_row_says_so_when_the_context_budget_later_cuts_its_section(session, monkeypatch):
+    """T-16 review round 3, finding 5: mark a row whose section the context budget then shrank.
+
+    `record_redactions` runs while a section is built, i.e. before `enforce_budget`. When that
+    pass then cuts the same section, an unmarked row reads as proof the reviewer was shown a
+    `[REDACTED]` where the reviewer may have been shown nothing at all. The row is marked
+    instead, and a redaction in a section that survived the budget is left alone.
+    """
+    from orchestrator.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_prompt_context_tokens", 3000)
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    filler = "\n".join(f"handoff line {i} with a checkable claim" for i in range(4000))
+    task = task_service.create(
+        session, TaskCreate(title="P", definition_of_done=[f"ANTHROPIC_API_KEY={secret}"])
+    )
+    built = prompt_builder.build_prompt(
+        session,
+        "architect",
+        task,
+        None,
+        DynamicState(
+            diff="diff --git a/x b/x\n+1",
+            handoff=f"ANTHROPIC_API_KEY={secret}\n{filler}",
+        ),
+    )
+    dynamic = next(s.content for s in built.sections if s.name == "dynamic_state")
+    assert "structured summary" in dynamic  # enforce_budget really shrank dynamic_state
+    rows = [r for r in built.truncations if r["kind"] == "redaction"]
+    dynamic_row = next(r for r in rows if r["section"] == "dynamic_state")
+    assert "afterwards reduced by the aggregate context budget" in dynamic_row["reason"]
+    static_row = next(r for r in rows if r["section"] == "phase")
+    assert "afterwards reduced by the aggregate context budget" not in static_row["reason"]
+    manifest = prompt_builder.render_truncation_manifest(built.truncations)
+    assert "afterwards reduced by the aggregate context budget" in manifest

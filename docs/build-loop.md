@@ -543,7 +543,10 @@ compensation-artifact shortfall is computed from the **final text actually sent*
 `enforce_budget`), not only from the per-file rows taken before that step, so a file lost to the
 aggregate context budget appears in the archived manifest as well as in the harness finding.
 Redaction is never reported as a budget shortfall: a compensation file rewritten in place still
-counts as delivered.
+counts as delivered. A redaction row is recorded while its section is built, before
+`enforce_budget`; if the aggregate context budget then shrinks that section, the row's `note`
+column says the section was reduced afterwards and the described text may not have reached the
+reviewer, rather than reading as proof the reviewer saw the rewritten text.
 
 The handoff channel is a token budget too (`ORCHESTRATOR_MAX_LOG_TOKENS`, default 8000). It was
 raised from 4000 because a normal T-20 handoff was middle-truncated in every round while the diff
