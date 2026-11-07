@@ -273,6 +273,8 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
   `make test-parity` runs the suite again with a **synthetic** `.env` derived from your local
   variable names (never your values), as a developer check and never as the gate command. A parity
   run killed with SIGKILL can leave that synthetic throwaway tree behind; `orchestrator cleanup`
-  reclaims it, and never touches one a live parity run holds. See `docs/build-loop.md`,
+  reclaims it, and never touches one a live parity run holds. Residue risk is swept, not assumed
+  absent: an unmarked shell root is only reclaimed after a 60-second grace window, and the doctor
+  parity lock lives under `<ORCHESTRATOR_HOME>/locks/`. See `docs/build-loop.md`,
   "Gated runs are environment-free".
 - Single-user and local only, by design.

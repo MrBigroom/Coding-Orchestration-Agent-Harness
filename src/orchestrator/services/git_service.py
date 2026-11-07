@@ -24,6 +24,8 @@ import re
 import shutil
 import stat
 import tempfile
+import time
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +57,13 @@ ORCH_DIR = ".orchestrator"  # per-worktree scratch (handoff file); git-excluded
 PARITY_TASK_ID = "env-parity"
 PARITY_TMP_PREFIX = "orch-env-parity."
 PARITY_LOCK_NAME = ".lock"
+# T-20 round 5: the doctor parity lock lives under ORCHESTRATOR_HOME, a path no worktree teardown
+# deletes. It is NOT a `.managed` marker (managed_worktrees() enumerates every file there and would
+# turn a lock file into a phantom entry a sweep could unlink while another process holds it).
+PARITY_LOCK_DIR = "locks"
+# A shell parity root writes `.repo` only AFTER it holds its lock, so a root without `.repo` is
+# either a run that is still starting or a pre-T-20 orphan. Judge it only after this grace window.
+PARITY_GRACE_SECONDS = 60.0
 # `<tmpdir>/orch-env-parity.*/.repo` records the checkout the root belongs to, so a project-scoped
 # probe ignores another repo's parity run instead of being blocked by it (T-20 review round 2).
 PARITY_REPO_MARKER = ".repo"
@@ -207,14 +216,96 @@ def _ensure_excluded(repo: Path) -> None:
 def parity_lock_path(project_slug: str) -> Path:
     """Lock handle for the doctor parity destination of one project.
 
-    This is the managed-marker path itself (`.managed/env-parity`), NOT a new directory: the
-    frozen layout is `worktrees/<project_slug>/<task_id>` plus the `.managed` markers, so a
-    sibling `.locks/` tree would invent a path scheme the contract does not grant (T-20 review
-    round 3). Holding an exclusive `flock` on the marker changes what the marker RECORDS not at
-    all — `ensure_snapshot` still writes `<path>\n(detached)\n` to it — and it means the lock
-    disappears together with the marker, so no lock file of its own can be left behind.
+    T-20 round 5 (operator grant): the lock lives at
+    `<ORCHESTRATOR_HOME>/locks/<project_slug>-env-parity.lock`, a directory no worktree teardown
+    ever deletes. It must NOT live at `.managed/env-parity`: `managed_worktrees()` derives a
+    phantom managed entry from every file in `.managed/`, and a sweep would then unlink a lock
+    another process still holds. The frozen `.managed` marker keeps exactly its old meaning —
+    written by `ensure_snapshot` as `"<path>\n(detached)\n"`, removed by cleanup — and is never
+    used as a lock or created empty.
     """
-    return _marker(project_slug, PARITY_TASK_ID)
+    return get_settings().home / PARITY_LOCK_DIR / f"{project_slug}-{PARITY_TASK_ID}.lock"
+
+
+def _lock_file_pid(fd: int) -> int | None:
+    """The pid recorded in an open lock file, or None when the content is not a pid."""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 128).decode("ascii", errors="replace").strip()
+    except OSError:
+        return None
+    first = raw.splitlines()[0].strip() if raw else ""
+    try:
+        return int(first)
+    except ValueError:
+        return None
+
+
+def _pid_is_alive(pid: int | None) -> bool:
+    """True only when `os.kill(pid, 0)` proves the recorded holder still exists."""
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # a live pid owned by another user
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _write_lock_pid(fd: int) -> None:
+    """Record this process as the holder (the sweeper trusts the pid of a FREE flock)."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    os.fsync(fd)
+
+
+def _open_lock_file(path: Path) -> int:
+    """Open the canonical lock read-write, creating it with a pid already inside.
+
+    The pid is written to a unique staging file and `os.link`ed into place, so a lock file that
+    exists ALWAYS names a holder: a crash between creation and the first write cannot leave an
+    empty lock the sweeper has to guess about. The create is exclusive (`FileExistsError` means
+    another invocation won the race; open its file and let `flock` decide).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_name(f"{path.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp")
+    fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        try:
+            os.link(staging, path)
+        except FileExistsError:
+            pass
+    finally:
+        staging.unlink(missing_ok=True)
+    return os.open(path, os.O_RDWR)
+
+
+def _break_stale_lock(path: Path) -> None:
+    """Remove a lock whose recorded holder is gone by RENAME first, then unlink.
+
+    Never unlink a path another process may still have open under its old inode: the rename makes
+    the removal atomic and the caller creates a fresh inode afterwards.
+    """
+    quarantine = path.with_name(f"{path.name}.stale-{os.getpid()}-{uuid.uuid4().hex}")
+    try:
+        os.rename(path, quarantine)
+    except FileNotFoundError:
+        return
+    try:
+        os.unlink(quarantine)
+    except FileNotFoundError:
+        pass
 
 
 @contextlib.contextmanager
@@ -223,40 +314,87 @@ def parity_lock(project_slug: str) -> Iterator[None]:
 
     An interrupted run releases the lock with the process, so a later sweep can tell an orphaned
     tree (lock free) from one another process is still using (lock busy). The lock path lives
-    beside the managed marker, never inside the throwaway worktree, because the whole worktree is
-    deleted by cleanup.
+    under ORCHESTRATOR_HOME, never inside the throwaway worktree or the `.managed` marker tree.
     """
     import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
 
     path = parity_lock_path(project_slug)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as fh:
+    fd = _open_lock_file(path)
+    try:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ParityBusy(f"another parity run holds {path}") from exc
+        _write_lock_pid(fd)
         try:
             yield
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 @contextlib.contextmanager
-def _parity_lock_at(path: Path) -> Iterator[bool]:
-    """Non-blocking lock used by the sweeper: yields False (and touches nothing) when busy."""
+def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
+    """Non-blocking lock used by the sweeper; yields False when a holder is using the tree.
+
+    `dry_run` must leave the filesystem byte-identical, so it opens an EXISTING lock read-only
+    and never creates the directory or a `.lock`. A free `flock` means no process is using the
+    tree; the recorded pid only decides whether a stale file is broken with the mandated
+    rename-then-unlink (never an unlink of a path another process may still hold open).
+    """
     import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as fh:
+    if dry_run:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            yield False
+            fd = os.open(path, os.O_RDONLY)
+        except FileNotFoundError:
+            yield True
             return
         try:
-            yield True
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            os.close(fd)
+        return
+
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        fd = None
+    if fd is not None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            yield False
+            return
+        if not _pid_is_alive(_lock_file_pid(fd)):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            _break_stale_lock(path)
+            fd = None
+    if fd is None:
+        fd = _open_lock_file(path)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            yield False
+            return
+    try:
+        _write_lock_pid(fd)
+        yield True
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def is_parity_worktree(path: Path | str) -> bool:
@@ -375,8 +513,9 @@ def _sweep_managed_parity(project_slug: str | None, dry_run: bool) -> list[Parit
         if project_slug and info["project_slug"] != project_slug:
             continue
         path: Path = info["path"]
+        lock = parity_lock_path(info["project_slug"])
         try:
-            with _parity_lock_at(parity_lock_path(info["project_slug"])) as acquired:
+            with _parity_lock_at(lock, dry_run=dry_run) as acquired:
                 if not acquired:
                     actions.append(
                         ParitySweepAction(
@@ -476,17 +615,41 @@ def _untrusted_parity_root(root: Path) -> str | None:
     return None
 
 
+def _root_age_seconds(root: Path) -> float:
+    """How long ago this parity root was created (mtime); a stat failure is treated as old."""
+    try:
+        return max(0.0, time.time() - root.lstat().st_mtime)
+    except OSError:
+        return PARITY_GRACE_SECONDS
+
+
 def _sweep_temp_parity(temp_root: Path, dry_run: bool) -> list[ParitySweepAction]:
     """Reclaim one <tmpdir>/orch-env-parity.* root created by scripts/orch_env_parity.sh.
+
+    The shell writes `.repo` only after it holds the root's lock, so an unmarked root is either a
+    run still between `mktemp -d` and `flock`/`.repo`, or a pre-T-20 orphan. The grace window is
+    what distinguishes them (T-20 round 5): too young is reported and skipped, older than the
+    window is reclaimed. A live lock always wins over the grace judgement.
 
     Every removal is verified afterwards: `worktree remove` runs with `check=False`, rmtree with
     `ignore_errors=True`, so "removed ..." is claimed only when the tree, the git registration
     and the root are all gone (T-20 review round 3).
     """
     actions: list[ParitySweepAction] = []
+    if not (temp_root / PARITY_REPO_MARKER).is_file():
+        age = _root_age_seconds(temp_root)
+        if age < PARITY_GRACE_SECONDS:
+            return [
+                ParitySweepAction(
+                    f"skip {temp_root}: no {PARITY_REPO_MARKER} marker yet and only "
+                    f"{age:.0f}s old (< {PARITY_GRACE_SECONDS:.0f}s grace); too young to judge",
+                    ok=False,
+                    busy=True,
+                )
+            ]
     lock = temp_root / PARITY_LOCK_NAME
     try:
-        with _parity_lock_at(lock) as acquired:
+        with _parity_lock_at(lock, dry_run=dry_run) as acquired:
             if not acquired:
                 return [
                     ParitySweepAction(

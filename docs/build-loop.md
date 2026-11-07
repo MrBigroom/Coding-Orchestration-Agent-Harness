@@ -473,10 +473,15 @@ Three things now keep that difference visible and harmless:
    `doctor --env-parity`, reclaim orphaned `env-parity` worktrees and
    `<tmpdir>/orch-env-parity.*` roots (each root records its checkout in `.repo`, so another
    repository's run is not this project's failure). The sweep takes each destination's lock first,
-   so a tree a live parity run is still using is reported and skipped, never deleted; the doctor
-   path locks the managed `.managed/env-parity` marker itself (giving the parity probe no
-   directory of its own inside the frozen `<project_slug>/<task_id>` layout), and the shell path
-   locks `<tmpdir>/orch-env-parity.*/.lock`. A root that
+   so a tree a live parity run is still using is reported and skipped, never deleted. The doctor
+   path locks `<ORCHESTRATOR_HOME>/locks/<project_slug>-env-parity.lock`, outside the frozen
+   `<project_slug>/<task_id>` layout and outside `.managed/` (whose markers keep exactly their old
+   `<path>\n(detached)\n` meaning and are never used as locks). That lock records the holder's pid;
+   a stale lock is broken only when `os.kill(pid, 0)` says the holder is gone, and by atomic
+   rename-then-unlink rather than unlinking a path someone may still hold open. The shell path
+   locks `<tmpdir>/orch-env-parity.*/.lock`. A shell root without its `.repo` marker is judged a
+   starting run and skipped while it is younger than a 60-second grace window; an older unmarked
+   root is a pre-T-20 orphan and is reclaimed. A root that
    is a symlink, owned by another user, or group/world-writable is refused rather than followed,
    and `git worktree remove` runs only for a linked worktree git itself lists. Every removal is
    re-checked afterwards, so a tree or registration that survived is reported as not reclaimed.

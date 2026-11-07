@@ -42,12 +42,16 @@ TREE="$TMP/tree"
 # parity run is using. It is created before the worktree so the root is never unowned. `.repo`
 # records which checkout this root belongs to, so another project's probe ignores it instead of
 # reporting a busy lock that is none of its business.
+#
+# This order is NOT a claim that the root is always locked: between `mktemp -d` and `flock` there
+# is a window where the root exists with no lock and no `.repo`. The sweeper closes that window
+# itself (T-20 round 5): an unmarked root younger than a 60-second grace is reported as too young
+# to judge and never swept; only an older unmarked root is treated as a pre-T-20 orphan.
 LOCK="$TMP/.lock"
-# Acquire the lock BEFORE writing `.repo` and install the cleanup trap BEFORE any failure can
-# exit: a sweep that sees this root while the run is still starting must find a held lock, not a
-# half-created directory it may delete, and a failure before the worktree exists must not leave
-# the new root behind either.
-exec 9>"$LOCK"
+# Open WITHOUT truncating (`>>`), so a lock file the sweeper already created keeps its pid until
+# this run acquires the lock and records its own. Install the cleanup trap BEFORE any failure can
+# exit, so a failure before the worktree exists does not leave the new root behind either.
+exec 9>>"$LOCK"
 cleanup() {
   # --force: the seeded .env is intentionally untracked, and this tree is disposable. No branch
   # is created, so nothing of the operator's is deleted.
@@ -59,6 +63,8 @@ trap cleanup EXIT INT TERM
 if ! flock -n 9; then
   fail "another parity run is using $TMP"
 fi
+# Record the holder so a sweep may only break this lock once `os.kill(pid, 0)` says it is gone.
+printf '%s\n' "$$" >&9
 printf '%s\n' "$ROOT" > "$TMP/.repo"
 
 printf 'orch-parity: DEVELOPER CHECK (not the gate command)\n'
