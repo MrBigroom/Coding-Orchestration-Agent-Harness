@@ -49,10 +49,6 @@ TREE="$TMP/tree"
 # itself (T-20 round 5): an unmarked root younger than a 60-second grace is reported as too young
 # to judge and never swept; only an older unmarked root is treated as a pre-T-20 orphan.
 LOCK="$TMP/.lock"
-# Open WITHOUT truncating (`>>`), so a lock file the sweeper already created keeps its pid until
-# this run acquires the lock and records its own. Install the cleanup trap BEFORE any failure can
-# exit, so a failure before the worktree exists does not leave the new root behind either.
-exec 9>>"$LOCK"
 cleanup() {
   # --force: the seeded .env is intentionally untracked, and this tree is disposable. No branch
   # is created, so nothing of the operator's is deleted.
@@ -60,7 +56,13 @@ cleanup() {
   git -C "$ROOT" worktree prune >/dev/null 2>&1 || true
   rm -rf "$TMP"
 }
+# The trap goes in BEFORE the lock fd is opened, so no step below -- including a failing
+# `exec 9>>` -- can exit and leave the new root behind. The previous order opened the fd first
+# and then claimed a guarantee the script did not actually have (T-20 review round 6).
 trap cleanup EXIT INT TERM
+# Open WITHOUT truncating (`>>`), so a lock file the sweeper already created keeps its pid until
+# this run acquires the lock and records its own.
+exec 9>>"$LOCK"
 if ! flock -n 9; then
   fail "another parity run is using $TMP"
 fi

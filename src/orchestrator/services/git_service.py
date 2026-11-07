@@ -334,6 +334,31 @@ def _break_stale_lock(path: Path, fd: int) -> bool:
     return True
 
 
+def _acquire_lock_fd(path: Path) -> int | None:
+    """Open and flock `path`, then PROVE the fd holds the inode `path` names. None when it does not.
+
+    A concurrent sweeper can rename a stale lock between this process's `open` and its `flock`.
+    Without the identity check the acquirer ends up holding an orphaned inode while the sweeper
+    creates and locks a fresh one -- two holders, and the sweep then reclaims a snapshot that is
+    actually in use (T-20 review round 6, on the acquiring side of the round-5 fix). One retry is
+    enough: the second attempt either wins the fresh inode or finds it genuinely held.
+    """
+    import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
+
+    for _attempt in range(2):
+        fd = _open_lock_file(path)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return None
+        if _fd_names_path(fd, path):
+            return fd
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    return None
+
+
 @contextlib.contextmanager
 def parity_lock(project_slug: str) -> Iterator[None]:
     """Hold the doctor parity lock for the lifetime of a parity run.
@@ -341,16 +366,16 @@ def parity_lock(project_slug: str) -> Iterator[None]:
     An interrupted run releases the lock with the process, so a later sweep can tell an orphaned
     tree (lock free) from one another process is still using (lock busy). The lock path lives
     under ORCHESTRATOR_HOME, never inside the throwaway worktree or the `.managed` marker tree.
+    Acquisition goes through `_acquire_lock_fd`, which will not hand back an fd whose inode the
+    path no longer names.
     """
     import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
 
     path = parity_lock_path(project_slug)
-    fd = _open_lock_file(path)
+    fd = _acquire_lock_fd(path)
+    if fd is None:
+        raise ParityBusy(f"another parity run holds {path}")
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ParityBusy(f"another parity run holds {path}") from exc
         _write_lock_pid(fd)
         try:
             yield
@@ -413,18 +438,8 @@ def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
                 return
             fd = None
     if fd is None:
-        fd = _open_lock_file(path)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            yield False
-            return
-        if not _fd_names_path(fd, path):
-            # We won a race for an inode that is no longer the lock at `path`: the winner's file
-            # was replaced under us. Bail out rather than hold a lock nothing consults.
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+        fd = _acquire_lock_fd(path)
+        if fd is None:
             yield False
             return
     try:

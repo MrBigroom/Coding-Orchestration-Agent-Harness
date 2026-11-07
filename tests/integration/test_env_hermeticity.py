@@ -757,6 +757,43 @@ def test_breaking_a_stale_lock_never_renames_a_live_lock_that_replaced_it(home):
         path.unlink(missing_ok=True)
 
 
+def test_parity_lock_refuses_an_inode_swapped_between_open_and_flock(home, monkeypatch):
+    """R-52 finding 1: the ACQUIRING side must prove it holds the inode `path` names.
+
+    A sweeper can rename a stale lock between this process's open and its flock. Without an
+    identity check the acquirer holds an orphaned inode while the sweeper creates and locks a fresh
+    one -- two holders -- and the sweep then reclaims a snapshot that is genuinely in use. The
+    round-5 fix guarded the sweeper's side only; `_acquire_lock_fd` now guards both, retrying once
+    and then refusing with ParityBusy instead of silently holding an orphan.
+    """
+    slug = "swap-inode"
+    path = git_service.parity_lock_path(slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(f"{_dead_pid()}\n")
+        real_open = git_service._open_lock_file
+        calls: list[Path] = []
+
+        def open_then_swap(p: Path) -> int:
+            fd = real_open(p)
+            calls.append(Path(p))
+            # The sweeper wins the race: same name, new inode, live holder.
+            fresh = p.with_name(f"{p.name}.fresh-{len(calls)}")
+            fresh.write_text(f"{os.getpid()}\n")
+            os.replace(fresh, p)
+            return fd
+
+        monkeypatch.setattr(git_service, "_open_lock_file", open_then_swap)
+        with pytest.raises(git_service.ParityBusy):
+            with git_service.parity_lock(slug):
+                raise AssertionError("held a lock the path no longer names")
+        assert len(calls) == 2, calls  # one retry, then refuse -- never a silent orphan
+        assert path.exists() and int(path.read_text()) == os.getpid()
+        assert not list(path.parent.glob(f"{path.name}.fresh-*"))
+    finally:
+        path.unlink(missing_ok=True)
+
+
 def test_a_dry_run_probe_never_blocks_a_live_parity_run(home):
     """R-50 finding 5: a preview takes no flock, so it cannot make a real run fail.
 
@@ -833,12 +870,16 @@ def test_parity_sweep_dry_run_creates_no_lock_and_mutates_nothing(home, tmp_path
     info = next(m for m in git_service.managed_worktrees() if m["task_id"] == "env-parity")
     lock = git_service.parity_lock_path("dry-run")
     assert not lock.exists() and not lock.parent.exists()
-    before = _fingerprint(home, temp_root)
+    # Git's own linked-worktree metadata is part of "byte-identical": a dry run that shells out to
+    # `git status` can refresh the index under <repo>/.git/worktrees, which is outside `home` and
+    # the tempdir (T-20 review round 6, finding 5).
+    git_meta = repo / ".git" / "worktrees"
+    before = _fingerprint(home, temp_root, git_meta)
 
     actions = git_service.sweep_parity_residue("dry-run", dry_run=True)
 
     assert any("would remove parity residue" in a for a in _details(actions)), actions
-    assert _fingerprint(home, temp_root) == before
+    assert _fingerprint(home, temp_root, git_meta) == before
     assert not lock.exists() and not lock.parent.exists()
     assert snapshot.path.exists() and (snapshot.path / ".env").exists()
     assert str(snapshot.path) in _registered_worktrees(repo)
@@ -937,7 +978,7 @@ def test_git_service_keeps_the_posix_lock_import_lazy():
         if isinstance(node, ast.Import) and node not in tree.body
         for alias in node.names
     ]
-    assert local.count("fcntl") == 2, local  # parity_lock + _parity_lock_at
+    assert local.count("fcntl") == 3, local  # parity_lock + _parity_lock_at + _acquire_lock_fd
 
 
 def test_a_killed_shell_parity_run_leaves_no_registered_worktree(home, tmp_path, monkeypatch):
