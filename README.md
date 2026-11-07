@@ -257,9 +257,9 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 - **Desktop notifications: one channel, and the link is usually text.** Only the freedesktop D-Bus
   channel is tested end-to-end (CachyOS/Hyprland with quickshell: `notify-send`, then `gdbus`);
   macOS/Windows backends do not exist. `GetCapabilities` is probed first: a `body-markup` daemon
-  parses every body, so its text is HTML-escaped on both transports; an `<a href>` is added only
-  through `gdbus` with `body-hyperlinks`. Mako/dunst defaults, `notify-send`, and unprobed daemons
-  get a copyable `Open: <url>` line. No `ActionInvoked` listener exists, so no action is advertised.
+  parses every body, so its text is HTML-escaped on both transports; an `<a href>` needs `gdbus`
+  plus `body-hyperlinks`. Mako/dunst, `notify-send`, and unprobed daemons get an `Open: <url>`
+  line. No `ActionInvoked` listener exists, so no action is advertised.
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify

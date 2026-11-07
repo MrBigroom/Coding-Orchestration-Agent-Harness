@@ -266,7 +266,6 @@ def probe_capabilities() -> DaemonCapabilities:
 
 
 def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
-    """Run one notification client. Returns (channel, error, stdout)."""
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, never a shell
             argv, env=_notification_env(), capture_output=True, text=True,
@@ -404,7 +403,6 @@ def flush_pending_if_any(session: Session) -> int:
 def _terminate_pending_locked(
     session: Session, reason: str, error: str, owner: str | None = PROCESS_TOKEN
 ) -> int:
-    """Terminate only this process's pending rows; another owner's row keeps `pending`."""
     rows = list(session.exec(
         select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))))
     if owner is not None:
@@ -421,15 +419,11 @@ def _terminate_pending_locked(
     return len(rows)
 
 
-def _database_ready() -> bool:
-    url = get_settings().db_url or ""
-    return not (url.startswith("sqlite:///")
-                and not Path(url.removeprefix("sqlite:///")).exists())
-
-
 def flush_pending_at_exit(session: Session | None = None) -> int:
     """CLI exit: deliver, then terminate what this process could not deliver. Never raises."""
-    if session is None and not _database_ready():
+    url = get_settings().db_url or ""
+    if session is None and url.startswith("sqlite:///") and not Path(
+            url.removeprefix("sqlite:///")).exists():
         return 0
     delivered = flush_pending(session)
     try:

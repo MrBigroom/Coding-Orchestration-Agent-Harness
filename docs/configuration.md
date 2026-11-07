@@ -103,11 +103,11 @@ added only on `gdbus` with `body-hyperlinks`. `details_json.body_shape` records 
 | probe failed (no `gdbus`, failed/timed-out call) or no `body-markup` (minimal daemons) | raw plain text (`plain`) | text |
 
 **Pending rows are never stranded.** A `pending` row is resolved by the 2s coalescing timer, API
-startup, the read path (`GET /api/notifications` flushes first), or CLI exit. `cli.main()` (console
-script and `python -m orchestrator`) flushes, then writes `failed` / `process_exit_undelivered` only
-for rows **that process** created (`details_json.owner`); a live server's rows stay `pending`. The
-exit flush is inert without a `notifications` table. Coalescing is global: one message can carry
-several runs/triggers while `dedupe_key` still allows at most one row per run per trigger.
+startup, the read path (`GET /api/notifications` flushes first), or CLI exit. `cli.main()` flushes,
+then writes `failed` / `process_exit_undelivered` only for rows **that process** created
+(`details_json.owner`); a live server's rows stay `pending`. The exit flush is inert without a
+database file. Coalescing is global: one message can carry several runs/triggers while `dedupe_key`
+still allows at most one row per run per trigger.
 
 ## Provider variables
 
