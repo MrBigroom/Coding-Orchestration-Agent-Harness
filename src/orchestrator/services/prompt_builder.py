@@ -343,12 +343,21 @@ def _allocate_diff_group(
         remaining = budget
         if share < minimum:
             # The budget cannot fund every file: give the minimum to as many as fit, in priority
-            # order, rather than confirming every file at a useless sub-minimum share.
+            # order, rather than confirming every file at a useless sub-minimum share. A huge
+            # first file takes only its minimum here, not the whole remainder.
             for idx, size in enumerate(sizes):
                 if remaining < minimum:
                     break
-                take = min(size, remaining)
+                take = min(size, minimum)
                 allocations[idx] = take
+                remaining -= take
+            for idx, size in enumerate(sizes):
+                if remaining <= 0:
+                    break
+                if not allocations[idx]:
+                    continue
+                take = min(size - allocations[idx], remaining)
+                allocations[idx] += take
                 remaining -= take
         else:
             # Pass 1: a fair share for every file, so one huge log cannot starve later ones.

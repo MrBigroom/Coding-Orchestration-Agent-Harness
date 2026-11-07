@@ -73,6 +73,19 @@ def test_a_large_first_evidence_log_does_not_starve_later_evidence():
     ) != []
 
 
+def test_an_unfundable_group_does_not_give_the_whole_budget_to_the_first_file():
+    """The sub-minimum branch must still not be greedy when every file cannot be funded."""
+    paths = [f"verify-evidence/T-16/u{i}.txt" for i in range(6)]
+    patch = _chunk(paths[0], 2000, "huge") + "".join(
+        _chunk(path, 50, "evidence") for path in paths[1:]
+    )
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 200, recorder)
+    # A fair minimum for the next file, not the entire group for file 0 (which the old greedy
+    # branch would have taken, leaving every later file omitted).
+    assert f"+++ b/{paths[1]}" in rendered, rendered
+
+
 def test_undelivered_compensation_uses_the_final_text_not_only_the_records():
     """Finding 5: a later context-budget cut makes an unchanged recorder row insufficient."""
     path = "verify-evidence/T-16/index.txt"
