@@ -74,6 +74,34 @@ def test_secrets_redacted_and_sensitive_diffs_stripped(session):
     assert "sk-ant-api03" not in text and "x = 1" in text
 
 
+def test_rendered_diff_is_the_post_context_budget_text_actually_sent(session, monkeypatch):
+    """Review round 1 finding 5: the audit target must survive `enforce_budget`.
+
+    `render_diff_for_prompt` runs before the aggregate context budget. If that budget then cuts
+    dynamic_state, auditing the earlier render would check text the reviewer never saw. The
+    property pinned here is that `BuiltPrompt.rendered_diff` is re-extracted from the final
+    section, so it equals the diff block in `dynamic_text()` rather than the pre-budget render.
+    """
+    from orchestrator.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_prompt_context_tokens", 3000)
+    monkeypatch.setattr(get_settings(), "max_diff_tokens", 10_000)
+    body = "\n".join(f"+line {i} of a large file with UNIQUE_HEAD at the top" for i in range(4000))
+    diff = (
+        "diff --git a/src/big.py b/src/big.py\n--- a/src/big.py\n+++ b/src/big.py\n"
+        f"@@ -1,0 +1,4000 @@\nUNIQUE_HEAD\n{body}\n"
+    )
+    task = task_service.create(session, TaskCreate(title="P"))
+    built = prompt_builder.build_prompt(session, "architect", task, None, DynamicState(diff=diff))
+    dynamic = next(s.content for s in built.sections if s.name == "dynamic_state")
+    assert "structured summary" in dynamic  # enforce_budget really ran
+    assert built.rendered_diff == prompt_builder.extract_rendered_diff(built)
+    assert built.rendered_diff in dynamic
+    pre_budget = prompt_builder.render_diff_for_prompt(diff, get_settings().max_diff_tokens)
+    assert built.rendered_diff != pre_budget
+    assert len(built.rendered_diff) < len(pre_budget)
+
+
 def test_budget_truncates_dynamic_only(session, monkeypatch):
     from orchestrator.core.config import get_settings
 

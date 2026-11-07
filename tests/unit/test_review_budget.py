@@ -8,7 +8,7 @@ explicit harness finding rather than an empty diff a reviewer reads as "missing"
 
 from __future__ import annotations
 
-import pytest
+import subprocess
 
 from orchestrator.core.schemas import TaskCreate
 from orchestrator.services import prompt_builder, review_service, task_service
@@ -50,6 +50,39 @@ def test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped():
     ) == []
 
 
+def test_a_large_first_evidence_log_does_not_starve_later_evidence():
+    """Review round 1 finding 1: the allocation is fair, not greedy.
+
+    The old rule let the first evidence file take `remaining - 60 * left`, which left later files
+    below the minimum and omitted them even though a fair share each would have carried them.
+    """
+    paths = [f"verify-evidence/T-16/e{i}.txt" for i in range(6)]
+    patch = _chunk(paths[0], 2000, "huge") + "".join(
+        _chunk(path, 50, "evidence") for path in paths[1:]
+    )
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 2000, recorder)
+    omitted = rendered.split("omitted (", 1)[1].split("]", 1)[0]
+    for path in paths[1:]:
+        assert path not in omitted, rendered
+        assert f"+++ b/{path}" in rendered, (path, rendered[:1000])
+    # The huge first log was not allowed to consume the whole group either.
+    assert "verify-evidence/T-16/e0.txt" in rendered.split("partially included (", 1)[1]
+    assert prompt_builder.undelivered_compensation(
+        [r.as_dict() for r in recorder.records]
+    ) != []
+
+
+def test_undelivered_compensation_uses_the_final_text_not_only_the_records():
+    """Finding 5: a later context-budget cut makes an unchanged recorder row insufficient."""
+    path = "verify-evidence/T-16/index.txt"
+    patch = _chunk(path, 10, "evidence")
+    assert prompt_builder.undelivered_compensation([], rendered=patch, patch=patch) == []
+    assert prompt_builder.undelivered_compensation(
+        [], rendered="the diff block was removed by the context budget", patch=patch
+    ) == [path]
+
+
 def test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding():
     """DoD 7/8(a): either the evidence reaches the reviewer, or this finding does."""
     evidence_paths = [f"verify-evidence/T-16/big{i}.txt" for i in range(8)]
@@ -71,7 +104,9 @@ def test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding()
     assert finding.file_or_area == ", ".join(undelivered)
     assert finding.issue.startswith("harness-detected evidence delivery:")
     assert "not missing Worker evidence" in finding.issue
-    assert finding.violates == "T-16 DoD 7 (compensation artifacts must be funded or reported)"
+    # The finding is a harness budget gate, so its text must not be pinned to this task's DoD.
+    assert "T-16" not in finding.violates
+    assert "compensation artifacts must be funded or reported" in finding.violates
     assert review_service.evidence_delivery_finding([]) is None
 
 
@@ -97,17 +132,18 @@ def test_parity_scenario_is_skipped_by_default_and_enabled_on_demand(monkeypatch
     conftest.pytest_collection_modifyitems(None, [included])
     assert included.markers == []
 
-    # The environment module that owns the expensive scenarios really is marked.
+    # Only the expensive scenarios are marked; the cheap hermeticity checks remain gated.
     from tests.integration import test_env_hermeticity
 
-    assert any(getattr(m, "name", "") == "parity" for m in test_env_hermeticity.pytestmark)
+    expensive = test_env_hermeticity.test_affected_subset_is_identical_with_and_without_a_seeded_dotenv
+    cheap = test_env_hermeticity.test_verification_json_names_the_gated_environment
+    assert any(getattr(m, "name", "") == "parity" for m in expensive.pytestmark)
+    assert not any(getattr(m, "name", "") == "parity" for m in getattr(cheap, "pytestmark", []))
 
 
-def test_a_gate_review_setup_does_not_touch_the_operator_worktree_list(session):
+def test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry(session):
     """DoD 8(c): registration changes belong to temp repos, never the operator's checkout."""
-    before = conftest.operator_repo_worktrees()
-    if not before:
-        pytest.skip("not running inside a git checkout")
+    before = conftest.operator_repo_worktree_fingerprint()
     task = task_service.create(session, TaskCreate(title="P", definition_of_done=["A"]))
     built = prompt_builder.build_prompt(
         session,
@@ -117,5 +153,28 @@ def test_a_gate_review_setup_does_not_touch_the_operator_worktree_list(session):
         DynamicState(diff=_chunk("src/app.py", 5)),
     )
     assert built.rendered_diff
-    after = conftest.operator_repo_worktrees()
-    assert after == before
+    after = conftest.operator_repo_worktree_fingerprint()
+    assert not conftest.worktree_fingerprint_changed(before, after)
+
+
+def test_the_worktree_guard_detects_a_transient_add_and_prune(tmp_path):
+    """A start/end listing comparison is blind to add+prune; the fingerprint must not be."""
+    repo = conftest.make_repo(tmp_path / "transient-repo")
+    before = conftest.worktree_fingerprint(repo)
+    tree = tmp_path / "transient-tree"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(tree), "HEAD"],
+        check=True, capture_output=True, text=True, timeout=120,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
+        check=True, capture_output=True, text=True, timeout=120,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "prune"],
+        check=True, capture_output=True, text=True, timeout=120,
+    )
+    after = conftest.worktree_fingerprint(repo)
+    # The old guard compared only these listings, which are identical after the prune.
+    assert before["listing"] == after["listing"]
+    assert conftest.worktree_fingerprint_changed(before, after) is True

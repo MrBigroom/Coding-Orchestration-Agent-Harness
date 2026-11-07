@@ -450,11 +450,15 @@ Three things now keep that difference visible and harmless:
    cwd-relative `.env` is never ambient for the rest of the session; an explicit path passed to
    `load_env_file()` still works. A test that spawns pytest is opt-in
    (`ORCH_ENV_SPAWN_TESTS=1`), always passes explicit node ids, and never runs a nested full
-   suite, so a gated run pays nothing for it. Since T-16 the wider environment/parity scenario
-   is opt-in too: `tests/integration/test_env_hermeticity.py` is marked `parity` and is skipped
-   unless `ORCH_ENV_PARITY_TESTS=1` (the nested-suite cases still need `ORCH_ENV_SPAWN_TESTS=1`).
-   The gate also asserts that no test adds or removes a worktree in the operator repository
-   while it runs, so a test designed to protect gate trust cannot perturb the gate.
+   suite, so a gated run pays nothing for it. Since T-16 only the **expensive** environment
+   scenarios are opt-in: the `@pytest.mark.parity` items in
+   `tests/integration/test_env_hermeticity.py` are skipped unless `ORCH_ENV_PARITY_TESTS=1`
+   (the nested-suite cases still need `ORCH_ENV_SPAWN_TESTS=1`), while the cheap hermeticity
+   checks stay in the gated suite. The gate also fingerprints the operator repository's
+   worktree registry (the listing plus the registry and git-dir mtimes) before and after the
+   session, so a **transient** `git worktree add` + `prune` is caught, not only a registration
+   that survives; an unreadable registry fails the guard instead of silently skipping it. A
+   test designed to protect gate trust therefore cannot perturb the gate.
 2. **The gate record says which world it was.** `verification.json`'s existing `tests` check
    evidence ends with `environment: cwd=…; local .env absent (tracked-files-only worktree);
    node_modules absent; .venv absent` (or `present` for whichever exists). The
@@ -552,9 +556,9 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   tenth of five, which is what a flat per-file split produced (round-3 reviewer finding 5). A file
   that cannot fit whole gets as many complete hunks as the remaining budget allows, then an
   inline `... [review diff: N of M hunks shown for <path>; ... omitted ... (@@ headers named) ...]`
-  marker, then the rest are named as omitted. One file may consume at most half the budget so a
-  single generated artifact cannot starve the rest, and the whole thing stays inside
-  `max_diff_tokens`: the budget is never widened.
+  marker, then the rest are named as omitted. In the source group one file may consume at most
+  half the group's budget so a single generated artifact cannot starve the rest, and the whole
+  thing stays inside `max_diff_tokens`: the budget is never widened.
 - **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
   directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
   payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,
@@ -625,8 +629,11 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   `verify-evidence/**`, `contract-change-request-*.md`, committed handoff copies — get a
   separate reserved slice of `max_diff_tokens` (`COMPENSATION_BUDGET_FRACTION`, currently one
   third of the post-header budget). Source files may not spend it; leftovers from source are
-  added to it; evidence files get a fair share so one huge log cannot tail-drop the rest. If the
-  bundle still cannot fit, the manifest prints a **Compensation-artifact shortfall**, the review
+  added to it. Evidence is allocated **fairly, not greedily**: every file first receives at most
+  `budget // file_count`, and only after every file has had that share is any leftover handed
+  back to files that need more, so one huge log cannot tail-drop a later `zz_review_index.txt`.
+  If the bundle still cannot fit that fair share, the manifest prints a
+  **Compensation-artifact shortfall**, the review
   adds a harness-detected finding (`review_evidence_undelivered`), and the prompt tells the
   reviewer that the missing evidence is a delivery failure rather than a Worker evidence gap.
   `max_diff_tokens` is not widened by any of this.
@@ -634,7 +641,10 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   **2.40** or newer. On an older Git the audit falls back to plain `git check-attr -a`: it still
   reports every `-diff` / `export-ignore` attribute, but pre-existing status cannot be attributed
   to the merge-base, so the finding fails closed and says so instead of crashing or silently
-  skipping the check. A hiding attribute this task introduced is always a harness finding (and
+  skipping the check. The fallback reason names its actual cause: an old Git version, an
+  unestablished version, a probe failure, or **no merge-base at all** (which is not a Git
+  version limitation and is never reported as `git < 2.40`). A hiding attribute this task
+  introduced is always a harness finding (and
   an additive `review_diff_incomplete` build-log event); one that is proven to predate the
   merge-base is informational. A Worker cannot opt out of review by configuring
   `.gitattributes`.

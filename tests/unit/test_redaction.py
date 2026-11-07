@@ -260,6 +260,33 @@ def test_synthetic_placeholder_assignments_in_test_literals_survive():
     assert REDACTED in redact("ANTHROPIC_API_KEY=syntheticrealvalue123")
 
 
+def test_a_real_secret_with_a_placeholder_prefix_is_still_redacted():
+    """Review round 1 finding 4: the exemption is placeholder VOCABULARY, not arbitrary content.
+
+    The earlier regex accepted `placeholder` + a delimiter + anything, so a generic assignment
+    such as `PASSWORD=placeholder-but-actually-a-secret-123` was left intact. These all keep a
+    placeholder word at the start and must still lose the value.
+    """
+    damaged = [
+        "PASSWORD=placeholder-but-actually-a-secret-123",
+        "ANTHROPIC_API_KEY=synthetic-real-key-12345",
+        "SECRET=fake-credential-abcdef123456",
+        "TOKEN=dummy-token-ABCDEFGHIJKLMNOP",
+        "API_KEY=not-a-secret-but-really-XYZ9876",
+    ]
+    for line in damaged:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    # The narrow vocabulary still accepts the exact synthetic fixtures the gate needs.
+    for line in (
+        "PASSWORD=placeholder-0001",
+        "ANTHROPIC_API_KEY=synthetic-not-a-secret",
+        "OPERATOR_API_KEY=not-a-secret-0002",
+    ):
+        assert redact(line) == line, line
+
+
 def test_redaction_report_names_the_pattern_class_and_count_without_the_secret():
     from orchestrator.utils.redaction import RedactionHit, redact_with_report
 

@@ -348,7 +348,8 @@ def test_attribute_check_falls_back_when_check_attr_source_is_unavailable(tmp_pa
     (repo / "verify-evidence" / "T-16" / "checks.txt").write_text("2 passed\n")
     _commit(repo, "hide evidence")
     patch = run_git(["diff", "main...HEAD"], repo).stdout
-    monkeypatch.setattr(review_audit, "supports_check_attr_source", lambda cwd: False)
+    # Force the honest old-Git reason rather than a probe shim that cannot say WHY it failed.
+    monkeypatch.setattr(review_audit, "git_version", lambda cwd: (2, 39, 0))
     issues = review_audit.diff_completeness(repo, "main", patch)
     attributes = [i for i in issues if i.kind == "attribute"]
     assert attributes, issues
@@ -356,9 +357,39 @@ def test_attribute_check_falls_back_when_check_attr_source_is_unavailable(tmp_pa
     assert attributes[0].attribute == "-diff"
     assert attributes[0].blocks is True
     assert "pre-existing status could not be attributed" in attributes[0].detail
-    assert "git < 2.40" in attributes[0].detail
+    assert "git 2.39.0 is older than the 2.40 floor" in attributes[0].detail
     # It still names the path to the reviewer.
     assert "verify-evidence/T-16/checks.txt" in review_audit.render_diff_completeness(issues)
+
+
+def test_an_empty_merge_base_does_not_claim_the_git_version_is_old(tmp_path, monkeypatch):
+    """Review round 1 finding 6: the fallback reason must be true for the actual cause.
+
+    Git >= 2.40 has `check-attr --source`; when no merge-base exists the audit still cannot use
+    it, but saying `git < 2.40` would be a false statement in the finding a reviewer reads.
+    """
+    repo = make_repo(tmp_path / "repo", {"README.md": "x\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / ".gitattributes").write_text("verify-evidence/T-16/* -diff\n")
+    (repo / "verify-evidence" / "T-16").mkdir(parents=True)
+    (repo / "verify-evidence" / "T-16" / "checks.txt").write_text("2 passed\n")
+    _commit(repo, "hide evidence")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    real = review_audit.run_git
+
+    def no_merge_base(argv, cwd, *args, **kwargs):
+        if list(argv[:2]) == ["merge-base", "main"]:
+            return type("R", (), {"code": 1, "stdout": "", "stderr": "no merge base"})()
+        return real(argv, cwd, *args, **kwargs)
+
+    monkeypatch.setattr(review_audit, "run_git", no_merge_base)
+    issues = review_audit.diff_completeness(repo, "main", patch)
+    attributes = [i for i in issues if i.kind == "attribute"]
+    assert attributes, issues
+    detail = attributes[0].detail
+    assert "no merge-base could be resolved" in detail
+    assert "git < 2.40" not in detail
+    assert "Git version limitation" in detail
 
 
 def test_review_setup_git_calls_do_not_scale_with_the_number_of_changed_files(

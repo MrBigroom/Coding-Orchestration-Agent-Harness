@@ -1294,6 +1294,47 @@ def supports_check_attr_source(cwd: Path) -> bool:
     return version is not None and version >= MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE
 
 
+def attribute_source_status(cwd: Path, merge_base: str) -> tuple[bool, str]:
+    """Whether attributes can be attributed to the merge-base, and an honest reason.
+
+    The reason matters (T-16 review round 1, finding 6): an empty merge-base is not evidence of
+    an old Git. Reporting ``git < 2.40`` for it is a false statement in the finding the reviewer
+    reads, so each degradation names its own cause. The fallback is always plain
+    ``check-attr -a``, and the caller still fails closed because pre-existing status is unknown.
+    """
+    floor = (
+        f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[0]}."
+        f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[1]}"
+    )
+    if not merge_base:
+        return (
+            False,
+            "no merge-base could be resolved, so `git check-attr --source` was not attempted "
+            "and pre-existing status is unknown (this is not a Git version limitation)",
+        )
+    version = git_version(cwd)
+    if version is None:
+        return (
+            False,
+            "the git version could not be established, so `git check-attr --source` was not "
+            "attempted and pre-existing status is unknown",
+        )
+    rendered_version = f"{version[0]}.{version[1]}.{version[2]}"
+    if version < MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE:
+        return (
+            False,
+            f"git {rendered_version} is older than the {floor} floor for check-attr --source; "
+            "plain git check-attr -a is used and pre-existing status is unknown",
+        )
+    if not supports_check_attr_source(cwd):
+        return (
+            False,
+            "git reports a supported version but `check-attr --source` probe failed; plain "
+            "git check-attr -a is used and pre-existing status is unknown",
+        )
+    return True, f"git check-attr --source {merge_base}"
+
+
 def _attributes(
     cwd: Path, paths: list[str], source: str | None = None
 ) -> dict[str, dict[str, str]]:
@@ -1350,17 +1391,8 @@ def diff_completeness(
     paths = [p for _a, _d, p in rows]
     current_attrs = _attributes(cwd, paths)
     merge_base = run_git(["merge-base", base_branch, "HEAD"], cwd, check=False).stdout.strip()
-    source_supported = bool(merge_base) and supports_check_attr_source(cwd)
+    source_supported, attribute_source = attribute_source_status(cwd, merge_base)
     base_attrs = _attributes(cwd, paths, source=merge_base) if source_supported else {}
-    attribute_source = (
-        f"git check-attr --source {merge_base}"
-        if source_supported
-        else (
-            "plain git check-attr -a (git < "
-            f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[0]}.{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[1]}"
-            " has no --source; pre-existing status unknown)"
-        )
-    )
 
     issues: list[DiffIssue] = []
     for adds, deletes, path in rows:

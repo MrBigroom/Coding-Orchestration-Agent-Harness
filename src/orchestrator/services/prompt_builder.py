@@ -315,8 +315,12 @@ def _allocate_diff_group(
     """Spend one group's budget; returns the tokens actually used.
 
     The source group keeps the historical cap (one file may use at most half its group budget).
-    The evidence group uses a fair per-file share plus any leftover that can be given without
-    starving the files still to come, so one huge log cannot tail-drop the rest of the evidence.
+    The evidence group is allocated **fairly**, not greedily: every file first receives at most
+    `budget // len(group)`, and only after every file has had that share is any leftover handed
+    back to files that still need more. A large first evidence log therefore cannot consume the
+    budget that a later `zz_review_index.txt` needs; the earlier greedy rule
+    (`max(per_file, remaining - minimum * left)`) let it do exactly that (T-16 review round 1,
+    finding 1).
     """
     if not group:
         return 0
@@ -331,26 +335,54 @@ def _allocate_diff_group(
                 "omitted because the diff budget was exhausted by higher-priority files",
             )
         return 0
-    per_file = max(120, budget // max(1, len(group)))
-    cap = per_file if evidence else max(per_file, budget // 2)
-    remaining = budget
-    used = 0
+    sizes = [estimate_tokens(chunk) for _path, chunk in group]
     minimum = 60  # ~ a file header plus one short hunk
-    for idx, (path, chunk) in enumerate(group):
-        size = estimate_tokens(chunk)
-        if evidence:
-            left = len(group) - idx - 1
-            allowance = max(per_file, remaining - minimum * left)
-            file_budget = min(size, allowance, max(remaining, 0))
+    share = max(0, budget // max(1, len(group)))
+    if evidence:
+        allocations = [0] * len(group)
+        remaining = budget
+        if share < minimum:
+            # The budget cannot fund every file: give the minimum to as many as fit, in priority
+            # order, rather than confirming every file at a useless sub-minimum share.
+            for idx, size in enumerate(sizes):
+                if remaining < minimum:
+                    break
+                take = min(size, remaining)
+                allocations[idx] = take
+                remaining -= take
         else:
-            file_budget = min(size, cap, max(remaining, 0))
+            # Pass 1: a fair share for every file, so one huge log cannot starve later ones.
+            for idx, size in enumerate(sizes):
+                take = min(size, share, remaining)
+                allocations[idx] = take
+                remaining -= take
+            # Pass 2: only now may a file take leftover the others did not need.
+            for idx, size in enumerate(sizes):
+                if remaining <= 0:
+                    break
+                take = min(size - allocations[idx], remaining)
+                allocations[idx] += take
+                remaining -= take
+        per_file = share
+        cap = 0
+    else:
+        per_file = max(120, budget // max(1, len(group)))
+        cap = max(per_file, budget // 2)
+        allocations = []
+        remaining = budget
+        for size in sizes:
+            take = min(size, cap, max(remaining, 0))
+            allocations.append(take)
+            remaining -= take
+    used = 0
+    for (path, chunk), size, file_budget in zip(group, sizes, allocations, strict=True):
         budget_text = (
-            f"max_diff_tokens={max_tokens} tokens; evidence per-file share={per_file} "
+            f"max_diff_tokens={max_tokens} tokens; evidence fair share={per_file} "
             f"tokens; compensation reserve in force"
             if evidence
             else f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}"
         )
-        if file_budget < minimum:
+        if file_budget < minimum and size > file_budget:
             omitted.append(path)
             _record_omitted(
                 recorder,
@@ -455,7 +487,7 @@ def render_diff_budget(
     source_per_file = max(120, source_budget // max(1, len(source))) if source else 0
     source_cap = max(source_per_file, source_budget // 2) if source else 0
     evidence_per_file = (
-        max(120, evidence_budget // max(1, len(compensation))) if compensation else 0
+        evidence_budget // max(1, len(compensation)) if compensation else 0
     )
     if compensation:
         budget_line = (
@@ -481,8 +513,26 @@ def render_diff_budget(
     return preamble + "\n" + "".join(rendered_parts)
 
 
-def undelivered_compensation(records: list[dict[str, Any]]) -> list[str]:
-    """Compensation files the rendered diff did not carry in full (T-16 DoD 7)."""
+def undelivered_compensation(
+    records: list[dict[str, Any]],
+    rendered: str | None = None,
+    patch: str | None = None,
+) -> list[str]:
+    """Compensation files the rendered diff did not carry in full (T-16 DoD 7).
+
+    When `rendered` and `patch` are supplied, the answer is taken from the **actual text sent**
+    (which includes any later `enforce_budget` shrink), not only from the per-file rows recorded
+    before that step. The record-only form is kept for callers that have just rendered the diff
+    and for the unit tests that build a recorder by hand.
+    """
+    if rendered is not None and patch is not None:
+        originals = dict(split_diff_files(patch))
+        shown = dict(split_diff_files(rendered))
+        return sorted(
+            path
+            for path, chunk in originals.items()
+            if is_compensation_artifact(path) and shown.get(path) != chunk
+        )
     out: list[str] = []
     for record in records:
         if str(record.get("kind") or "budget") != "budget":
@@ -811,6 +861,29 @@ def _dynamic(
     return "\n\n".join(parts)
 
 
+_DIFF_BLOCK_OPEN = "### Latest diff\n```diff\n"
+_DIFF_BLOCK_CLOSE = "\n```"
+
+
+def extract_rendered_diff(prompt: BuiltPrompt) -> str:
+    """The diff text left in the final `dynamic_state` section after every budget was applied.
+
+    `review_service` audits exactly this string (T-16 DoD 3). An empty result means the aggregate
+    context budget removed the diff block entirely, so the audit correctly reports that the
+    reviewer received no hunks; it never silently falls back to the pre-budget render.
+    """
+    for section in prompt.sections:
+        if section.name != "dynamic_state":
+            continue
+        start = section.content.find(_DIFF_BLOCK_OPEN)
+        if start == -1:
+            return ""
+        start += len(_DIFF_BLOCK_OPEN)
+        end = section.content.find(_DIFF_BLOCK_CLOSE, start)
+        return section.content[start:end] if end != -1 else section.content[start:]
+    return ""
+
+
 def build_prompt(
     session: Session,
     role: str,
@@ -862,10 +935,14 @@ def build_prompt(
         memory_warnings=selection.warnings,
     )
     prompt = enforce_budget(prompt, recorder)
+    # T-16 DoD 3: report the diff text the reviewer is ACTUALLY sent. `enforce_budget` can trim
+    # dynamic_state after `render_diff_for_prompt` ran, so re-extracting from the final section is
+    # what makes the completeness audit and the sent prompt the same object (review round 1,
+    # finding 5).
     prompt.rendered_diff = (
-        state.rendered_diff
-        if state.rendered_diff is not None
-        else (rendered_diff_out[0] if rendered_diff_out else "")
+        extract_rendered_diff(prompt)
+        if state.diff
+        else (state.rendered_diff or "")
     )
     prompt.truncations = [r.as_dict() for r in recorder.records]
     return prompt

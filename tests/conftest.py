@@ -177,8 +177,7 @@ def pytest_collection_modifyitems(config, items) -> None:
             item.add_marker(skip)
 
 
-def worktree_listing(repo: Path) -> list[str]:
-    """`git worktree list --porcelain` entries for the repository containing `repo`."""
+def _git_common_dir(repo: Path) -> Path | None:
     res = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
         capture_output=True,
@@ -186,10 +185,18 @@ def worktree_listing(repo: Path) -> list[str]:
         timeout=60,
     )
     if res.returncode != 0:
-        return []
+        return None
     common = Path(res.stdout.strip())
     if not common.is_absolute():
         common = (repo / common).resolve()
+    return common
+
+
+def worktree_listing(repo: Path) -> list[str]:
+    """`git worktree list --porcelain` entries for the repository containing `repo`."""
+    common = _git_common_dir(repo)
+    if common is None:
+        return []
     listing = subprocess.run(
         ["git", "--git-dir", str(common), "worktree", "list", "--porcelain"],
         capture_output=True,
@@ -203,9 +210,63 @@ def worktree_listing(repo: Path) -> list[str]:
     )
 
 
+def worktree_fingerprint(repo: Path) -> dict[str, object]:
+    """A robust snapshot of a repository's worktree registry.
+
+    A start/end comparison of `git worktree list` cannot see a *transient* add+prune: both
+    listings are identical even though the shared repository was mutated while the gate ran
+    (T-16 review round 1, finding 2). The registry directory's own mtime changes when an entry is
+    created or removed, so include it alongside the names. Errors are raised, not returned as an
+    empty list, so the session guard cannot silently skip itself.
+    """
+    common = _git_common_dir(repo)
+    if common is None:
+        raise RuntimeError(f"{repo} is not inside a git repository")
+    listing = subprocess.run(
+        ["git", "--git-dir", str(common), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if listing.returncode != 0:
+        raise RuntimeError(
+            "git worktree list failed: "
+            + (listing.stderr.strip() or listing.stdout.strip() or f"exit {listing.returncode}")
+        )
+    registry = common / "worktrees"
+    entries: list[str] = []
+    registry_mtime_ns = 0
+    if registry.is_dir():
+        entries = sorted(p.name for p in registry.iterdir())
+        registry_mtime_ns = registry.stat().st_mtime_ns
+    return {
+        "listing": sorted(
+            line.strip()
+            for line in listing.stdout.splitlines()
+            if line.startswith("worktree ")
+        ),
+        "registry": str(registry),
+        "entries": entries,
+        "registry_mtime_ns": registry_mtime_ns,
+        # `git worktree add` followed by `remove`/`prune` can leave the registry directory
+        # absent again; the parent git dir's mtime still records that the registry was touched.
+        "git_dir_mtime_ns": common.stat().st_mtime_ns,
+    }
+
+
+def worktree_fingerprint_changed(
+    before: dict[str, object], after: dict[str, object]
+) -> bool:
+    return before != after
+
+
 def operator_repo_worktrees() -> list[str]:
     repo = Path(__file__).resolve().parents[1]
     return worktree_listing(repo)
+
+
+def operator_repo_worktree_fingerprint() -> dict[str, object]:
+    return worktree_fingerprint(Path(__file__).resolve().parents[1])
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -214,14 +275,23 @@ def _operator_repo_worktrees_untouched():
 
     Measured motivation (T-16 DoD 8, reviews.26 finding 7): a test that registered a worktree in
     the shared repository while the gate was running perturbed the very state the gate was
-    inspecting. This guard is O(1) and fails at the end of the session if any test changed the
-    operator repo's worktree list.
+    inspecting. The fingerprint catches both a persistent and a transient add+prune, and a
+    registry it cannot read is a loud failure rather than a silent skip (review round 1, finding
+    2).
     """
-    before = operator_repo_worktrees()
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed: the operator worktree guard cannot run")
+    try:
+        before = operator_repo_worktree_fingerprint()
+    except RuntimeError as exc:
+        pytest.fail(f"cannot fingerprint the operator repository worktree registry: {exc}")
     yield
-    after = operator_repo_worktrees()
-    if before and after:
-        assert before == after, (
-            "the gated suite added or removed a worktree in the operator repository: "
-            f"before={before} after={after}"
-        )
+    try:
+        after = operator_repo_worktree_fingerprint()
+    except RuntimeError as exc:
+        pytest.fail(f"cannot re-read the operator repository worktree registry: {exc}")
+    assert not worktree_fingerprint_changed(before, after), (
+        "the gated suite added or removed a worktree in the operator repository "
+        "(including a transient add+prune): "
+        f"before={before} after={after}"
+    )

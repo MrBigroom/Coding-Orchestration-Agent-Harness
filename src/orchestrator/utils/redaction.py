@@ -92,20 +92,29 @@ _TOKEN_COUNT_KEY = re.compile(r"(?i)tokens$")
 # the prose, not to the number, so strip it before deciding whether the value is a count.
 _TRAILING_PROSE = ".;:!?)]}"
 _TOKEN_COUNT_VALUE = re.compile(r"[\d][\d,_]*$")
-# Self-describing placeholders are not credentials. This is deliberately narrow: the value must
-# BE one of these words/prefixes, followed by a non-alphanumeric delimiter or end of value, so a
-# real random secret that merely starts with the same letters is still redacted. This fixes the
-# R-52 fixture in which a test asserted `ANTHROPIC_API_KEY=synthetic-not-a-secret` and the
-# reviewer was shown `ANTHROPIC_API_KEY=[REDACTED]`, i.e. the redactor destroyed the evidence
-# that no secret existed. Every recognised credential *shape* below still redacts first, so
-# `KEY=synthetic-sk-ant-...` loses the key regardless of this exemption.
+# Self-describing placeholders are not credentials. This is deliberately narrow: the whole value
+# must be built from placeholder vocabulary, digits and separators, so `synthetic-not-a-secret`
+# survives while `synthetic-<random-looking-secret>` still redacts. An earlier version accepted
+# ANY text after a placeholder word plus a delimiter, which exempted values such as
+# `PASSWORD=placeholder-but-actually-a-secret-123` from redaction (T-16 review round 1, finding 4).
+# This fixes the R-52 fixture in which a test asserted
+# `ANTHROPIC_API_KEY=synthetic-not-a-secret` and the reviewer was shown
+# `ANTHROPIC_API_KEY=[REDACTED]`, i.e. the redactor destroyed the evidence that no secret existed.
+# Every recognised credential *shape* above still redacts first, so `KEY=synthetic-sk-ant-...`
+# loses the key regardless of this exemption.
+_PLACEHOLDER_WORD = r"(?:synthetic|placeholder|dummy|fake|example|sample|redacted|changeme)"
+_PLACEHOLDER_DESCRIPTOR = (
+    r"(?:not[-_.]?)?(?:a[-_.]?)?(?:secret|value|token|key|password|passwd|credential)"
+)
+_PLACEHOLDER_NUMBER = r"(?:v?[0-9]{1,6})"
 _PLACEHOLDER_VALUE = re.compile(
-    r"""(?ix)^(?:
-        \[REDACTED\]
-      | <[^<>\s]*>
-      | \$\{?[A-Za-z_][A-Za-z0-9_]*\}?
-      | (?:synthetic|placeholder|dummy|fake|example|sample|redacted|changeme|not[-_]?a[-_]?secret)
-         (?:$|[^A-Za-z0-9].*)
+    rf"""(?ix)^(?:
+        <[^<>\s]*>
+      | \$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?
+      | not[-_]?a[-_]?secret(?:[-_.]?{_PLACEHOLDER_NUMBER})?
+      | {_PLACEHOLDER_WORD}
+         (?:[-_.]?{_PLACEHOLDER_DESCRIPTOR})?
+         (?:[-_.]?{_PLACEHOLDER_NUMBER})?
       | https?://[^\s/]*\.(?:invalid|example(?:\.(?:com|org|net))?)(?:/\S*)?
       | [^\s@]+@[^\s@]*\.(?:invalid|example(?:\.(?:com|org|net))?)
     )$"""
