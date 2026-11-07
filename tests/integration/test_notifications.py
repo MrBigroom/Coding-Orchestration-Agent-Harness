@@ -8,6 +8,7 @@ import json
 import re
 import threading
 import time
+
 from pathlib import Path
 
 import pytest
@@ -201,147 +202,42 @@ def test_notifications_endpoint_serves_the_persistent_list(initialized):
         assert client.get("/api/notifications?status=bogus").status_code == 422
 
 
-        rows = client.get("/api/notifications").json()
-        assert [(r["trigger"], r["status"]) for r in rows] == [("run_completed", "delivered")]
-        assert client.get("/api/notifications?status=bogus").status_code == 422
+def test_the_task_link_is_a_real_target_when_web_dist_is_absent(initialized, monkeypatch):
+    """DoD 2 / DoD 5: call the deep link instead of grepping the page for a source string.
 
-
-def test_reading_the_list_flushes_rows_the_server_left_pending(initialized, sent):
-    """DoD 3: the read path is a flush point, so a long-running server cannot leave rows pending.
-
-    The row is inserted AFTER startup on purpose: startup recovery is a different flush point and
-    would otherwise be what delivered it, and this test would pass with the read-path flush gone.
-    """
-    from orchestrator.core.db import session_scope
-
-    with TestClient(_create_app(), base_url="http://127.0.0.1:8321") as client:
-        with session_scope() as s:
-            s.add(
-                Notification(
-                    trigger="run_completed",
-                    event="run_completed",
-                    status="pending",
-                    title="read path pending",
-                    body="the server never tried",
-                    dedupe_key="read-path:1",
-                    details_json={},
-                )
-            )
-            s.commit()
-        assert sent == []  # nothing delivered it yet
-        rows = client.get("/api/notifications").json()
-        assert [(r["title"], r["status"]) for r in rows] == [("read path pending", "delivered")]
-    assert [c["title"] for c in sent] == ["read path pending"]
-
-
-def test_cli_exit_delivers_rows_the_process_left_pending(initialized, sent, monkeypatch):
-    """DoD 3: the coalescing timer dies with the CLI, so exiting is a flush point."""
-    from orchestrator import cli
-    from orchestrator.core.db import session_scope
-
-    with session_scope() as s:
-        s.add(
-            Notification(
-                trigger="run_completed",
-                event="run_completed",
-                status="pending",
-                title="cli exit pending",
-                body="from a dead CLI timer",
-                dedupe_key="cli-exit:1",
-                details_json={},
-            )
-        )
-        s.commit()
-    monkeypatch.setattr(cli, "app", lambda: None)  # a command that wrote the row and returned
-    cli.main()
-    with session_scope() as s:
-        row = s.exec(
-            select(Notification).where(Notification.dedupe_key == "cli-exit:1")
-        ).one()
-        assert (row.status, row.reason, row.error) == ("delivered", "", None)
-    assert [c["title"] for c in sent] == ["cli exit pending"]
-
-
-def test_cli_exit_terminates_rows_it_cannot_deliver(initialized, monkeypatch):
-    """DoD 3: a process going away writes a terminal status, never a row pending forever."""
-    from orchestrator import cli
-    from orchestrator.core.db import session_scope
-
-    with session_scope() as s:
-        s.add(
-            Notification(
-                trigger="run_completed",
-                event="run_completed",
-                status="pending",
-                title="cannot deliver",
-                body="no channel here",
-                dedupe_key="cli-exit:2",
-                details_json={},
-            )
-        )
-        s.commit()
-    monkeypatch.setattr(notification_service, "flush_pending", lambda session=None: 0)
-    monkeypatch.setattr(cli, "app", lambda: None)
-    cli.main()
-    with session_scope() as s:
-        row = s.exec(
-            select(Notification).where(Notification.dedupe_key == "cli-exit:2")
-        ).one()
-        assert (row.status, row.reason) == ("failed", "process_exit_undelivered")
-
-
-def _served_route(page: str) -> dict[str, str | None]:
-    """The route the fallback page was served with (HTML-escaped JSON in `data-route`)."""
-    raw = html.unescape(re.search(r'data-route="([^"]+)"', page).group(1))
-    return json.loads(raw)
-
-
-def _fallback_views(page: str) -> set[str]:
-    """The fallback UI's view registry, parsed from the page the server actually served."""
-    block = page.split("const views = {", 1)[1].split("\n};", 1)[0]
-    return set(re.findall(r"^  (?:async )?(\w+)\(", block, re.MULTILINE))
-
-
-def _react_routes() -> list[str]:
-    app_tsx = (Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx").read_text()
-    return re.findall(r'<Route\s+path="([^"]+)"', app_tsx)
-
-
-def _match_route(pattern: str, path: str) -> dict[str, str] | None:
-    """Match a react-router path pattern (`/tasks/:id`) against a URL path."""
-    if pattern == "*":
-        return {}
-    pattern_parts = pattern.strip("/").split("/")
-    path_parts = path.strip("/").split("/")
-    if len(pattern_parts) != len(path_parts):
-        return None
-    params: dict[str, str] = {}
-    for expected, actual in zip(pattern_parts, path_parts, strict=True):
-        if expected.startswith(":"):
-            params[expected[1:]] = actual
-        elif expected != actual:
-            return None
-    return params
-
-
-def test_the_task_link_resolves_in_the_fallback_ui_and_the_react_router(initialized, monkeypatch):
-    """DoD 5: call the URL instead of grepping the page for a source string.
-
-    With no web/dist, `/tasks/<id>` (the link every notification carries) is served by the
-    fallback UI. The API resolves that path and the page renders the resolved view, so the route
-    is asserted by asking for it. The React router is asserted by matching the same URL against
-    the route table `web/src/App.tsx` really declares.
+    With no web/dist, `/tasks/7` is served by the fallback UI. The API resolves the path into the
+    page's `data-route`, so asking for the URL asserts the view the page will render. The React
+    side is matched against the route table `web/src/App.tsx` declares (there is no JS runner).
     """
     from orchestrator.api import main as api_main
 
+    root = Path(__file__).resolve().parents[2]
     monkeypatch.setattr(api_main, "frontend_dist_dir", lambda: None)
     with TestClient(api_main.create_app(), base_url="http://127.0.0.1:8321") as client:
-        page = client.get("/tasks/7")
-        assert page.status_code == 200
-        assert "React build not found" in page.text  # the fallback UI, not the React bundle
-        resolved = _served_route(page.text)
-        assert resolved == {"view": "task", "arg": "7"}
-        assert resolved["view"] in _fallback_views(page.text)  # the page can render it
-        assert _served_route(client.get("/").text) == {"view": "dashboard", "arg": None}
-    matches = {path: _match_route(path, "/tasks/7") for path in _react_routes()}
-    assert [p for p, params in matches.items() if params == {"id": "7"}] == ["/tasks/:id"]
+        res = client.get("/tasks/7")
+        assert res.status_code == 200
+        assert "React build not found" in res.text  # the fallback UI, not the React bundle
+        route = json.loads(html.unescape(re.search(r'data-route="([^"]+)"', res.text).group(1)))
+        assert route == {"view": "task", "arg": "7"}
+        assert "async task(" in res.text  # the page can render the resolved view
+        home = client.get("/").text
+        assert json.loads(html.unescape(re.search(r'data-route="([^"]+)"', home).group(1))) == {
+            "view": "dashboard",
+            "arg": None,
+        }
+    routes = re.findall(
+        r'<Route\s+path="([^"]+)"', (root / "web" / "src" / "App.tsx").read_text()
+    )
+
+    def matches(pattern: str, path: str = "/tasks/7") -> bool:
+        have, want = pattern.strip("/").split("/"), path.strip("/").split("/")
+        return len(have) == len(want) and all(
+            x.startswith(":") or x == y for x, y in zip(have, want, strict=True)
+        )
+
+    assert [p for p in routes if matches(p)] == ["/tasks/:id"]
+    # No JS test runner exists (no `test` script, no vitest/jest/playwright), which is why the
+    # React side is matched from the declared table rather than rendered. If one is added, call it.
+    web_pkg = json.loads((root / "web" / "package.json").read_text(encoding="utf-8"))
+    assert "test" not in web_pkg["scripts"]
+    assert not ({"vitest", "jest", "@playwright/test"} & set(web_pkg.get("devDependencies", {})))

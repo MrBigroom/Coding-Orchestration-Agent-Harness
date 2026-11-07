@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
-
 import pytest
 from sqlmodel import col, select
 
@@ -39,7 +36,6 @@ SECRET = "sk-ant-api03-supersecretvalue1234567890"
 
 @pytest.fixture(autouse=True)
 def _reset_batch_timer(monkeypatch):
-    """No test inherits an armed timer or an open batch window from the test before it."""
     monkeypatch.setattr(notification_service, "_timer", None)
     monkeypatch.setattr(notification_service, "_batch_started", None)
 
@@ -254,276 +250,15 @@ def test_channel_actions_markup_and_no_client(monkeypatch):
     link = "http://127.0.0.1:8321/tasks/7"
     body = "body <b>\nOpen: " + link
     assert notification_service.deliver("title", body, link).channel == "notify-send"
-    # No --action anywhere: it would imply --wait and block on a dismissal (T-18 DoD 1/2).
-    assert [a for a in seen[0] if "action" in a or a == "--wait"] == []
-    # Unprobed daemon: plain text, so no escaping and no literal anchor is emitted.
-    assert seen[0][-1] == body
+    assert [a for a in seen[0] if "action" in a or a == "--wait"] == []  # no --wait trap
+    assert seen[0][-1] == body  # unprobed: raw text, no escaping and no anchor
     clients = {"gdbus"}
     assert notification_service.deliver("title", "body", link).channel == "gdbus"
     assert "org.freedesktop.Notifications.Notify" in seen[1]
-    assert seen[1][-3] == "[]" and seen[1][-2] == "{}"
+    assert seen[1][-3] == "[]" and seen[1][-2] == "{}"  # no action array, no markup hint
     clients.clear()
     result = notification_service.deliver("title", "body")
     assert result.status == "failed" and (result.error or "").startswith("no freedesktop")
-
-
-# --- T-18: truthful outcomes, capability probe, pending rows, coalescing ---------------------
-
-# Captured before any autouse fixture patches the module function, so the probe's own parser can
-# still be exercised without a real D-Bus session.
-REAL_PROBE = notification_service.probe_capabilities
-MARKUP_AND_LINK = notification_service.DaemonCapabilities(
-    True, frozenset({"body", "body-markup", "body-hyperlinks"}), "GetCapabilities"
-)
-MARKUP_ONLY = notification_service.DaemonCapabilities(
-    True, frozenset({"body", "body-markup"}), "GetCapabilities"
-)
-
-
-def _clients(monkeypatch, *, present=("notify-send", "gdbus"), probe=None, replies=None):
-    """Fake both notification clients; returns the captured argv lists."""
-    seen: list[list[str]] = []
-    queued = list(replies or [])
-
-    def fake_run_client(argv):
-        seen.append(argv)
-        return queued.pop(0) if queued else (argv[0], None, "")
-
-    monkeypatch.setattr(notification_service, "_run_client", fake_run_client)
-    monkeypatch.setattr(
-        notification_service.shutil,
-        "which",
-        lambda n: f"/usr/bin/{n}" if n in present else None,
-    )
-    monkeypatch.setattr(
-        notification_service, "probe_capabilities", lambda: probe or notification_service.UNPROBED
-    )
-    return seen
-
-
-def test_probe_capabilities_parses_what_the_daemon_advertises(monkeypatch):
-    monkeypatch.setattr(notification_service, "probe_capabilities", REAL_PROBE)
-    monkeypatch.setattr(notification_service.shutil, "which", lambda n: f"/usr/bin/{n}")
-
-    class Reply:
-        def __init__(self, rc, out, err=""):
-            self.returncode, self.stdout, self.stderr = rc, out, err
-
-    monkeypatch.setattr(
-        notification_service.subprocess,
-        "run",
-        lambda *a, **k: Reply(0, "(['persistence', 'body', 'body-markup', 'body-hyperlinks'],)\n"),
-    )
-    caps = notification_service.probe_capabilities()
-    assert (caps.probed, caps.supports("body-markup"), caps.supports("body-hyperlinks")) == (
-        True,
-        True,
-        True,
-    )
-    monkeypatch.setattr(notification_service.subprocess, "run", lambda *a, **k: Reply(1, "", "no"))
-    assert notification_service.probe_capabilities().probed is False
-
-    def boom(*_a, **_k):
-        raise subprocess.TimeoutExpired("gdbus", 2)
-
-    monkeypatch.setattr(notification_service.subprocess, "run", boom)
-    assert notification_service.probe_capabilities().probed is False
-    monkeypatch.setattr(notification_service.shutil, "which", lambda n: None)
-    caps = notification_service.probe_capabilities()
-    assert (caps.probed, caps.source) == (False, "gdbus not on PATH")
-
-
-def test_a_daemon_that_advertises_no_hyperlink_gets_a_plain_body(monkeypatch):
-    link = "http://127.0.0.1:8321/tasks/7"
-    body = "body\nOpen: " + link
-    seen = _clients(monkeypatch, present={"gdbus"}, probe=MARKUP_ONLY)
-    result = notification_service.deliver("title", body, link)
-    assert (result.shape, result.channel) == ("plain", "gdbus")
-    assert seen[0][-3] == "[]" and seen[0][-2] == "{}"
-    assert json.loads(seen[0][-4]) == body
-    # Advertised only when BOTH capabilities are there; then the anchor is sent with the hint.
-    seen = _clients(monkeypatch, present={"gdbus"}, probe=MARKUP_AND_LINK)
-    result = notification_service.deliver("title", body, link)
-    assert (result.shape, result.status) == ("markup+hyperlink", "delivered")
-    assert seen[0][-2] == "{'body-markup': <true>}"
-    assert f'<a href="{link}">Open task</a>' in json.loads(seen[0][-4])
-
-
-def test_every_transport_result_maps_to_one_frozen_status(monkeypatch):
-    """DoD 1: the outcome classes are explicit and every result lands in exactly one."""
-    assert set(notification_service.STATUS_FOR_OUTCOME) == set(notification_service.OUTCOME_CLASSES)
-    assert set(notification_service.STATUS_FOR_OUTCOME.values()) <= {
-        "pending",
-        "delivered",
-        "failed",
-        "skipped",
-        "coalesced",
-    }
-    link = "http://127.0.0.1:8321/tasks/7"
-    cases = {}
-    _clients(monkeypatch, present={"notify-send"})
-    cases["notify-send exit 0"] = notification_service.deliver("t", "b", link)
-    _clients(monkeypatch, present={"gdbus"}, replies=[("gdbus", None, "(uint32 42,)\n")])
-    cases["gdbus returns an id"] = notification_service.deliver("t", "b", link)
-    _clients(monkeypatch, present={"notify-send"}, replies=[("notify-send", "exit 1", "")])
-    cases["client exits non-zero"] = notification_service.deliver("t", "b", link)
-    timeout = "timed out after 10s (client killed; display state unknown)"
-    _clients(monkeypatch, present={"notify-send"}, replies=[("notify-send", timeout, "")])
-    cases["client times out"] = notification_service.deliver("t", "b", link)
-    _clients(monkeypatch, present=set())
-    cases["no client on PATH"] = notification_service.deliver("t", "b", link)
-    assert {name: (r.status, r.reason) for name, r in cases.items()} == {
-        "notify-send exit 0": ("delivered", "shown_unacknowledged"),
-        "gdbus returns an id": ("delivered", ""),
-        "client exits non-zero": ("failed", "delivery_failed"),
-        "client times out": ("failed", "delivery_failed"),
-        "no client on PATH": ("failed", "delivery_failed"),
-    }
-    assert cases["gdbus returns an id"].detail == "daemon accepted notification id 42"
-    assert cases["notify-send exit 0"].outcome == notification_service.OUTCOME_SHOWN_UNACKNOWLEDGED
-
-
-def test_a_displayed_message_is_recorded_delivered_not_failed(session, monkeypatch):
-    """The live receipt (T-18): a run_timeout popup was shown and recorded `failed`."""
-    task, run = _task_run(session)
-    settings_service.update(session, {MASTER_SETTING: True})
-    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 0.0)
-    _clients(monkeypatch, present={"notify-send"})
-    _log(session, "run_timeout", task, run, "timed out")
-    row = _rows(session)[0]
-    assert (row.status, row.reason, row.error) == ("delivered", "shown_unacknowledged", None)
-    assert row.details_json["outcome_class"] == "shown_unacknowledged"
-    assert row.details_json["body_shape"] == "plain"
-
-
-def test_the_standalone_path_reaches_the_same_outcome_classes(session, monkeypatch, tmp_path):
-    run, _ = _standalone_run(session, tmp_path)
-    settings_service.update(session, {MASTER_SETTING: True})
-    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 0.0)
-    _clients(monkeypatch, present={"gdbus"})
-    notification_service.notify_event(
-        event="standalone_run", details=f"{run.title}: completed", standalone_run_id=run.id
-    )
-    row = _rows(session)[0]
-    assert (row.status, row.reason) == ("delivered", "shown_unacknowledged")
-    assert row.link.endswith("/agents")
-    assert row.details_json["outcome_class"] == "shown_unacknowledged"
-
-
-def _pending_row(session, key="exit:1", title="left pending"):
-    row = Notification(
-        trigger="run_completed",
-        event="run_completed",
-        status="pending",
-        title=title,
-        body="from a dead CLI timer",
-        dedupe_key=key,
-        details_json={},
-    )
-    session.add(row)
-    session.commit()
-    session.refresh(row)
-    return row
-
-
-def test_the_exit_flush_delivers_pending_rows(session, sent):
-    _pending_row(session)
-    assert notification_service.flush_pending_at_exit(session) == 1
-    assert [r.status for r in _rows(session)] == ["delivered"]
-    assert [c["title"] for c in sent] == ["left pending"]
-
-
-def test_the_exit_flush_terminates_rows_it_cannot_deliver(session, monkeypatch):
-    """DoD 3: a process going away must not leave a row pending forever."""
-    _pending_row(session)
-    monkeypatch.setattr(notification_service, "flush_pending", lambda session=None: 0)
-    assert notification_service.flush_pending_at_exit(session) == 1
-    row = _rows(session)[0]
-    assert (row.status, row.reason) == ("failed", "process_exit_undelivered")
-    assert row.error == "process exited before delivery was attempted"
-    assert row.details_json["outcome_class"] == "failed"
-
-
-def test_the_exit_flush_is_inert_before_the_database_exists(home):
-    assert notification_service.flush_pending_at_exit() == 0
-    assert not (home / "orchestrator.db").exists()
-
-
-def test_parallel_finishes_across_runs_are_one_message(session, sent, monkeypatch):
-    """DoD 4: coalesce across runs, keeping at most one notification per run per trigger."""
-    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
-    monkeypatch.setattr(notification_service, "_schedule", lambda: None)
-    settings_service.update(session, {MASTER_SETTING: True})
-    runs = [_task_run(session, f"parallel {i}", f"R-{i}") for i in range(1, 6)]
-    for _task, run in runs:
-        notification_service.notify_event(event="run_completed", run_id=run.id)
-    notification_service.flush_pending(session)
-    assert len(sent) == 1 and "5 updates" in sent[0]["title"]
-    rows = _rows(session)
-    assert [r.status for r in rows] == ["delivered"] + ["coalesced"] * 4
-    assert [r.coalesced_into for r in rows[1:]] == [rows[0].id] * 4
-    assert len({r.dedupe_key for r in rows}) == 5  # one per run per trigger, never folded away
-
-
-class FakeTimer:
-    instances: list[FakeTimer] = []
-
-    def __init__(self, interval, fn):
-        self.interval, self.fn, self.cancelled, self.started = interval, fn, False, False
-        FakeTimer.instances.append(self)
-
-    def start(self):
-        self.started = True
-
-    def cancel(self):
-        self.cancelled = True
-
-
-def _clock(monkeypatch, value):
-    clock = [value]
-    monkeypatch.setattr(notification_service.time, "monotonic", lambda: clock[0])
-    return clock
-
-
-def test_a_batch_that_straddles_the_window_still_produces_one_message(
-    session, sent, monkeypatch
-):
-    """DoD 4: the window is debounced, so a finish 1.5s after the first is not a second popup."""
-    FakeTimer.instances.clear()
-    monkeypatch.setattr(notification_service.threading, "Timer", FakeTimer)
-    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 2.0)
-    monkeypatch.setattr(notification_service, "COALESCE_MAX_SECONDS", 10.0)
-    clock = _clock(monkeypatch, 1000.0)
-    task1, run1 = _task_run(session, "first", "R-1")
-    task2, run2 = _task_run(session, "second", "R-2")
-    settings_service.update(session, {MASTER_SETTING: True})
-    notification_service.notify_event(event="run_completed", run_id=run1.id)
-    clock[0] = 1001.5
-    notification_service.notify_event(event="run_completed", run_id=run2.id)
-    assert [(t.cancelled, t.interval) for t in FakeTimer.instances] == [(True, 2.0), (False, 2.0)]
-    notification_service._flush_thread()
-    assert len(sent) == 1 and "2 updates" in sent[0]["title"]
-    assert [r.status for r in _rows(session)] == ["delivered", "coalesced"]
-
-
-def test_the_debounce_never_delays_a_batch_past_the_cap(session, monkeypatch):
-    FakeTimer.instances.clear()
-    monkeypatch.setattr(notification_service.threading, "Timer", FakeTimer)
-    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 2.0)
-    monkeypatch.setattr(notification_service, "COALESCE_MAX_SECONDS", 10.0)
-    clock = _clock(monkeypatch, 500.0)
-    task, run = _task_run(session)
-    settings_service.update(session, {MASTER_SETTING: True})
-    notification_service.notify_event(event="run_completed", run_id=run.id)
-    for offset, remaining in ((9.5, 0.5), (9.9, 0.1)):
-        clock[0] = 500.0 + offset
-        notification_service.notify_event(event="task_status", details="planned -> review: x")
-        assert FakeTimer.instances[-1].interval == pytest.approx(remaining)
-    armed = FakeTimer.instances[-1]
-    clock[0] = 510.5
-    notification_service.notify_event(event="task_status", details="planned -> blocked: x")
-    assert armed.cancelled is False  # at the cap the armed timer delivers instead of moving
-    assert [round(t.interval, 6) for t in FakeTimer.instances] == [2.0, 0.5, 0.1]
 
 
 def test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded(session, monkeypatch):

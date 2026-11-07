@@ -31,33 +31,23 @@ from orchestrator.services import artifact_service, settings_service
 from orchestrator.utils.redaction import redact
 
 log = logging.getLogger(__name__)
-# One short GLOBAL window, debounced per new row: a batch of parallel finishes becomes one popup,
-# and a batch that straddles the window boundary does not split into a stampede (T-18 DoD 4).
 COALESCE_SECONDS = 2.0
-# ... but never later than this after the first pending row, so a steady stream of events cannot
-# postpone delivery forever.
 COALESCE_MAX_SECONDS = 10.0
 DELIVERY_TIMEOUT_SECONDS = 10
 PROBE_TIMEOUT_SECONDS = 2
 PENDING, DELIVERED, FAILED, SKIPPED, COALESCED = (
     "pending", "delivered", "failed", "skipped", "coalesced",
 )
-
-# T-18 DoD 1: every transport result is classified into exactly one explicit outcome class, then
-# mapped to the frozen CCR-T9-01 status. `shown_unacknowledged` (the client accepted and showed the
-# message, but nothing acknowledged a dismissal or an action) has no status of its own, so it is
-# recorded `delivered` with `reason` and `details_json["outcome_class"]` naming the real class.
-# No status value is added: a sixth status would need an approved CCR.
+# Every transport result lands in exactly one outcome class, mapped to a frozen CCR-T9-01
+# status. `shown_unacknowledged` (displayed, nothing acknowledged it) has no status of its own,
+# so it is `delivered` with `reason=shown_unacknowledged`; a sixth status needs an approved CCR.
 OUTCOME_DELIVERED = "delivered"
 OUTCOME_SHOWN_UNACKNOWLEDGED = "shown_unacknowledged"
 OUTCOME_FAILED = "failed"
 OUTCOME_SKIPPED = "skipped"
 OUTCOME_COALESCED = "coalesced"
 OUTCOME_CLASSES = (
-    OUTCOME_DELIVERED,
-    OUTCOME_SHOWN_UNACKNOWLEDGED,
-    OUTCOME_FAILED,
-    OUTCOME_SKIPPED,
+    OUTCOME_DELIVERED, OUTCOME_SHOWN_UNACKNOWLEDGED, OUTCOME_FAILED, OUTCOME_SKIPPED,
     OUTCOME_COALESCED,
 )
 STATUS_FOR_OUTCOME = {
@@ -67,10 +57,10 @@ STATUS_FOR_OUTCOME = {
     OUTCOME_SKIPPED: SKIPPED,
     OUTCOME_COALESCED: COALESCED,
 }
-# Reason written for a row whose process exited before it could be delivered (T-18 DoD 3).
 PROCESS_EXIT_REASON = "process_exit_undelivered"
-
-# Capability names from the freedesktop notification spec (GetCapabilities).
+# The CLI exit terminates only rows its own process created, never a live server's rows.
+OWNER_KEY = "owner"
+PROCESS_TOKEN = f"{os.getpid()}:{uuid.uuid4().hex}"
 MARKUP_CAPABILITY = "body-markup"
 HYPERLINK_CAPABILITY = "body-hyperlinks"
 
@@ -230,11 +220,7 @@ def _notification_env() -> dict[str, str]:
 
 @dataclass(frozen=True)
 class TransportResult:
-    """One transport attempt, classified into exactly one outcome class (T-18 DoD 1).
-
-    `shape` is what was actually sent, `daemon` what the probe found, so the row records the
-    attempt instead of implying one.
-    """
+    """One transport attempt and the shape/daemon that produced it."""
 
     outcome: str
     channel: str | None = None
@@ -289,11 +275,7 @@ _NOTIFICATION_ID_RE = re.compile(r"uint32\s+(\d+)")
 
 
 def probe_capabilities() -> DaemonCapabilities:
-    """Ask the daemon what it can render before advertising anything (T-18 DoD 2).
-
-    Never assumes: no `gdbus`, a failed call or a timeout all mean `probed=False`, and an unprobed
-    daemon gets plain text.
-    """
+    """Ask the daemon what it can render; no gdbus/failure/timeout means unprobed (plain text)."""
     if not shutil.which("gdbus"):
         return DaemonCapabilities(False, frozenset(), "gdbus not on PATH")
     argv = [
@@ -340,42 +322,25 @@ def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
     return argv[0], None, proc.stdout or ""
 
 
-def _markup(body: str, link: str) -> str:
-    """Escape user text and turn the task link into one real anchor (body-markup daemons)."""
-    lines = [
-        html.escape(x, quote=False) for x in body.splitlines() if x != f"Open: {link}"
-    ]
-    if link:
-        lines.append(f'<a href="{html.escape(link, quote=True)}">Open task</a>')
-    return "\n".join(lines)
-
-
 def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> tuple[str, str]:
-    """Return (text to send, shape label) for the daemon we actually have.
+    """Escape text for a markup-capable daemon; add an anchor only on gdbus with hyperlinks.
 
-    Only `gdbus` can attach the `body-markup` hint, so markup is emitted there and only when the
-    daemon advertises BOTH `body-markup` and `body-hyperlinks`. `notify-send` gets the plain body
-    (the link stays a readable `Open: <url>` line): it sends no such hint, so an anchor through it
-    would show literal tags.
+    A `body-markup` daemon parses every body as markup and the spec has no hint for it, so both
+    transports get escaped text and gdbus sends `{}`. Mako/dunst defaults and `notify-send` keep
+    the `Open: <url>` line; an unprobed daemon gets raw text.
     """
-    if (
-        channel == "gdbus"
-        and link
-        and caps.supports(MARKUP_CAPABILITY)
-        and caps.supports(HYPERLINK_CAPABILITY)
-    ):
-        return _markup(body, link), "markup+hyperlink"
-    return body, "plain"
+    if not caps.supports(MARKUP_CAPABILITY):
+        return body, "plain"
+    lines = [html.escape(x, quote=False) for x in body.splitlines()]
+    if channel == "gdbus" and link and caps.supports(HYPERLINK_CAPABILITY):
+        lines = [x for x in lines if x != html.escape(f"Open: {link}", quote=False)]
+        lines.append(f'<a href="{html.escape(link, quote=True)}">Open task</a>')
+        return "\n".join(lines), "markup+hyperlink"
+    return "\n".join(lines), "markup-escaped"
 
 
 def deliver(title: str, body: str, link: str = "") -> TransportResult:
-    """Send one desktop notification and classify the result into one outcome class.
-
-    Passes no `--action` (or action array): a default action implies `--wait` for `notify-send`,
-    which blocks until a dismissal that under mako's defaults never arrives, so a message the
-    operator saw was recorded failed. Nothing listens for `ActionInvoked` yet, so the action was
-    false advertising (T-18 DoD 2).
-    """
+    """Send one notification and classify it; no `--action` (it implies a blocking `--wait`)."""
     caps = probe_capabilities()
     daemon = caps.label()
     if shutil.which("notify-send"):
@@ -387,8 +352,6 @@ def deliver(title: str, body: str, link: str = "") -> TransportResult:
         ])
         if error is not None:
             return TransportResult(OUTCOME_FAILED, channel, error, shape, daemon)
-        # The client exited 0: the message was handed over and shown, but nothing acknowledged a
-        # dismissal or an action, so this is shown-unacknowledged, not a confirmed `delivered`.
         return TransportResult(
             OUTCOME_SHOWN_UNACKNOWLEDGED, channel, None, shape, daemon,
             "notify-send returned 0; dismissal is not observed",
@@ -396,12 +359,12 @@ def deliver(title: str, body: str, link: str = "") -> TransportResult:
     if shutil.which("gdbus"):
         channel = "gdbus"
         text, shape = _body_for(body, link, caps, channel)
-        hints = "{'body-markup': <true>}" if shape.startswith("markup") else "{}"
+        # No hints and no action array: body-markup is a capability, not a hint.
         channel, error, stdout = _run_client([
             "gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
             "--object-path", "/org/freedesktop/Notifications", "--method",
             "org.freedesktop.Notifications.Notify", json.dumps("Coding Orchestrator"), "0",
-            json.dumps(""), json.dumps(title), json.dumps(text), "[]", hints, "10000",
+            json.dumps(""), json.dumps(title), json.dumps(text), "[]", "{}", "10000",
         ])
         if error is not None:
             return TransportResult(OUTCOME_FAILED, channel, error, shape, daemon)
@@ -472,12 +435,7 @@ def _flush_thread() -> None:
 
 
 def _schedule() -> None:
-    """Debounce delivery: one message per batch, capped so a stream cannot starve it.
-
-    Each new pending row restarts the short window, so parallel runs finishing on either side of
-    the first row's timer land in ONE message; the window never extends past `COALESCE_MAX_SECONDS`
-    after the batch's first row.
-    """
+    """Debounce one message per batch, capped after the first row so a stream cannot starve it."""
     global _batch_started, _timer
     with _lock:
         now = time.monotonic()
@@ -495,11 +453,7 @@ def _schedule() -> None:
 
 
 def flush_pending(session: Session | None = None) -> int:
-    """Deliver all pending rows now (timer, API startup recovery, tests).
-
-    Never raises and never leaves a caller-supplied session poisoned: startup recovery runs
-    inside the API lifespan, where an exception would abort the whole server.
-    """
+    """Deliver pending rows now; never raises and never poisons a caller-supplied session."""
     try:
         with (nullcontext(session) if session is not None else session_scope()) as s:
             return _deliver_pending(s)
@@ -521,11 +475,15 @@ def flush_pending_if_any(session: Session) -> int:
     return flush_pending(session) if any_pending is not None else 0
 
 
-def _terminate_pending_locked(session: Session, reason: str, error: str) -> int:
-    """Give every still-pending row a terminal status instead of leaving it pending forever."""
+def _terminate_pending_locked(
+    session: Session, reason: str, error: str, owner: str | None = PROCESS_TOKEN
+) -> int:
+    """Terminate only this process's pending rows; another owner's row keeps `pending`."""
     rows = list(session.exec(
         select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))
     ))
+    if owner is not None:
+        rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
     for row in rows:
         row.status = STATUS_FOR_OUTCOME[OUTCOME_FAILED]
         row.reason = reason
@@ -540,11 +498,7 @@ def _terminate_pending_locked(session: Session, reason: str, error: str) -> int:
 
 
 def _database_ready() -> bool:
-    """True only when this home already holds the notifications table.
-
-    The CLI exit flush runs for every command, including `orchestrator --help`; creating a database
-    as a side effect of exiting would itself be a bug.
-    """
+    """True only when this home already holds the notifications table (never create one on exit)."""
     from sqlalchemy import inspect
 
     from orchestrator.core import db
@@ -559,11 +513,7 @@ def _database_ready() -> bool:
 
 
 def flush_pending_at_exit(session: Session | None = None) -> int:
-    """CLI exit: deliver what is pending, then terminate what delivery could not reach.
-
-    The timer thread dies with the process, so a CLI-created row is otherwise left pending until
-    an API startup that may never come (T-18 DoD 3). Never raises.
-    """
+    """CLI exit: deliver, then terminate what this process could not deliver. Never raises."""
     if session is None and not _database_ready():
         return 0
     delivered = flush_pending(session)
@@ -673,7 +623,8 @@ def notify_event(
             row = Notification(
                 task_id=tid, run_id=rid, trigger=trigger.key, event=event,
                 title=payload["title"], body=payload["body"], link=payload["link"],
-                dedupe_key=dedupe_key, details_json=payload["details"],
+                dedupe_key=dedupe_key,
+                details_json={**payload["details"], OWNER_KEY: PROCESS_TOKEN},
                 status=PENDING if enabled else SKIPPED,
                 reason="" if enabled else (
                     "master_disabled" if not master else "trigger_disabled"

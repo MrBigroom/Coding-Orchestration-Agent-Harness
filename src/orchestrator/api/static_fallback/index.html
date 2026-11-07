@@ -47,8 +47,7 @@ const TONE = { accepted:"ok", completed:"ok", pass:"ok", APPROVED:"ok", approved
   in_progress:"warn", running:"warn", testing:"warn", pending:"warn", CHANGES_REQUESTED:"warn", blocked:"bad", failed:"bad",
   rejected:"bad", timeout:"bad", fail:"bad", NEEDS_HUMAN:"bad" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-// The API resolves a path-form deep link (/tasks/7) and puts it here; the hash form is in-page
-// navigation. Parsing is guarded so this page also works when it is opened as a bare file.
+// Server-resolved path deep link (/tasks/7); hash navigation still wins in-page.
 const initialState = (() => { try { return JSON.parse(document.body.dataset.route || "{}"); } catch { return {}; } })();
 const badge = (v) => v ? `<span class="b ${TONE[v] || ""}">${esc(v)}</span>` : '<span class="muted">—</span>';
 function token() { try { return localStorage.getItem("orchestrator.token") || ""; } catch { return ""; } }
@@ -195,9 +194,7 @@ const views = {
 
 function route() {
   clearTimeout(timer);
-  // Deep links from notifications use the React path form (/tasks/<id>) because that is the GUI's
-  // route. Without web/dist this page serves that URL; the server resolved it into data-route
-  // (api/fallback.py) so the first render is the right view instead of the dashboard.
+  // Deep links use the React path form (/tasks/<id>); the server resolved it into data-route.
   const [view, arg] = location.hash.slice(1)
     ? location.hash.slice(1).split("/")
     : [initialState.view || "dashboard", initialState.arg || undefined];

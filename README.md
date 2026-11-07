@@ -256,16 +256,13 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
-- **Desktop notifications: one channel, and the link is text on the transport this machine uses.**
-  The only channel exercised end-to-end is the freedesktop D-Bus one, on CachyOS/Hyprland with
-  quickshell's notification server (`notify-send`, `gdbus` as fallback). macOS and Windows
-  notification backends are out of scope and do not exist; nothing else was tested. Nothing
-  listens for `ActionInvoked`, so notifications carry no clickable action. A clickable `<a href>` is
-  only sent
-  through the `gdbus` transport and only when the daemon advertises both `body-markup` and
-  `body-hyperlinks`; `notify-send` always gets a plain-text body with the task URL as a copyable
-  `Open: <url>` line, because it attaches no `body-markup` hint. A daemon that cannot be probed
-  (no `gdbus`, a failed call) is treated as markup-less rather than assumed capable.
+- **Desktop notifications: one channel, and the link is usually text.** The only channel tested
+  end-to-end is the freedesktop D-Bus one on CachyOS/Hyprland with quickshell (`notify-send`, then
+  `gdbus`). macOS/Windows backends do not exist. `GetCapabilities` is probed first: a daemon
+  advertising `body-markup` parses every body as markup, so its text is HTML-escaped on both
+  transports; a clickable `<a href>` is added only through `gdbus` and only with `body-hyperlinks`.
+  Mako/dunst defaults, anything reached via `notify-send`, and unprobed daemons get the URL as a
+  copyable `Open: <url>` line. Nothing listens for `ActionInvoked`, so no action is advertised.
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify
