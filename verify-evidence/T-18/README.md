@@ -1,6 +1,7 @@
 # T-18 evidence — truthful outcomes, probed capabilities, durable pending rows
 
-HEAD `e23eb958`; `tracked-and-untracked-entries-outside-this-dir=0`.
+Code HEAD `e23eb958` (suite ran there; later commits change only `verify-evidence/`);
+`tracked-and-untracked-entries-outside-this-dir=0`.
 
 `./scripts/orch_verify.sh test` -> **726 passed, 10 skipped**, exit 0 (120.53s).
 `ORCH_VERIFY|mode=test|module=orchestrator|module_file=/…/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py|worktree_root=/…/worktrees/coding-orchestrator/18`
