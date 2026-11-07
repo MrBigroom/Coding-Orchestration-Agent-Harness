@@ -1,0 +1,19 @@
+# HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316
+# dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
+# command: ORCH_ENV_PARITY_TESTS=1 ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -rA -m parity tests/integration/test_env_hermeticity.py
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
+orch-verify: pytest target -rA -m parity tests/integration/test_env_hermeticity.py
+....                                                                     [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv
+PASSED tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard
+PASSED tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv
+PASSED tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree
+4 passed, 29 deselected in 19.08s

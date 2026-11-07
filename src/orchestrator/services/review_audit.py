@@ -60,6 +60,7 @@ from typing import Any
 
 from orchestrator.services.prompt_builder import split_diff_files
 from orchestrator.utils.git import run_git
+from orchestrator.utils.redaction import is_sensitive_path
 
 # A finding is only an absence claim when it uses absence language; otherwise it is a normal
 # review finding and no mechanical check applies.
@@ -1273,16 +1274,108 @@ def _numstat(cwd: Path, base_branch: str) -> list[tuple[str, str, str]]:
     return rows
 
 
+# `git check-attr --source=<tree-ish>` landed in Git 2.40. Below that floor the audit still
+# reports attributes, but it cannot attribute them to the merge-base, so pre-existing status is
+# unknown and the finding fails closed (blocking) rather than silently skipping the check.
+MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE = (2, 40)
+
+
+def git_version(cwd: Path) -> tuple[int, int, int] | None:
+    """Parse `git --version`; None when the version cannot be established."""
+    res = run_git(["--version"], cwd, check=False)
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", res.stdout or "")
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+
+
+def supports_check_attr_source(cwd: Path, source: str | None = None) -> bool:
+    """True when `git check-attr --source` works, not merely when the version looks new.
+
+    The version floor is necessary but not sufficient: a wrapper/older build can advertise 2.40
+    and still reject the option, and the source object can be unreadable. With a `source`, this
+    actually probes the command (T-16 review round 2, finding 6), so `attribute_source_status`
+    can report a PROBE failure as its own cause instead of an unreachable branch.
+    """
+    version = git_version(cwd)
+    if version is None or version < MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE:
+        return False
+    if source is None:
+        return True
+    return _probe_check_attr_source(cwd, source)
+
+
+def _probe_check_attr_source(cwd: Path, source: str) -> bool:
+    """Run the smallest useful `--source` query; False on any failure, never an exception."""
+    try:
+        res = run_git(["check-attr", "--source", source, "-a", "--", "."], cwd, check=False)
+    except OSError:
+        return False
+    return res.code == 0
+
+
+def attribute_source_status(cwd: Path, merge_base: str) -> tuple[bool, str]:
+    """Whether attributes can be attributed to the merge-base, and an honest reason.
+
+    The reason matters (T-16 review round 1, finding 6): an empty merge-base is not evidence of
+    an old Git. Reporting ``git < 2.40`` for it is a false statement in the finding the reviewer
+    reads, so each degradation names its own cause. The fallback is always plain
+    ``check-attr -a``, and the caller still fails closed because pre-existing status is unknown.
+    """
+    floor = (
+        f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[0]}."
+        f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[1]}"
+    )
+    if not merge_base:
+        return (
+            False,
+            "no merge-base could be resolved, so `git check-attr --source` was not attempted "
+            "and pre-existing status is unknown (this is not a Git version limitation)",
+        )
+    version = git_version(cwd)
+    if version is None:
+        return (
+            False,
+            "the git version could not be established, so `git check-attr --source` was not "
+            "attempted and pre-existing status is unknown",
+        )
+    rendered_version = f"{version[0]}.{version[1]}.{version[2]}"
+    if version < MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE:
+        return (
+            False,
+            f"git {rendered_version} is older than the {floor} floor for check-attr --source; "
+            "plain git check-attr -a is used and pre-existing status is unknown",
+        )
+    if not supports_check_attr_source(cwd, merge_base):
+        return (
+            False,
+            f"git reports at least the {floor} floor but the `check-attr --source` probe failed; "
+            "plain git check-attr -a is used and pre-existing status is unknown",
+        )
+    return True, f"git check-attr --source {merge_base}"
+
+
 def _attributes(
     cwd: Path, paths: list[str], source: str | None = None
-) -> dict[str, dict[str, str]]:
+) -> tuple[dict[str, dict[str, str]], str]:
+    """Parsed attributes plus an error string; `({}, "")` for no paths.
+
+    A failing `check-attr` used to return `{}` indistinguishably from "no attributes set", which
+    silently turned a capability failure into "this task introduced the attribute". The caller
+    now receives the failure and degrades to the honest fail-closed wording (T-16 review round 2,
+    finding 6).
+    """
     if not paths:
-        return {}
+        return {}, ""
     args = ["check-attr", "-a"]
     if source:
         args += ["--source", source]
     args += ["--", *paths]
     res = run_git(args, cwd, check=False)
+    if res.code != 0:
+        command = f"check-attr --source {source}" if source else "check-attr -a"
+        detail = (res.stderr or res.stdout).strip() or "no output"
+        return {}, f"git {command} exited {res.code}: {detail}"
     out: dict[str, dict[str, str]] = {}
     for line in res.stdout.splitlines():
         parts = line.rsplit(": ", 2)
@@ -1290,7 +1383,7 @@ def _attributes(
             continue
         path, attr, value = parts
         out.setdefault(path, {})[attr] = value
-    return out
+    return out, ""
 
 
 def _hidden_attributes(attrs: dict[str, str]) -> list[str]:
@@ -1303,9 +1396,17 @@ def _hidden_attributes(attrs: dict[str, str]) -> list[str]:
 
 
 def diff_completeness(
-    cwd: Path | None, base_branch: str | None, patch: str
+    cwd: Path | None,
+    base_branch: str | None,
+    patch: str,
+    rendered: str | None = None,
 ) -> list[DiffIssue]:
-    """Compare changed files, the supplied patch and repository attributes.
+    """Compare changed files with the diff the reviewer was actually sent.
+
+    `patch` is the archived full record (`patch.diff`); `rendered` is the budgeted text the prompt
+    builder actually emitted. Completeness is judged against `rendered` (T-16 DoD 3) — auditing the
+    archived patch was checking a file the reviewer never saw. When `rendered` is omitted the
+    function keeps its pre-T-16 behaviour for callers that have only one text.
 
     Returns every issue found, including pre-existing ones. `blocks` is True only for an issue
     this task introduced: an attribute that was already set at the merge-base is reported as
@@ -1316,13 +1417,44 @@ def diff_completeness(
     rows = _numstat(cwd, base_branch)
     if not rows:
         return []
-    chunks = dict(split_diff_files(patch or ""))
+    audited = rendered if rendered is not None else patch
+    chunks = dict(split_diff_files(audited or ""))
     paths = [p for _a, _d, p in rows]
-    current_attrs = _attributes(cwd, paths)
+    current_attrs, current_attr_error = _attributes(cwd, paths)
     merge_base = run_git(["merge-base", base_branch, "HEAD"], cwd, check=False).stdout.strip()
-    base_attrs = _attributes(cwd, paths, source=merge_base) if merge_base else {}
+    source_supported, attribute_source = attribute_source_status(cwd, merge_base)
+    base_attrs: dict[str, dict[str, str]] = {}
+    if source_supported:
+        base_attrs, base_error = _attributes(cwd, paths, source=merge_base)
+        if base_error:
+            source_supported = False
+            attribute_source = (
+                f"git check-attr --source {merge_base} failed at runtime ({base_error}); plain "
+                "git check-attr -a is used and pre-existing status is unknown"
+            )
+            base_attrs = {}
 
     issues: list[DiffIssue] = []
+    if current_attr_error:
+        # The plain `check-attr -a` call is the last line of the attribute check, so a failure
+        # here means -diff/export-ignore status is genuinely unknown. `_attributes` returns
+        # `{}` on failure, which used to look identical to "no attributes set" and silently
+        # skipped the check (T-16 review round 5, finding 2).
+        issues.append(
+            DiffIssue(
+                path="<all changed files>",
+                kind="attribute_unavailable",
+                detail=(
+                    "git check-attr -a failed at runtime "
+                    f"({current_attr_error}); the -diff/export-ignore attribute check could "
+                    "not be performed for the changed files, so attribute-based hiding is "
+                    "unknown and this finding fails closed"
+                ),
+                blocks=True,
+                pre_existing=False,
+                attribute="",
+            )
+        )
     for adds, deletes, path in rows:
         before = _hidden_attributes(base_attrs.get(path, {}))
         after = _hidden_attributes(current_attrs.get(path, {}))
@@ -1341,7 +1473,17 @@ def diff_completeness(
                             if pre_existing
                             else ""
                         )
+                        + (
+                            ""
+                            if source_supported
+                            else " — pre-existing status could not be attributed: "
+                            + attribute_source
+                            + "; reported as a finding to fail closed"
+                        )
                     ),
+                    # Fail closed when the capability floor is unavailable: a repository
+                    # attribute that hides hunks must not become invisible just because the
+                    # local git is old.
                     blocks=not pre_existing,
                     pre_existing=pre_existing,
                     attribute=attr,
@@ -1349,6 +1491,14 @@ def diff_completeness(
             )
         chunk = chunks.get(path)
         binary = adds == "-" or deletes == "-"
+        withheld = (
+            bool(chunk)
+            and is_sensitive_path(path)
+            and any(
+                line.rstrip("\r\n") == "# [sensitive file omitted]"
+                for line in chunk.splitlines()
+            )
+        )
         metadata_only = bool(chunk) and any(
             line.startswith(
                 (
@@ -1364,6 +1514,23 @@ def diff_completeness(
             for line in chunk.splitlines()
         )
         has_hunk = bool(chunk) and any(line.startswith("@@") for line in chunk.splitlines())
+        if withheld:
+            issues.append(
+                DiffIssue(
+                    path=path,
+                    kind="withheld",
+                    detail=(
+                        f"{path} is a sensitive path: its content was withheld as a secret "
+                        "before the diff budget, so the reviewer saw the path and an explicit "
+                        "omission marker, not hunks. This is a deliberate redaction, not a "
+                        "missing patch section."
+                    ),
+                    blocks=False,
+                    pre_existing=pre_existing,
+                    attribute=", ".join(after),
+                )
+            )
+            continue
         if binary:
             issues.append(
                 DiffIssue(

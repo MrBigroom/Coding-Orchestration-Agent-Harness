@@ -1,0 +1,175 @@
+T-16 review index (HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316; dirty-entries=0 excluding verify-evidence/T-16/)
+Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, lint.txt, new-tests.txt,
+parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
+
+Full suite at this HEAD: 712 passed, 10 skipped, exit 0 (full-test.txt).
+Lint: All checks passed (lint.txt).
+Focused redaction/review/hermeticity suite: 100 passed, 4 skipped, exit 0 (new-tests.txt),
+with untrimmed PASSED lines including the pre-existing credential matrix test.
+Parity opt-in: 4 passed, 29 deselected, exit 0 (parity-optin.txt).
+
+Review round 2 findings -> fix and proof:
+F1 redaction misread as an undelivered file -> prompt_builder.py:526 undelivered_compensation,
+   :542 delivered() accepts the as-sent chunk when it equals redact(chunk); budget cuts still
+   differ. tests/unit/test_review_budget.py:107 (redacted file delivered; missing block still a
+   shortfall).
+F2 angle/URL placeholder over-exemption -> utils/redaction.py:122/:128: angle segments must be
+   placeholder/instruction vocabulary, and a URL with userinfo or a colon in the authority is not
+   a placeholder. tests/unit/test_redaction.py:290 proves <actual-secret>, <hunter2> and
+   https://user:pass@example.invalid redact while <your-api-key> and the R-52 fixtures survive.
+F3 manifest shortfall from the as-sent text -> prompt_builder.py:607 render_truncation_manifest
+   accepts rendered/patch; review_service.py:233 render_review_payload receives
+   rendered_diff=as_sent_diff and patch_text. tests/unit/test_review_budget.py:129 proves the
+   archived payload names a file removed by enforce_budget.
+F4 evidence finding must not requeue or force trimming -> review_service.py:59 prefix,
+   :214 apply_evidence_delivery_finding leaves the verdict untouched; run_service.py:157
+   _latest_feedback filters it out via review_service.worker_actionable_findings (:68).
+   tests/unit/test_review_budget.py:161 pins APPROVED-unchanged and feedback exclusion.
+F5 opt-in documentation -> tests/conftest.py parity hook docstring and
+   tests/integration/test_env_hermeticity.py header both state -m parity needs
+   ORCH_ENV_PARITY_TESTS=1; -m parity alone still skips.
+F6 unreachable git probe / untested runtime failure -> review_audit.py:1292
+   supports_check_attr_source probes the command, :1308 _probe_check_attr_source,
+   :1317 attribute_source_status names probe failure, :1358 _attributes returns its error and
+   diff_completeness degrades to fail-closed with "failed at runtime".
+   tests/unit/test_review_audit.py:380 (probe) and :391 (runtime).
+F7 withheld detection via substring -> review_audit.py:1474 requires is_sensitive_path(path)
+   AND the exact strip-marker line. tests/unit/test_review_audit.py:342 proves a non-sensitive
+   source line containing the marker text is not labelled withheld.
+F8 handoff channel -> core/config.py:78 default max_log_tokens 8000, .env.example:34 and
+   docs/configuration.md:36 updated; any remaining cut is still a manifest row.
+   tests/unit/test_prompt_builder.py:118 proves a ~5k-token handoff is not truncated at the
+   default and an over-cap handoff records max_log_tokens=8000.
+
+DoD 1 - redactions are manifest rows: utils/redaction.py:175 redact_with_report;
+  prompt_builder.py:111 record_redactions, :654 manifest section splits secret | budget |
+  redaction. A row whose section the aggregate context budget later shrank says so in its
+  manifest note column (prompt_builder.py:1020 _mark_redactions_later_cut, called at :1072;
+  header at :581). tests/unit/test_prompt_builder.py:154 (seeded secret + row, no secret in
+  manifest), :250 (later-cut row is marked, an uncut section's row is not).
+DoD 2 - over-match stopped, credentials kept: utils/redaction.py:122/:128;
+  tests/unit/test_redaction.py:290 (angle/URL), :69 (credential matrix), :236 (R-52 fixtures),
+  :263 (placeholder-prefixed real secrets); the damaged marker max_diff_tokens=[REDACTED] is
+  never produced (:219/:290).
+DoD 3 - completeness against the sent text: review_service.py:367 audits as_sent_diff;
+  prompt_builder.py:907 extract_rendered_diff, :981 final rendered_diff;
+  tests/unit/test_prompt_builder.py:77; tests/unit/test_review_audit.py:310 (dropped file is a
+  finding), :325 (sensitive withheld).
+DoD 4 - honest git floor: review_audit.py:1292/:1317/:1358; tests :380/:391/:417;
+  docs/build-loop.md:652 states the 2.40 floor and runtime fallback.
+DoD 5 - offline tests (a)-(e): test_prompt_builder.py:154 (5a), test_redaction.py:219/:290
+  (5b), test_redaction.py:69 (5c), test_review_audit.py:310 (5d), :380/:391 (5e). No network.
+DoD 6 - docs: docs/build-loop.md:535 redaction visibility + as-sent shortfall, :548 handoff
+  budget, :646 compensation shortfall, :652 git floor; README.md:278-284 known limitations.
+DoD 7 - evidence funded or reported: prompt_builder.py:467 reserve, :304 fair allocation,
+  :436 rendered budget, :526 shortfall, :607 as-sent manifest; review_service.py:191 finding.
+  Tests: tests/unit/test_review_budget.py:40,:61,:84,:97,:107,:129,:161,:199.
+DoD 8 - bounded gate cost: config.py:78 handoff budget; prompt_builder.py:467 separate evidence
+  reserve; tests/conftest.py parity hook + worktree fingerprint; only four expensive parity tests
+  opt-in (parity-optin.txt); tests/unit/test_review_budget.py:237,:259,:275,:313,:341,:355.
+  No compression commit was made for this evidence.
+
+Round-1 findings retained: fair evidence allocation, transient operator-worktree guard, only
+expensive parity tests opt-in, placeholder-prefix redaction, audit after enforce_budget, honest
+old-Git reason, generic harness finding and label, evidence HEAD stamps. They are unchanged by
+this round and their tests remain in the focused run above.
+
+## Round 3 -- operator hand-fix of R-56 findings 1 and 2 (commit 986eed8)
+
+Both are holes in the controls this task exists to build, and the two previous rounds each
+introduced a new redaction bypass while closing the last one, so the operator wrote these fixes
+directly instead of funding a fourth round against the same two files. Every evidence file above is
+re-stamped at this HEAD; the file:line citations earlier in this index are unchanged except where
+listed here.
+
+- **Finding 1 -- a real secret survived redaction.** `_PLACEHOLDER_VALUE` exempted a `$` followed by
+  an OPTIONAL brace and an identifier, so `DB_PASSWORD=$Sup3rSecretValue`,
+  `PASSWORD=$1$abcDEF$ghiJKL` and `TOKEN=$abcdef123456` reached the reviewer unmasked. Only a
+  BRACED `${ENV_NAME}` reference is exempt now, because that names a variable instead of holding a
+  value: rationale at `redaction.py:129`, pattern at `:137`. The closing brace stays optional
+  because `_ASSIGNMENT`'s value group is `[^\s"',}]{4,}` and never includes it -- requiring it
+  would redact every legitimate reference and leave a stray brace. Test:
+  `tests/unit/test_redaction.py::test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives`
+  (four leaking shapes redact; two braced references round-trip byte-identically).
+- **Finding 2 -- the as-sent diff audit could be fed a forgery.** `extract_rendered_diff` located
+  the block by searching `dynamic_state` for a FIXED `### Latest diff` header, and Worker-written
+  submission text precedes the diff in that same section, so a handoff quoting the header plus
+  fabricated hunks became the audit-of-record for `diff_completeness`, `undelivered_compensation`
+  and `supplied_evidence`. The sentinel now carries a per-build nonce minted inside `build_prompt`
+  AFTER every Worker string exists: `_diff_block_open` at `prompt_builder.py:909`, nonce minted at
+  `:980`, used by the extractor at `:937`, carried on `BuiltPrompt.diff_nonce`
+  (`providers/base.py:35`). Measured before the fix: in a section holding a forged block and the
+  real one, the fixed header matched the forgery at offset 37 and the real block at 72, so the
+  forgery won the search. Test:
+  `tests/unit/test_prompt_builder.py::test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff`
+  (the forged text is still delivered as prose; it is simply not the audit target).
+
+NOT fixed here, and why. R-56 finding 3 is this task's own subject: the DEPLOYED main harness
+supplied README.md, docs/build-loop.md, docs/configuration.md, .env.example, pyproject.toml,
+tests/unit/test_review_budget.py and all of verify-evidence/T-16/ at 0 bytes, and T-16 cannot be
+reviewed under the improvement it is itself making. Findings 4 and 5 are the nits the Architect
+labelled non-blocking: code-shaped values under TOKEN/SECRET keys are still rewritten but are now
+recorded in the manifest, and `record_redactions` runs before `enforce_budget`, so a manifest row
+can describe text the aggregate context budget later removed.
+
+Gate re-run by the operator at 986eed8 in this worktree: 707 passed / 0 failed / 10 skipped
+(full-test.txt), lint clean (lint.txt), focused selection 95 passed / 4 skipped (new-tests.txt),
+parity opt-in 4 passed / 29 deselected (parity-optin.txt).
+
+## Round 4 -- finding 5 (nit) fixed; findings 1 and 2 re-verified at the operator hand-fix
+
+Findings 1 and 2 (the security ones) were hand-fixed by the operator at 986eed8 and are unchanged
+here; their tests are `test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives`
+(tests/unit/test_redaction.py:335) and
+`test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff`
+(tests/unit/test_prompt_builder.py:217). Both run in new-tests.txt at this HEAD.
+
+Finding 5 fixed (the operator allowed it if cheap). `record_redactions` runs while a section is
+built, before `enforce_budget`, so a redaction row could describe text the aggregate context
+budget then removed. `_mark_redactions_later_cut` (prompt_builder.py:1020) is called by
+`enforce_budget` for each section it actually shrinks (:1072): every redaction row for that
+section gets a note saying the section was reduced afterwards and the described text may not have
+reached the reviewer, and the redaction manifest table now has a `note` column
+(_REDACTION_MANIFEST_HEADER at :581) so the caveat is visible in review_payload.md, not only in
+the record. Rows for sections that survived are untouched.
+Test: `test_a_redaction_row_says_so_when_the_context_budget_later_cuts_its_section`
+(tests/unit/test_prompt_builder.py:250) asserts the cut section's row carries the note, the
+uncut `phase` section's row does not, and the rendered manifest carries it.
+
+Finding 4 (code-shaped values under TOKEN/SECRET keys still rewritten) is deferred by the
+operator; it is recorded in the manifest as DoD 1 requires and is not a security hole.
+
+Evidence at a7c16f2: 708 passed / 10 skipped (full-test.txt), lint clean (lint.txt), focused
+96 passed / 4 skipped (new-tests.txt), parity opt-in 4 passed / 29 deselected (parity-optin.txt).
+
+## Round 5 -- the two blocking findings from R-57 (commit 2ed2cec)
+
+Only these two were changed this round; the round-4 hand-fixes and the deferred finding 4 stand.
+Every evidence file above is re-stamped at HEAD 2ed2cec.
+
+- **Finding 1 -- the guard no longer depends on a shared-git-dir mtime.**
+  `tests/conftest.py:215` `worktree_fingerprint` now compares only `git worktree list
+  --porcelain` and the registry entry names; `registry_mtime_ns` and `git_dir_mtime_ns` are gone
+  from the compared snapshot (kept nowhere, so they cannot become a failure condition).
+  `WorktreeMutationSpy` (`tests/conftest.py:374`, installed by the session fixture at
+  `:437`/`:399`) wraps `subprocess.run`, `subprocess.Popen` and `orchestrator.utils.git.run_git`,
+  records only `git ... worktree add|remove|prune` calls whose `-C`/`--git-dir`/cwd resolves to
+  the operator's common dir, and therefore catches a transient add+prune that the start/end
+  snapshot cannot see. The failure text builder `worktree_guard_failure` (`:267`) reports both
+  facts and does not blame the suite when `recorded == []`, while an unreadable registry still
+  raises (`:215`). Tests: `tests/unit/test_review_budget.py:275` (spy catches transient
+  add+prune while the snapshot is identical), `:313` (git status plus create+rename in the common
+  dir leave the snapshot unchanged and the guard passing), `:341` (unreadable registry raises),
+  `:355` (non-attributing message for names-changed-without-spy, and the attributed message when
+  the spy did record).
+- **Finding 2 -- a failing current-side check-attr is fail-closed, not silently green.**
+  `src/orchestrator/services/review_audit.py:1423` keeps `current_attr_error` instead of
+  discarding it, and `:1438` appends a blocking `DiffIssue(kind="attribute_unavailable")` naming
+  the error and stating that the `-diff`/`export-ignore` check could not be performed. The base
+  side already does this at `:1428`. Test: `tests/unit/test_review_audit.py:417` forces the plain
+  `check-attr -a` failure and asserts one blocking issue, the simulated error in its detail, and
+  the `HARNESS FINDING` line in `render_diff_completeness`.
+
+Gate re-run at 2ed2cec in this worktree: 712 passed / 0 failed / 10 skipped (full-test.txt),
+lint clean (lint.txt), focused selection 100 passed / 4 skipped (new-tests.txt), parity opt-in
+4 passed / 29 deselected (parity-optin.txt).

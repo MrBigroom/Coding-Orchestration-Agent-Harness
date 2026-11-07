@@ -53,6 +53,22 @@ AMBIGUOUS = ReviewFinding(
     violates="review.json contract",
 )
 
+# A harness-detected evidence-delivery finding is visibility for the human reader, not a Worker
+# action item: the fix (a larger budget, or a smaller evidence bundle) is the harness's job, and
+# sending it back would force a Worker to spend a round compressing evidence (T-16 DoD 8(a)).
+EVIDENCE_DELIVERY_PREFIX = "harness-detected evidence delivery:"
+
+
+def is_harness_budget_finding(finding: ReviewFinding | dict) -> bool:
+    """True for the harness's own diff-budget finding, which never asks the Worker to act."""
+    issue = finding.get("issue", "") if isinstance(finding, dict) else finding.issue
+    return str(issue).startswith(EVIDENCE_DELIVERY_PREFIX)
+
+
+def worker_actionable_findings(findings: list[ReviewFinding] | list[dict]) -> list:
+    """Findings a Worker can fix; harness-owned budget failures are excluded from feedback."""
+    return [finding for finding in findings if not is_harness_budget_finding(finding)]
+
 
 def parse_review(text: str) -> tuple[ReviewResult, bool]:
     """Return (result, ambiguous)."""
@@ -172,6 +188,48 @@ def delivery_evidence_section(session: Session, task: Task, run: Run) -> str:
     )
 
 
+def evidence_delivery_finding(paths: list[str]) -> ReviewFinding | None:
+    """The harness finding for compensation artifacts the diff budget could not carry.
+
+    Kept as a function so the message is asserted directly in a unit test (T-16 DoD 7) and the
+    review path cannot drift from it.
+    """
+    if not paths:
+        return None
+    return ReviewFinding(
+        file_or_area=", ".join(paths),
+        issue=(
+            EVIDENCE_DELIVERY_PREFIX
+            + f" the reviewer diff budget could not carry "
+            f"{len(paths)} compensation artifact(s) in full; this is a review-input budget "
+            "failure, not missing Worker evidence, and it does not ask the Worker to trim evidence"
+        ),
+        violates=(
+            "review input completeness (compensation artifacts must be funded or reported; "
+            "this is a harness budget gate, not a task-specific DoD item)"
+        ),
+    )
+
+
+def apply_evidence_delivery_finding(result: ReviewResult, paths: list[str]) -> ReviewFinding | None:
+    """Append the harness finding without touching the reviewer's verdict (T-16 DoD 8(a)).
+
+    An APPROVED round stays APPROVED and is accepted; a CHANGES_REQUESTED round is already going
+    back for its own findings, and this row is filtered out of the Worker feedback by
+    `worker_actionable_findings`. Either way, no round is consumed to compress evidence.
+    """
+    finding = evidence_delivery_finding(paths)
+    if finding is None:
+        return None
+    result.findings.append(finding)
+    result.notes.append(
+        "harness-detected: compensation artifacts the reviewer diff budget could not deliver in "
+        "full: " + ", ".join(paths) + ". This finding is recorded for the human reader; it does "
+        "not change the verdict and is not a Worker action item."
+    )
+    return finding
+
+
 def render_review_payload(
     *,
     input_text: str,
@@ -182,6 +240,8 @@ def render_review_payload(
     diff_issues: list[review_audit.DiffIssue],
     supplied: review_audit.SuppliedEvidence,
     universe: review_audit.PathUniverse | None = None,
+    rendered_diff: str | None = None,
+    patch_text: str | None = None,
 ) -> str:
     """The archived reviewer input plus the provenance of every absence/truncation claim.
 
@@ -206,7 +266,7 @@ def render_review_payload(
 
 ## Truncation manifest
 
-{prompt_builder.render_truncation_manifest(truncations)}
+{prompt_builder.render_truncation_manifest(truncations, rendered=rendered_diff, patch=patch_text)}
 
 ## What the reviewer was actually given
 
@@ -234,7 +294,10 @@ candidate when a bare name matched more than one file.
 
 Tally: {review_audit.tally_verdicts(absence_checks)}
 
-## Diff completeness (git diffstat vs the supplied patch)
+## Diff completeness (git diffstat vs the rendered reviewer diff)
+
+Audited against the budgeted text the prompt builder actually emitted, not the archived
+`patch.diff` (T-16 DoD 3). `patch.diff` remains the full record.
 
 {diff_text}
 """
@@ -253,7 +316,32 @@ async def architect_review(
     cwd = Path(run.worktree_path) if run.worktree_path else None
     base_branch = project.base_branch if project else None
     patch_text = artifact_service.read_text(run.id, "patch.diff") or ""
-    diff_issues = review_audit.diff_completeness(cwd, base_branch, patch_text)
+    # T-16 DoD 3/7: render the budgeted diff ONCE, then audit that exact text for completeness and
+    # hand the same text to the prompt builder. The archived patch.diff stays the full record.
+    recorder = prompt_builder.TruncationRecorder()
+    rendered_diff = prompt_builder.render_diff_for_prompt(
+        patch_text, prompt_builder.get_settings().max_diff_tokens, recorder
+    )
+    # A preliminary audit lets the reviewer prompt name budget omissions before the aggregate
+    # context budget runs. It is NOT the audit of record: after build_prompt the same checks run
+    # again against `prompt.rendered_diff`, which is re-extracted from the final dynamic section
+    # (T-16 review round 1, finding 5). The second pass is what proves the audited text is the
+    # text sent.
+    pre_undelivered = prompt_builder.undelivered_compensation(
+        [record.as_dict() for record in recorder.records]
+    )
+    pre_diff_issues = review_audit.diff_completeness(
+        cwd, base_branch, patch_text, rendered=rendered_diff
+    )
+    harness_text = harness_findings_section(session, task, run, project, pre_diff_issues)
+    if pre_undelivered:
+        harness_text += (
+            "\nHARNESS FINDING: the reviewer diff budget could not deliver "
+            f"{len(pre_undelivered)} compensation artifact(s) in full: "
+            + ", ".join(pre_undelivered)
+            + ". This is a harness-detected delivery failure (T-16 DoD 7), not missing Worker "
+            "evidence. Do not file it as an evidence gap; the review records it separately."
+        )
     state = DynamicState(
         handoff=(artifact_service.read_text(run.id, "handoff.md") or "")
         + "\n\nhandoff.json:\n"
@@ -261,15 +349,32 @@ async def architect_review(
         test_summary=artifact_service.read_text(run.id, "test_summary.txt"),
         verification=artifact_service.read_text(run.id, "verification.md"),
         diff=patch_text,
+        rendered_diff=rendered_diff,
         recovery=recovery_section(session, task, run),
-        harness_findings=harness_findings_section(session, task, run, project, diff_issues),
+        harness_findings=harness_text,
         delivery_evidence=delivery_evidence_section(session, task, run),
         extra={
             "Harness-detected missing artifacts (computed by the orchestrator, not asserted by "
             "a model)": "\n".join(missing) or "none",
         },
     )
-    prompt = prompt_builder.build_prompt(session, Role.architect, task, project, state)
+    prompt = prompt_builder.build_prompt(
+        session, Role.architect, task, project, state, recorder=recorder
+    )
+    # The audit of record: `prompt.rendered_diff` is the block left in the FINAL dynamic_state
+    # after enforce_budget, so the diffstat is compared with the bytes the reviewer was sent.
+    as_sent_diff = prompt.rendered_diff
+    diff_issues = review_audit.diff_completeness(
+        cwd, base_branch, patch_text, rendered=as_sent_diff
+    )
+    undelivered_evidence = prompt_builder.undelivered_compensation(
+        [record.as_dict() for record in recorder.records],
+        rendered=as_sent_diff,
+        patch=patch_text,
+    )
+    audit_changed_after_context_budget = (
+        diff_issues != pre_diff_issues or undelivered_evidence != pre_undelivered
+    )
     # T-11 DoD 1: archive the exact bytes the reviewer received, plus what the builder dropped.
     # The artifact name is declared as PROPOSED in
     # docs/contract-change-request-T11-review-payload.md; docs/frozen-contracts.md is unchanged.
@@ -311,7 +416,7 @@ async def architect_review(
     # What the reviewer was actually given, derived from the same recorder that performed every
     # cut. Visibility claims are checked against this, never against file existence.
     supplied = review_audit.supplied_evidence(
-        patch_text,
+        as_sent_diff,
         prompt.truncations,
         review_audit.changed_paths(cwd, base_branch),
     )
@@ -359,9 +464,36 @@ async def architect_review(
             continue
         result.missing_artifacts.append(f"reviewer-asserted: {item}")
 
+    # T-16 DoD 7: evidence the diff budget could not carry is a harness-detected delivery
+    # failure, named as a finding so no reviewer has to infer it from an absent file.
+    if undelivered_evidence:
+        apply_evidence_delivery_finding(result, undelivered_evidence)
+        log_service.log_event(
+            session,
+            "review_evidence_undelivered",
+            structured_log.attach(
+                "the reviewer diff budget could not carry the task's own evidence",
+                {
+                    "task_id": task.id,
+                    "run_id": run.id,
+                    "paths": undelivered_evidence,
+                    "task_evidence": "harness-detected: not missing Worker evidence",
+                },
+            ),
+            role="supervisor",
+            task_id=task.id,
+            run_id=run.id,
+        )
+
     # T-11 DoD 7: a repository attribute or a missing patch section is a harness finding, so a
     # Worker cannot hide evidence by configuring `.gitattributes`. Pre-existing attributes are
     # reported (informational) but never become a finding against this run.
+    if audit_changed_after_context_budget:
+        result.notes.append(
+            "harness-detected: the aggregate prompt context budget changed the diff after the "
+            "preliminary audit; completeness and supplied-evidence are reported against the "
+            f"final {len(as_sent_diff.encode('utf-8'))}-byte diff block actually sent"
+        )
     for issue in diff_issues:
         if issue.blocks:
             result.findings.append(
@@ -486,6 +618,8 @@ async def architect_review(
             diff_issues=diff_issues,
             supplied=supplied,
             universe=universe,
+            rendered_diff=as_sent_diff,
+            patch_text=patch_text,
         ),
         redact_content=False,
     )

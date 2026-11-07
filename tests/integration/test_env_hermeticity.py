@@ -32,6 +32,12 @@ from orchestrator.services import (
 from orchestrator.utils.truncate import parse_test_counts
 from tests.conftest import make_repo, requires_git
 
+# T-16 DoD 8: only the EXPENSIVE environment-parity cases are opt-in. The cheap hermeticity
+# checks stay in the gated suite, because dropping the whole module removed the T-19 coverage the
+# gate relies on (review round 1, finding 3). The nested-suite cases are additionally behind
+# `ORCH_ENV_SPAWN_TESTS=1`; the marker hook in tests/conftest.py excludes `@pytest.mark.parity`
+# items unless ORCH_ENV_PARITY_TESTS=1 is set. With that env var they run, and `-m parity` selects
+# only them; `-m parity` alone does NOT include them.
 pytestmark = requires_git
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -168,6 +174,7 @@ def _require_committed_head() -> None:
 
 
 @SPAWN_TESTS
+@pytest.mark.parity
 def test_affected_subset_is_identical_with_and_without_a_seeded_dotenv(tmp_path):
     """DoD 2: the env/config/settings/sync subset plus the T-9 pair, twice in one temp checkout."""
     _require_committed_head()
@@ -190,6 +197,7 @@ def test_affected_subset_is_identical_with_and_without_a_seeded_dotenv(tmp_path)
 
 
 @SPAWN_TESTS
+@pytest.mark.parity
 def test_seeded_dotenv_changes_the_outcome_without_the_guard(tmp_path):
     """The control: without the session guard the seeded `.env` really does flip the assertions."""
     tree = _temp_checkout(tmp_path)
@@ -206,6 +214,7 @@ def test_seeded_dotenv_changes_the_outcome_without_the_guard(tmp_path):
 
 
 @SPAWN_TESTS
+@pytest.mark.parity
 def test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv(tmp_path):
     """DoD 5: the T-9 pair plus a module-level app import in one seeded run."""
     _require_committed_head()
@@ -981,6 +990,7 @@ def test_git_service_keeps_the_posix_lock_import_lazy():
     assert local.count("fcntl") == 3, local  # parity_lock + _parity_lock_at + _acquire_lock_fd
 
 
+@pytest.mark.parity
 def test_a_killed_shell_parity_run_leaves_no_registered_worktree(home, tmp_path, monkeypatch):
     """T-20 DoD 4a: SIGKILL skips the shell trap; the lock-aware sweep still reclaims the tree."""
     repo = make_repo(

@@ -47,6 +47,7 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
   "external: requires an external CLI harness or network; skipped by default",
+  "parity: environment-parity scenario; opt in with ORCH_ENV_PARITY_TESTS=1",
 ]
 
 [tool.ruff]

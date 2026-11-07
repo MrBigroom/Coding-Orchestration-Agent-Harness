@@ -206,3 +206,154 @@ def test_dotenv_loaded_without_overriding(tmp_path, monkeypatch):
         assert os.environ["ZZ_ALREADY_SET"] == "from-env"
     finally:
         os.environ.pop("ZZ_TEST_PROVIDER_KEY", None)
+
+
+# --- T-16 DoD 2/5(b): prose token counts and self-declared placeholders survive ----------------
+# The exact shape that reached a reviewer in runs/52/review_payload.md was
+# `max_diff_tokens=[REDACTED]`: the generated budget preamble ends the number with `;`, the old
+# `val.isdigit()` test saw `12000;`, and the redactor swallowed a configuration number that was
+# itself describing the diff budget. The damaged string is pinned here so a regression is named
+# by the same text the Architect saw.
+
+
+def test_inline_token_counts_in_prose_survive_byte_identically():
+    lines = [
+        "[review diff budget: max_diff_tokens=12000; 12 file(s); per-file budget 1975 tokens",
+        "max_diff_tokens=4000",
+        "input_tokens=123",
+        '"inputTokens": 400',
+        "totalTokens: 1007, cache_read_input_tokens=600",
+    ]
+    for line in lines:
+        assert redact(line) == line, line
+    damaged = "max_diff_tokens=[REDACTED]"
+    # The exact broken output must never be produced from the real number...
+    assert damaged not in redact(lines[0])
+    # ...while an archive that already contains the marker is not rewritten further.
+    assert redact(damaged) == damaged
+
+
+def test_synthetic_placeholder_assignments_in_test_literals_survive():
+    """R-52 fixture: the redactor had masked the strings whose point is that they are fake.
+
+    These are ASSERTED TEST LITERALS, not secrets; a reviewer saw `ANTHROPIC_API_KEY=[REDACTED]`
+    and filed a finding that contradicted the synthesis helper. Both directions are asserted
+    below, so the placeholder exemption cannot weaken a real credential shape.
+    """
+    from tests.integration.test_env_hermeticity import SEEDED_ENV_PAIRS
+
+    flat = "".join(f"{name}={value}\n" for name, value in SEEDED_ENV_PAIRS)
+    assert redact(flat) == flat
+    literals = [
+        'assert "ANTHROPIC_API_KEY=synthetic-not-a-secret" in observed.read_text()',
+        'assert "OPERATOR_API_KEY=not-a-secret-0000" in text',
+        'assert "OPERATOR_SUPABASE_URL=https://synthetic.invalid" in text',
+        'assert "OPERATOR_EMAIL=synthetic@example.invalid" in text',
+    ]
+    for line in literals:
+        assert redact(line) == line, line
+    # A real key shape under the same name still redacts first; the exemption is for the value
+    # shape, never for the credential patterns.
+    real = "ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    assert "sk-ant-api03" not in redact(real)
+    # A random-looking value that merely starts with the word "synthetic" is not a placeholder.
+    assert REDACTED in redact("ANTHROPIC_API_KEY=syntheticrealvalue123")
+
+
+def test_a_real_secret_with_a_placeholder_prefix_is_still_redacted():
+    """Review round 1 finding 4: the exemption is placeholder VOCABULARY, not arbitrary content.
+
+    The earlier regex accepted `placeholder` + a delimiter + anything, so a generic assignment
+    such as `PASSWORD=placeholder-but-actually-a-secret-123` was left intact. These all keep a
+    placeholder word at the start and must still lose the value.
+    """
+    damaged = [
+        "PASSWORD=placeholder-but-actually-a-secret-123",
+        "ANTHROPIC_API_KEY=synthetic-real-key-12345",
+        "SECRET=fake-credential-abcdef123456",
+        "TOKEN=dummy-token-ABCDEFGHIJKLMNOP",
+        "API_KEY=not-a-secret-but-really-XYZ9876",
+    ]
+    for line in damaged:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    # The narrow vocabulary still accepts the exact synthetic fixtures the gate needs.
+    for line in (
+        "PASSWORD=placeholder-0001",
+        "ANTHROPIC_API_KEY=synthetic-not-a-secret",
+        "OPERATOR_API_KEY=not-a-secret-0002",
+    ):
+        assert redact(line) == line, line
+
+
+def test_angle_bracket_and_url_placeholders_do_not_exempt_real_values():
+    """Review round 2 finding 2: a bracketed value or a URL with userinfo is not a placeholder.
+
+    The earlier `_PLACEHOLDER_VALUE` accepted ANY `<...>` and any URL ending in `.invalid`,
+    including `PASSWORD=<actual-secret>` and `https://user:pass@example.invalid`, so generic
+    secret assignments survived. The exemption is now placeholder vocabulary only, while real
+    credential shapes and the exact R-52 fixtures keep their behaviour.
+    """
+    damaged = [
+        "PASSWORD=<actual-secret>",
+        "TOKEN=<hunter2>",
+        "API_KEY=<abc123def456>",
+        "PASSWORD=https://user:pass@example.invalid",
+        "TOKEN=user:pass@example.invalid",
+        "SECRET=https://synthetic:s3cret@example.invalid",
+    ]
+    for line in damaged:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    safe = [
+        "PASSWORD=<your-api-key>",
+        "TOKEN=<insert-token-here>",
+        "URL=https://synthetic.invalid",
+        "EMAIL=synthetic@example.invalid",
+        "ANTHROPIC_API_KEY=synthetic-not-a-secret",
+    ]
+    for line in safe:
+        assert redact(line) == line, line
+    # The exact broken marker from the review payload is never produced from the real number.
+    assert "max_diff_tokens=[REDACTED]" not in redact("max_diff_tokens=4000")
+
+
+def test_redaction_report_names_the_pattern_class_and_count_without_the_secret():
+    from orchestrator.utils.redaction import RedactionHit, redact_with_report
+
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    report = redact_with_report(f"one {secret} two {secret}")
+    assert report.text.count(REDACTED) == 2
+    assert report.hits == (RedactionHit("sk-ant", 2),)
+    assert secret not in str(report.hits)
+    # Benign token counts produce no redaction row at all.
+    assert redact_with_report("max_diff_tokens=4000").hits == ()
+
+
+def test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives():
+    """T-16 review round 3, finding 1: only a BRACED `${ENV_NAME}` reference is a placeholder.
+
+    The exemption read `$` + optional brace + identifier + optional brace, so any bare
+    `$identifier`-shaped value was treated as a variable reference and survived redaction --
+    including real secrets, because passwords, tokens and generated strings commonly contain `$`.
+    `utils/redaction.py` is a security control and the task forbids narrowing what counts as a
+    secret, so the unbraced form redacts again. The CLOSING brace stays optional because
+    `_ASSIGNMENT`'s value group is `[^\\s"\\',}]{4,}` and therefore never includes it: requiring it
+    would redact every legitimate `${ENV_NAME}` reference and leave a stray brace behind.
+    """
+    leaks = [
+        "DB_PASSWORD=$Sup3rSecretValue",
+        "API_TOKEN=$abcdef123456",
+        "TOKEN=$short",
+        "PASSWORD=$1$abcDEF$ghiJKL",
+    ]
+    for line in leaks:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    # A braced reference names a variable instead of holding a value, so it stays readable and
+    # byte-identical -- including its closing brace.
+    for line in ("DB_PASSWORD=${db_password}", "API_TOKEN=${API_TOKEN}"):
+        assert redact(line) == line, line

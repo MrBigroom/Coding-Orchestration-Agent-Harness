@@ -1,0 +1,120 @@
+# HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316
+# dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
+# command: ./scripts/orch_verify.sh test -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
+orch-verify: pytest target -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
+.......................................................................s [ 69%]
+ss.........................s....                                         [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/unit/test_redaction.py::test_redacts_provider_keys
+PASSED tests/unit/test_redaction.py::test_branch_task_and_phase_names_survive_redaction
+PASSED tests/unit/test_redaction.py::test_findings_json_payload_survives_redaction
+PASSED tests/unit/test_redaction.py::test_credentials_are_still_redacted_wherever_they_appear
+PASSED tests/unit/test_redaction.py::test_build_log_details_keep_operational_commands_copy_pasteable
+PASSED tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression
+PASSED tests/unit/test_redaction.py::test_redacts_assignments_and_bearer
+PASSED tests/unit/test_redaction.py::test_redacts_private_key_block
+PASSED tests/unit/test_redaction.py::test_redacts_secret_values_from_environment
+PASSED tests/unit/test_redaction.py::test_leaves_normal_text_alone
+PASSED tests/unit/test_redaction.py::test_token_counts_are_not_secrets
+PASSED tests/unit/test_redaction.py::test_long_unbroken_text_redacts_quickly
+PASSED tests/unit/test_redaction.py::test_sensitive_paths_and_diff_stripping
+PASSED tests/unit/test_redaction.py::test_dotenv_loaded_without_overriding
+PASSED tests/unit/test_redaction.py::test_inline_token_counts_in_prose_survive_byte_identically
+PASSED tests/unit/test_redaction.py::test_synthetic_placeholder_assignments_in_test_literals_survive
+PASSED tests/unit/test_redaction.py::test_a_real_secret_with_a_placeholder_prefix_is_still_redacted
+PASSED tests/unit/test_redaction.py::test_angle_bracket_and_url_placeholders_do_not_exempt_real_values
+PASSED tests/unit/test_redaction.py::test_redaction_report_names_the_pattern_class_and_count_without_the_secret
+PASSED tests/unit/test_redaction.py::test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives
+PASSED tests/unit/test_prompt_builder.py::test_sections_follow_static_first_order
+PASSED tests/unit/test_prompt_builder.py::test_dynamic_state_never_leaks_into_static_sections
+PASSED tests/unit/test_prompt_builder.py::test_preview_detects_dynamic_before_static
+PASSED tests/unit/test_prompt_builder.py::test_preview_flags_volatile_values_in_static_prefix
+PASSED tests/unit/test_prompt_builder.py::test_secrets_redacted_and_sensitive_diffs_stripped
+PASSED tests/unit/test_prompt_builder.py::test_rendered_diff_is_the_post_context_budget_text_actually_sent
+PASSED tests/unit/test_prompt_builder.py::test_budget_truncates_dynamic_only
+PASSED tests/unit/test_prompt_builder.py::test_default_handoff_budget_carries_a_representative_handoff
+PASSED tests/unit/test_prompt_builder.py::test_redactions_are_recorded_in_the_manifest_without_the_secret
+PASSED tests/unit/test_prompt_builder.py::test_a_sensitive_file_is_labelled_withheld_as_a_secret_not_as_a_budget_cut
+PASSED tests/unit/test_prompt_builder.py::test_diff_budget_preamble_token_count_reaches_the_reviewer_intact
+PASSED tests/unit/test_prompt_builder.py::test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff
+PASSED tests/unit/test_prompt_builder.py::test_a_redaction_row_says_so_when_the_context_budget_later_cuts_its_section
+PASSED tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim
+PASSED tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim
+PASSED tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked
+PASSED tests/unit/test_review_audit.py::test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim
+PASSED tests/unit/test_review_audit.py::test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence
+PASSED tests/unit/test_review_audit.py::test_a_partially_supplied_file_is_the_omitted_state_not_a_confirmed_absence
+PASSED tests/unit/test_review_audit.py::test_an_unknowable_visibility_claim_is_unchecked_not_refuted
+PASSED tests/unit/test_review_audit.py::test_supplied_evidence_is_derived_from_the_recorder_that_cut
+PASSED tests/unit/test_review_audit.py::test_diff_budget_names_every_omitted_file_and_records_the_manifest
+PASSED tests/unit/test_review_audit.py::test_a_partially_supplied_file_says_so_in_the_text_the_reviewer_reads
+PASSED tests/unit/test_review_audit.py::test_an_omitted_file_is_listed_and_recorded
+PASSED tests/unit/test_review_audit.py::test_sensitive_files_withheld_from_the_diff_are_recorded_and_named
+PASSED tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task
+PASSED tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block
+PASSED tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body
+PASSED tests/unit/test_review_audit.py::test_diff_completeness_audits_the_rendered_diff_not_the_archived_patch
+PASSED tests/unit/test_review_audit.py::test_a_withheld_sensitive_file_is_labelled_not_a_missing_hunk
+PASSED tests/unit/test_review_audit.py::test_a_non_sensitive_file_containing_the_strip_marker_is_not_labelled_withheld
+PASSED tests/unit/test_review_audit.py::test_attribute_check_falls_back_when_check_attr_source_is_unavailable
+PASSED tests/unit/test_review_audit.py::test_attribute_source_probe_failure_is_named_as_a_probe_not_as_old_git
+PASSED tests/unit/test_review_audit.py::test_attribute_source_runtime_failure_falls_back_and_still_reports
+PASSED tests/unit/test_review_audit.py::test_current_side_attribute_failure_is_a_fail_closed_issue
+PASSED tests/unit/test_review_audit.py::test_an_empty_merge_base_does_not_claim_the_git_version_is_old
+PASSED tests/unit/test_review_audit.py::test_review_setup_git_calls_do_not_scale_with_the_number_of_changed_files
+PASSED tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped
+PASSED tests/unit/test_review_budget.py::test_a_large_first_evidence_log_does_not_starve_later_evidence
+PASSED tests/unit/test_review_budget.py::test_an_unfundable_group_does_not_give_the_whole_budget_to_the_first_file
+PASSED tests/unit/test_review_budget.py::test_undelivered_compensation_uses_the_final_text_not_only_the_records
+PASSED tests/unit/test_review_budget.py::test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut
+PASSED tests/unit/test_review_budget.py::test_manifest_shortfall_is_computed_from_the_as_sent_text
+PASSED tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim
+PASSED tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding
+PASSED tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand
+PASSED tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry
+PASSED tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune
+PASSED tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot
+PASSED tests/unit/test_review_budget.py::test_an_unreadable_worktree_registry_fails_loudly
+PASSED tests/unit/test_review_budget.py::test_guard_message_does_not_blame_the_suite_without_spy_evidence
+PASSED tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment
+PASSED tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree
+PASSED tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run
+PASSED tests/integration/test_env_hermeticity.py::test_env_parity_reports_a_preexisting_dotenv_instead_of_raising
+PASSED tests/integration/test_env_hermeticity.py::test_env_parity_never_unlinks_a_dotenv_it_did_not_create
+PASSED tests/integration/test_env_hermeticity.py::test_env_parity_rejects_a_command_without_an_orch_verify_marker
+PASSED tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_refuses_untrusted_temp_roots
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_remove_an_unregistered_tree
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_is_project_scoped_and_reports_unopenable_roots
+PASSED tests/integration/test_env_hermeticity.py::test_parity_placeholder_matches_between_the_python_and_shell_paths
+PASSED tests/integration/test_env_hermeticity.py::test_parity_env_name_order_matches_the_shell_path
+PASSED tests/integration/test_env_hermeticity.py::test_parity_lock_lives_under_orchestrator_home_not_the_managed_tree
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_breaks_a_stale_lock_by_rename_then_unlink
+PASSED tests/integration/test_env_hermeticity.py::test_breaking_a_stale_lock_never_renames_a_live_lock_that_replaced_it
+PASSED tests/integration/test_env_hermeticity.py::test_parity_lock_refuses_an_inode_swapped_between_open_and_flock
+PASSED tests/integration/test_env_hermeticity.py::test_a_dry_run_probe_never_blocks_a_live_parity_run
+PASSED tests/integration/test_env_hermeticity.py::test_the_shell_lock_names_exactly_one_holder_and_claims_no_closed_window
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_dry_run_creates_no_lock_and_mutates_nothing
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_skips_an_unmarked_root_until_the_grace_window_expires
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_reports_a_surviving_tree_as_not_reclaimed
+PASSED tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_claim_a_removal_rmtree_did_not_do
+PASSED tests/integration/test_env_hermeticity.py::test_git_service_keeps_the_posix_lock_import_lazy
+PASSED tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue
+PASSED tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch
+PASSED tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue
+PASSED tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value
+SKIPPED [1] tests/integration/test_env_hermeticity.py:176: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
+SKIPPED [1] tests/integration/test_env_hermeticity.py:199: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
+SKIPPED [1] tests/integration/test_env_hermeticity.py:216: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
+SKIPPED [1] tests/integration/test_env_hermeticity.py:993: parity scenario; opt in with ORCH_ENV_PARITY_TESTS=1
+100 passed, 4 skipped in 3.72s
