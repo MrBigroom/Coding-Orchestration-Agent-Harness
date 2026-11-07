@@ -85,3 +85,69 @@ def test_budget_truncates_dynamic_only(session, monkeypatch):
     system = built.sections[0].content
     assert system.startswith("You are the Worker")  # static untouched
     assert "structured summary" in built.sections[-1].content
+
+
+# --- T-16 DoD 1/2/5(a)(b): redaction is visible in the manifest, and prose survives -----------
+
+
+def test_redactions_are_recorded_in_the_manifest_without_the_secret(session):
+    """DoD 1/5(a): a seeded secret is redacted AND its pattern class/count is recorded."""
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/src/app.py\n"
+        f"@@ -1 +1 @@\n-KEY=old\n+ANTHROPIC_API_KEY={secret}\n"
+    )
+    task = task_service.create(session, TaskCreate(title="P"))
+    built = prompt_builder.build_prompt(session, "architect", task, None, DynamicState(diff=diff))
+    text = built.static_text() + built.dynamic_text()
+    assert secret not in text
+    redactions = [r for r in built.truncations if r["kind"] == "redaction"]
+    row = next(r for r in redactions if r["pattern_class"] == "sk-ant")
+    assert row["substitutions"] == 1
+    assert row["section"] == "dynamic_state"
+    manifest = prompt_builder.render_truncation_manifest(built.truncations)
+    assert "### Rewritten in place by the redactor" in manifest
+    assert "| sk-ant | 1 |" in manifest
+    # Neither the secret nor the substituted value is reprinted in the manifest.
+    assert secret not in manifest
+    assert "[REDACTED]" not in manifest
+
+
+def test_a_sensitive_file_is_labelled_withheld_as_a_secret_not_as_a_budget_cut(session):
+    diff = (
+        "diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-A=1\n+A=2\n"
+        "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/src/app.py\n"
+        "@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    )
+    task = task_service.create(session, TaskCreate(title="P"))
+    built = prompt_builder.build_prompt(session, "architect", task, None, DynamicState(diff=diff))
+    manifest = prompt_builder.render_truncation_manifest(built.truncations)
+    assert "### Withheld as a secret" in manifest
+    assert "diff:.env" in manifest
+    # The withholding row is not presented as a token-budget cut.
+    withheld = manifest.index("### Withheld as a secret")
+    budget = (
+        manifest.index("### Cut by a token budget")
+        if "### Cut by a token budget" in manifest
+        else len(manifest)
+    )
+    assert "diff:.env" in manifest[withheld:budget]
+
+
+def test_diff_budget_preamble_token_count_reaches_the_reviewer_intact(session, monkeypatch):
+    """DoD 2/5(b): the exact `max_diff_tokens=<n>;` prose shape survives the real prompt path."""
+    from orchestrator.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_diff_tokens", 200)
+    lines = "\n".join(f"+line {i} of a generated file that must be cut" for i in range(400))
+    diff = (
+        "diff --git a/src/big.py b/src/big.py\n--- a/src/big.py\n+++ b/src/big.py\n"
+        f"@@ -1,0 +1,400 @@\n{lines}\n"
+    )
+    task = task_service.create(session, TaskCreate(title="P"))
+    built = prompt_builder.build_prompt(session, "architect", task, None, DynamicState(diff=diff))
+    text = built.static_text() + built.dynamic_text()
+    assert "max_diff_tokens=200;" in text
+    assert "max_diff_tokens=[REDACTED]" not in text
+    records = [r for r in built.truncations if r["kind"] == "redaction"]
+    assert not any(r["pattern_class"] == "assignment" for r in records)

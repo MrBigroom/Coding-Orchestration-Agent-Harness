@@ -5,10 +5,36 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 REDACTED = "[REDACTED]"
 
-_PATTERNS: list[re.Pattern[str]] = [
+
+@dataclass(frozen=True)
+class RedactionHit:
+    """One pattern class that rewrote text, and how many substitutions it made.
+
+    Recorded in the reviewer payload's truncation manifest (T-16 DoD 1). It deliberately carries
+    no match text: the whole point is to make a rewrite visible without reprinting the secret.
+    """
+
+    pattern_class: str
+    count: int
+
+
+@dataclass(frozen=True)
+class RedactionReport:
+    text: str
+    hits: tuple[RedactionHit, ...] = ()
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.hits)
+
+
+# Named so a manifest row can say WHICH class matched without exposing the matched value. The
+# names are stable enough for a reviewer to correlate with this file.
+_NAMED_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Provider keys. The lookbehind anchor is load-bearing (T-8 DoD 10): without it these patterns
     # match INSIDE ordinary words that end in "sk" followed by a hyphen, so branch/task/phase
     # names were destroyed by redact() — "task-8-recovery-commits..." lost its value while a
@@ -19,20 +45,31 @@ _PATTERNS: list[re.Pattern[str]] = [
     # character, so `\bsk-` would miss `TOKEN_sk-proj-…` and `API_KEY_sk-ant-…` — shapes secrets
     # really do appear in — which the DoD forbids ("keep every existing credential pattern
     # redacting exactly as before"). This anchor is `\b` plus that case, never narrower.
-    re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_\-]{10,}"),
-    re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
-    re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+    ("sk-ant", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_\-]{10,}")),
+    ("sk", re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_\-]{20,}")),
+    ("gh", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("github_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("glpat", re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b")),
+    ("xox", re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}\b")),
+    ("aws-akia", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("google-aiza", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
     # JWT-ish
-    re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+    (
+        "jwt",
+        re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+    ),
     # PEM private keys
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    (
+        "pem-private-key",
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S
+        ),
+    ),
     # Bearer tokens in headers
-    re.compile(r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]{8,}"),
+    (
+        "bearer",
+        re.compile(r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]{8,}"),
+    ),
 ]
 
 # KEY=value / "key": "value" style assignments where the key name looks secret. The
@@ -50,12 +87,45 @@ _ASSIGNMENT = re.compile(
 
 # Token *counts* ("inputTokens": 400, max_tokens=16000) are usage numbers, not secrets.
 _TOKEN_COUNT_KEY = re.compile(r"(?i)tokens$")
+# A count can be followed by sentence punctuation: `max_diff_tokens=12000;` is the exact shape
+# that reached a reviewer as `max_diff_tokens=[REDACTED]` (T-16 DoD 2). The punctuation belongs to
+# the prose, not to the number, so strip it before deciding whether the value is a count.
+_TRAILING_PROSE = ".;:!?)]}"
+_TOKEN_COUNT_VALUE = re.compile(r"[\d][\d,_]*$")
+# Self-describing placeholders are not credentials. This is deliberately narrow: the value must
+# BE one of these words/prefixes, followed by a non-alphanumeric delimiter or end of value, so a
+# real random secret that merely starts with the same letters is still redacted. This fixes the
+# R-52 fixture in which a test asserted `ANTHROPIC_API_KEY=synthetic-not-a-secret` and the
+# reviewer was shown `ANTHROPIC_API_KEY=[REDACTED]`, i.e. the redactor destroyed the evidence
+# that no secret existed. Every recognised credential *shape* below still redacts first, so
+# `KEY=synthetic-sk-ant-...` loses the key regardless of this exemption.
+_PLACEHOLDER_VALUE = re.compile(
+    r"""(?ix)^(?:
+        \[REDACTED\]
+      | <[^<>\s]*>
+      | \$\{?[A-Za-z_][A-Za-z0-9_]*\}?
+      | (?:synthetic|placeholder|dummy|fake|example|sample|redacted|changeme|not[-_]?a[-_]?secret)
+         (?:$|[^A-Za-z0-9].*)
+      | https?://[^\s/]*\.(?:invalid|example(?:\.(?:com|org|net))?)(?:/\S*)?
+      | [^\s@]+@[^\s@]*\.(?:invalid|example(?:\.(?:com|org|net))?)
+    )$"""
+)
 
 _SECRET_ENV_HINT = re.compile(r"(?i)(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)")
 
 
+def _is_benign_assignment(m: re.Match[str]) -> bool:
+    """True when a `key=value` match is a usage number or a self-declared placeholder."""
+    key, val = m.group("key"), m.group("val")
+    if _TOKEN_COUNT_KEY.search(key):
+        trimmed = val.rstrip(_TRAILING_PROSE)
+        if _TOKEN_COUNT_VALUE.fullmatch(trimmed):
+            return True
+    return bool(_PLACEHOLDER_VALUE.match(val))
+
+
 def _redact_assignment(m: re.Match[str]) -> str:
-    if m.group("val").isdigit() and _TOKEN_COUNT_KEY.search(m.group("key")):
+    if _is_benign_assignment(m):
         return m.group(0)
     return f"{m.group('key')}{m.group('sep')}{REDACTED}"
 
@@ -66,20 +136,45 @@ def _env_secret_values() -> Iterable[str]:
             yield v
 
 
-def redact(text: str | None, extra_secrets: Iterable[str] = ()) -> str:
+def redact_with_report(
+    text: str | None, extra_secrets: Iterable[str] = ()
+) -> RedactionReport:
+    """Redact and report which pattern classes matched, without recording any match text.
+
+    `redact()` is the same operation without the report; keeping one implementation means the
+    manifest can never describe a rewrite that did not happen (or miss one that did).
+    """
     if not text:
-        return text or ""
+        return RedactionReport(text or "")
     out = text
+    counts: dict[str, int] = {}
     for secret in sorted({*extra_secrets, *_env_secret_values()}, key=len, reverse=True):
         if secret and len(secret) >= 8:
-            out = out.replace(secret, REDACTED)
-    for pat in _PATTERNS:
+            n = out.count(secret)
+            if n:
+                out = out.replace(secret, REDACTED)
+                counts["environment-value"] = counts.get("environment-value", 0) + n
+    for name, pat in _NAMED_PATTERNS:
         if pat.groups:
-            out = pat.sub(lambda m: m.group(1) + REDACTED, out)
+            out, n = pat.subn(lambda m: m.group(1) + REDACTED, out)
         else:
-            out = pat.sub(REDACTED, out)
-    out = _ASSIGNMENT.sub(_redact_assignment, out)
-    return out
+            out, n = pat.subn(REDACTED, out)
+        if n:
+            counts[name] = counts.get(name, 0) + n
+
+    def counted_assignment(m: re.Match[str]) -> str:
+        if _is_benign_assignment(m):
+            return m.group(0)
+        counts["assignment"] = counts.get("assignment", 0) + 1
+        return f"{m.group('key')}{m.group('sep')}{REDACTED}"
+
+    out = _ASSIGNMENT.sub(counted_assignment, out)
+    hits = tuple(RedactionHit(name, n) for name, n in sorted(counts.items()) if n)
+    return RedactionReport(out, hits)
+
+
+def redact(text: str | None, extra_secrets: Iterable[str] = ()) -> str:
+    return redact_with_report(text, extra_secrets).text
 
 
 SENSITIVE_FILE_PATTERNS = (

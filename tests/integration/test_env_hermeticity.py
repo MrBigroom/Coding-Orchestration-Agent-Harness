@@ -32,7 +32,10 @@ from orchestrator.services import (
 from orchestrator.utils.truncate import parse_test_counts
 from tests.conftest import make_repo, requires_git
 
-pytestmark = requires_git
+# T-16 DoD 8: the whole environment-parity scenario is opt-in (`ORCH_ENV_PARITY_TESTS=1`). The
+# nested-suite cases are additionally behind `ORCH_ENV_SPAWN_TESTS=1`; the marker hook in
+# tests/conftest.py makes the cheap gated suite exclude this module entirely by default.
+pytestmark = [requires_git, pytest.mark.parity]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHILD_MARKER = "ORCH_ENV_PARITY_CHILD"

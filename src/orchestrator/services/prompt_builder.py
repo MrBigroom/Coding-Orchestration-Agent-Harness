@@ -30,7 +30,11 @@ from orchestrator.core.schemas import Handoff
 from orchestrator.prompts import architect, memory, supervisor, worker
 from orchestrator.providers.base import BuiltPrompt, PromptSection
 from orchestrator.services import memory_service
-from orchestrator.utils.redaction import redact, strip_sensitive_files_from_diff
+from orchestrator.utils.redaction import (
+    RedactionHit,
+    redact_with_report,
+    strip_sensitive_files_from_diff,
+)
 from orchestrator.utils.truncate import estimate_tokens, truncate_middle, truncate_tail
 
 
@@ -40,6 +44,11 @@ class TruncationRecord:
 
     Recorded for the archived reviewer payload (T-11 DoD 1): a truncation that is not named is
     indistinguishable from evidence the reviewer never received.
+
+    T-16 adds a `kind`, so the manifest can separate the three things a reader used to have to
+    guess between: `budget` (content cut to fit a token budget), `secret` (content withheld
+    because it is a sensitive file) and `redaction` (content rewritten in place by the redactor).
+    A redaction row also names the pattern class and the substitution count, never the match.
     """
 
     section: str
@@ -48,6 +57,9 @@ class TruncationRecord:
     bytes_included: int
     budget: str
     reason: str
+    kind: str = "budget"
+    pattern_class: str = ""
+    substitutions: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +69,9 @@ class TruncationRecord:
             "bytes_included": self.bytes_included,
             "budget": self.budget,
             "reason": self.reason,
+            "kind": self.kind,
+            "pattern_class": self.pattern_class,
+            "substitutions": self.substitutions,
         }
 
 
@@ -74,6 +89,8 @@ class TruncationRecorder:
         rendered: str,
         budget: str,
         reason: str,
+        *,
+        kind: str = "budget",
     ) -> None:
         if rendered == original:
             return
@@ -85,8 +102,43 @@ class TruncationRecorder:
                 bytes_included=len(rendered.encode("utf-8")),
                 budget=budget,
                 reason=reason,
+                kind=kind,
             )
         )
+
+    def record_redactions(
+        self,
+        section: str,
+        item: str,
+        original: str,
+        rendered: str,
+        hits: tuple[RedactionHit, ...],
+    ) -> None:
+        """One manifest row per pattern class that rewrote reviewer-visible text (T-16 DoD 1).
+
+        Deliberately records only the class and the count: a manifest that reprinted the match
+        would leak the secret it is describing, and one that reprinted the replacement would
+        describe `[REDACTED]` as if it were content.
+        """
+        if rendered == original or not hits:
+            return
+        for hit in hits:
+            self.records.append(
+                TruncationRecord(
+                    section=section,
+                    item=item,
+                    bytes_available=len(original.encode("utf-8")),
+                    bytes_included=len(rendered.encode("utf-8")),
+                    budget="redaction (not a token budget)",
+                    reason=(
+                        f"pattern class '{hit.pattern_class}' rewrote {hit.count} occurrence(s) "
+                        "in place; the matched text and the substituted value are not recorded"
+                    ),
+                    kind="redaction",
+                    pattern_class=hit.pattern_class,
+                    substitutions=hit.count,
+                )
+            )
 
 
 def _limited(
@@ -217,6 +269,128 @@ def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, 
     return rendered, len(shown), len(hunks), sliced
 
 
+# T-16 DoD 7/8: evidence and compensation artifacts get their own share of the diff budget. The
+# number is a fraction of the post-header budget, not a wider `max_diff_tokens`; source files can
+# only spend the rest, so a large source tree cannot consume the evidence that makes its claims
+# checkable. The reserve is handed back to source when there are no compensation artifacts. When
+# the compensation bundle still cannot fit, the manifest says so AND the review raises a
+# harness-detected finding rather than leaving a reviewer to conclude the evidence is missing.
+COMPENSATION_BUDGET_FRACTION = 1 / 3
+
+
+def is_compensation_artifact(path: str) -> bool:
+    """A path whose purpose is making a Worker claim checkable, not implementing the task."""
+    p = path.replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    if p.startswith("verify-evidence/"):
+        return True
+    if name.startswith("contract-change-request-") and name.endswith(".md"):
+        return True
+    return name in {"handoff.md", "handoff.json"} and not p.startswith("runs/")
+
+
+def _record_omitted(
+    recorder: TruncationRecorder | None,
+    path: str,
+    chunk: str,
+    budget_text: str,
+    reason: str,
+) -> None:
+    if recorder is not None:
+        recorder.record("dynamic_state", f"diff:{path}", chunk, "", budget_text, reason)
+
+
+def _allocate_diff_group(
+    group: list[tuple[str, str]],
+    budget: int,
+    *,
+    max_tokens: int,
+    recorder: TruncationRecorder | None,
+    full: list[str],
+    partial: list[str],
+    omitted: list[str],
+    rendered_parts: list[str],
+    evidence: bool,
+) -> int:
+    """Spend one group's budget; returns the tokens actually used.
+
+    The source group keeps the historical cap (one file may use at most half its group budget).
+    The evidence group uses a fair per-file share plus any leftover that can be given without
+    starving the files still to come, so one huge log cannot tail-drop the rest of the evidence.
+    """
+    if not group:
+        return 0
+    if budget <= 0:
+        for path, chunk in group:
+            omitted.append(path)
+            _record_omitted(
+                recorder,
+                path,
+                chunk,
+                f"max_diff_tokens={max_tokens} tokens",
+                "omitted because the diff budget was exhausted by higher-priority files",
+            )
+        return 0
+    per_file = max(120, budget // max(1, len(group)))
+    cap = per_file if evidence else max(per_file, budget // 2)
+    remaining = budget
+    used = 0
+    minimum = 60  # ~ a file header plus one short hunk
+    for idx, (path, chunk) in enumerate(group):
+        size = estimate_tokens(chunk)
+        if evidence:
+            left = len(group) - idx - 1
+            allowance = max(per_file, remaining - minimum * left)
+            file_budget = min(size, allowance, max(remaining, 0))
+        else:
+            file_budget = min(size, cap, max(remaining, 0))
+        budget_text = (
+            f"max_diff_tokens={max_tokens} tokens; evidence per-file share={per_file} "
+            f"tokens; compensation reserve in force"
+            if evidence
+            else f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}"
+        )
+        if file_budget < minimum:
+            omitted.append(path)
+            _record_omitted(
+                recorder,
+                path,
+                chunk,
+                budget_text,
+                "omitted because the diff budget for this group was exhausted",
+            )
+            continue
+        if size <= file_budget:
+            rendered = chunk
+            hunks_shown, hunks_total, sliced = 1, 1, False
+            full.append(path)
+            reason = "included in full"
+        else:
+            rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, file_budget, path)
+            detail = f"{hunks_shown} of {hunks_total} hunks"
+            if sliced:
+                detail += ", body cut inside the shown hunk"
+            partial.append(f"{path} ({detail})")
+            reason = (
+                f"per-file diff budget: {detail} shown; omitted hunk headers are named inline in "
+                "the reviewer-visible text"
+            )
+        rendered_parts.append(rendered)
+        cost = estimate_tokens(rendered)
+        remaining -= cost
+        used += cost
+        if recorder is not None:
+            recorder.record(
+                "dynamic_state",
+                f"diff:{path}",
+                chunk,
+                rendered,
+                budget_text,
+                reason,
+            )
+    return used
+
+
 def render_diff_budget(
     patch: str, max_tokens: int, recorder: TruncationRecorder | None = None
 ) -> str:
@@ -227,90 +401,125 @@ def render_diff_budget(
     wiring needs a complete file far more than it needs the first 10% of five files (round-3
     reviewer finding 5: the wiring was unverifiable because one budget cut landed mid-file). A
     file that cannot fit whole gets as many complete hunks as the remaining budget allows and an
-    inline marker saying so; the files after it are named as omitted. One file may consume at most
-    half the budget, so a single generated artifact cannot starve the rest. The output starts with
-    three explicit lists — included in full, partially included (with hunk counts), omitted — so
-    the reviewer can tell *in the prompt itself* what was held back. The same information lands in
-    the truncation manifest. `max_diff_tokens` is not widened.
+    inline marker saying so; the files after it are named as omitted. The source group keeps the
+    historical one-file-at-most-half rule, so a single generated source artifact cannot starve the
+    rest. The output starts with explicit lists — included in full, partially included (with hunk
+    counts), omitted — so the reviewer can tell *in the prompt itself* what was held back. The
+    same information lands in the truncation manifest. `max_diff_tokens` is not widened.
+
+    T-16 DoD 7: compensation artifacts (`verify-evidence/**`, contract-change requests, committed
+    handoff copies) are a separate group with a reserved slice (`COMPENSATION_BUDGET_FRACTION`)
+    of the post-header budget. Source files may not spend it, and any leftovers from source are
+    added to it. Files in that group get a fair share so one huge evidence log cannot tail-drop
+    the rest. If even the reserved slice cannot carry them, the manifest records the shortfall
+    and `review_service` raises a harness-detected finding.
     """
     chunks = split_diff_files(patch)
     if not chunks or estimate_tokens(patch) <= max_tokens:
         return patch
     ordered = sorted(chunks, key=lambda pair: diff_priority(pair[0]))
+    compensation = [(path, chunk) for path, chunk in ordered if is_compensation_artifact(path)]
+    source = [(path, chunk) for path, chunk in ordered if not is_compensation_artifact(path)]
     header_reserve = max(80, min(300, max_tokens // 8))
-    per_file = max(120, (max_tokens - header_reserve) // max(1, len(ordered)))
-    cap = max(per_file, (max_tokens - header_reserve) // 2)
+    available = max_tokens - header_reserve
+    reserve = int(available * COMPENSATION_BUDGET_FRACTION) if compensation else 0
+    source_budget = available - reserve
     full: list[str] = []
     partial: list[str] = []
     omitted: list[str] = []
     rendered_parts: list[str] = []
-    remaining = max_tokens - header_reserve
-    minimum = 60  # ~ a file header plus one short hunk
-    for path, chunk in ordered:
-        size = estimate_tokens(chunk)
-        budget = min(size, cap, max(remaining, 0))
-        if budget < minimum:
-            omitted.append(path)
-            if recorder is not None:
-                recorder.record(
-                    "dynamic_state",
-                    f"diff:{path}",
-                    chunk,
-                    "",
-                    f"max_diff_tokens={max_tokens} tokens; per-file cap {per_file}/{cap} tokens",
-                    "omitted because the diff budget was exhausted by higher-priority files",
-                )
-            continue
-        if size <= budget:
-            rendered = chunk
-            hunks_shown, hunks_total, sliced = 1, 1, False
-            full.append(path)
-            reason = "included in full"
-        else:
-            rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, budget, path)
-            detail = f"{hunks_shown} of {hunks_total} hunks"
-            if sliced:
-                detail += ", body cut inside the shown hunk"
-            partial.append(f"{path} ({detail})")
-            reason = (
-                f"per-file diff budget: {detail} shown; omitted hunk headers are named inline in "
-                "the reviewer-visible text"
-            )
-        rendered_parts.append(rendered)
-        remaining -= estimate_tokens(rendered)
-        if recorder is not None:
-            recorder.record(
-                "dynamic_state",
-                f"diff:{path}",
-                chunk,
-                rendered,
-                f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}",
-                reason,
-            )
+    source_used = _allocate_diff_group(
+        source,
+        source_budget,
+        max_tokens=max_tokens,
+        recorder=recorder,
+        full=full,
+        partial=partial,
+        omitted=omitted,
+        rendered_parts=rendered_parts,
+        evidence=False,
+    )
+    evidence_budget = max(0, available - source_used)
+    _allocate_diff_group(
+        compensation,
+        evidence_budget,
+        max_tokens=max_tokens,
+        recorder=recorder,
+        full=full,
+        partial=partial,
+        omitted=omitted,
+        rendered_parts=rendered_parts,
+        evidence=True,
+    )
+    # The rendered text follows allocation order (source first, then compensation evidence).
+    source_per_file = max(120, source_budget // max(1, len(source))) if source else 0
+    source_cap = max(source_per_file, source_budget // 2) if source else 0
+    evidence_per_file = (
+        max(120, evidence_budget // max(1, len(compensation))) if compensation else 0
+    )
+    if compensation:
+        budget_line = (
+            f"[review diff budget: max_diff_tokens={max_tokens}; {len(ordered)} file(s); "
+            f"{len(source)} source file(s) share {source_budget} tokens (per-file "
+            f"{source_per_file}, cap {source_cap}); {len(compensation)} compensation artifact(s) "
+            f"have a reserved slice of {evidence_budget} tokens (per-file {evidence_per_file}); "
+            "files are ordered source-first, but the evidence that makes the source checkable is "
+            "never left to the tail."
+        )
+    else:
+        budget_line = (
+            f"[review diff budget: max_diff_tokens={max_tokens}; {len(ordered)} file(s); "
+            f"per-file budget {source_per_file} tokens (one file may use up to {source_cap}); "
+            "files are ordered source-first so code is funded before evidence."
+        )
     preamble = (
-        f"[review diff budget: max_diff_tokens={max_tokens}; {len(ordered)} file(s); "
-        f"per-file budget {per_file} tokens (one file may use up to {cap}); files are ordered "
-        "source-first so code is funded before evidence.\n"
-        f"included in full ({len(full)}): {', '.join(full) or 'none'}\n"
+        budget_line
+        + f"\nincluded in full ({len(full)}): {', '.join(full) or 'none'}\n"
         f"partially included ({len(partial)}): {', '.join(partial) or 'none'}\n"
         f"omitted ({len(omitted)}): {', '.join(omitted) or 'none'}]"
     )
     return preamble + "\n" + "".join(rendered_parts)
 
 
-def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
-    """The markdown manifest archived beside the exact reviewer input (T-11 DoD 1)."""
-    if not records:
-        return (
-            "No truncation: every prompt section and every changed file was included in full "
-            "in the archived input below."
-        )
-    rows = [
-        "| section | file / item | bytes available | bytes included | budget | reason |",
-        "|---|---|---:|---:|---|---|",
-    ]
+def undelivered_compensation(records: list[dict[str, Any]]) -> list[str]:
+    """Compensation files the rendered diff did not carry in full (T-16 DoD 7)."""
+    out: list[str] = []
+    for record in records:
+        if str(record.get("kind") or "budget") != "budget":
+            continue
+        item = str(record.get("item", ""))
+        if not item.startswith("diff:"):
+            continue
+        path = item[5:]
+        if not is_compensation_artifact(path):
+            continue
+        if int(record.get("bytes_included") or 0) < int(record.get("bytes_available") or 0):
+            out.append(path)
+    return sorted(set(out))
+
+
+_BUDGET_MANIFEST_HEADER = (
+    "| section | file / item | bytes available | bytes included | budget | reason |",
+    "|---|---|---:|---:|---|---|",
+)
+_REDACTION_MANIFEST_HEADER = (
+    "| section | file / item | pattern class | substitutions | bytes before | bytes after |",
+    "|---|---|---|---:|---:|---:|",
+)
+
+
+def _manifest_table(records: list[dict[str, Any]], redaction: bool = False) -> str:
+    rows = list(_REDACTION_MANIFEST_HEADER if redaction else _BUDGET_MANIFEST_HEADER)
     for r in records:
         item = str(r.get("item", "")).replace("|", "\\|")
+        if redaction:
+            rows.append(
+                f"| {r.get('section', '')} | {item} | "
+                f"{str(r.get('pattern_class', '')).replace('|', '\\|')} | "
+                f"{int(r.get('substitutions') or 0)} | {r.get('bytes_available', 0)} | "
+                f"{r.get('bytes_included', 0)} |"
+            )
+            continue
         budget = str(r.get("budget", "")).replace("|", "\\|")
         reason = str(r.get("reason", "")).replace("|", "\\|")
         rows.append(
@@ -318,6 +527,50 @@ def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
             f"{r.get('bytes_included', 0)} | {budget} | {reason} |"
         )
     return "\n".join(rows)
+
+
+def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
+    """The markdown manifest archived beside the exact reviewer input (T-11 DoD 1).
+
+    T-16: the table is split by `kind` so a reader can tell withheld-as-a-secret from a budget cut
+    from a rewrite in place. A redaction row names the pattern class and the substitution count and
+    nothing else. When the evidence could not be delivered, the manifest states that shortfall in
+    the same section, so it is not left for the reviewer to infer from an absent file.
+    """
+    if not records:
+        return (
+            "No truncation: every prompt section and every changed file was included in full "
+            "in the archived input below."
+        )
+    by_kind: dict[str, list[dict[str, Any]]] = {"budget": [], "secret": [], "redaction": []}
+    for record in records:
+        by_kind.setdefault(str(record.get("kind") or "budget"), []).append(record)
+    if not any(by_kind[k] for k in ("secret", "redaction")):
+        table = _manifest_table(by_kind.get("budget", []))
+    else:
+        sections: list[str] = []
+        if by_kind.get("secret"):
+            sections.append(
+                "### Withheld as a secret (content removed, path shown)\n\n"
+                + _manifest_table(by_kind["secret"])
+            )
+        if by_kind.get("budget"):
+            sections.append("### Cut by a token budget\n\n" + _manifest_table(by_kind["budget"]))
+        if by_kind.get("redaction"):
+            sections.append(
+                "### Rewritten in place by the redactor (not a budget cut, not withheld content)"
+                "\n\n" + _manifest_table(by_kind["redaction"], redaction=True)
+            )
+        table = "\n\n".join(sections)
+    undelivered = undelivered_compensation(records)
+    if undelivered:
+        table += (
+            "\n\n**Compensation-artifact shortfall:** the reviewer diff budget could not carry "
+            f"{len(undelivered)} evidence/compensation file(s) in full: {', '.join(undelivered)}. "
+            "This is a harness-detected delivery failure, not missing Worker evidence; the review "
+            "records it as a finding."
+        )
+    return table
 
 SECTION_ORDER = [
     "system",
@@ -429,10 +682,45 @@ class DynamicState:
     # T-12: what happened to the PREVIOUS round's submission, so a retry cannot look like a
     # fresh first attempt.
     submission: str | None = None
+    # T-16 DoD 3: the budgeted diff text the reviewer was actually sent, rendered once by
+    # `render_diff_for_prompt` so the completeness check audits THIS text rather than the archived
+    # full patch. `None` means "render it inside _dynamic" (unit-test callers).
+    rendered_diff: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
 
-def _dynamic(state: DynamicState, recorder: TruncationRecorder | None = None) -> str:
+def render_diff_for_prompt(
+    patch: str, max_tokens: int, recorder: TruncationRecorder | None = None
+) -> str:
+    """Withhold sensitive files and apply the diff budget in one place.
+
+    `review_service` calls this once, then uses the returned text both for the prompt and for the
+    diff-completeness check (T-16 DoD 3). Recording lives here so a withheld file is a manifest row
+    with `kind="secret"` (distinct from a budget cut) and the reviewer-visible marker is explicit.
+    """
+    dropped: list[str] = []
+    diff = strip_sensitive_files_from_diff(patch, dropped=dropped)
+    if dropped and recorder is not None:
+        originals = dict(split_diff_files(patch))
+        for path in dropped:
+            recorder.record(
+                "dynamic_state",
+                f"diff:{path}",
+                originals.get(path, ""),
+                "",
+                f"max_diff_tokens={max_tokens} tokens",
+                "sensitive file: content withheld before the diff budget "
+                "(utils/redaction.strip_sensitive_files_from_diff); only the path is shown",
+                kind="secret",
+            )
+    return render_diff_budget(diff, max_tokens, recorder)
+
+
+def _dynamic(
+    state: DynamicState,
+    recorder: TruncationRecorder | None = None,
+    rendered_diff_out: list[str] | None = None,
+) -> str:
     s = get_settings()
     parts: list[str] = []
     if state.recovery:
@@ -503,28 +791,14 @@ def _dynamic(state: DynamicState, recorder: TruncationRecorder | None = None) ->
             )
         )
     if state.diff:
-        # A withheld sensitive file is a truncation like any other: it is recorded here, named in
-        # the archived manifest, and shown to the reviewer as an explicit omission marker instead
-        # of vanishing between the patch and the prompt (T-11 round-2 reviewer finding 3).
-        dropped: list[str] = []
-        diff = strip_sensitive_files_from_diff(state.diff, dropped=dropped)
-        if dropped and recorder is not None:
-            originals = dict(split_diff_files(state.diff))
-            for path in dropped:
-                recorder.record(
-                    "dynamic_state",
-                    f"diff:{path}",
-                    originals.get(path, ""),
-                    "",
-                    f"max_diff_tokens={s.max_diff_tokens} tokens",
-                    "sensitive file: content withheld before the diff budget "
-                    "(utils/redaction.strip_sensitive_files_from_diff); only the path is shown",
-                )
-        parts.append(
-            "### Latest diff\n```diff\n"
-            + render_diff_budget(diff, s.max_diff_tokens, recorder)
-            + "\n```"
+        rendered_diff = (
+            state.rendered_diff
+            if state.rendered_diff is not None
+            else render_diff_for_prompt(state.diff, s.max_diff_tokens, recorder)
         )
+        if rendered_diff_out is not None:
+            rendered_diff_out.append(rendered_diff)
+        parts.append("### Latest diff\n```diff\n" + rendered_diff + "\n```")
     if state.feedback:
         parts.append(
             "### Latest reviewer feedback\n"
@@ -543,23 +817,29 @@ def build_prompt(
     task: Task | None = None,
     project: Project | None = None,
     state: DynamicState | None = None,
+    recorder: TruncationRecorder | None = None,
 ) -> BuiltPrompt:
     state = state or DynamicState()
-    recorder = TruncationRecorder()
+    # T-16: a caller that rendered the diff itself (review_service) passes the SAME recorder, so
+    # the diff rows and the redaction rows land in one manifest and nothing is rendered twice.
+    recorder = recorder or TruncationRecorder()
     # Budgeted selection: memory is a static section, so the cap is enforced here rather
     # than by enforce_budget, which can only shrink dynamic content.
     selection = memory_service.select_for_prompt(session, role, project.slug if project else None)
     mem = selection.sections
 
     def sec(name: str, content: str) -> PromptSection:
+        report = redact_with_report(content)
+        recorder.record_redactions(name, f"section:{name}", content, report.text, report.hits)
         return PromptSection(
             name=name,
-            content=redact(content),
+            content=report.text,
             static=name in STATIC_SECTIONS,
             cache_breakpoint=name in BREAKPOINTS,
         )
 
     history = state.history or ""
+    rendered_diff_out: list[str] = []
     sections = [
         sec("system", system_prompt_for(role)),
         sec("global_memory", f"{memory.GLOBAL_HEADER}\n{mem['global']}" if mem["global"] else ""),
@@ -573,7 +853,7 @@ def build_prompt(
             "history",
             _limited(recorder, "history", "history", history, 2000),
         ),
-        sec("dynamic_state", _dynamic(state, recorder)),
+        sec("dynamic_state", _dynamic(state, recorder, rendered_diff_out)),
     ]
     prompt = BuiltPrompt(
         role=role,
@@ -582,6 +862,11 @@ def build_prompt(
         memory_warnings=selection.warnings,
     )
     prompt = enforce_budget(prompt, recorder)
+    prompt.rendered_diff = (
+        state.rendered_diff
+        if state.rendered_diff is not None
+        else (rendered_diff_out[0] if rendered_diff_out else "")
+    )
     prompt.truncations = [r.as_dict() for r in recorder.records]
     return prompt
 

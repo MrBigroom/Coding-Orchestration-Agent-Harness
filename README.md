@@ -267,6 +267,17 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 - The Supervisor micro-fix setting is stored but there is no micro-fix executor. Code
   changes always go back to the Worker.
 - Token counts are estimates (~4 characters per token), not tokenizer-exact.
+- **Review-input completeness is not code correctness.** Diff completeness proves only that a
+  changed file has at least one hunk in the text the reviewer was actually sent (T-16); it cannot
+  prove the hunk is complete or that a claim is true. Sensitive files are deliberately withheld
+  (`# [sensitive file omitted]`), and the archived `patch.diff` remains the full record. Redaction
+  rows in `review_payload.md` name the pattern class and count, never the secret or the
+  substituted value. The compensation-artifact reserve can still be too small for an oversized
+  evidence bundle; when that happens the manifest and a harness finding say so instead of the
+  reviewer being told the evidence is missing. Attribute attribution needs Git 2.40 for
+  `check-attr --source`; older Git falls back to plain `check-attr -a` and fails closed on an
+  attribute it cannot date. The expensive environment-parity tests are opt-in
+  (`ORCH_ENV_PARITY_TESTS=1`; nested-suite cases also need `ORCH_ENV_SPAWN_TESTS=1`).
 - **A gate green is a green in a clean environment, not in your checkout.** Gated runs execute in
   a tracked-files-only worktree: no `.env`, no `node_modules`, no `.venv`. The suite itself is
   hermetic against a repo-level `.env`, and `verification.json` records which world the gate used;

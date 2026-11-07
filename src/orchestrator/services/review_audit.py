@@ -1273,6 +1273,27 @@ def _numstat(cwd: Path, base_branch: str) -> list[tuple[str, str, str]]:
     return rows
 
 
+# `git check-attr --source=<tree-ish>` landed in Git 2.40. Below that floor the audit still
+# reports attributes, but it cannot attribute them to the merge-base, so pre-existing status is
+# unknown and the finding fails closed (blocking) rather than silently skipping the check.
+MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE = (2, 40)
+
+
+def git_version(cwd: Path) -> tuple[int, int, int] | None:
+    """Parse `git --version`; None when the version cannot be established."""
+    res = run_git(["--version"], cwd, check=False)
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", res.stdout or "")
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+
+
+def supports_check_attr_source(cwd: Path) -> bool:
+    """True when `git check-attr --source` is available (Git >= 2.40)."""
+    version = git_version(cwd)
+    return version is not None and version >= MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE
+
+
 def _attributes(
     cwd: Path, paths: list[str], source: str | None = None
 ) -> dict[str, dict[str, str]]:
@@ -1303,9 +1324,17 @@ def _hidden_attributes(attrs: dict[str, str]) -> list[str]:
 
 
 def diff_completeness(
-    cwd: Path | None, base_branch: str | None, patch: str
+    cwd: Path | None,
+    base_branch: str | None,
+    patch: str,
+    rendered: str | None = None,
 ) -> list[DiffIssue]:
-    """Compare changed files, the supplied patch and repository attributes.
+    """Compare changed files with the diff the reviewer was actually sent.
+
+    `patch` is the archived full record (`patch.diff`); `rendered` is the budgeted text the prompt
+    builder actually emitted. Completeness is judged against `rendered` (T-16 DoD 3) — auditing the
+    archived patch was checking a file the reviewer never saw. When `rendered` is omitted the
+    function keeps its pre-T-16 behaviour for callers that have only one text.
 
     Returns every issue found, including pre-existing ones. `blocks` is True only for an issue
     this task introduced: an attribute that was already set at the merge-base is reported as
@@ -1316,11 +1345,22 @@ def diff_completeness(
     rows = _numstat(cwd, base_branch)
     if not rows:
         return []
-    chunks = dict(split_diff_files(patch or ""))
+    audited = rendered if rendered is not None else patch
+    chunks = dict(split_diff_files(audited or ""))
     paths = [p for _a, _d, p in rows]
     current_attrs = _attributes(cwd, paths)
     merge_base = run_git(["merge-base", base_branch, "HEAD"], cwd, check=False).stdout.strip()
-    base_attrs = _attributes(cwd, paths, source=merge_base) if merge_base else {}
+    source_supported = bool(merge_base) and supports_check_attr_source(cwd)
+    base_attrs = _attributes(cwd, paths, source=merge_base) if source_supported else {}
+    attribute_source = (
+        f"git check-attr --source {merge_base}"
+        if source_supported
+        else (
+            "plain git check-attr -a (git < "
+            f"{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[0]}.{MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE[1]}"
+            " has no --source; pre-existing status unknown)"
+        )
+    )
 
     issues: list[DiffIssue] = []
     for adds, deletes, path in rows:
@@ -1341,7 +1381,17 @@ def diff_completeness(
                             if pre_existing
                             else ""
                         )
+                        + (
+                            ""
+                            if source_supported
+                            else " — pre-existing status could not be attributed: "
+                            + attribute_source
+                            + "; reported as a finding to fail closed"
+                        )
                     ),
+                    # Fail closed when the capability floor is unavailable: a repository
+                    # attribute that hides hunks must not become invisible just because the
+                    # local git is old.
                     blocks=not pre_existing,
                     pre_existing=pre_existing,
                     attribute=attr,
@@ -1349,6 +1399,7 @@ def diff_completeness(
             )
         chunk = chunks.get(path)
         binary = adds == "-" or deletes == "-"
+        withheld = bool(chunk) and "# [sensitive file omitted]" in chunk
         metadata_only = bool(chunk) and any(
             line.startswith(
                 (
@@ -1364,6 +1415,23 @@ def diff_completeness(
             for line in chunk.splitlines()
         )
         has_hunk = bool(chunk) and any(line.startswith("@@") for line in chunk.splitlines())
+        if withheld:
+            issues.append(
+                DiffIssue(
+                    path=path,
+                    kind="withheld",
+                    detail=(
+                        f"{path} is a sensitive path: its content was withheld as a secret "
+                        "before the diff budget, so the reviewer saw the path and an explicit "
+                        "omission marker, not hunks. This is a deliberate redaction, not a "
+                        "missing patch section."
+                    ),
+                    blocks=False,
+                    pre_existing=pre_existing,
+                    attribute=", ".join(after),
+                )
+            )
+            continue
         if binary:
             issues.append(
                 DiffIssue(

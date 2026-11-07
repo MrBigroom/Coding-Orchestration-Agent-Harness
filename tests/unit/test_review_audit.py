@@ -292,3 +292,100 @@ def test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body(tmp_path):
     _commit(repo, "edit source")
     issues = review_audit.diff_completeness(repo, "main", "")
     assert any(i.kind == "no_hunk" and i.path == "src/app.py" and i.blocks for i in issues)
+
+
+# --- T-16 DoD 3/4/5(d)(e): audit the rendered diff, and degrade the git capability honestly ----
+
+
+def _two_file_patch(tmp_path):
+    repo = make_repo(tmp_path / "repo", {"src/a.py": "a = 1\n", "src/b.py": "b = 1\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / "src" / "a.py").write_text("a = 2\n")
+    (repo / "src" / "b.py").write_text("b = 2\n")
+    _commit(repo, "edit both files")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    return repo, patch
+
+
+def test_diff_completeness_audits_the_rendered_diff_not_the_archived_patch(tmp_path):
+    """DoD 3/5(d): a file the budget dropped has no hunk in the text the reviewer saw."""
+    repo, patch = _two_file_patch(tmp_path)
+    first, second = prompt_builder.split_diff_files(patch)
+    rendered_one = first[1]
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=rendered_one)
+    assert any(
+        i.kind == "no_hunk" and i.path == "src/b.py" and i.blocks for i in issues
+    ), issues
+    assert not any(i.path == "src/a.py" for i in issues)
+    # With the full rendered text (or the archive as fallback) there is no finding.
+    assert review_audit.diff_completeness(repo, "main", patch, rendered=patch) == []
+    assert review_audit.diff_completeness(repo, "main", patch) == []
+
+
+def test_a_withheld_sensitive_file_is_labelled_not_a_missing_hunk(tmp_path):
+    repo = make_repo(tmp_path / "repo", {"src/app.py": "x = 1\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / ".env").write_text("SECRET=1\n")
+    (repo / "src" / "app.py").write_text("x = 2\n")
+    _commit(repo, "add env and source")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    from orchestrator.utils.redaction import strip_sensitive_files_from_diff
+
+    rendered = strip_sensitive_files_from_diff(patch)
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=rendered)
+    withheld = [i for i in issues if i.path == ".env"]
+    assert withheld and withheld[0].kind == "withheld" and withheld[0].blocks is False
+    assert "withheld as a secret" in withheld[0].detail
+    assert not any(i.path == ".env" and i.kind == "no_hunk" for i in issues)
+
+
+def test_attribute_check_falls_back_when_check_attr_source_is_unavailable(tmp_path, monkeypatch):
+    """DoD 4/5(e): no `--source` support must still report attributes, never raise."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "x\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / ".gitattributes").write_text("verify-evidence/T-16/* -diff\n")
+    (repo / "verify-evidence" / "T-16").mkdir(parents=True)
+    (repo / "verify-evidence" / "T-16" / "checks.txt").write_text("2 passed\n")
+    _commit(repo, "hide evidence")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    monkeypatch.setattr(review_audit, "supports_check_attr_source", lambda cwd: False)
+    issues = review_audit.diff_completeness(repo, "main", patch)
+    attributes = [i for i in issues if i.kind == "attribute"]
+    assert attributes, issues
+    assert attributes[0].path == "verify-evidence/T-16/checks.txt"
+    assert attributes[0].attribute == "-diff"
+    assert attributes[0].blocks is True
+    assert "pre-existing status could not be attributed" in attributes[0].detail
+    assert "git < 2.40" in attributes[0].detail
+    # It still names the path to the reviewer.
+    assert "verify-evidence/T-16/checks.txt" in review_audit.render_diff_completeness(issues)
+
+
+def test_review_setup_git_calls_do_not_scale_with_the_number_of_changed_files(
+    tmp_path, monkeypatch
+):
+    """DoD 8: setup is a constant number of git processes, not one process per changed file."""
+    calls: list[list[str]] = []
+    real = review_audit.run_git
+
+    def recording(argv, path, *args, **kwargs):
+        calls.append(list(argv))
+        return real(argv, path, *args, **kwargs)
+
+    monkeypatch.setattr(review_audit, "run_git", recording)
+
+    def audit(files: dict[str, str]) -> int:
+        repo = make_repo(tmp_path / ("repo" + str(len(calls))), {"README.md": "x\n"})
+        run_git(["checkout", "-q", "-b", "task"], repo)
+        for name, body in files.items():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text(body)
+        _commit(repo, "edit files")
+        patch = run_git(["diff", "main...HEAD"], repo).stdout
+        before = len(calls)
+        review_audit.diff_completeness(repo, "main", patch, rendered=patch)
+        return len(calls) - before
+
+    one = audit({"src/one.py": "one = 2\n"})
+    many = audit({f"src/m{i}.py": f"m{i} = 2\n" for i in range(8)})
+    assert many == one, (one, many)

@@ -450,7 +450,11 @@ Three things now keep that difference visible and harmless:
    cwd-relative `.env` is never ambient for the rest of the session; an explicit path passed to
    `load_env_file()` still works. A test that spawns pytest is opt-in
    (`ORCH_ENV_SPAWN_TESTS=1`), always passes explicit node ids, and never runs a nested full
-   suite, so a gated run pays nothing for it.
+   suite, so a gated run pays nothing for it. Since T-16 the wider environment/parity scenario
+   is opt-in too: `tests/integration/test_env_hermeticity.py` is marked `parity` and is skipped
+   unless `ORCH_ENV_PARITY_TESTS=1` (the nested-suite cases still need `ORCH_ENV_SPAWN_TESTS=1`).
+   The gate also asserts that no test adds or removes a worktree in the operator repository
+   while it runs, so a test designed to protect gate trust cannot perturb the gate.
 2. **The gate record says which world it was.** `verification.json`'s existing `tests` check
    evidence ends with `environment: cwd=…; local .env absent (tracked-files-only worktree);
    node_modules absent; .venv absent` (or `present` for whichever exists). The
@@ -523,6 +527,14 @@ executed anything ("I ran…"), a note records that the claim is disregarded.
 `docs/contract-change-request-T11-review-payload.md`; `docs/frozen-contracts.md` is untouched
 until a human approves that request. `review.json` keeps its frozen shape: provenance is
 recorded in the existing `notes` and `missing_artifacts` arrays, not in a new key.
+
+**Redaction visibility (T-16).** The artifact layout is unchanged, but the payload's truncation
+manifest now separates three outcomes that used to look the same: `Withheld as a secret` (a
+sensitive file's content was removed, path shown), `Cut by a token budget`, and `Rewritten in
+place by the redactor`. Every in-place rewrite records the pattern class that matched and the
+number of substitutions, in the section or file affected. It never records the matched text or
+the substituted value. `redact_with_report()` and `redact()` share one implementation
+(`utils/redaction.py`), so a rewrite cannot happen without its row.
 
 ### Review input auditability
 
@@ -603,13 +615,29 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   supply, and `unchecked` is used whenever neither can decide it (fail closed). A `refuted` claim
   removes the finding and is logged (`review_absence_refuted`), but a verdict is never upgraded on
   it: the round goes to `NEEDS_HUMAN`, not to `APPROVED`.
-- **Diff completeness.** Before the review ships, the harness compares the git diffstat with the
-  supplied patch (`git diff --numstat` vs the archived `patch.diff`): every changed file must
-  have a hunk body, and `git check-attr -a` is run for `-diff` / `export-ignore` on every changed
-  path. A hiding attribute this task introduced is a harness finding (and an additive
-  `review_diff_incomplete` build-log event); one that predates the merge-base is reported as
-  pre-existing and is not a reason to fail the run. A Worker cannot opt out of review by
-  configuring `.gitattributes`.
+- **Diff completeness (T-16 DoD 3).** Before the review ships, the harness compares the git
+  diffstat with the **rendered, budgeted diff text the prompt builder actually emitted** — not
+  the archived `patch.diff`, which is the full record but a file the reviewer never saw. Every
+  changed file must have a hunk body in that rendered text; a file the budget omitted is a
+  harness finding. A sensitive file's explicit `# [sensitive file omitted]` marker is labelled
+  `withheld`, never reported as a missing hunk.
+- **Compensation artifact budget (T-16 DoD 7/8).** Files that make a claim checkable —
+  `verify-evidence/**`, `contract-change-request-*.md`, committed handoff copies — get a
+  separate reserved slice of `max_diff_tokens` (`COMPENSATION_BUDGET_FRACTION`, currently one
+  third of the post-header budget). Source files may not spend it; leftovers from source are
+  added to it; evidence files get a fair share so one huge log cannot tail-drop the rest. If the
+  bundle still cannot fit, the manifest prints a **Compensation-artifact shortfall**, the review
+  adds a harness-detected finding (`review_evidence_undelivered`), and the prompt tells the
+  reviewer that the missing evidence is a delivery failure rather than a Worker evidence gap.
+  `max_diff_tokens` is not widened by any of this.
+- **Git capability floor (T-16 DoD 4).** `git check-attr --source=<merge-base>` requires Git
+  **2.40** or newer. On an older Git the audit falls back to plain `git check-attr -a`: it still
+  reports every `-diff` / `export-ignore` attribute, but pre-existing status cannot be attributed
+  to the merge-base, so the finding fails closed and says so instead of crashing or silently
+  skipping the check. A hiding attribute this task introduced is always a harness finding (and
+  an additive `review_diff_incomplete` build-log event); one that is proven to predate the
+  merge-base is informational. A Worker cannot opt out of review by configuring
+  `.gitattributes`.
 
 Measured motivation: reviews.7 (T-8 round 5) asserted three required proofs were missing; all
 three existed on the branch, and the reviewer had also received a handoff block cut off at DoD 5.

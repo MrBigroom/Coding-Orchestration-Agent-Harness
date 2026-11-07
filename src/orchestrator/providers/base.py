@@ -25,6 +25,9 @@ class BuiltPrompt:
     # Additive: what the builder had to drop to fit its budgets. `review_service` archives this
     # next to the exact prompt text so a truncated reviewer input can never look complete.
     truncations: list[dict[str, Any]] = field(default_factory=list)
+    # Additive (T-16 DoD 3): the budgeted diff text actually rendered into this prompt. Diff
+    # completeness is audited against THIS, not against the archived full patch.diff.
+    rendered_diff: str = ""
     # Approved memory demoted by the per-section memory budget (id/bucket/scope/tokens/reason).
     # Never rendered into the prompt; surfaced in prompt preview as a warning.
     memory_exclusions: list[dict[str, Any]] = field(default_factory=list)

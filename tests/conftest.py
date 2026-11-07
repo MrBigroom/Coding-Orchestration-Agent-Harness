@@ -149,3 +149,79 @@ def make_repo(path: Path, files: dict[str, str] | None = None) -> Path:
 
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+
+
+# --- T-16 DoD 8: expensive environment/parity scenarios are opt-in, and the gate's own review
+# setup must not register or remove a worktree in the operator's repository. ------------------
+
+PARITY_ENV = "ORCH_ENV_PARITY_TESTS"
+
+
+def parity_tests_enabled() -> bool:
+    return os.environ.get(PARITY_ENV) == "1"
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Skip `parity`-marked tests unless the operator opts in.
+
+    The marker exists so a nested-suite/env-parity scenario is never an accidental member of the
+    gated suite: one of them spawns a second pytest process and clones the checkout, and DoD 8
+    bounds what the gate may cost per round. It is deliberately a marker plus a hook (not a
+    module-level skip) so `-m parity`/the env var can include it on demand.
+    """
+    if parity_tests_enabled():
+        return
+    skip = pytest.mark.skip(reason=f"parity scenario; opt in with {PARITY_ENV}=1")
+    for item in items:
+        if "parity" in item.keywords:
+            item.add_marker(skip)
+
+
+def worktree_listing(repo: Path) -> list[str]:
+    """`git worktree list --porcelain` entries for the repository containing `repo`."""
+    res = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if res.returncode != 0:
+        return []
+    common = Path(res.stdout.strip())
+    if not common.is_absolute():
+        common = (repo / common).resolve()
+    listing = subprocess.run(
+        ["git", "--git-dir", str(common), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if listing.returncode != 0:
+        return []
+    return sorted(
+        line.strip() for line in listing.stdout.splitlines() if line.startswith("worktree ")
+    )
+
+
+def operator_repo_worktrees() -> list[str]:
+    repo = Path(__file__).resolve().parents[1]
+    return worktree_listing(repo)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _operator_repo_worktrees_untouched():
+    """The gated suite may create worktrees in its own temp repos, never in the operator's.
+
+    Measured motivation (T-16 DoD 8, reviews.26 finding 7): a test that registered a worktree in
+    the shared repository while the gate was running perturbed the very state the gate was
+    inspecting. This guard is O(1) and fails at the end of the session if any test changed the
+    operator repo's worktree list.
+    """
+    before = operator_repo_worktrees()
+    yield
+    after = operator_repo_worktrees()
+    if before and after:
+        assert before == after, (
+            "the gated suite added or removed a worktree in the operator repository: "
+            f"before={before} after={after}"
+        )

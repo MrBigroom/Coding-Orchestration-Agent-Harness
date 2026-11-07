@@ -206,3 +206,67 @@ def test_dotenv_loaded_without_overriding(tmp_path, monkeypatch):
         assert os.environ["ZZ_ALREADY_SET"] == "from-env"
     finally:
         os.environ.pop("ZZ_TEST_PROVIDER_KEY", None)
+
+
+# --- T-16 DoD 2/5(b): prose token counts and self-declared placeholders survive ----------------
+# The exact shape that reached a reviewer in runs/52/review_payload.md was
+# `max_diff_tokens=[REDACTED]`: the generated budget preamble ends the number with `;`, the old
+# `val.isdigit()` test saw `12000;`, and the redactor swallowed a configuration number that was
+# itself describing the diff budget. The damaged string is pinned here so a regression is named
+# by the same text the Architect saw.
+
+
+def test_inline_token_counts_in_prose_survive_byte_identically():
+    lines = [
+        "[review diff budget: max_diff_tokens=12000; 12 file(s); per-file budget 1975 tokens",
+        "max_diff_tokens=4000",
+        "input_tokens=123",
+        '"inputTokens": 400',
+        "totalTokens: 1007, cache_read_input_tokens=600",
+    ]
+    for line in lines:
+        assert redact(line) == line, line
+    damaged = "max_diff_tokens=[REDACTED]"
+    # The exact broken output must never be produced from the real number...
+    assert damaged not in redact(lines[0])
+    # ...while an archive that already contains the marker is not rewritten further.
+    assert redact(damaged) == damaged
+
+
+def test_synthetic_placeholder_assignments_in_test_literals_survive():
+    """R-52 fixture: the redactor had masked the strings whose point is that they are fake.
+
+    These are ASSERTED TEST LITERALS, not secrets; a reviewer saw `ANTHROPIC_API_KEY=[REDACTED]`
+    and filed a finding that contradicted the synthesis helper. Both directions are asserted
+    below, so the placeholder exemption cannot weaken a real credential shape.
+    """
+    from tests.integration.test_env_hermeticity import SEEDED_ENV_PAIRS
+
+    flat = "".join(f"{name}={value}\n" for name, value in SEEDED_ENV_PAIRS)
+    assert redact(flat) == flat
+    literals = [
+        'assert "ANTHROPIC_API_KEY=synthetic-not-a-secret" in observed.read_text()',
+        'assert "OPERATOR_API_KEY=not-a-secret-0000" in text',
+        'assert "OPERATOR_SUPABASE_URL=https://synthetic.invalid" in text',
+        'assert "OPERATOR_EMAIL=synthetic@example.invalid" in text',
+    ]
+    for line in literals:
+        assert redact(line) == line, line
+    # A real key shape under the same name still redacts first; the exemption is for the value
+    # shape, never for the credential patterns.
+    real = "ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    assert "sk-ant-api03" not in redact(real)
+    # A random-looking value that merely starts with the word "synthetic" is not a placeholder.
+    assert REDACTED in redact("ANTHROPIC_API_KEY=syntheticrealvalue123")
+
+
+def test_redaction_report_names_the_pattern_class_and_count_without_the_secret():
+    from orchestrator.utils.redaction import RedactionHit, redact_with_report
+
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    report = redact_with_report(f"one {secret} two {secret}")
+    assert report.text.count(REDACTED) == 2
+    assert report.hits == (RedactionHit("sk-ant", 2),)
+    assert secret not in str(report.hits)
+    # Benign token counts produce no redaction row at all.
+    assert redact_with_report("max_diff_tokens=4000").hits == ()
