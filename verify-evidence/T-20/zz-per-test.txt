@@ -1,4 +1,4 @@
-HEAD 23f87fa216666ce82a8e78e8aa92c77f3f557275 | dirty-entries 0 | 2026-11-07T14:14:50Z
+HEAD d3f56999eb18c2ec2d21f643539e58b68fc96be4 | dirty-entries 0 | 2026-11-07T14:19:55Z
 T-20 evidence: ./scripts/orch_verify.sh test -vv -k 'parity or cleanup or env_hermeticity'
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -50,5 +50,5 @@ tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_
 tests/integration/test_git_worktree.py::test_cleanup_only_managed_and_never_deletes_branches PASSED [ 96%]
 tests/unit/test_recovery_markers.py::test_cleanup_still_refuses_untracked_output PASSED [100%]
 
-================ 30 passed, 3 skipped, 649 deselected in 3.02s =================
+================ 30 passed, 3 skipped, 649 deselected in 3.00s =================
 exit=0
