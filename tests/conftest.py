@@ -213,13 +213,16 @@ def worktree_listing(repo: Path) -> list[str]:
 
 
 def worktree_fingerprint(repo: Path) -> dict[str, object]:
-    """A robust snapshot of a repository's worktree registry.
+    """A stable snapshot of a repository's registered worktrees.
 
-    A start/end comparison of `git worktree list` cannot see a *transient* add+prune: both
-    listings are identical even though the shared repository was mutated while the gate ran
-    (T-16 review round 1, finding 2). The registry directory's own mtime changes when an entry is
-    created or removed, so include it alongside the names. Errors are raised, not returned as an
-    empty list, so the session guard cannot silently skip itself.
+    Only facts that really mean "a registration changed" are compared: the `git worktree list
+    --porcelain` listing and the registry entry names under `<common>/worktrees`. mtimes are
+    deliberately absent. An index refresh, a `FETCH_HEAD`/`ORIG_HEAD` write, a pack rewrite, the
+    harness's own merge or a doctor probe all touch the shared git directory without adding or
+    removing a worktree, so an mtime-based failure would flake every gated run (T-16 review
+    round 5, finding 1). Transient add+prune is caught by WorktreeMutationSpy instead. An
+    unreadable registry raises, never returns an empty list, so the session guard cannot
+    silently skip itself.
     """
     common = _git_common_dir(repo)
     if common is None:
@@ -237,10 +240,11 @@ def worktree_fingerprint(repo: Path) -> dict[str, object]:
         )
     registry = common / "worktrees"
     entries: list[str] = []
-    registry_mtime_ns = 0
-    if registry.is_dir():
-        entries = sorted(p.name for p in registry.iterdir())
-        registry_mtime_ns = registry.stat().st_mtime_ns
+    if registry.exists():
+        try:
+            entries = sorted(path.name for path in registry.iterdir())
+        except OSError as exc:
+            raise RuntimeError(f"cannot read worktree registry {registry}: {exc}") from exc
     return {
         "listing": sorted(
             line.strip()
@@ -249,17 +253,175 @@ def worktree_fingerprint(repo: Path) -> dict[str, object]:
         ),
         "registry": str(registry),
         "entries": entries,
-        "registry_mtime_ns": registry_mtime_ns,
-        # `git worktree add` followed by `remove`/`prune` can leave the registry directory
-        # absent again; the parent git dir's mtime still records that the registry was touched.
-        "git_dir_mtime_ns": common.stat().st_mtime_ns,
     }
 
 
 def worktree_fingerprint_changed(
     before: dict[str, object], after: dict[str, object]
 ) -> bool:
-    return before != after
+    return before.get("listing") != after.get("listing") or before.get("entries") != after.get(
+        "entries"
+    )
+
+
+def worktree_guard_failure(
+    before: dict[str, object],
+    after: dict[str, object],
+    recorded: list[list[str]],
+) -> str | None:
+    """Describe a guard violation without claiming a cause the evidence cannot prove.
+
+    A registry entry change with no recorded suite call may come from the operator, the harness
+    or another checkout, so the message reports both facts instead of blaming the suite
+    (T-16 review round 5, finding 1(c)).
+    """
+    registry_changed = worktree_fingerprint_changed(before, after)
+    if not registry_changed and not recorded:
+        return None
+    calls = "; ".join(" ".join(call) for call in recorded) if recorded else "none"
+    listing_detail = f"before={before.get('listing')} after={after.get('listing')}"
+    if recorded:
+        return (
+            "the gated suite ran `git worktree add|remove|prune` against the operator "
+            f"repository, which the gate forbids. recorded git worktree calls: {calls}. "
+            f"registry entries changed during the session: {registry_changed}. {listing_detail}"
+        )
+    return (
+        "the operator repository's registry entries changed during the session; the suite's "
+        f"own recorded git worktree calls were: {calls}. No cause is attributed to the suite: "
+        "another process (the harness or the operator) may have changed the registry. "
+        f"{listing_detail}"
+    )
+
+
+def _worktree_mutation_argv(argv: object) -> bool:
+    if not isinstance(argv, (list, tuple)) or not argv:
+        return False
+    tokens = [str(part) for part in argv]
+    if Path(tokens[0]).name.lower() not in {"git", "git.exe"}:
+        return False
+    return any(
+        tokens[index] == "worktree" and tokens[index + 1] in {"add", "remove", "prune"}
+        for index in range(len(tokens) - 1)
+    )
+
+
+def _invocation_targets(argv: object, cwd: object) -> list[Path]:
+    if not isinstance(argv, (list, tuple)):
+        return []
+    tokens = [str(part) for part in argv]
+    raw: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "-C" and index + 1 < len(tokens):
+            raw.append(tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("--git-dir="):
+            raw.append(token.split("=", 1)[1])
+        elif token == "--git-dir" and index + 1 < len(tokens):
+            raw.append(tokens[index + 1])
+            index += 1
+        elif token.startswith("--work-tree="):
+            raw.append(token.split("=", 1)[1])
+        elif token == "--work-tree" and index + 1 < len(tokens):
+            raw.append(tokens[index + 1])
+            index += 1
+        index += 1
+    if cwd is not None:
+        raw.append(str(cwd))
+    return [Path(item) for item in raw]
+
+
+def _git_dir_for(path: Path) -> Path | None:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if resolved.is_file():
+        resolved = resolved.parent
+    for candidate in (resolved, *resolved.parents):
+        dotgit = candidate / ".git"
+        try:
+            if dotgit.is_dir():
+                return dotgit.resolve()
+            if dotgit.is_file():
+                text = dotgit.read_text(encoding="utf-8", errors="replace").strip()
+                if text.startswith("gitdir:"):
+                    target = Path(text.split(":", 1)[1].strip())
+                    if not target.is_absolute():
+                        target = candidate / target
+                    return target.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def _targets_operator_repo(target: Path, operator_common: Path) -> bool:
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return False
+    if resolved == operator_common or resolved.is_relative_to(operator_common):
+        return True
+    git_dir = _git_dir_for(resolved)
+    if git_dir is None:
+        return False
+    return git_dir == operator_common or git_dir.is_relative_to(operator_common)
+
+
+class WorktreeMutationSpy:
+    """Record operator-repository `worktree add|remove|prune` calls as they happen.
+
+    A start/end snapshot cannot see a transient add+prune, and an mtime is noisy because
+    ordinary git activity touches the shared directory (review round 5, finding 1(a)/(b)). The
+    spy observes the call itself and only for the operator's repository, so worktrees created
+    inside a test's own temp repo are ignored.
+    """
+
+    def __init__(self, operator_common: Path) -> None:
+        self.operator_common = Path(operator_common).resolve()
+        self.records: list[list[str]] = []
+
+    def _record(self, argv: object, cwd: object) -> None:
+        if not _worktree_mutation_argv(argv):
+            return
+        if not any(
+            _targets_operator_repo(target, self.operator_common)
+            for target in _invocation_targets(argv, cwd)
+        ):
+            return
+        record = [str(part) for part in argv]  # type: ignore[union-attr]
+        if record not in self.records:
+            self.records.append(record)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        original_run = subprocess.run
+        original_popen = subprocess.Popen
+        spy = self
+
+        def run(*args, **kwargs):
+            spy._record(args[0] if args else kwargs.get("args"), kwargs.get("cwd"))
+            return original_run(*args, **kwargs)
+
+        class SpyPopen(original_popen):  # type: ignore[misc, valid-type]
+            def __init__(self, *args, **kwargs):
+                spy._record(args[0] if args else kwargs.get("args"), kwargs.get("cwd"))
+                original_popen.__init__(self, *args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(subprocess, "Popen", SpyPopen)
+
+        from orchestrator.utils import git as git_mod
+
+        original_run_git = git_mod.run_git
+
+        def run_git(args, cwd, *rest, **kwargs):
+            spy._record(["git", *[str(part) for part in args]], cwd)
+            return original_run_git(args, cwd, *rest, **kwargs)
+
+        monkeypatch.setattr(git_mod, "run_git", run_git)
 
 
 def operator_repo_worktrees() -> list[str]:
@@ -277,23 +439,33 @@ def _operator_repo_worktrees_untouched():
 
     Measured motivation (T-16 DoD 8, reviews.26 finding 7): a test that registered a worktree in
     the shared repository while the gate was running perturbed the very state the gate was
-    inspecting. The fingerprint catches both a persistent and a transient add+prune, and a
-    registry it cannot read is a loud failure rather than a silent skip (review round 1, finding
-    2).
+    inspecting. Persistent changes are compared by registry entry names, transient add+prune is
+    caught by an in-process spy, and neither depends on a shared-git-directory mtime, which
+    ordinary git activity changes (T-16 review round 5, finding 1). A registry it cannot read is
+    still a loud failure rather than a silent skip (review round 1, finding 2).
     """
     if shutil.which("git") is None:
         pytest.skip("git is not installed: the operator worktree guard cannot run")
+    repo = Path(__file__).resolve().parents[1]
     try:
-        before = operator_repo_worktree_fingerprint()
+        common = _git_common_dir(repo)
+        if common is None:
+            raise RuntimeError(f"{repo} is not inside a git repository")
+        before = worktree_fingerprint(repo)
     except RuntimeError as exc:
         pytest.fail(f"cannot fingerprint the operator repository worktree registry: {exc}")
-    yield
+
+    spy = WorktreeMutationSpy(common)
+    patch = pytest.MonkeyPatch()
+    spy.install(patch)
     try:
-        after = operator_repo_worktree_fingerprint()
+        yield
+    finally:
+        patch.undo()
+
+    try:
+        after = worktree_fingerprint(repo)
     except RuntimeError as exc:
         pytest.fail(f"cannot re-read the operator repository worktree registry: {exc}")
-    assert not worktree_fingerprint_changed(before, after), (
-        "the gated suite added or removed a worktree in the operator repository "
-        "(including a transient add+prune): "
-        f"before={before} after={after}"
-    )
+    failure = worktree_guard_failure(before, after, spy.records)
+    assert failure is None, failure

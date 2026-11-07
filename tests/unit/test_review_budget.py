@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from orchestrator.core.models import Review, ReviewVerdict
 from orchestrator.core.schemas import ReviewResult, TaskCreate
 from orchestrator.services import (
@@ -270,24 +272,101 @@ def test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry(sessi
     assert not conftest.worktree_fingerprint_changed(before, after)
 
 
-def test_the_worktree_guard_detects_a_transient_add_and_prune(tmp_path):
-    """A start/end listing comparison is blind to add+prune; the fingerprint must not be."""
-    repo = conftest.make_repo(tmp_path / "transient-repo")
+def test_the_worktree_spy_catches_a_transient_add_and_prune(tmp_path, monkeypatch):
+    """Round-5 finding 1(a)/(i): the call is recorded even when the snapshot looks unchanged."""
+    repo = conftest.make_repo(tmp_path / "spy-repo")
+    common = conftest._git_common_dir(repo)
+    assert common is not None
+    spy = conftest.WorktreeMutationSpy(common)
+    spy.install(monkeypatch)
     before = conftest.worktree_fingerprint(repo)
-    tree = tmp_path / "transient-tree"
+    tree = tmp_path / "spy-tree"
     subprocess.run(
         ["git", "-C", str(repo), "worktree", "add", "--detach", str(tree), "HEAD"],
-        check=True, capture_output=True, text=True, timeout=120,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     subprocess.run(
         ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
-        check=True, capture_output=True, text=True, timeout=120,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     subprocess.run(
         ["git", "-C", str(repo), "worktree", "prune"],
-        check=True, capture_output=True, text=True, timeout=120,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     after = conftest.worktree_fingerprint(repo)
-    # The old guard compared only these listings, which are identical after the prune.
-    assert before["listing"] == after["listing"]
-    assert conftest.worktree_fingerprint_changed(before, after) is True
+    # The start/end snapshot is identical after the prune: only the spy can see the mutation.
+    assert not conftest.worktree_fingerprint_changed(before, after)
+    flat = [" ".join(record) for record in spy.records]
+    assert any("worktree add" in call for call in flat), spy.records
+    assert any("worktree prune" in call for call in flat), spy.records
+
+
+def test_mtime_only_git_activity_does_not_change_the_compared_snapshot(tmp_path):
+    """Round-5 finding 1(b)/(ii): ordinary shared-git-dir churn must not fail the guard."""
+    repo = conftest.make_repo(tmp_path / "mtime-repo")
+    common = conftest._git_common_dir(repo)
+    assert common is not None
+    before = conftest.worktree_fingerprint(repo)
+    # An index refresh and an unrelated create+rename both touch the directory mtime.
+    subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    probe = common / "guard-mtime-probe"
+    probe.write_text("probe\n")
+    probe.replace(common / "guard-mtime-probe-renamed")
+    (common / "guard-mtime-probe-renamed").unlink()
+    after = conftest.worktree_fingerprint(repo)
+    assert before == after
+    assert not conftest.worktree_fingerprint_changed(before, after)
+    assert conftest.worktree_guard_failure(before, after, []) is None
+    # mtimes are not part of the compared snapshot, so they cannot become a failure condition.
+    assert "git_dir_mtime_ns" not in after
+    assert "registry_mtime_ns" not in after
+
+
+def test_an_unreadable_worktree_registry_fails_loudly(tmp_path, monkeypatch):
+    """Round-5 finding 1(d)/(iii): a silent skip is still forbidden."""
+    repo = conftest.make_repo(tmp_path / "loud-repo")
+    not_a_git_dir = tmp_path / "not-a-git-dir"
+    not_a_git_dir.mkdir()
+    monkeypatch.setattr(conftest, "_git_common_dir", lambda path: not_a_git_dir)
+    with pytest.raises(RuntimeError, match="git worktree list failed"):
+        conftest.worktree_fingerprint(repo)
+
+    monkeypatch.setattr(conftest, "_git_common_dir", lambda path: None)
+    with pytest.raises(RuntimeError, match="not inside a git repository"):
+        conftest.worktree_fingerprint(repo)
+
+
+def test_guard_message_does_not_blame_the_suite_without_spy_evidence():
+    """Round-5 finding 1(c)/(iv): names changed, no recorded call, no attribution."""
+    before = {"listing": ["worktree /operator/main"], "entries": ["16"]}
+    after = {
+        "listing": ["worktree /operator/main", "worktree /operator/other"],
+        "entries": ["16", "17"],
+    }
+    message = conftest.worktree_guard_failure(before, after, [])
+    assert message is not None
+    assert "registry entries changed during the session" in message
+    assert "recorded git worktree calls were: none" in message
+    assert "No cause is attributed to the suite" in message
+    assert "the gated suite ran" not in message
+
+    recorded = [["git", "-C", "/operator/main", "worktree", "add", "/tmp/tree"]]
+    attributed = conftest.worktree_guard_failure(before, before, recorded)
+    assert attributed is not None
+    assert "recorded git worktree calls: git -C /operator/main worktree add /tmp/tree" in attributed

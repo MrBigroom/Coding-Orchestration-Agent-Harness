@@ -414,6 +414,31 @@ def test_attribute_source_runtime_failure_falls_back_and_still_reports(tmp_path,
     assert "pre-existing status is unknown" in attributes[0].detail
 
 
+def test_current_side_attribute_failure_is_a_fail_closed_issue(tmp_path, monkeypatch):
+    """Round-5 finding 2: the plain fallback failure must not look like "no attributes"."""
+    repo, patch = _two_file_patch(tmp_path)
+    real = review_audit._attributes
+
+    def current_failure(cwd, paths, source=None):
+        if source is None:
+            return {}, "simulated plain check-attr failure"
+        return real(cwd, paths, source)
+
+    monkeypatch.setattr(review_audit, "_attributes", current_failure)
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=patch)
+    unavailable = [i for i in issues if i.kind == "attribute_unavailable"]
+    assert len(unavailable) == 1, issues
+    issue = unavailable[0]
+    assert issue.blocks is True
+    assert "simulated plain check-attr failure" in issue.detail
+    assert "check-attr -a failed at runtime" in issue.detail
+    assert "could not be performed" in issue.detail
+    assert "fails closed" in issue.detail
+    text = review_audit.render_diff_completeness(issues)
+    assert "HARNESS FINDING" in text
+    assert "check-attr -a failed at runtime" in text
+
+
 def test_an_empty_merge_base_does_not_claim_the_git_version_is_old(tmp_path, monkeypatch):
     """Review round 1 finding 6: the fallback reason must be true for the actual cause.
 

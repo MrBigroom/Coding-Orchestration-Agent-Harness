@@ -1420,7 +1420,7 @@ def diff_completeness(
     audited = rendered if rendered is not None else patch
     chunks = dict(split_diff_files(audited or ""))
     paths = [p for _a, _d, p in rows]
-    current_attrs, _current_attr_error = _attributes(cwd, paths)
+    current_attrs, current_attr_error = _attributes(cwd, paths)
     merge_base = run_git(["merge-base", base_branch, "HEAD"], cwd, check=False).stdout.strip()
     source_supported, attribute_source = attribute_source_status(cwd, merge_base)
     base_attrs: dict[str, dict[str, str]] = {}
@@ -1435,6 +1435,26 @@ def diff_completeness(
             base_attrs = {}
 
     issues: list[DiffIssue] = []
+    if current_attr_error:
+        # The plain `check-attr -a` call is the last line of the attribute check, so a failure
+        # here means -diff/export-ignore status is genuinely unknown. `_attributes` returns
+        # `{}` on failure, which used to look identical to "no attributes set" and silently
+        # skipped the check (T-16 review round 5, finding 2).
+        issues.append(
+            DiffIssue(
+                path="<all changed files>",
+                kind="attribute_unavailable",
+                detail=(
+                    "git check-attr -a failed at runtime "
+                    f"({current_attr_error}); the -diff/export-ignore attribute check could "
+                    "not be performed for the changed files, so attribute-based hiding is "
+                    "unknown and this finding fails closed"
+                ),
+                blocks=True,
+                pre_existing=False,
+                attribute="",
+            )
+        )
     for adds, deletes, path in rows:
         before = _hidden_attributes(base_attrs.get(path, {}))
         after = _hidden_attributes(current_attrs.get(path, {}))
