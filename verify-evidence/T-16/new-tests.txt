@@ -1,4 +1,4 @@
-# HEAD a06bbb2baf63f11aefb25ed98af707f9e5291cab
+# HEAD 986eed833c7e6b5c523a847b71451ab415304332
 # dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ./scripts/orch_verify.sh test -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
@@ -9,8 +9,8 @@ orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: pytest target -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
-................................................................sss..... [ 74%]
-....................s....                                                [100%]
+..................................................................sss... [ 72%]
+......................s....                                              [100%]
 ==================================== PASSES ====================================
 =========================== short test summary info ============================
 PASSED tests/unit/test_redaction.py::test_redacts_provider_keys
@@ -32,6 +32,7 @@ PASSED tests/unit/test_redaction.py::test_synthetic_placeholder_assignments_in_t
 PASSED tests/unit/test_redaction.py::test_a_real_secret_with_a_placeholder_prefix_is_still_redacted
 PASSED tests/unit/test_redaction.py::test_angle_bracket_and_url_placeholders_do_not_exempt_real_values
 PASSED tests/unit/test_redaction.py::test_redaction_report_names_the_pattern_class_and_count_without_the_secret
+PASSED tests/unit/test_redaction.py::test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives
 PASSED tests/unit/test_prompt_builder.py::test_sections_follow_static_first_order
 PASSED tests/unit/test_prompt_builder.py::test_dynamic_state_never_leaks_into_static_sections
 PASSED tests/unit/test_prompt_builder.py::test_preview_detects_dynamic_before_static
@@ -43,6 +44,7 @@ PASSED tests/unit/test_prompt_builder.py::test_default_handoff_budget_carries_a_
 PASSED tests/unit/test_prompt_builder.py::test_redactions_are_recorded_in_the_manifest_without_the_secret
 PASSED tests/unit/test_prompt_builder.py::test_a_sensitive_file_is_labelled_withheld_as_a_secret_not_as_a_budget_cut
 PASSED tests/unit/test_prompt_builder.py::test_diff_budget_preamble_token_count_reaches_the_reviewer_intact
+PASSED tests/unit/test_prompt_builder.py::test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff
 PASSED tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim
 PASSED tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim
 PASSED tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked
@@ -110,4 +112,4 @@ SKIPPED [1] tests/integration/test_env_hermeticity.py:176: spawns a pytest subpr
 SKIPPED [1] tests/integration/test_env_hermeticity.py:199: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:216: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:993: parity scenario; opt in with ORCH_ENV_PARITY_TESTS=1
-93 passed, 4 skipped in 3.62s
+95 passed, 4 skipped in 3.34s

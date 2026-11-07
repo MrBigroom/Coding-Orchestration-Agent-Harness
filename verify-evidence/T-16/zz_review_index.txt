@@ -1,4 +1,4 @@
-T-16 review index (HEAD a06bbb2baf63f11aefb25ed98af707f9e5291cab; dirty-entries=0 excluding verify-evidence/T-16/)
+T-16 review index (HEAD 986eed833c7e6b5c523a847b71451ab415304332; dirty-entries=0 excluding verify-evidence/T-16/)
 Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, lint.txt, new-tests.txt,
 parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
 
@@ -70,3 +70,45 @@ Round-1 findings retained: fair evidence allocation, transient operator-worktree
 expensive parity tests opt-in, placeholder-prefix redaction, audit after enforce_budget, honest
 old-Git reason, generic harness finding and label, evidence HEAD stamps. They are unchanged by
 this round and their tests remain in the focused run above.
+
+## Round 3 -- operator hand-fix of R-56 findings 1 and 2 (commit 986eed8)
+
+Both are holes in the controls this task exists to build, and the two previous rounds each
+introduced a new redaction bypass while closing the last one, so the operator wrote these fixes
+directly instead of funding a fourth round against the same two files. Every evidence file above is
+re-stamped at this HEAD; the file:line citations earlier in this index are unchanged except where
+listed here.
+
+- **Finding 1 -- a real secret survived redaction.** `_PLACEHOLDER_VALUE` exempted a `$` followed by
+  an OPTIONAL brace and an identifier, so `DB_PASSWORD=$Sup3rSecretValue`,
+  `PASSWORD=$1$abcDEF$ghiJKL` and `TOKEN=$abcdef123456` reached the reviewer unmasked. Only a
+  BRACED `${ENV_NAME}` reference is exempt now, because that names a variable instead of holding a
+  value: rationale at `redaction.py:129`, pattern at `:137`. The closing brace stays optional
+  because `_ASSIGNMENT`'s value group is `[^\s"',}]{4,}` and never includes it -- requiring it
+  would redact every legitimate reference and leave a stray brace. Test:
+  `tests/unit/test_redaction.py::test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives`
+  (four leaking shapes redact; two braced references round-trip byte-identically).
+- **Finding 2 -- the as-sent diff audit could be fed a forgery.** `extract_rendered_diff` located
+  the block by searching `dynamic_state` for a FIXED `### Latest diff` header, and Worker-written
+  submission text precedes the diff in that same section, so a handoff quoting the header plus
+  fabricated hunks became the audit-of-record for `diff_completeness`, `undelivered_compensation`
+  and `supplied_evidence`. The sentinel now carries a per-build nonce minted inside `build_prompt`
+  AFTER every Worker string exists: `_diff_block_open` at `prompt_builder.py:909`, nonce minted at
+  `:980`, used by the extractor at `:937`, carried on `BuiltPrompt.diff_nonce`
+  (`providers/base.py:35`). Measured before the fix: in a section holding a forged block and the
+  real one, the fixed header matched the forgery at offset 37 and the real block at 72, so the
+  forgery won the search. Test:
+  `tests/unit/test_prompt_builder.py::test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff`
+  (the forged text is still delivered as prose; it is simply not the audit target).
+
+NOT fixed here, and why. R-56 finding 3 is this task's own subject: the DEPLOYED main harness
+supplied README.md, docs/build-loop.md, docs/configuration.md, .env.example, pyproject.toml,
+tests/unit/test_review_budget.py and all of verify-evidence/T-16/ at 0 bytes, and T-16 cannot be
+reviewed under the improvement it is itself making. Findings 4 and 5 are the nits the Architect
+labelled non-blocking: code-shaped values under TOKEN/SECRET keys are still rewritten but are now
+recorded in the manifest, and `record_redactions` runs before `enforce_budget`, so a manifest row
+can describe text the aggregate context budget later removed.
+
+Gate re-run by the operator at 986eed8 in this worktree: 707 passed / 0 failed / 10 skipped
+(full-test.txt), lint clean (lint.txt), focused selection 95 passed / 4 skipped (new-tests.txt),
+parity opt-in 4 passed / 29 deselected (parity-optin.txt).
