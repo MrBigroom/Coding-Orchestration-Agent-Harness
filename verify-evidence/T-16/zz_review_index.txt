@@ -1,10 +1,10 @@
-T-16 review index (HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9; dirty-entries=0 excluding verify-evidence/T-16/)
+T-16 review index (HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316; dirty-entries=0 excluding verify-evidence/T-16/)
 Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, lint.txt, new-tests.txt,
 parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
 
-Full suite at this HEAD: 708 passed, 10 skipped, exit 0 (full-test.txt).
+Full suite at this HEAD: 712 passed, 10 skipped, exit 0 (full-test.txt).
 Lint: All checks passed (lint.txt).
-Focused redaction/review/hermeticity suite: 96 passed, 4 skipped, exit 0 (new-tests.txt),
+Focused redaction/review/hermeticity suite: 100 passed, 4 skipped, exit 0 (new-tests.txt),
 with untrimmed PASSED lines including the pre-existing credential matrix test.
 Parity opt-in: 4 passed, 29 deselected, exit 0 (parity-optin.txt).
 
@@ -66,7 +66,7 @@ DoD 7 - evidence funded or reported: prompt_builder.py:467 reserve, :304 fair al
   Tests: tests/unit/test_review_budget.py:40,:61,:84,:97,:107,:129,:161,:199.
 DoD 8 - bounded gate cost: config.py:78 handoff budget; prompt_builder.py:467 separate evidence
   reserve; tests/conftest.py parity hook + worktree fingerprint; only four expensive parity tests
-  opt-in (parity-optin.txt); tests/unit/test_review_budget.py:235,:257,:273.
+  opt-in (parity-optin.txt); tests/unit/test_review_budget.py:237,:259,:275,:313,:341,:355.
   No compression commit was made for this evidence.
 
 Round-1 findings retained: fair evidence allocation, transient operator-worktree guard, only
@@ -141,3 +141,35 @@ operator; it is recorded in the manifest as DoD 1 requires and is not a security
 
 Evidence at a7c16f2: 708 passed / 10 skipped (full-test.txt), lint clean (lint.txt), focused
 96 passed / 4 skipped (new-tests.txt), parity opt-in 4 passed / 29 deselected (parity-optin.txt).
+
+## Round 5 -- the two blocking findings from R-57 (commit 2ed2cec)
+
+Only these two were changed this round; the round-4 hand-fixes and the deferred finding 4 stand.
+Every evidence file above is re-stamped at HEAD 2ed2cec.
+
+- **Finding 1 -- the guard no longer depends on a shared-git-dir mtime.**
+  `tests/conftest.py:215` `worktree_fingerprint` now compares only `git worktree list
+  --porcelain` and the registry entry names; `registry_mtime_ns` and `git_dir_mtime_ns` are gone
+  from the compared snapshot (kept nowhere, so they cannot become a failure condition).
+  `WorktreeMutationSpy` (`tests/conftest.py:374`, installed by the session fixture at
+  `:437`/`:399`) wraps `subprocess.run`, `subprocess.Popen` and `orchestrator.utils.git.run_git`,
+  records only `git ... worktree add|remove|prune` calls whose `-C`/`--git-dir`/cwd resolves to
+  the operator's common dir, and therefore catches a transient add+prune that the start/end
+  snapshot cannot see. The failure text builder `worktree_guard_failure` (`:267`) reports both
+  facts and does not blame the suite when `recorded == []`, while an unreadable registry still
+  raises (`:215`). Tests: `tests/unit/test_review_budget.py:275` (spy catches transient
+  add+prune while the snapshot is identical), `:313` (git status plus create+rename in the common
+  dir leave the snapshot unchanged and the guard passing), `:341` (unreadable registry raises),
+  `:355` (non-attributing message for names-changed-without-spy, and the attributed message when
+  the spy did record).
+- **Finding 2 -- a failing current-side check-attr is fail-closed, not silently green.**
+  `src/orchestrator/services/review_audit.py:1423` keeps `current_attr_error` instead of
+  discarding it, and `:1438` appends a blocking `DiffIssue(kind="attribute_unavailable")` naming
+  the error and stating that the `-diff`/`export-ignore` check could not be performed. The base
+  side already does this at `:1428`. Test: `tests/unit/test_review_audit.py:417` forces the plain
+  `check-attr -a` failure and asserts one blocking issue, the simulated error in its detail, and
+  the `HARNESS FINDING` line in `render_diff_completeness`.
+
+Gate re-run at 2ed2cec in this worktree: 712 passed / 0 failed / 10 skipped (full-test.txt),
+lint clean (lint.txt), focused selection 100 passed / 4 skipped (new-tests.txt), parity opt-in
+4 passed / 29 deselected (parity-optin.txt).

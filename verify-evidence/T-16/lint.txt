@@ -1,4 +1,4 @@
-# HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9
+# HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316
 # dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ./scripts/orch_verify.sh lint
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16

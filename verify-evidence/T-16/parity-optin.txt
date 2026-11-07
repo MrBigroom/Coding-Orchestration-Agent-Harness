@@ -1,4 +1,4 @@
-# HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9
+# HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316
 # dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ORCH_ENV_PARITY_TESTS=1 ORCH_ENV_SPAWN_TESTS=1 ./scripts/orch_verify.sh test -rA -m parity tests/integration/test_env_hermeticity.py
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
@@ -16,4 +16,4 @@ PASSED tests/integration/test_env_hermeticity.py::test_affected_subset_is_identi
 PASSED tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard
 PASSED tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv
 PASSED tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree
-4 passed, 29 deselected in 18.78s
+4 passed, 29 deselected in 19.08s

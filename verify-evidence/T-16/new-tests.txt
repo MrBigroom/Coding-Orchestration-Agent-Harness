@@ -1,4 +1,4 @@
-# HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9
+# HEAD 2ed2cec92420f4787d34b1be7d0b6c3de95e3316
 # dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ./scripts/orch_verify.sh test -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
@@ -9,8 +9,8 @@ orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: pytest target -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
-...................................................................sss.. [ 72%]
-.......................s....                                             [100%]
+.......................................................................s [ 69%]
+ss.........................s....                                         [100%]
 ==================================== PASSES ====================================
 =========================== short test summary info ============================
 PASSED tests/unit/test_redaction.py::test_redacts_provider_keys
@@ -67,6 +67,7 @@ PASSED tests/unit/test_review_audit.py::test_a_non_sensitive_file_containing_the
 PASSED tests/unit/test_review_audit.py::test_attribute_check_falls_back_when_check_attr_source_is_unavailable
 PASSED tests/unit/test_review_audit.py::test_attribute_source_probe_failure_is_named_as_a_probe_not_as_old_git
 PASSED tests/unit/test_review_audit.py::test_attribute_source_runtime_failure_falls_back_and_still_reports
+PASSED tests/unit/test_review_audit.py::test_current_side_attribute_failure_is_a_fail_closed_issue
 PASSED tests/unit/test_review_audit.py::test_an_empty_merge_base_does_not_claim_the_git_version_is_old
 PASSED tests/unit/test_review_audit.py::test_review_setup_git_calls_do_not_scale_with_the_number_of_changed_files
 PASSED tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped
@@ -79,7 +80,10 @@ PASSED tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_do
 PASSED tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding
 PASSED tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand
 PASSED tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry
-PASSED tests/unit/test_review_budget.py::test_the_worktree_guard_detects_a_transient_add_and_prune
+PASSED tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune
+PASSED tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot
+PASSED tests/unit/test_review_budget.py::test_an_unreadable_worktree_registry_fails_loudly
+PASSED tests/unit/test_review_budget.py::test_guard_message_does_not_blame_the_suite_without_spy_evidence
 PASSED tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment
 PASSED tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree
 PASSED tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run
@@ -113,4 +117,4 @@ SKIPPED [1] tests/integration/test_env_hermeticity.py:176: spawns a pytest subpr
 SKIPPED [1] tests/integration/test_env_hermeticity.py:199: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:216: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:993: parity scenario; opt in with ORCH_ENV_PARITY_TESTS=1
-96 passed, 4 skipped in 3.38s
+100 passed, 4 skipped in 3.72s
