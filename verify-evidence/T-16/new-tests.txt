@@ -1,4 +1,4 @@
-# HEAD 986eed833c7e6b5c523a847b71451ab415304332
+# HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9
 # dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ./scripts/orch_verify.sh test -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
@@ -9,8 +9,8 @@ orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: pytest target -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py tests/integration/test_env_hermeticity.py
-..................................................................sss... [ 72%]
-......................s....                                              [100%]
+...................................................................sss.. [ 72%]
+.......................s....                                             [100%]
 ==================================== PASSES ====================================
 =========================== short test summary info ============================
 PASSED tests/unit/test_redaction.py::test_redacts_provider_keys
@@ -45,6 +45,7 @@ PASSED tests/unit/test_prompt_builder.py::test_redactions_are_recorded_in_the_ma
 PASSED tests/unit/test_prompt_builder.py::test_a_sensitive_file_is_labelled_withheld_as_a_secret_not_as_a_budget_cut
 PASSED tests/unit/test_prompt_builder.py::test_diff_budget_preamble_token_count_reaches_the_reviewer_intact
 PASSED tests/unit/test_prompt_builder.py::test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff
+PASSED tests/unit/test_prompt_builder.py::test_a_redaction_row_says_so_when_the_context_budget_later_cuts_its_section
 PASSED tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim
 PASSED tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim
 PASSED tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked
@@ -112,4 +113,4 @@ SKIPPED [1] tests/integration/test_env_hermeticity.py:176: spawns a pytest subpr
 SKIPPED [1] tests/integration/test_env_hermeticity.py:199: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:216: spawns a pytest subprocess; opt in with ORCH_ENV_SPAWN_TESTS=1
 SKIPPED [1] tests/integration/test_env_hermeticity.py:993: parity scenario; opt in with ORCH_ENV_PARITY_TESTS=1
-95 passed, 4 skipped in 3.34s
+96 passed, 4 skipped in 3.38s

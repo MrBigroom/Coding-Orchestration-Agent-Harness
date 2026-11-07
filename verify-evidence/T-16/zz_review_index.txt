@@ -1,10 +1,10 @@
-T-16 review index (HEAD 986eed833c7e6b5c523a847b71451ab415304332; dirty-entries=0 excluding verify-evidence/T-16/)
+T-16 review index (HEAD a7c16f267bc3e4e8a0a92f2fc455993eddcdebd9; dirty-entries=0 excluding verify-evidence/T-16/)
 Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, lint.txt, new-tests.txt,
 parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
 
-Full suite at this HEAD: 705 passed, 10 skipped, exit 0 (full-test.txt).
+Full suite at this HEAD: 708 passed, 10 skipped, exit 0 (full-test.txt).
 Lint: All checks passed (lint.txt).
-Focused redaction/review/hermeticity suite: 93 passed, 4 skipped, exit 0 (new-tests.txt),
+Focused redaction/review/hermeticity suite: 96 passed, 4 skipped, exit 0 (new-tests.txt),
 with untrimmed PASSED lines including the pre-existing credential matrix test.
 Parity opt-in: 4 passed, 29 deselected, exit 0 (parity-optin.txt).
 
@@ -41,9 +41,12 @@ F8 handoff channel -> core/config.py:78 default max_log_tokens 8000, .env.exampl
    tests/unit/test_prompt_builder.py:118 proves a ~5k-token handoff is not truncated at the
    default and an over-cap handoff records max_log_tokens=8000.
 
-DoD 1 - redactions are manifest rows: utils/redaction.py:166 redact_with_report;
-  prompt_builder.py:110 record_redactions, :650 manifest section splits secret | budget |
-  redaction. tests/unit/test_prompt_builder.py:154 (seeded secret + row, no secret in manifest).
+DoD 1 - redactions are manifest rows: utils/redaction.py:175 redact_with_report;
+  prompt_builder.py:111 record_redactions, :654 manifest section splits secret | budget |
+  redaction. A row whose section the aggregate context budget later shrank says so in its
+  manifest note column (prompt_builder.py:1020 _mark_redactions_later_cut, called at :1072;
+  header at :581). tests/unit/test_prompt_builder.py:154 (seeded secret + row, no secret in
+  manifest), :250 (later-cut row is marked, an uncut section's row is not).
 DoD 2 - over-match stopped, credentials kept: utils/redaction.py:122/:128;
   tests/unit/test_redaction.py:290 (angle/URL), :69 (credential matrix), :236 (R-52 fixtures),
   :263 (placeholder-prefixed real secrets); the damaged marker max_diff_tokens=[REDACTED] is
@@ -112,3 +115,29 @@ can describe text the aggregate context budget later removed.
 Gate re-run by the operator at 986eed8 in this worktree: 707 passed / 0 failed / 10 skipped
 (full-test.txt), lint clean (lint.txt), focused selection 95 passed / 4 skipped (new-tests.txt),
 parity opt-in 4 passed / 29 deselected (parity-optin.txt).
+
+## Round 4 -- finding 5 (nit) fixed; findings 1 and 2 re-verified at the operator hand-fix
+
+Findings 1 and 2 (the security ones) were hand-fixed by the operator at 986eed8 and are unchanged
+here; their tests are `test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives`
+(tests/unit/test_redaction.py:335) and
+`test_a_forged_diff_header_in_worker_text_cannot_become_the_as_sent_diff`
+(tests/unit/test_prompt_builder.py:217). Both run in new-tests.txt at this HEAD.
+
+Finding 5 fixed (the operator allowed it if cheap). `record_redactions` runs while a section is
+built, before `enforce_budget`, so a redaction row could describe text the aggregate context
+budget then removed. `_mark_redactions_later_cut` (prompt_builder.py:1020) is called by
+`enforce_budget` for each section it actually shrinks (:1072): every redaction row for that
+section gets a note saying the section was reduced afterwards and the described text may not have
+reached the reviewer, and the redaction manifest table now has a `note` column
+(_REDACTION_MANIFEST_HEADER at :581) so the caveat is visible in review_payload.md, not only in
+the record. Rows for sections that survived are untouched.
+Test: `test_a_redaction_row_says_so_when_the_context_budget_later_cuts_its_section`
+(tests/unit/test_prompt_builder.py:250) asserts the cut section's row carries the note, the
+uncut `phase` section's row does not, and the rendered manifest carries it.
+
+Finding 4 (code-shaped values under TOKEN/SECRET keys still rewritten) is deferred by the
+operator; it is recorded in the manifest as DoD 1 requires and is not a security hole.
+
+Evidence at a7c16f2: 708 passed / 10 skipped (full-test.txt), lint clean (lint.txt), focused
+96 passed / 4 skipped (new-tests.txt), parity opt-in 4 passed / 29 deselected (parity-optin.txt).
