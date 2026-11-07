@@ -74,69 +74,60 @@ dark only.
 
 `notifications_enabled` is the master switch and is **off on a new install**; each trigger also has
 its own `notification_<trigger>` switch (human-must-act triggers default on, noisy machinery
-triggers default off). With the master off nothing is attempted: the row is written `skipped` with
-`reason=master_disabled`, and a per-trigger switch records `reason=trigger_disabled`. A channel that
-is off is therefore never confused with one that was tried.
+triggers default off). Nothing attempted is recorded `skipped` with `reason=master_disabled` or
+`reason=trigger_disabled`, which is never confused with a delivery that was tried.
 
-Every row carries one of the frozen CCR-T9-01 statuses. The service classifies each transport
-result into one explicit **outcome class** first (`notification_service.OUTCOME_CLASSES`) and then
-maps that class to a status; `details_json.outcome_class` always names the class, and `reason`
-names the finer distinction the class carries.
+Every transport result is classified into one explicit **outcome class**
+(`notification_service.OUTCOME_CLASSES`) and then mapped to the frozen CCR-T9-01 status;
+`details_json.outcome_class` names the class and `reason` the finer distinction it carries.
 
 | Outcome class | Status | When | `reason` |
 |---|---|---|---|
-| `delivered` | `delivered` | the `gdbus` `Notify` call returned a notification id, so the daemon acknowledged ownership of the message | *(empty)* |
-| `shown_unacknowledged` | `delivered` | `notify-send` exited 0: the message was handed over and shown, but nothing acknowledged a dismissal or an action | `shown_unacknowledged` |
-| `failed` | `failed` | the client exited non-zero, timed out, was missing, or raised: delivery was attempted and did not succeed | `delivery_failed` |
-| `skipped` | `skipped` | the master switch or the trigger is off, so nothing was attempted | `master_disabled` / `trigger_disabled` |
-| `coalesced` | `coalesced` | folded into one earlier popup of the same batch; `coalesced_into` points at it | `coalesced_into:<id>` |
+| `delivered` | `delivered` | `gdbus` `Notify` returned a notification id, so the daemon acknowledged the message | *(empty)* |
+| `shown_unacknowledged` | `delivered` | `notify-send` exited 0: shown, but nothing acknowledged a dismissal or an action | `shown_unacknowledged` |
+| `failed` | `failed` | the client exited non-zero, timed out, was missing, or raised | `delivery_failed` |
+| `skipped` | `skipped` | master switch or trigger off: nothing was attempted | `master_disabled` / `trigger_disabled` |
+| `coalesced` | `coalesced` | folded into one earlier popup of the same batch (`coalesced_into` points at it) | `coalesced_into:<id>` |
 
-The status vocabulary is frozen, so `shown-unacknowledged` is not a sixth status: a shown message
-is recorded `delivered` with the `shown_unacknowledged` reason and outcome class, never `failed`.
-Delivery is best-effort and nothing waits for an acknowledgement: the code passes **no action** to
-any client. `notify-send --action` implies `--wait`, which blocks until the popup is dismissed
-(under mako's defaults: never) and made a message the operator saw time out and be recorded
-`failed`. Nothing listens for the freedesktop `ActionInvoked` signal either, so a default action
-was advertised without being handled and is deliberately gone until such a listener exists.
+A shown message is never recorded `failed`. `shown_unacknowledged` is not a sixth status (the
+vocabulary is frozen): it maps onto `delivered`. No client is given an action: `notify-send
+--action` implies `--wait`, which blocks until the popup is dismissed (under mako's defaults:
+never) and made a message the operator saw time out and be recorded `failed`. Nothing listens for
+`ActionInvoked` either, so a default action was advertised without being handled; there is none
+until such a listener exists.
 
-**Capability requirements.** Before sending anything the service probes the daemon with
-`org.freedesktop.Notifications.GetCapabilities` (`probe_capabilities()`):
+**Capability requirements.** `probe_capabilities()` asks the daemon with
+`org.freedesktop.Notifications.GetCapabilities` before anything is rendered:
 
-- A body is rendered as markup with a clickable `<a href>` only on the `gdbus` transport and only
-  when the daemon advertises **both** `body-markup` and `body-hyperlinks`; the call then carries
-  `body-markup: true`. Everything is HTML-escaped before it is sent.
-- `notify-send` always receives the plain-text body, because that client attaches no
-  `body-markup` hint today: an anchor sent through it would be displayed as a literal tag.
-- A daemon that does not advertise `body-hyperlinks` (mako, dunst, most tiling-WM notifiers), a
-  daemon that cannot be probed (no `gdbus`, a failed or timed-out call), and every `notify-send`
-  delivery all receive a **plain-text body**: the task URL stays as a readable `Open: <url>` line
-  that can be copied, and nothing pretends it is clickable.
-- Nothing assumes a capability: `probed=False` always means plain text.
+- A clickable `<a href>` is sent only on the `gdbus` transport and only when the daemon advertises
+  **both** `body-markup` and `body-hyperlinks`; the call then carries `body-markup: true`. Text is
+  HTML-escaped first.
+- `notify-send` always receives the plain-text body: it attaches no `body-markup` hint today, so an
+  anchor through it would show as a literal tag.
+- A daemon without `body-hyperlinks` (mako, dunst, most tiling-WM notifiers), a daemon that cannot
+  be probed (no `gdbus`, failed or timed-out call), and every `notify-send` delivery receive a
+  plain-text body: the task URL stays a copyable `Open: <url>` line and nothing pretends it is
+  clickable. `probed=False` always means plain text.
 
 On the development machine (CachyOS/Hyprland) the daemon is quickshell's notification server
-(`qs -c caelestia`); its `GetCapabilities` returns
-`persistence, body, body-markup, body-hyperlinks, body-images, actions, icon-static`, which is a
-freedesktop-compliant set. It is still reached through `notify-send` first, so the link arrives as
-text there; the `gdbus` path is the one that upgrades to an anchor.
+(`qs -c caelestia`); `GetCapabilities` returns
+`persistence, body, body-markup, body-hyperlinks, body-images, actions, icon-static` — a
+freedesktop-compliant set, still reached through `notify-send` first, so the link arrives as text.
 
-**Pending rows are flushed, never stranded.** A row is written `pending` only when delivery is
-enabled, and every one of these points delivers or terminally resolves it:
+**Pending rows are never stranded.** A row is `pending` only when delivery is enabled, and each of
+these resolves it:
 
-- the coalescing timer: one global window (`COALESCE_SECONDS`, 2s) that is **debounced** by each
-  new row, so a batch of parallel finishes is one popup even when a later run finishes after the
-  first timer was armed, and capped (`COALESCE_MAX_SECONDS`, 10s) so a steady stream cannot
-  postpone delivery forever;
-- API startup (`serve` lifespan) for rows a dead CLI process left behind;
-- the read path: `GET /api/notifications` flushes pending rows before answering, so a long-running
-  server cannot leave rows pending indefinitely;
-- CLI exit: `orchestrator.cli.main()` flushes on the way out and writes
-  `failed` / `reason=process_exit_undelivered` for anything it still could not deliver. It is
-  inert when the database has no `notifications` table yet, so `orchestrator --help` in a fresh
-  home still creates nothing.
+- the coalescing timer: one global window (`COALESCE_SECONDS`, 2s) **debounced** by each new row so
+  a batch of parallel finishes is one popup even when a later run finishes after the first timer was
+  armed, capped (`COALESCE_MAX_SECONDS`, 10s) so a steady stream cannot postpone delivery forever;
+- API startup (`serve` lifespan), for rows a dead CLI process left;
+- the read path: `GET /api/notifications` flushes pending rows before answering;
+- CLI exit: `orchestrator.cli.main()` flushes and writes `failed` / `process_exit_undelivered` for
+  what it could not deliver. It is inert when the database has no `notifications` table, so
+  `orchestrator --help` in a fresh home still creates nothing.
 
-Coalescing is global, not per run: one message can contain rows from several runs and several
-triggers (the title says how many updates it carries) while `dedupe_key` still allows at most one
-row per run per trigger.
+Coalescing is global, not per run: one message can carry rows from several runs and triggers (its
+title says how many updates) while `dedupe_key` still allows at most one row per run per trigger.
 
 ## Provider variables
 

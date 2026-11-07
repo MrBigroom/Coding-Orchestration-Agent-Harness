@@ -43,12 +43,11 @@ PENDING, DELIVERED, FAILED, SKIPPED, COALESCED = (
     "pending", "delivered", "failed", "skipped", "coalesced",
 )
 
-# T-18 DoD 1: the outcome classes are explicit and every transport result is classified into
-# exactly one of them. `status` keeps the frozen CCR-T9-01 vocabulary; a class that the frozen
-# vocabulary cannot name (`shown-unacknowledged`: the daemon/client accepted the message but
-# nothing acknowledged a dismissal or an action) is recorded as `delivered` with `reason` and
-# `details_json["outcome_class"]` saying precisely which class it was. No status value is added
-# here: a new one needs an approved CCR.
+# T-18 DoD 1: every transport result is classified into exactly one explicit outcome class, then
+# mapped to the frozen CCR-T9-01 status. `shown_unacknowledged` (the client accepted and showed the
+# message, but nothing acknowledged a dismissal or an action) has no status of its own, so it is
+# recorded `delivered` with `reason` and `details_json["outcome_class"]` naming the real class.
+# No status value is added: a sixth status would need an approved CCR.
 OUTCOME_DELIVERED = "delivered"
 OUTCOME_SHOWN_UNACKNOWLEDGED = "shown_unacknowledged"
 OUTCOME_FAILED = "failed"
@@ -233,8 +232,8 @@ def _notification_env() -> dict[str, str]:
 class TransportResult:
     """One transport attempt, classified into exactly one outcome class (T-18 DoD 1).
 
-    `shape` names what was actually sent (`plain`, `markup+hyperlink`), `daemon` names what the
-    capability probe found, so the row records the delivery attempt instead of implying one.
+    `shape` is what was actually sent, `daemon` what the probe found, so the row records the
+    attempt instead of implying one.
     """
 
     outcome: str
@@ -292,8 +291,8 @@ _NOTIFICATION_ID_RE = re.compile(r"uint32\s+(\d+)")
 def probe_capabilities() -> DaemonCapabilities:
     """Ask the daemon what it can render before advertising anything (T-18 DoD 2).
 
-    Never assumes: no `gdbus` on PATH, a failed call or a timeout all mean `probed=False`, and
-    an unprobed daemon gets a plain-text body (no markup, no hyperlink, no action).
+    Never assumes: no `gdbus`, a failed call or a timeout all mean `probed=False`, and an unprobed
+    daemon gets plain text.
     """
     if not shutil.which("gdbus"):
         return DaemonCapabilities(False, frozenset(), "gdbus not on PATH")
@@ -354,10 +353,10 @@ def _markup(body: str, link: str) -> str:
 def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> tuple[str, str]:
     """Return (text to send, shape label) for the daemon we actually have.
 
-    Only the `gdbus` transport can attach the `body-markup` hint, so markup is emitted there and
-    only when the daemon advertises BOTH `body-markup` and `body-hyperlinks`. `notify-send` gets
-    the plain body (the link stays a readable `Open: <url>` line): it would need the same hint
-    and today sends none, so emitting an anchor through it would show literal tags.
+    Only `gdbus` can attach the `body-markup` hint, so markup is emitted there and only when the
+    daemon advertises BOTH `body-markup` and `body-hyperlinks`. `notify-send` gets the plain body
+    (the link stays a readable `Open: <url>` line): it sends no such hint, so an anchor through it
+    would show literal tags.
     """
     if (
         channel == "gdbus"
@@ -372,10 +371,10 @@ def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> t
 def deliver(title: str, body: str, link: str = "") -> TransportResult:
     """Send one desktop notification and classify the result into one outcome class.
 
-    Never passes `--action` (or an action array): an advertised default action implies
-    `--wait` for `notify-send`, so the client would block until a dismissal that under mako's
-    defaults never arrives, and a message the operator saw would be recorded as failed. Nothing
-    listens for `ActionInvoked` yet, so the action was false advertising (T-18 DoD 2).
+    Passes no `--action` (or action array): a default action implies `--wait` for `notify-send`,
+    which blocks until a dismissal that under mako's defaults never arrives, so a message the
+    operator saw was recorded failed. Nothing listens for `ActionInvoked` yet, so the action was
+    false advertising (T-18 DoD 2).
     """
     caps = probe_capabilities()
     daemon = caps.label()
@@ -475,10 +474,9 @@ def _flush_thread() -> None:
 def _schedule() -> None:
     """Debounce delivery: one message per batch, capped so a stream cannot starve it.
 
-    Every new pending row restarts the short window, so parallel runs that finish on either side
-    of the first row's timer still land in ONE message instead of one popup each. The window never
-    extends beyond `COALESCE_MAX_SECONDS` after the batch's first row, so a continuous stream of
-    events still gets delivered.
+    Each new pending row restarts the short window, so parallel runs finishing on either side of
+    the first row's timer land in ONE message; the window never extends past `COALESCE_MAX_SECONDS`
+    after the batch's first row.
     """
     global _batch_started, _timer
     with _lock:
@@ -516,11 +514,7 @@ def flush_pending(session: Session | None = None) -> int:
 
 
 def flush_pending_if_any(session: Session) -> int:
-    """Read-path flush (T-18 DoD 3): listing rows must not leave them pending forever.
-
-    The persistent list is the durable record, so a server that has been running for days must
-    not show rows it never even attempted just because no timer fired.
-    """
+    """Read-path flush (T-18 DoD 3): the durable list must not show rows nothing ever tried."""
     any_pending = session.exec(
         select(Notification.id).where(Notification.status == PENDING).limit(1)
     ).first()
@@ -548,8 +542,8 @@ def _terminate_pending_locked(session: Session, reason: str, error: str) -> int:
 def _database_ready() -> bool:
     """True only when this home already holds the notifications table.
 
-    The CLI exit flush runs for every command, including `orchestrator --help`; creating a
-    database (or a home directory) as a side effect of exiting would be a new side effect.
+    The CLI exit flush runs for every command, including `orchestrator --help`; creating a database
+    as a side effect of exiting would itself be a bug.
     """
     from sqlalchemy import inspect
 
@@ -567,8 +561,8 @@ def _database_ready() -> bool:
 def flush_pending_at_exit(session: Session | None = None) -> int:
     """CLI exit: deliver what is pending, then terminate what delivery could not reach.
 
-    A timer thread dies with the process, so a row created by a CLI command is otherwise left
-    pending until an API startup that may never come (T-18 DoD 3). Never raises.
+    The timer thread dies with the process, so a CLI-created row is otherwise left pending until
+    an API startup that may never come (T-18 DoD 3). Never raises.
     """
     if session is None and not _database_ready():
         return 0
