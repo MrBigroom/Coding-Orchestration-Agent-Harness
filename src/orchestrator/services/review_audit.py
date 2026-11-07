@@ -60,6 +60,7 @@ from typing import Any
 
 from orchestrator.services.prompt_builder import split_diff_files
 from orchestrator.utils.git import run_git
+from orchestrator.utils.redaction import is_sensitive_path
 
 # A finding is only an absence claim when it uses absence language; otherwise it is a normal
 # review finding and no mechanical check applies.
@@ -1288,10 +1289,29 @@ def git_version(cwd: Path) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
 
 
-def supports_check_attr_source(cwd: Path) -> bool:
-    """True when `git check-attr --source` is available (Git >= 2.40)."""
+def supports_check_attr_source(cwd: Path, source: str | None = None) -> bool:
+    """True when `git check-attr --source` works, not merely when the version looks new.
+
+    The version floor is necessary but not sufficient: a wrapper/older build can advertise 2.40
+    and still reject the option, and the source object can be unreadable. With a `source`, this
+    actually probes the command (T-16 review round 2, finding 6), so `attribute_source_status`
+    can report a PROBE failure as its own cause instead of an unreachable branch.
+    """
     version = git_version(cwd)
-    return version is not None and version >= MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE
+    if version is None or version < MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE:
+        return False
+    if source is None:
+        return True
+    return _probe_check_attr_source(cwd, source)
+
+
+def _probe_check_attr_source(cwd: Path, source: str) -> bool:
+    """Run the smallest useful `--source` query; False on any failure, never an exception."""
+    try:
+        res = run_git(["check-attr", "--source", source, "-a", "--", "."], cwd, check=False)
+    except OSError:
+        return False
+    return res.code == 0
 
 
 def attribute_source_status(cwd: Path, merge_base: str) -> tuple[bool, str]:
@@ -1326,25 +1346,36 @@ def attribute_source_status(cwd: Path, merge_base: str) -> tuple[bool, str]:
             f"git {rendered_version} is older than the {floor} floor for check-attr --source; "
             "plain git check-attr -a is used and pre-existing status is unknown",
         )
-    if not supports_check_attr_source(cwd):
+    if not supports_check_attr_source(cwd, merge_base):
         return (
             False,
-            "git reports a supported version but `check-attr --source` probe failed; plain "
-            "git check-attr -a is used and pre-existing status is unknown",
+            f"git reports at least the {floor} floor but the `check-attr --source` probe failed; "
+            "plain git check-attr -a is used and pre-existing status is unknown",
         )
     return True, f"git check-attr --source {merge_base}"
 
 
 def _attributes(
     cwd: Path, paths: list[str], source: str | None = None
-) -> dict[str, dict[str, str]]:
+) -> tuple[dict[str, dict[str, str]], str]:
+    """Parsed attributes plus an error string; `({}, "")` for no paths.
+
+    A failing `check-attr` used to return `{}` indistinguishably from "no attributes set", which
+    silently turned a capability failure into "this task introduced the attribute". The caller
+    now receives the failure and degrades to the honest fail-closed wording (T-16 review round 2,
+    finding 6).
+    """
     if not paths:
-        return {}
+        return {}, ""
     args = ["check-attr", "-a"]
     if source:
         args += ["--source", source]
     args += ["--", *paths]
     res = run_git(args, cwd, check=False)
+    if res.code != 0:
+        command = f"check-attr --source {source}" if source else "check-attr -a"
+        detail = (res.stderr or res.stdout).strip() or "no output"
+        return {}, f"git {command} exited {res.code}: {detail}"
     out: dict[str, dict[str, str]] = {}
     for line in res.stdout.splitlines():
         parts = line.rsplit(": ", 2)
@@ -1352,7 +1383,7 @@ def _attributes(
             continue
         path, attr, value = parts
         out.setdefault(path, {})[attr] = value
-    return out
+    return out, ""
 
 
 def _hidden_attributes(attrs: dict[str, str]) -> list[str]:
@@ -1389,10 +1420,19 @@ def diff_completeness(
     audited = rendered if rendered is not None else patch
     chunks = dict(split_diff_files(audited or ""))
     paths = [p for _a, _d, p in rows]
-    current_attrs = _attributes(cwd, paths)
+    current_attrs, _current_attr_error = _attributes(cwd, paths)
     merge_base = run_git(["merge-base", base_branch, "HEAD"], cwd, check=False).stdout.strip()
     source_supported, attribute_source = attribute_source_status(cwd, merge_base)
-    base_attrs = _attributes(cwd, paths, source=merge_base) if source_supported else {}
+    base_attrs: dict[str, dict[str, str]] = {}
+    if source_supported:
+        base_attrs, base_error = _attributes(cwd, paths, source=merge_base)
+        if base_error:
+            source_supported = False
+            attribute_source = (
+                f"git check-attr --source {merge_base} failed at runtime ({base_error}); plain "
+                "git check-attr -a is used and pre-existing status is unknown"
+            )
+            base_attrs = {}
 
     issues: list[DiffIssue] = []
     for adds, deletes, path in rows:
@@ -1431,7 +1471,14 @@ def diff_completeness(
             )
         chunk = chunks.get(path)
         binary = adds == "-" or deletes == "-"
-        withheld = bool(chunk) and "# [sensitive file omitted]" in chunk
+        withheld = (
+            bool(chunk)
+            and is_sensitive_path(path)
+            and any(
+                line.rstrip("\r\n") == "# [sensitive file omitted]"
+                for line in chunk.splitlines()
+            )
+        )
         metadata_only = bool(chunk) and any(
             line.startswith(
                 (

@@ -287,6 +287,39 @@ def test_a_real_secret_with_a_placeholder_prefix_is_still_redacted():
         assert redact(line) == line, line
 
 
+def test_angle_bracket_and_url_placeholders_do_not_exempt_real_values():
+    """Review round 2 finding 2: a bracketed value or a URL with userinfo is not a placeholder.
+
+    The earlier `_PLACEHOLDER_VALUE` accepted ANY `<...>` and any URL ending in `.invalid`,
+    including `PASSWORD=<actual-secret>` and `https://user:pass@example.invalid`, so generic
+    secret assignments survived. The exemption is now placeholder vocabulary only, while real
+    credential shapes and the exact R-52 fixtures keep their behaviour.
+    """
+    damaged = [
+        "PASSWORD=<actual-secret>",
+        "TOKEN=<hunter2>",
+        "API_KEY=<abc123def456>",
+        "PASSWORD=https://user:pass@example.invalid",
+        "TOKEN=user:pass@example.invalid",
+        "SECRET=https://synthetic:s3cret@example.invalid",
+    ]
+    for line in damaged:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    safe = [
+        "PASSWORD=<your-api-key>",
+        "TOKEN=<insert-token-here>",
+        "URL=https://synthetic.invalid",
+        "EMAIL=synthetic@example.invalid",
+        "ANTHROPIC_API_KEY=synthetic-not-a-secret",
+    ]
+    for line in safe:
+        assert redact(line) == line, line
+    # The exact broken marker from the review payload is never produced from the real number.
+    assert "max_diff_tokens=[REDACTED]" not in redact("max_diff_tokens=4000")
+
+
 def test_redaction_report_names_the_pattern_class_and_count_without_the_secret():
     from orchestrator.utils.redaction import RedactionHit, redact_with_report
 

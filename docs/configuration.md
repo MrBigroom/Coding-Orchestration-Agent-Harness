@@ -33,7 +33,7 @@ the providers/adapters when they run.
 | `ORCHESTRATOR_SUPERVISOR_MICROFIXES_ENABLED` | `false` | Policy flag; no micro-fix executor exists |
 | `ORCHESTRATOR_ALLOW_GUI_COMMANDS` | `false` | Allow running a project's configured test/lint/build from the GUI |
 | `ORCHESTRATOR_MAX_PROMPT_CONTEXT_TOKENS` | `60000` | Prompt budget (~4 chars/token) |
-| `ORCHESTRATOR_MAX_LOG_TOKENS` | `4000` | Per-log budget in prompts |
+| `ORCHESTRATOR_MAX_LOG_TOKENS` | `8000` | Per-log/handoff budget in prompts (4000 was measured to truncate a normal handoff every round; still a hard cap, and any cut is named in the review payload manifest) |
 | `ORCHESTRATOR_MAX_DIFF_TOKENS` | `12000` | Diff budget in prompts |
 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_GLOBAL` | `2000` | Cap on the injected global memory section |
 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_ROLE` | `800` | Cap on the injected role memory section |

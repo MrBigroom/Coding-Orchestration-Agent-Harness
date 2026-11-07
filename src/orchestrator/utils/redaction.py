@@ -107,16 +107,34 @@ _PLACEHOLDER_DESCRIPTOR = (
     r"(?:not[-_.]?)?(?:a[-_.]?)?(?:secret|value|token|key|password|passwd|credential)"
 )
 _PLACEHOLDER_NUMBER = r"(?:v?[0-9]{1,6})"
+# Angle-bracketed placeholders used in docs (`<your-api-key>`, `<insert-token-here>`). The earlier
+# `<[^<>\s]*>` exempted ANY bracketed text, including `<a-real-secret>`, which made the
+# placeholder exemption a hole in the assignment redactor (T-16 review round 2, finding 2). Every
+# segment must now be placeholder/instruction vocabulary or a short number, so `<actual-secret>`
+# is not exempt while `<your-api-key>` still is. Real credential shapes are matched by the named
+# patterns first, so `<sk-ant-...>` loses the key regardless of this rule.
+_PLACEHOLDER_ANGLE_SEGMENT = (
+    r"(?:your|insert|replace|enter|add|here|todo|tbd|xxx|redacted|placeholder|synthetic|"
+    r"dummy|fake|example|sample|changeme|not|a|an|the|api|key|token|secret|value|password|"
+    r"passwd|credential|credentials|id|name|host|url|port|user|username|email|path|file|dir|"
+    r"directory|number|string|v?[0-9]{1,6})"
+)
+_PLACEHOLDER_ANGLE_VALUE = (
+    rf"<{_PLACEHOLDER_ANGLE_SEGMENT}(?:[-_. ]+{_PLACEHOLDER_ANGLE_SEGMENT})*>"
+)
+# URL userinfo is a credential pair (`https://user:pass@host.invalid`), so a URL with `@` in the
+# authority is never a placeholder. Colons are refused in the host too, and the email local part
+# excludes `:` so `user:pass@example.invalid` cannot slip through as a placeholder address.
 _PLACEHOLDER_VALUE = re.compile(
     rf"""(?ix)^(?:
-        <[^<>\s]*>
+        {_PLACEHOLDER_ANGLE_VALUE}
       | \$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?
       | not[-_]?a[-_]?secret(?:[-_.]?{_PLACEHOLDER_NUMBER})?
       | {_PLACEHOLDER_WORD}
          (?:[-_.]?{_PLACEHOLDER_DESCRIPTOR})?
          (?:[-_.]?{_PLACEHOLDER_NUMBER})?
-      | https?://[^\s/]*\.(?:invalid|example(?:\.(?:com|org|net))?)(?:/\S*)?
-      | [^\s@]+@[^\s@]*\.(?:invalid|example(?:\.(?:com|org|net))?)
+      | https?://(?![^\s/@]*@)[^\s/@:]+\.(?:invalid|example(?:\.(?:com|org|net))?)(?:/\S*)?
+      | [A-Za-z0-9._%+-]+@[A-Za-z0-9.-]*\.(?:invalid|example(?:\.(?:com|org|net))?)
     )$"""
 )
 

@@ -339,6 +339,21 @@ def test_a_withheld_sensitive_file_is_labelled_not_a_missing_hunk(tmp_path):
     assert not any(i.path == ".env" and i.kind == "no_hunk" for i in issues)
 
 
+def test_a_non_sensitive_file_containing_the_strip_marker_is_not_labelled_withheld(tmp_path):
+    """Review round 2 finding 7: only a SENSITIVE path withheld as a secret gets that label."""
+    repo = make_repo(tmp_path / "repo", {"src/app.py": "x = 1\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / "src" / "app.py").write_text(
+        "x = 2\nMARKER = '# [sensitive file omitted]'\n"
+    )
+    _commit(repo, "add a source line that mentions the strip marker")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=patch)
+    assert not any(i.path == "src/app.py" and i.kind == "withheld" for i in issues), issues
+    assert not any(i.path == "src/app.py" for i in issues), issues
+
+
 def test_attribute_check_falls_back_when_check_attr_source_is_unavailable(tmp_path, monkeypatch):
     """DoD 4/5(e): no `--source` support must still report attributes, never raise."""
     repo = make_repo(tmp_path / "repo", {"README.md": "x\n"})
@@ -360,6 +375,43 @@ def test_attribute_check_falls_back_when_check_attr_source_is_unavailable(tmp_pa
     assert "git 2.39.0 is older than the 2.40 floor" in attributes[0].detail
     # It still names the path to the reviewer.
     assert "verify-evidence/T-16/checks.txt" in review_audit.render_diff_completeness(issues)
+
+
+def test_attribute_source_probe_failure_is_named_as_a_probe_not_as_old_git(tmp_path, monkeypatch):
+    """Review round 2 finding 6: the probe branch is reachable and its reason is true."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "x\n"})
+    monkeypatch.setattr(review_audit, "_probe_check_attr_source", lambda cwd, source: False)
+    supported, reason = review_audit.attribute_source_status(repo, "main")
+    assert supported is False
+    assert "probe failed" in reason
+    assert "git < 2.40" not in reason
+    assert "2.40" in reason
+
+
+def test_attribute_source_runtime_failure_falls_back_and_still_reports(tmp_path, monkeypatch):
+    """A 2.40+ `_attributes(source=...)` failure must degrade, not crash or silently pass."""
+    repo = make_repo(tmp_path / "repo", {"README.md": "x\n"})
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    (repo / ".gitattributes").write_text("verify-evidence/T-16/* -diff\n")
+    (repo / "verify-evidence" / "T-16").mkdir(parents=True)
+    (repo / "verify-evidence" / "T-16" / "checks.txt").write_text("2 passed\n")
+    _commit(repo, "hide evidence")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    real = review_audit._attributes
+
+    def runtime_failure(cwd, paths, source=None):
+        if source:
+            return {}, "simulated --source failure"
+        return real(cwd, paths, source)
+
+    monkeypatch.setattr(review_audit, "_attributes", runtime_failure)
+    issues = review_audit.diff_completeness(repo, "main", patch)
+    attributes = [i for i in issues if i.kind == "attribute"]
+    assert attributes, issues
+    assert attributes[0].blocks is True
+    assert "failed at runtime" in attributes[0].detail
+    assert "simulated --source failure" in attributes[0].detail
+    assert "pre-existing status is unknown" in attributes[0].detail
 
 
 def test_an_empty_merge_base_does_not_claim_the_git_version_is_old(tmp_path, monkeypatch):

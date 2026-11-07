@@ -538,7 +538,17 @@ sensitive file's content was removed, path shown), `Cut by a token budget`, and 
 place by the redactor`. Every in-place rewrite records the pattern class that matched and the
 number of substitutions, in the section or file affected. It never records the matched text or
 the substituted value. `redact_with_report()` and `redact()` share one implementation
-(`utils/redaction.py`), so a rewrite cannot happen without its row.
+(`utils/redaction.py`), so a rewrite cannot happen without its row. The manifest's
+compensation-artifact shortfall is computed from the **final text actually sent** (after
+`enforce_budget`), not only from the per-file rows taken before that step, so a file lost to the
+aggregate context budget appears in the archived manifest as well as in the harness finding.
+Redaction is never reported as a budget shortfall: a compensation file rewritten in place still
+counts as delivered.
+
+The handoff channel is a token budget too (`ORCHESTRATOR_MAX_LOG_TOKENS`, default 8000). It was
+raised from 4000 because a normal T-20 handoff was middle-truncated in every round while the diff
+budget was omitting the docs and evidence the handoff was carrying; it remains a hard cap, and any
+handoff cut is named in the manifest (`handoff block`, bytes available/included).
 
 ### Review input auditability
 
@@ -633,21 +643,25 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   `budget // file_count`, and only after every file has had that share is any leftover handed
   back to files that need more, so one huge log cannot tail-drop a later `zz_review_index.txt`.
   If the bundle still cannot fit that fair share, the manifest prints a
-  **Compensation-artifact shortfall**, the review
+  **Compensation-artifact shortfall** computed against the final as-sent diff, the review
   adds a harness-detected finding (`review_evidence_undelivered`), and the prompt tells the
   reviewer that the missing evidence is a delivery failure rather than a Worker evidence gap.
-  `max_diff_tokens` is not widened by any of this.
+  That finding never changes the reviewer's verdict and is filtered out of the Worker feedback,
+  so no round is spent trimming evidence to satisfy the harness's own budget. `max_diff_tokens`
+  is not widened by any of this.
 - **Git capability floor (T-16 DoD 4).** `git check-attr --source=<merge-base>` requires Git
   **2.40** or newer. On an older Git the audit falls back to plain `git check-attr -a`: it still
   reports every `-diff` / `export-ignore` attribute, but pre-existing status cannot be attributed
   to the merge-base, so the finding fails closed and says so instead of crashing or silently
-  skipping the check. The fallback reason names its actual cause: an old Git version, an
-  unestablished version, a probe failure, or **no merge-base at all** (which is not a Git
-  version limitation and is never reported as `git < 2.40`). A hiding attribute this task
-  introduced is always a harness finding (and
-  an additive `review_diff_incomplete` build-log event); one that is proven to predate the
-  merge-base is informational. A Worker cannot opt out of review by configuring
-  `.gitattributes`.
+  skipping the check. Capability is probed by actually running `check-attr --source`, not only by
+  reading the version, so a build that advertises 2.40 but rejects the option is caught; if the
+  probe passes and the real `--source` query fails at runtime, the audit degrades to the plain
+  query with pre-existing status unknown. The fallback reason names its actual cause: an old Git
+  version, an unestablished version, a probe failure, a runtime failure, or **no merge-base at
+  all** (which is not a Git version limitation and is never reported as `git < 2.40`). A hiding
+  attribute this task introduced is always a harness finding (and an additive
+  `review_diff_incomplete` build-log event); one that is proven to predate the merge-base is
+  informational. A Worker cannot opt out of review by configuring `.gitattributes`.
 
 Measured motivation: reviews.7 (T-8 round 5) asserted three required proofs were missing; all
 three existed on the branch, and the reviewer had also received a handoff block cut off at DoD 5.

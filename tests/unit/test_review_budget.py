@@ -10,9 +10,17 @@ from __future__ import annotations
 
 import subprocess
 
-from orchestrator.core.schemas import TaskCreate
-from orchestrator.services import prompt_builder, review_service, task_service
+from orchestrator.core.models import Review, ReviewVerdict
+from orchestrator.core.schemas import ReviewResult, TaskCreate
+from orchestrator.services import (
+    prompt_builder,
+    review_audit,
+    review_service,
+    run_service,
+    task_service,
+)
 from orchestrator.services.prompt_builder import DynamicState
+from orchestrator.utils.redaction import redact
 from tests import conftest
 
 
@@ -94,6 +102,98 @@ def test_undelivered_compensation_uses_the_final_text_not_only_the_records():
     assert prompt_builder.undelivered_compensation(
         [], rendered="the diff block was removed by the context budget", patch=patch
     ) == [path]
+
+
+def test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut():
+    """Review round 2 finding 1: redaction must not masquerade as an undelivered file."""
+    path = "verify-evidence/T-16/secret.txt"
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwx"
+    patch = (
+        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        "@@ -1,0 +1,2 @@\n"
+        f"+ANTHROPIC_API_KEY={secret}\n"
+        "+ordinary evidence line\n"
+    )
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 5000, recorder)
+    assert path in rendered
+    redacted = redact(rendered)
+    assert secret not in redacted
+    records = [r.as_dict() for r in recorder.records]
+    # The file reached the reviewer and was rewritten in place: not a shortfall.
+    assert prompt_builder.undelivered_compensation(records, rendered=redacted, patch=patch) == []
+    # A real loss (the whole block gone) is still a shortfall.
+    assert prompt_builder.undelivered_compensation(records, rendered="", patch=patch) == [path]
+
+
+def test_manifest_shortfall_is_computed_from_the_as_sent_text():
+    """Review round 2 finding 3: the archived manifest must say what the finding says."""
+    path = "verify-evidence/T-16/index.txt"
+    patch = _chunk(path, 20, "evidence")
+    recorder = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(patch, 5000, recorder)
+    records = [r.as_dict() for r in recorder.records]
+    # It fits, so neither the record-only nor the as-sent view has a shortfall.
+    assert "Compensation-artifact shortfall" not in prompt_builder.render_truncation_manifest(records)
+    # enforce_budget then removes the whole diff block: the as-sent manifest must name it.
+    manifest = prompt_builder.render_truncation_manifest(records, rendered="", patch=patch)
+    assert "**Compensation-artifact shortfall:**" in manifest
+    assert path in manifest
+    assert prompt_builder.undelivered_compensation(records, rendered="", patch=patch) == [path]
+    # The archived payload uses the same as-sent inputs, so the manifest a reviewer reads names
+    # the file the harness finding names (review round 2, finding 3).
+    payload = review_service.render_review_payload(
+        input_text="reviewer input",
+        truncations=records,
+        harness_missing=[],
+        reviewer_missing=[],
+        absence_checks=[],
+        diff_issues=[],
+        supplied=review_audit.SuppliedEvidence(),
+        universe=review_audit.PathUniverse(),
+        rendered_diff="",
+        patch_text=patch,
+    )
+    assert "**Compensation-artifact shortfall:**" in payload
+    assert path in payload
+
+
+def test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim(session):
+    """DoD 8(a): the harness's own budget failure is not a Worker action item.
+
+    The finding stays visible in review.json, but the reviewer's verdict is untouched and the
+    feedback string the next Worker prompt receives excludes it, so no round is spent on an
+    evidence-compression commit.
+    """
+    result = ReviewResult(verdict=ReviewVerdict.APPROVED, findings=[])
+    finding = review_service.apply_evidence_delivery_finding(
+        result, ["verify-evidence/T-16/big.txt"]
+    )
+    assert finding is not None and finding in result.findings
+    assert result.verdict == ReviewVerdict.APPROVED
+    assert review_service.is_harness_budget_finding(finding)
+
+    task = task_service.create(session, TaskCreate(title="budget feedback"))
+    session.add(
+        Review(
+            task_id=task.id,
+            verdict="CHANGES_REQUESTED",
+            findings=[
+                finding.model_dump(),
+                {
+                    "file_or_area": "src/app.py",
+                    "issue": "the real code finding",
+                    "violates": "DoD 1",
+                },
+            ],
+        )
+    )
+    session.commit()
+    feedback = run_service._latest_feedback(session, task)
+    assert feedback is not None
+    assert "src/app.py" in feedback and "the real code finding" in feedback
+    assert "harness-detected evidence delivery" not in feedback
+    assert "big.txt" not in feedback
 
 
 def test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding():

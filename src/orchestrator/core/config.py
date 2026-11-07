@@ -71,7 +71,11 @@ class Settings(BaseSettings):
     supervisor_microfixes_enabled: bool = False
 
     max_prompt_context_tokens: int = 60_000
-    max_log_tokens: int = 4_000
+    # Measured on T-20: a normal handoff block was middle-truncated in every round at 4000
+    # tokens, and because the diff budget omits docs/evidence the handoff is the only channel
+    # that can carry them. 8000 keeps that channel useful while still being a hard cap (T-16
+    # DoD 8); a larger handoff is still cut, and the cut is named in the truncation manifest.
+    max_log_tokens: int = 8_000
     max_diff_tokens: int = 12_000
 
     # Memory budgets (per injected section, ~4 chars/token). Memory is static, so

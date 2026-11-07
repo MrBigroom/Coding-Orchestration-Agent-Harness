@@ -36,7 +36,8 @@ from tests.conftest import make_repo, requires_git
 # checks stay in the gated suite, because dropping the whole module removed the T-19 coverage the
 # gate relies on (review round 1, finding 3). The nested-suite cases are additionally behind
 # `ORCH_ENV_SPAWN_TESTS=1`; the marker hook in tests/conftest.py excludes `@pytest.mark.parity`
-# items by default and includes them with `-m parity` or ORCH_ENV_PARITY_TESTS=1.
+# items unless ORCH_ENV_PARITY_TESTS=1 is set. With that env var they run, and `-m parity` selects
+# only them; `-m parity` alone does NOT include them.
 pytestmark = requires_git
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

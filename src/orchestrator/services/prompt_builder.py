@@ -32,6 +32,7 @@ from orchestrator.providers.base import BuiltPrompt, PromptSection
 from orchestrator.services import memory_service
 from orchestrator.utils.redaction import (
     RedactionHit,
+    redact,
     redact_with_report,
     strip_sensitive_files_from_diff,
 )
@@ -537,10 +538,25 @@ def undelivered_compensation(
     if rendered is not None and patch is not None:
         originals = dict(split_diff_files(patch))
         shown = dict(split_diff_files(rendered))
+
+        def delivered(path: str, chunk: str) -> bool:
+            """True when this file's text reached the reviewer, even if rewritten in place.
+
+            The prior equality check treated an in-place redaction as an undelivered file,
+            because the as-sent chunk no longer equalled the raw `patch.diff` chunk. Redaction is
+            reported separately (a `kind="redaction"` manifest row), never as a budget shortfall
+            (T-16 review round 2, finding 1). Comparing against `redact(chunk)` keeps the budget
+            answer honest: a context-budget cut still differs from the redacted whole chunk.
+            """
+            shown_chunk = shown.get(path)
+            if shown_chunk is None:
+                return False
+            return shown_chunk == chunk or shown_chunk == redact(chunk)
+
         return sorted(
             path
             for path, chunk in originals.items()
-            if is_compensation_artifact(path) and shown.get(path) != chunk
+            if is_compensation_artifact(path) and not delivered(path, chunk)
         )
     out: list[str] = []
     for record in records:
@@ -588,7 +604,12 @@ def _manifest_table(records: list[dict[str, Any]], redaction: bool = False) -> s
     return "\n".join(rows)
 
 
-def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
+def render_truncation_manifest(
+    records: list[dict[str, Any]],
+    *,
+    rendered: str | None = None,
+    patch: str | None = None,
+) -> str:
     """The markdown manifest archived beside the exact reviewer input (T-11 DoD 1).
 
     T-16: the table is split by `kind` so a reader can tell withheld-as-a-secret from a budget cut
@@ -597,9 +618,18 @@ def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
     the same section, so it is not left for the reviewer to infer from an absent file.
     """
     if not records:
+        undelivered_only = undelivered_compensation([], rendered=rendered, patch=patch)
+        if not undelivered_only:
+            return (
+                "No truncation: every prompt section and every changed file was included in full "
+                "in the archived input below."
+            )
         return (
-            "No truncation: every prompt section and every changed file was included in full "
-            "in the archived input below."
+            "**Compensation-artifact shortfall:** the reviewer diff budget could not carry "
+            f"{len(undelivered_only)} evidence/compensation file(s) in full: "
+            + ", ".join(undelivered_only)
+            + ". This is a harness-detected delivery failure, not missing Worker evidence; the "
+            "review records it as a finding."
         )
     by_kind: dict[str, list[dict[str, Any]]] = {"budget": [], "secret": [], "redaction": []}
     for record in records:
@@ -621,7 +651,7 @@ def render_truncation_manifest(records: list[dict[str, Any]]) -> str:
                 "\n\n" + _manifest_table(by_kind["redaction"], redaction=True)
             )
         table = "\n\n".join(sections)
-    undelivered = undelivered_compensation(records)
+    undelivered = undelivered_compensation(records, rendered=rendered, patch=patch)
     if undelivered:
         table += (
             "\n\n**Compensation-artifact shortfall:** the reviewer diff budget could not carry "

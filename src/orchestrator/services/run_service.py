@@ -157,14 +157,18 @@ def dry_run(session: Session, task: Task) -> RoutePlan:
 def _latest_feedback(session: Session, task: Task) -> str | None:
     from sqlmodel import col, select
 
+    from orchestrator.services.review_service import worker_actionable_findings
+
     review = session.exec(
         select(Review).where(Review.task_id == task.id).order_by(col(Review.id).desc())
     ).first()
     if not review or review.verdict == "APPROVED":
         return None
+    # A harness-owned evidence-budget finding is not something a Worker can fix; sending it back
+    # would ask for an evidence-compression commit, which T-16 DoD 8(a) forbids.
     items = "\n".join(
         f"- {f.get('file_or_area')}: {f.get('issue')} (violates {f.get('violates') or 'n/a'})"
-        for f in review.findings
+        for f in worker_actionable_findings(review.findings)
     )
     return f"Verdict: {review.verdict}\n{items}"
 

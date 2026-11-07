@@ -115,6 +115,39 @@ def test_budget_truncates_dynamic_only(session, monkeypatch):
     assert "structured summary" in built.sections[-1].content
 
 
+def test_default_handoff_budget_carries_a_representative_handoff(session):
+    """DoD 8 / operator note C: the handoff channel must not truncate a normal handoff.
+
+    Measured on T-20: at 4000 tokens the handoff block was middle-truncated in every round, and
+    because the diff budget omits docs/evidence it was the only channel that could carry them.
+    The default is now 8000 and still a hard cap: a handoff larger than that is cut, and the cut
+    is recorded in the manifest.
+    """
+    from orchestrator.core.config import get_settings
+
+    limit = get_settings().max_log_tokens
+    assert limit >= 8000
+    task = task_service.create(session, TaskCreate(title="handoff budget"))
+    # ~5k tokens at the 8000 default, the R-52 class of handoff (20973 bytes), not pathological.
+    line = "handoff line with a checkable claim and its evidence path\n"
+    normal = line * max(1, (limit * 4 * 5 // 8) // len(line))
+    built = prompt_builder.build_prompt(
+        session, "architect", task, None, DynamicState(handoff=normal)
+    )
+    dynamic = next(s.content for s in built.sections if s.name == "dynamic_state")
+    assert normal in dynamic
+    assert not any(r["item"] == "handoff block" for r in built.truncations)
+
+    # Over the cap, the loss is still named rather than silent.
+    huge = "x" * (limit * 4 * 2)
+    built = prompt_builder.build_prompt(
+        session, "architect", task, None, DynamicState(handoff=huge)
+    )
+    record = next(r for r in built.truncations if r["item"] == "handoff block")
+    assert record["bytes_included"] < record["bytes_available"]
+    assert f"max_log_tokens={limit} tokens" in record["budget"]
+
+
 # --- T-16 DoD 1/2/5(a)(b): redaction is visible in the manifest, and prose survives -----------
 
 

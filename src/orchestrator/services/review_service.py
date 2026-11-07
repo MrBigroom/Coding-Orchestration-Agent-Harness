@@ -53,6 +53,22 @@ AMBIGUOUS = ReviewFinding(
     violates="review.json contract",
 )
 
+# A harness-detected evidence-delivery finding is visibility for the human reader, not a Worker
+# action item: the fix (a larger budget, or a smaller evidence bundle) is the harness's job, and
+# sending it back would force a Worker to spend a round compressing evidence (T-16 DoD 8(a)).
+EVIDENCE_DELIVERY_PREFIX = "harness-detected evidence delivery:"
+
+
+def is_harness_budget_finding(finding: ReviewFinding | dict) -> bool:
+    """True for the harness's own diff-budget finding, which never asks the Worker to act."""
+    issue = finding.get("issue", "") if isinstance(finding, dict) else finding.issue
+    return str(issue).startswith(EVIDENCE_DELIVERY_PREFIX)
+
+
+def worker_actionable_findings(findings: list[ReviewFinding] | list[dict]) -> list:
+    """Findings a Worker can fix; harness-owned budget failures are excluded from feedback."""
+    return [finding for finding in findings if not is_harness_budget_finding(finding)]
+
 
 def parse_review(text: str) -> tuple[ReviewResult, bool]:
     """Return (result, ambiguous)."""
@@ -183,15 +199,35 @@ def evidence_delivery_finding(paths: list[str]) -> ReviewFinding | None:
     return ReviewFinding(
         file_or_area=", ".join(paths),
         issue=(
-            "harness-detected evidence delivery: the reviewer diff budget could not carry "
+            EVIDENCE_DELIVERY_PREFIX
+            + f" the reviewer diff budget could not carry "
             f"{len(paths)} compensation artifact(s) in full; this is a review-input budget "
-            "failure, not missing Worker evidence"
+            "failure, not missing Worker evidence, and it does not ask the Worker to trim evidence"
         ),
         violates=(
             "review input completeness (compensation artifacts must be funded or reported; "
             "this is a harness budget gate, not a task-specific DoD item)"
         ),
     )
+
+
+def apply_evidence_delivery_finding(result: ReviewResult, paths: list[str]) -> ReviewFinding | None:
+    """Append the harness finding without touching the reviewer's verdict (T-16 DoD 8(a)).
+
+    An APPROVED round stays APPROVED and is accepted; a CHANGES_REQUESTED round is already going
+    back for its own findings, and this row is filtered out of the Worker feedback by
+    `worker_actionable_findings`. Either way, no round is consumed to compress evidence.
+    """
+    finding = evidence_delivery_finding(paths)
+    if finding is None:
+        return None
+    result.findings.append(finding)
+    result.notes.append(
+        "harness-detected: compensation artifacts the reviewer diff budget could not deliver in "
+        "full: " + ", ".join(paths) + ". This finding is recorded for the human reader; it does "
+        "not change the verdict and is not a Worker action item."
+    )
+    return finding
 
 
 def render_review_payload(
@@ -204,6 +240,8 @@ def render_review_payload(
     diff_issues: list[review_audit.DiffIssue],
     supplied: review_audit.SuppliedEvidence,
     universe: review_audit.PathUniverse | None = None,
+    rendered_diff: str | None = None,
+    patch_text: str | None = None,
 ) -> str:
     """The archived reviewer input plus the provenance of every absence/truncation claim.
 
@@ -228,7 +266,7 @@ def render_review_payload(
 
 ## Truncation manifest
 
-{prompt_builder.render_truncation_manifest(truncations)}
+{prompt_builder.render_truncation_manifest(truncations, rendered=rendered_diff, patch=patch_text)}
 
 ## What the reviewer was actually given
 
@@ -429,13 +467,7 @@ async def architect_review(
     # T-16 DoD 7: evidence the diff budget could not carry is a harness-detected delivery
     # failure, named as a finding so no reviewer has to infer it from an absent file.
     if undelivered_evidence:
-        finding = evidence_delivery_finding(undelivered_evidence)
-        if finding is not None:
-            result.findings.append(finding)
-        result.notes.append(
-            "harness-detected: compensation artifacts the reviewer diff budget could not "
-            "deliver in full: " + ", ".join(undelivered_evidence)
-        )
+        apply_evidence_delivery_finding(result, undelivered_evidence)
         log_service.log_event(
             session,
             "review_evidence_undelivered",
@@ -586,6 +618,8 @@ async def architect_review(
             diff_issues=diff_issues,
             supplied=supplied,
             universe=universe,
+            rendered_diff=as_sent_diff,
+            patch_text=patch_text,
         ),
         redact_content=False,
     )

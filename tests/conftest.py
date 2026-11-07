@@ -167,7 +167,9 @@ def pytest_collection_modifyitems(config, items) -> None:
     The marker exists so a nested-suite/env-parity scenario is never an accidental member of the
     gated suite: one of them spawns a second pytest process and clones the checkout, and DoD 8
     bounds what the gate may cost per round. It is deliberately a marker plus a hook (not a
-    module-level skip) so `-m parity`/the env var can include it on demand.
+    module-level skip) so the env var can include the tests on demand: set
+    `ORCH_ENV_PARITY_TESTS=1` and they run (add `-m parity` to select only them). `-m parity`
+    WITHOUT the env var still skips them, because this hook runs after marker selection.
     """
     if parity_tests_enabled():
         return
