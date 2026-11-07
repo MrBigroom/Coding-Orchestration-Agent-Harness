@@ -8,7 +8,7 @@ HEAD `e23eb958`; `tracked-and-untracked-entries-outside-this-dir=0`.
 PASSED (focused -vv, 38):
 `test_probe_parses_capabilities_and_fails_closed` PASSED
 `test_markup_daemon_gets_escaped_text_on_every_transport_and_no_hint` PASSED
-`test_every_transport_result_maps_to_one_frozen_status[present0..present4]` PASSED
+`test_every_transport_result_maps_to_one_frozen_status` (5 parametrized cases) PASSED
 `test_a_displayed_message_is_recorded_delivered_not_failed` PASSED
 `test_the_standalone_path_reaches_the_same_outcome_classes` PASSED
 `test_exit_flush_delivers_and_terminates_only_real_rows_it_owns` PASSED
@@ -23,7 +23,7 @@ PASSED (focused -vv, 38):
    `--action` and `[]`/`{}` on gdbus: only an error/timeout/missing client is `OUTCOME_FAILED`.
 2. **Probed capability.** `:245-264` calls `GetCapabilities` and fails closed; `:285-294` gives
    unprobed/no-markup raw `plain`, markup escaped text on both transports, an anchor only on gdbus
-   with `body-hyperlinks`; no `body-markup` hint. Per-daemon table: `docs/configuration.md:73-111`.
+   with `body-hyperlinks`; no `body-markup` hint. Per-daemon table: `docs/configuration.md:73-110`.
 3. **Pending rows.** Read path `api/routes/notifications.py:31`; CLI exit `cli.py:1442-1465`;
    owner stamped at `notification_service.py:536`; scoped termination `:403-419`; inert without a
    database file `:424-427`. Tests drive `cli.main()` and the API route; a real `notify_event` row
