@@ -64,6 +64,50 @@ file names this worktree as the import root): `full-test.txt` 676 passed / 0 fai
 `lint.txt` clean; `zz-per-test.txt` 33 passed / 3 skipped, the skips being this file's
 `ORCH_ENV_SPAWN_TESTS` opt-ins. No DoD-4 test is skipped.
 
+## Round 6 -- operator hand-fix (R-52 findings 1, 4, 5)
+
+Commit `5f1953f`, again authored by the operator's expert-agent (chat-10) and not by the Worker.
+Round 6 had been ruled handoff-only, finding 1 was against the operator's own round-5 fix, and the
+Architect wrote that it "needs an operator hand-fix or a funded round" -- by then both caps had
+fired (attempts 6 of 6, verified rounds 6 of 3), so there was no round left to fund.
+
+- **Finding 1 (two holders, acquiring side).** `parity_lock()` flocked whatever fd
+  `_open_lock_file` returned, so a sweeper renaming a stale lock between this process's open and
+  its flock left the acquirer holding an orphaned inode while the sweeper locked a fresh one, and
+  the sweep then reclaimed a snapshot in use. Round 5 guarded only the sweeper's side.
+  `_acquire_lock_fd(path)` now flocks, requires `_fd_names_path(fd, path)`, retries once and
+  returns None otherwise; `parity_lock` maps that to `ParityBusy`, `_parity_lock_at` to "busy".
+  One implementation guards both sides. Test:
+  `test_parity_lock_refuses_an_inode_swapped_between_open_and_flock` -- swaps the inode on every
+  attempt, asserts exactly two acquisition attempts then a refusal, and that the replacement lock
+  survives untouched.
+- **Finding 4 (a comment claiming a guarantee the script did not have).** The cleanup trap is now
+  installed BEFORE `exec 9>>"$LOCK"`, so a failing `exec` cannot leave an unmarked root behind.
+- **Finding 5 (proof coverage).** `_fingerprint` in
+  `test_parity_sweep_dry_run_creates_no_lock_and_mutates_nothing` now includes
+  `<repo>/.git/worktrees`, the metadata a `git status` inside `remove_worktree(dry_run=True)`
+  could refresh. The byte-identical claim is proven over it rather than assumed, and it holds.
+
+Refuted / not defects, both belonging to T-16:
+
+- **Finding 2** said the supplied diff shows `ANTHROPIC_API_KEY=[REDACTED]` inside asserted test
+  literals, "which as shown contradicts `_synthetic_env_value`". It does not contradict it: the
+  credential redactor rewrote the reviewer's copy of code whose whole point is that the values are
+  placeholders (`_synthetic_env_value` returns `synthetic-not-a-secret` and friends, and
+  `test_parity_synthesis_never_writes_a_real_credential_value` passes). The reviewer was shown a
+  masked version of an assertion about masking, and correctly labelled it a harness problem.
+- **Finding 3** could not confirm the residue line sits under the Known-limitations heading because
+  `README.md` reached the reviewer at **0 of 1337 bytes** (aggregate diff budget exhausted by
+  higher-priority files, even at `max_diff_tokens=24000`). Inspected directly: `## Known
+  limitations` is README.md:254 and the parity residue sentence is :273-278, inside that section.
+  The pinning test is `test_make_target_is_documented_as_the_developer_parity_path`, which asserts
+  the exact sentences (not a bare `"synthetic" in readme`); the reviewer is right that it does not
+  assert the heading, which is a fair strengthening to consider but not a defect in the docs.
+
+Gate re-run by the operator at `5f1953f` inside this worktree: `full-test.txt` 677 passed /
+0 failed / 9 skipped; `lint.txt` clean; `zz-per-test.txt` 34 passed / 3 skipped, the skips being
+this file's `ORCH_ENV_SPAWN_TESTS` opt-ins.
+
 ## Budget note
 
 The branch diff is larger than `max_diff_tokens=12000`, so this directory may not be supplied to
