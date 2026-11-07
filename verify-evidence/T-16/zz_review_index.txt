@@ -1,10 +1,10 @@
-T-16 review index (HEAD dae0048beeb887d14a27126329af88a5129355e1; dirty-entries=0 excluding verify-evidence/T-16/)
+T-16 review index (HEAD 843fe1bfeea7ed1fa6dbf28a1e2a478ffd52e496; dirty-entries=0 excluding verify-evidence/T-16/)
 Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, new-tests.txt,
 lint.txt, parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
 
-Full suite at this HEAD: 696 passed, 10 skipped, exit 0 (full-test.txt).
+Full suite at this HEAD: 697 passed, 10 skipped, exit 0 (full-test.txt).
 Lint: All checks passed (lint.txt).
-Focused hermeticity/redaction/review suite: 84 passed, 4 skipped, exit 0 (new-tests.txt);
+Focused hermeticity/redaction/review suite: 85 passed, 4 skipped, exit 0 (new-tests.txt);
 this file keeps the individual PASSED lines, including the pre-existing credential matrix
 test_credentials_are_still_redacted_wherever_they_appear.
 Parity opt-in: 4 passed, 29 deselected, exit 0 (parity-optin.txt); the cheap 29 tests run in the
@@ -12,14 +12,16 @@ gated suite above, so only the expensive 4 are opt-in.
 
 Review round 1 findings -> fix and proof:
 F1 greedy evidence allocation -> src/orchestrator/services/prompt_builder.py:303
-   _allocate_diff_group (two-pass fair share; no greedy allowance).
-   tests/unit/test_review_budget.py:53 huge first log leaves every later file visible.
+   _allocate_diff_group (two-pass fair share; no greedy allowance, and the sub-minimum branch
+   gives each file its minimum rather than the whole remainder to the first).
+   tests/unit/test_review_budget.py:53 huge first log leaves every later file visible;
+   :76 an unfundable group still funds the next file, not only the first.
 F2 transient add+prune invisible to the guard -> tests/conftest.py:213 worktree_fingerprint
    includes registry entries + registry/git-dir mtimes; :273 guard fails loudly if unreadable.
-   tests/unit/test_review_budget.py:160 detects add+prune whose listings are identical.
+   tests/unit/test_review_budget.py:173 detects add+prune whose listings are identical.
 F3 whole env module opt-in -> tests/integration/test_env_hermeticity.py:40 keeps cheap checks
    gated; :176,:199,:216,:992 mark only the four expensive cases. 29 cheap tests now run in the
-   gated suite (full-test.txt); tests/unit/test_review_budget.py:122 pins both directions.
+   gated suite (full-test.txt); tests/unit/test_review_budget.py:135 pins both directions.
 F4 placeholder over-exemption -> src/orchestrator/utils/redaction.py:110 restricts the value to
    placeholder vocabulary, digits and separators. tests/unit/test_redaction.py:263 asserts
    placeholder-prefixed real secrets still redact while :236 keeps the R-52 fixtures intact.
@@ -32,7 +34,7 @@ F6 false "git < 2.40" reason -> src/orchestrator/services/review_audit.py:1297
    tests/unit/test_review_audit.py:342 (old Git) and :365 (empty merge-base, no false claim).
 F7 task-bound violates + unlabelled note -> src/orchestrator/services/review_service.py:175
    generic harness-budget violates; :436 note starts "harness-detected:".
-   tests/unit/test_review_budget.py:86 asserts the finding is not pinned to T-16.
+   tests/unit/test_review_budget.py:99 asserts the finding is not pinned to T-16.
 F8 evidence stamps/trimmed PASSED -> every file above carries HEAD + dirty-entries; new-tests.txt
    is untrimmed and names each test.
 
@@ -49,18 +51,18 @@ DoD 3 - completeness on the sent text: review_service.py:328-337; prompt_builder
   finding; present file is clean) and :325 (sensitive file labelled withheld, not missing).
 DoD 4 - honest git floor: review_audit.py:1279/:1297/:1367; tests/test_review_audit.py:342,:365;
   docs/build-loop.md:640.
-DoD 5 - offline tests: all 84 focused tests use text/temp repos; no network provider calls. The
+DoD 5 - offline tests: all 85 focused tests use text/temp repos; no network provider calls. The
   four sub-items map to test_prompt_builder.py:121 (5a), test_redaction.py:219 (5b),
   test_redaction.py:69 (5c), test_review_audit.py:310 (5d), test_review_audit.py:342 (5e).
 DoD 6 - docs: docs/build-loop.md:459 (transient guard), :535 (redaction visibility),
   :632 (fair evidence allocation), :640 (git floor); README.md:270 known limitation.
 DoD 7 - evidence funded or reported: prompt_builder.py:278 reserve, :303 fair allocation,
   :426 rendered budget, :516 undelivered check, :582 manifest shortfall; review_service.py:175
-  harness finding. Tests: tests/unit/test_review_budget.py:32,:53,:76,:86.
+  harness finding. Tests: tests/unit/test_review_budget.py:32,:53,:76,:89,:99.
 DoD 8 - bounded gate cost: prompt_builder.py:278 separate reserve; tests/conftest.py:160 parity
   hook, :213 fingerprint, :273 guard; test_env_hermeticity.py:176/199/216/992 marker only the
-  expensive cases; tests/unit/test_review_budget.py:122 (opt-in), :144 (no operator mutation),
-  :160 (transient detection). Parity evidence: parity-optin.txt (4 passed, 29 deselected).
+  expensive cases; tests/unit/test_review_budget.py:135 (opt-in), :157 (no operator mutation),
+  :173 (transient detection). Parity evidence: parity-optin.txt (4 passed, 29 deselected).
 
 No compression commit was made for this evidence; an over-budget bundle is reported by the
 manifest and the harness finding instead.
