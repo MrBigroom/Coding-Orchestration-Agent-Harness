@@ -39,9 +39,10 @@ SOURCE_ENV="${ORCH_PARITY_ENV_FILE:-$ROOT/.env}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/orch-env-parity.XXXXXX")"
 TREE="$TMP/tree"
 # The lock is what lets a sweep tell an orphaned tree (lock free after SIGKILL) from one another
-# parity run is using. It is created before the worktree so the root is never unowned. `.repo`
-# records which checkout this root belongs to, so another project's probe ignores it instead of
-# reporting a busy lock that is none of its business.
+# parity run is using. The FILE is created before the worktree so the root carries it from the
+# start, but the root is not owned by this run until `flock` below succeeds -- see the window note.
+# `.repo` records which checkout this root belongs to, so another project's probe ignores it
+# instead of reporting a busy lock that is none of its business.
 #
 # This order is NOT a claim that the root is always locked: between `mktemp -d` and `flock` there
 # is a window where the root exists with no lock and no `.repo`. The sweeper closes that window
@@ -64,7 +65,11 @@ if ! flock -n 9; then
   fail "another parity run is using $TMP"
 fi
 # Record the holder so a sweep may only break this lock once `os.kill(pid, 0)` says it is gone.
-printf '%s\n' "$$" >&9
+# Truncate BY PATH now that the flock is ours: the same inode, so fd 9's lock is untouched.
+# Appending (`>&9`) left every previous holder's pid in the file while the Python reader takes the
+# FIRST line, so one stale pid could keep a genuinely orphaned lock unbreakable forever (T-20
+# review round 5).
+printf '%s\n' "$$" > "$LOCK"
 printf '%s\n' "$ROOT" > "$TMP/.repo"
 
 printf 'orch-parity: DEVELOPER CHECK (not the gate command)\n'

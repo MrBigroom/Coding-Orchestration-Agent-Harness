@@ -291,21 +291,47 @@ def _open_lock_file(path: Path) -> int:
     return os.open(path, os.O_RDWR)
 
 
-def _break_stale_lock(path: Path) -> None:
-    """Remove a lock whose recorded holder is gone by RENAME first, then unlink.
+def _fd_names_path(fd: int, path: Path) -> bool:
+    """True while `path` still names the inode this fd holds.
 
-    Never unlink a path another process may still have open under its old inode: the rename makes
-    the removal atomic and the caller creates a fresh inode afterwards.
+    flock binds to an open file description, not to a name, so a fd can stay locked on an inode
+    that the path no longer refers to. Every decision that acts on "the lock at `path`" has to
+    check the identity, not the name (T-20 review round 5).
     """
+    try:
+        st = os.stat(path)
+        fst = os.fstat(fd)
+    except OSError:
+        return False
+    return (st.st_dev, st.st_ino) == (fst.st_dev, fst.st_ino)
+
+
+def _break_stale_lock(path: Path, fd: int) -> bool:
+    """Quarantine a stale lock by RENAME, then unlink it, WHILE the caller still holds its flock.
+
+    Returns True only when this call removed the file. Two guards make it safe:
+
+    * the caller's flock is held across the rename, so no other process can be mid-acquire on
+      this inode -- releasing first and renaming by path let a second contender create and lock a
+      fresh inode that this call then renamed away, leaving two holders (T-20 review round 5);
+    * `path` must still name the inode `fd` holds, so a lock somebody else created after `fd` was
+      opened is left alone instead of being quarantined.
+
+    Never unlink a path another process may still have open: the rename makes the removal atomic
+    and the caller creates a fresh inode afterwards.
+    """
+    if not _fd_names_path(fd, path):
+        return False
     quarantine = path.with_name(f"{path.name}.stale-{os.getpid()}-{uuid.uuid4().hex}")
     try:
         os.rename(path, quarantine)
-    except FileNotFoundError:
-        return
+    except OSError:
+        return False
     try:
         os.unlink(quarantine)
     except FileNotFoundError:
         pass
+    return True
 
 
 @contextlib.contextmanager
@@ -338,10 +364,16 @@ def parity_lock(project_slug: str) -> Iterator[None]:
 def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
     """Non-blocking lock used by the sweeper; yields False when a holder is using the tree.
 
-    `dry_run` must leave the filesystem byte-identical, so it opens an EXISTING lock read-only
-    and never creates the directory or a `.lock`. A free `flock` means no process is using the
-    tree; the recorded pid only decides whether a stale file is broken with the mandated
-    rename-then-unlink (never an unlink of a path another process may still hold open).
+    `dry_run` must not affect a live run at all, so it never flocks and never creates anything:
+    it opens an EXISTING lock read-only and reports whether the recorded holder is still alive.
+    Taking `LOCK_EX` here -- even non-blocking -- made `cleanup --dry-run` able to fail a
+    concurrent parity run, whose own non-blocking acquire then saw the preview as a holder
+    (T-20 review round 5). A preview that reports "busy" for a live pid and "free" for a dead one
+    errs in the safe direction: it may decline to preview a sweep the real run would perform.
+
+    On the real path a free `flock` means no process is using the tree; the recorded pid then
+    decides whether a stale file is broken, and the break happens under the held flock with an
+    inode-identity check (see `_break_stale_lock`).
     """
     import fcntl  # POSIX-only, imported here so the module itself stays platform-portable
 
@@ -352,15 +384,7 @@ def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
             yield True
             return
         try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                yield False
-                return
-            try:
-                yield True
-            finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+            yield not _pid_is_alive(_lock_file_pid(fd))
         finally:
             os.close(fd)
         return
@@ -377,15 +401,29 @@ def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
             yield False
             return
         if not _pid_is_alive(_lock_file_pid(fd)):
+            # Break it UNDER the flock we already hold: unlocking first opened a window where a
+            # second contender created and locked a fresh inode that this call then renamed away,
+            # leaving two processes each believing they held the lock (T-20 review round 5).
+            broke = _break_stale_lock(path, fd)
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
-            _break_stale_lock(path)
+            if not broke:
+                # The path names somebody else's lock now. Their run, not ours to judge.
+                yield False
+                return
             fd = None
     if fd is None:
         fd = _open_lock_file(path)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            os.close(fd)
+            yield False
+            return
+        if not _fd_names_path(fd, path):
+            # We won a race for an inode that is no longer the lock at `path`: the winner's file
+            # was replaced under us. Bail out rather than hold a lock nothing consults.
+            fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
             yield False
             return

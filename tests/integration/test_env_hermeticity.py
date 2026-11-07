@@ -705,6 +705,105 @@ def test_parity_sweep_breaks_a_stale_lock_by_rename_then_unlink(home, monkeypatc
     assert not renames[0][1].exists()  # the quarantine name is removed after the rename
 
 
+def _dead_pid() -> int:
+    """A pid that has certainly exited, so `os.kill(pid, 0)` says the holder is gone."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait(timeout=60)
+    return proc.pid
+
+
+def test_breaking_a_stale_lock_never_renames_a_live_lock_that_replaced_it(home):
+    """R-50 finding 1: the break runs UNDER the held flock and only on the inode we hold.
+
+    The interleaving, pinned: contender A opens and flocks a stale lock whose recorded pid is
+    dead; contender B then replaces the path with a fresh inode of its own before A renames. The
+    previous code unlocked, closed the fd and renamed BY PATH -- quarantining B's live lock and
+    leaving two processes each holding "the" lock. `_break_stale_lock` must refuse on the inode
+    mismatch and B's lock must survive untouched.
+    """
+    import fcntl
+
+    path = git_service.parity_lock_path("interleaved")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(f"{_dead_pid()}\n")
+        stale_inode = path.stat().st_ino
+        fd = os.open(path, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # B wins the race the old code left open: same name, different inode, live holder.
+            live = path.with_name(f"{path.name}.live")
+            live.write_text(f"{os.getpid()}\n")
+            os.replace(live, path)
+            assert path.stat().st_ino != stale_inode
+
+            assert git_service._break_stale_lock(path, fd) is False
+            assert path.exists() and int(path.read_text()) == os.getpid()
+            assert not list(path.parent.glob(f"{path.name}.stale-*")), "quarantined a live lock"
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        # The same call DOES break the lock while the path still names the inode we hold.
+        path.write_text(f"{_dead_pid()}\n")
+        fd = os.open(path, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            assert git_service._break_stale_lock(path, fd) is True
+            assert not path.exists()
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_a_dry_run_probe_never_blocks_a_live_parity_run(home):
+    """R-50 finding 5: a preview takes no flock, so it cannot make a real run fail.
+
+    The dry-run branch used to take `LOCK_EX | LOCK_NB` on the live lock file, so `cleanup
+    --dry-run` could be the very reason a concurrent parity run reported "another parity run is
+    using ...". Inside an open probe of a free lock, a real exclusive acquire must still succeed;
+    a live holder must still be reported busy.
+    """
+    import fcntl
+
+    path = git_service.parity_lock_path("dry-probe")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(f"{_dead_pid()}\n")
+        with git_service._parity_lock_at(path, dry_run=True) as free:
+            assert free is True  # a dead holder reads as free without touching the lock
+            fd = os.open(path, os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # BlockingIOError if probe held it
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+        with git_service.parity_lock("dry-probe"):
+            with git_service._parity_lock_at(path, dry_run=True) as free:
+                assert free is False
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_the_shell_lock_names_exactly_one_holder_and_claims_no_closed_window():
+    """R-50 findings 3 and 6: the script's lock file, and the comment that describes it.
+
+    `printf '%s\\n' "$$" >&9` appended, while `_lock_file_pid` reads the FIRST line, so a dead pid
+    left by an earlier run could keep a genuinely orphaned lock unbreakable forever. The pid is
+    now written by truncation after `flock` succeeds. The stale claim that the root "is never
+    unowned" contradicted the mktemp-to-flock window documented two lines below it.
+    """
+    script = (REPO_ROOT / "scripts" / "orch_env_parity.sh").read_text()
+    records = 'printf \'%s\\n\' "$$" > "$LOCK"'
+    assert records in script
+    assert 'printf \'%s\\n\' "$$" >&9' not in script
+    assert script.index("flock -n 9") < script.index(records)  # held before it is recorded
+    assert "so the root is never unowned" not in script
+    assert "This order is NOT a claim that the root is always locked" in script
+    assert "is a window where the root exists with no lock" in script
+
+
 def _fingerprint(*roots: Path) -> dict[str, tuple[int, bytes]]:
     """Every path under the roots with its mode and bytes, so a dry run can be compared exactly."""
     out: dict[str, tuple[int, bytes]] = {}
