@@ -53,12 +53,10 @@ the task and run ids, the outcome, the next action and a link to the task. Deliv
 every decision is also kept in the **Notifications** page and `GET /api/notifications`, with
 "not attempted because notifications are off" (`skipped`) separate from "attempted and failed"
 (`failed`). The master switch `notifications_enabled` is **off on a new install** and every trigger
-is individually disable-able in Settings. A record never claims more than happened: the daemon is
-asked for its capabilities before anything is rendered as markup, a message that was displayed is
-recorded `delivered` (with `reason=shown_unacknowledged` when nothing acknowledged it) rather than
-`failed`, and no default action is advertised until an `ActionInvoked` listener exists. See
-[`docs/build-loop.md`](docs/build-loop.md#terminal-run-events) and
-[`docs/configuration.md`](docs/configuration.md#notification-delivery-and-status-t18).
+is individually disable-able in Settings. A record never claims more than happened: capabilities
+are probed before markup, a displayed message is recorded `delivered` (`reason=shown_unacknowledged`
+when nothing acknowledged it) rather than `failed`, and no default action is advertised. See
+[`docs/configuration.md`](docs/configuration.md#notification-delivery-and-status-t-18).
 
 ### What the demo does
 
@@ -256,13 +254,12 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
-- **Desktop notifications: one channel, and the link is usually text.** The only channel tested
-  end-to-end is the freedesktop D-Bus one on CachyOS/Hyprland with quickshell (`notify-send`, then
-  `gdbus`). macOS/Windows backends do not exist. `GetCapabilities` is probed first: a daemon
-  advertising `body-markup` parses every body as markup, so its text is HTML-escaped on both
-  transports; a clickable `<a href>` is added only through `gdbus` and only with `body-hyperlinks`.
-  Mako/dunst defaults, anything reached via `notify-send`, and unprobed daemons get the URL as a
-  copyable `Open: <url>` line. Nothing listens for `ActionInvoked`, so no action is advertised.
+- **Desktop notifications: one channel, and the link is usually text.** Only the freedesktop D-Bus
+  channel is tested end-to-end (CachyOS/Hyprland with quickshell: `notify-send`, then `gdbus`);
+  macOS/Windows backends do not exist. `GetCapabilities` is probed first: a `body-markup` daemon
+  parses every body, so its text is HTML-escaped on both transports; an `<a href>` is added only
+  through `gdbus` with `body-hyperlinks`. Mako/dunst defaults, `notify-send`, and unprobed daemons
+  get a copyable `Open: <url>` line. No `ActionInvoked` listener exists, so no action is advertised.
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify

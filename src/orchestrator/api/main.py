@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -12,7 +14,6 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator import __version__
-from orchestrator.api.fallback import render_shell
 from orchestrator.core.config import get_settings
 from orchestrator.core.logging import configure_logging, get_logger
 from orchestrator.core.security import SameOriginMiddleware
@@ -219,12 +220,13 @@ def create_app() -> FastAPI:
         if path and candidate.is_file() and root.resolve() in candidate.parents:
             return FileResponse(candidate)
         if dist is None:
-            # T-18 DoD 5: resolve the deep link server-side so the page renders the right view
-            # (and so the resolution is testable by calling the URL, not by grepping the source).
-            return HTMLResponse(
-                render_shell((FALLBACK_DIR / "index.html").read_text(encoding="utf-8"), path),
-                headers={"Cache-Control": "no-cache"},
-            )
+            # T-18 DoD 5: resolve `/tasks/7` server-side so the fallback renders the task view.
+            view, _, arg = path.strip("/").partition("/")
+            view = "dashboard" if not view else "task" if view == "tasks" and arg else view
+            route = html.escape(json.dumps({"view": view, "arg": arg or None}), quote=True)
+            page = (FALLBACK_DIR / "index.html").read_text(encoding="utf-8")
+            return HTMLResponse(page.replace("__ORCH_ROUTE__", route, 1),
+                                headers={"Cache-Control": "no-cache"})
         # Revalidated every time: it names the hashed assets, so a stale copy pins an old GUI.
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 

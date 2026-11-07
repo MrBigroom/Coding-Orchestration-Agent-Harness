@@ -100,21 +100,13 @@ def _hermetic_environment():
 
 @pytest.fixture(autouse=True)
 def _no_real_notification_daemon(monkeypatch):
-    """No test may reach a real desktop notification daemon (T-18 DoD 5).
-
-    The suite runs on the operator's machine, where a D-Bus session and a notification daemon
-    exist: an unmocked fan-out would pop a notification on their desktop and a capability probe
-    would be a live external call. Tests that assert on the argv patch `_run_client` themselves.
-    """
+    """No test may reach the operator's real daemon or D-Bus session (T-18 DoD 5)."""
     from orchestrator.services import notification_service
 
-    def blocked(argv):
-        return argv[0], "test suite blocked the real desktop notification client", ""
-
-    monkeypatch.setattr(notification_service, "_run_client", blocked)
-    monkeypatch.setattr(
-        notification_service, "probe_capabilities", lambda: notification_service.UNPROBED
-    )
+    monkeypatch.setattr(notification_service, "_run_client",
+                        lambda argv: (argv[0], "blocked by the test suite", ""))
+    monkeypatch.setattr(notification_service, "probe_capabilities",
+                        lambda: notification_service.UNPROBED)
 
 
 @pytest.fixture

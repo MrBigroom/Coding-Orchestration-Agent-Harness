@@ -10,7 +10,6 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -32,40 +31,28 @@ from orchestrator.utils.redaction import redact
 
 log = logging.getLogger(__name__)
 COALESCE_SECONDS = 2.0
-COALESCE_MAX_SECONDS = 10.0
 DELIVERY_TIMEOUT_SECONDS = 10
 PROBE_TIMEOUT_SECONDS = 2
 PENDING, DELIVERED, FAILED, SKIPPED, COALESCED = (
     "pending", "delivered", "failed", "skipped", "coalesced",
 )
-# Every transport result lands in exactly one outcome class, mapped to a frozen CCR-T9-01
-# status. `shown_unacknowledged` (displayed, nothing acknowledged it) has no status of its own,
-# so it is `delivered` with `reason=shown_unacknowledged`; a sixth status needs an approved CCR.
-OUTCOME_DELIVERED = "delivered"
-OUTCOME_SHOWN_UNACKNOWLEDGED = "shown_unacknowledged"
-OUTCOME_FAILED = "failed"
-OUTCOME_SKIPPED = "skipped"
-OUTCOME_COALESCED = "coalesced"
-OUTCOME_CLASSES = (
+# Every transport result is one outcome class, mapped to a frozen CCR-T9-01 status. A shown
+# message has no status of its own, so it is `delivered` with reason=shown_unacknowledged.
+OUTCOME_CLASSES = ("delivered", "shown_unacknowledged", "failed", "skipped", "coalesced")
+(
     OUTCOME_DELIVERED, OUTCOME_SHOWN_UNACKNOWLEDGED, OUTCOME_FAILED, OUTCOME_SKIPPED,
     OUTCOME_COALESCED,
-)
-STATUS_FOR_OUTCOME = {
-    OUTCOME_DELIVERED: DELIVERED,
-    OUTCOME_SHOWN_UNACKNOWLEDGED: DELIVERED,
-    OUTCOME_FAILED: FAILED,
-    OUTCOME_SKIPPED: SKIPPED,
-    OUTCOME_COALESCED: COALESCED,
-}
+) = OUTCOME_CLASSES
+STATUS_FOR_OUTCOME = dict(zip(
+    OUTCOME_CLASSES, (DELIVERED, DELIVERED, FAILED, SKIPPED, COALESCED), strict=True
+))
 PROCESS_EXIT_REASON = "process_exit_undelivered"
-# The CLI exit terminates only rows its own process created, never a live server's rows.
-OWNER_KEY = "owner"
+OWNER_KEY = "owner"  # the CLI exit terminates only rows its own process created
 PROCESS_TOKEN = f"{os.getpid()}:{uuid.uuid4().hex}"
 MARKUP_CAPABILITY = "body-markup"
 HYPERLINK_CAPABILITY = "body-hyperlinks"
 
 _timer: threading.Timer | None = None
-_batch_started: float | None = None
 _lock = threading.Lock()
 # Serialises delivery so two flushes (a timer thread and an inline sync-path flush) can never
 # select the same pending row and deliver it twice.
@@ -220,53 +207,34 @@ def _notification_env() -> dict[str, str]:
 
 @dataclass(frozen=True)
 class TransportResult:
-    """One transport attempt and the shape/daemon that produced it."""
-
     outcome: str
     channel: str | None = None
     error: str | None = None
     shape: str = "plain"
-    daemon: str = "unprobed"
-    detail: str = ""
 
     @property
-    def status(self) -> str:
+    def status(self):
         return STATUS_FOR_OUTCOME[self.outcome]
 
     @property
-    def reason(self) -> str:
-        return {
-            OUTCOME_DELIVERED: "",
-            OUTCOME_SHOWN_UNACKNOWLEDGED: OUTCOME_SHOWN_UNACKNOWLEDGED,
-            OUTCOME_FAILED: "delivery_failed",
-            OUTCOME_SKIPPED: "not_attempted",
-            OUTCOME_COALESCED: "coalesced",
-        }[self.outcome]
+    def reason(self):
+        return {OUTCOME_DELIVERED: "", OUTCOME_SHOWN_UNACKNOWLEDGED: "shown_unacknowledged",
+                OUTCOME_FAILED: "delivery_failed", OUTCOME_SKIPPED: "not_attempted",
+                OUTCOME_COALESCED: "coalesced"}[self.outcome]
 
-    def as_details(self) -> dict[str, Any]:
-        return {
-            "outcome_class": self.outcome,
-            "body_shape": self.shape,
-            "daemon": self.daemon,
-            "detail": self.detail,
-        }
+    def as_details(self):
+        return {"outcome_class": self.outcome, "body_shape": self.shape}
 
 
 @dataclass(frozen=True)
 class DaemonCapabilities:
-    """What the notification daemon says it supports (freedesktop GetCapabilities)."""
-
     probed: bool
     capabilities: frozenset[str]
     source: str
 
-    def supports(self, name: str) -> bool:
+    def supports(self, name):
         return self.probed and name in self.capabilities
 
-    def label(self) -> str:
-        if not self.probed:
-            return f"unprobed ({self.source})"
-        return f"{self.source}: " + ",".join(sorted(self.capabilities))
 
 
 UNPROBED = DaemonCapabilities(False, frozenset(), "not probed")
@@ -278,27 +246,23 @@ def probe_capabilities() -> DaemonCapabilities:
     """Ask the daemon what it can render; no gdbus/failure/timeout means unprobed (plain text)."""
     if not shutil.which("gdbus"):
         return DaemonCapabilities(False, frozenset(), "gdbus not on PATH")
-    argv = [
-        "gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
-        "--object-path", "/org/freedesktop/Notifications", "--method",
-        "org.freedesktop.Notifications.GetCapabilities",
-    ]
+    argv = ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+            "--object-path", "/org/freedesktop/Notifications", "--method",
+            "org.freedesktop.Notifications.GetCapabilities"]
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, never a shell
             argv, env=_notification_env(), capture_output=True, text=True,
-            timeout=PROBE_TIMEOUT_SECONDS, check=False,
-        )
+            timeout=PROBE_TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired:
         return DaemonCapabilities(False, frozenset(), "GetCapabilities timed out")
     except OSError as e:
         return DaemonCapabilities(False, frozenset(), f"GetCapabilities failed: {redact(str(e))}")
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()[-200:]
-        source = f"GetCapabilities exit {proc.returncode}"
-        return DaemonCapabilities(False, frozenset(), redact(f"{source}: {err}" if err else source))
-    return DaemonCapabilities(
-        True, frozenset(_CAPABILITY_RE.findall(proc.stdout or "")), "GetCapabilities"
-    )
+        return DaemonCapabilities(False, frozenset(),
+                                  redact(f"GetCapabilities exit {proc.returncode}: {err}"))
+    return DaemonCapabilities(True, frozenset(_CAPABILITY_RE.findall(proc.stdout or "")),
+                              "GetCapabilities")
 
 
 def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
@@ -309,11 +273,8 @@ def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
             timeout=DELIVERY_TIMEOUT_SECONDS, check=False,
         )
     except subprocess.TimeoutExpired:
-        return (
-            argv[0],
-            f"timed out after {DELIVERY_TIMEOUT_SECONDS}s (client killed; display state unknown)",
-            "",
-        )
+        return (argv[0], f"timed out after {DELIVERY_TIMEOUT_SECONDS}s "
+                "(client killed; display state unknown)", "")
     except OSError as e:
         return argv[0], redact(str(e)), ""
     if proc.returncode != 0:
@@ -323,12 +284,6 @@ def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
 
 
 def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> tuple[str, str]:
-    """Escape text for a markup-capable daemon; add an anchor only on gdbus with hyperlinks.
-
-    A `body-markup` daemon parses every body as markup and the spec has no hint for it, so both
-    transports get escaped text and gdbus sends `{}`. Mako/dunst defaults and `notify-send` keep
-    the `Open: <url>` line; an unprobed daemon gets raw text.
-    """
     if not caps.supports(MARKUP_CAPABILITY):
         return body, "plain"
     lines = [html.escape(x, quote=False) for x in body.splitlines()]
@@ -342,46 +297,30 @@ def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> t
 def deliver(title: str, body: str, link: str = "") -> TransportResult:
     """Send one notification and classify it; no `--action` (it implies a blocking `--wait`)."""
     caps = probe_capabilities()
-    daemon = caps.label()
     if shutil.which("notify-send"):
-        channel = "notify-send"
-        text, shape = _body_for(body, link, caps, channel)
+        text, shape = _body_for(body, link, caps, "notify-send")
         channel, error, _ = _run_client([
             "notify-send", "--app-name=Coding Orchestrator", "--urgency=normal",
-            "--icon=dialog-information", title, text,
-        ])
+            "--icon=dialog-information", title, text])
         if error is not None:
-            return TransportResult(OUTCOME_FAILED, channel, error, shape, daemon)
-        return TransportResult(
-            OUTCOME_SHOWN_UNACKNOWLEDGED, channel, None, shape, daemon,
-            "notify-send returned 0; dismissal is not observed",
-        )
+            return TransportResult(OUTCOME_FAILED, channel, error, shape)
+        return TransportResult(OUTCOME_SHOWN_UNACKNOWLEDGED, channel, None, shape)
     if shutil.which("gdbus"):
-        channel = "gdbus"
-        text, shape = _body_for(body, link, caps, channel)
+        text, shape = _body_for(body, link, caps, "gdbus")
         # No hints and no action array: body-markup is a capability, not a hint.
         channel, error, stdout = _run_client([
             "gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
             "--object-path", "/org/freedesktop/Notifications", "--method",
             "org.freedesktop.Notifications.Notify", json.dumps("Coding Orchestrator"), "0",
-            json.dumps(""), json.dumps(title), json.dumps(text), "[]", "{}", "10000",
-        ])
+            json.dumps(""), json.dumps(title), json.dumps(text), "[]", "{}", "10000"])
         if error is not None:
-            return TransportResult(OUTCOME_FAILED, channel, error, shape, daemon)
+            return TransportResult(OUTCOME_FAILED, channel, error, shape)
         match = _NOTIFICATION_ID_RE.search(stdout)
-        if match:
-            return TransportResult(
-                OUTCOME_DELIVERED, channel, None, shape, daemon,
-                f"daemon accepted notification id {match.group(1)}",
-            )
-        return TransportResult(
-            OUTCOME_SHOWN_UNACKNOWLEDGED, channel, None, shape, daemon,
-            "Notify returned without a notification id",
-        )
-    return TransportResult(
-        OUTCOME_FAILED, None,
-        "no freedesktop notification client on PATH (notify-send/gdbus)", "plain", daemon,
-    )
+        return TransportResult(OUTCOME_DELIVERED if match else OUTCOME_SHOWN_UNACKNOWLEDGED,
+                               channel, None, shape)
+    return TransportResult(OUTCOME_FAILED, None,
+                           "no freedesktop notification client on PATH (notify-send/gdbus)",
+                           "plain")
 
 
 def _deliver_pending_locked(session: Session) -> int:
@@ -406,11 +345,8 @@ def _deliver_pending_locked(session: Session) -> int:
     for extra in rows[1:]:
         extra.status, extra.coalesced_into = STATUS_FOR_OUTCOME[OUTCOME_COALESCED], first.id
         extra.channel, extra.reason = result.channel, f"coalesced_into:{first.id}"
-        extra.details_json = {
-            **(extra.details_json or {}),
-            "outcome_class": OUTCOME_COALESCED,
-            "coalesced_into": first.id,
-        }
+        extra.details_json = {**(extra.details_json or {}), "outcome_class": OUTCOME_COALESCED,
+                              "coalesced_into": first.id}
     for row in rows:
         session.add(row)
     session.commit()
@@ -424,10 +360,9 @@ def _deliver_pending(session: Session) -> int:
 
 
 def _flush_thread() -> None:
-    global _batch_started, _timer
+    global _timer
     with _lock:
         _timer = None  # before delivery, so an event arriving mid-flush schedules again
-        _batch_started = None
     try:
         flush_pending()
     except Exception:  # noqa: BLE001 - the timer thread must never raise
@@ -435,19 +370,12 @@ def _flush_thread() -> None:
 
 
 def _schedule() -> None:
-    """Debounce one message per batch, capped after the first row so a stream cannot starve it."""
-    global _batch_started, _timer
+    """One short global window: the first pending row arms the timer, later rows join it."""
+    global _timer
     with _lock:
-        now = time.monotonic()
-        if _batch_started is None:
-            _batch_started = now
-        cap_left = COALESCE_MAX_SECONDS - (now - _batch_started)
         if _timer is not None:
-            if cap_left <= 0:
-                return  # the armed timer is already at the cap: let it deliver this batch
-            _timer.cancel()
-        delay = max(0.0, min(COALESCE_SECONDS, cap_left))
-        _timer = threading.Timer(delay, _flush_thread)
+            return
+        _timer = threading.Timer(COALESCE_SECONDS, _flush_thread)
         _timer.daemon = True
         _timer.start()
 
@@ -468,11 +396,9 @@ def flush_pending(session: Session | None = None) -> int:
 
 
 def flush_pending_if_any(session: Session) -> int:
-    """Read-path flush (T-18 DoD 3): the durable list must not show rows nothing ever tried."""
-    any_pending = session.exec(
-        select(Notification.id).where(Notification.status == PENDING).limit(1)
-    ).first()
-    return flush_pending(session) if any_pending is not None else 0
+    pending = session.exec(
+        select(Notification.id).where(Notification.status == PENDING).limit(1)).first()
+    return flush_pending(session) if pending is not None else 0
 
 
 def _terminate_pending_locked(
@@ -480,17 +406,15 @@ def _terminate_pending_locked(
 ) -> int:
     """Terminate only this process's pending rows; another owner's row keeps `pending`."""
     rows = list(session.exec(
-        select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))
-    ))
+        select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))))
     if owner is not None:
         rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
     for row in rows:
         row.status = STATUS_FOR_OUTCOME[OUTCOME_FAILED]
         row.reason = reason
         row.error = row.error or error
-        row.details_json = {
-            **(row.details_json or {}), "outcome_class": OUTCOME_FAILED, "detail": error,
-        }
+        row.details_json = {**(row.details_json or {}), "outcome_class": OUTCOME_FAILED,
+                            "detail": error}
         session.add(row)
     if rows:
         session.commit()
@@ -498,18 +422,9 @@ def _terminate_pending_locked(
 
 
 def _database_ready() -> bool:
-    """True only when this home already holds the notifications table (never create one on exit)."""
-    from sqlalchemy import inspect
-
-    from orchestrator.core import db
-
     url = get_settings().db_url or ""
-    if url.startswith("sqlite:///") and not Path(url.removeprefix("sqlite:///")).exists():
-        return False
-    try:
-        return bool(inspect(db.get_engine()).has_table(Notification.__tablename__))
-    except Exception:  # noqa: BLE001 - an unreadable database is "not ready", not an exit error
-        return False
+    return not (url.startswith("sqlite:///")
+                and not Path(url.removeprefix("sqlite:///")).exists())
 
 
 def flush_pending_at_exit(session: Session | None = None) -> int:

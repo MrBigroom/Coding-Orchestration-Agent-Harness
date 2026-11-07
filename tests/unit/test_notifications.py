@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+
 import pytest
 from sqlmodel import col, select
 
@@ -35,9 +38,8 @@ SECRET = "sk-ant-api03-supersecretvalue1234567890"
 
 
 @pytest.fixture(autouse=True)
-def _reset_batch_timer(monkeypatch):
+def _reset_coalesce_timer(monkeypatch):
     monkeypatch.setattr(notification_service, "_timer", None)
-    monkeypatch.setattr(notification_service, "_batch_started", None)
 
 
 def _boom(*_a, **_k):
@@ -52,8 +54,7 @@ def sent(monkeypatch):
     def fake_deliver(title: str, body: str, link: str = "") -> notification_service.TransportResult:
         calls.append({"title": title, "body": body, "link": link})
         return notification_service.TransportResult(
-            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain", "test-daemon"
-        )
+            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain")
 
     monkeypatch.setattr(notification_service, "deliver", fake_deliver)
     return calls
@@ -478,3 +479,144 @@ def test_flush_never_raises_and_never_poisons_a_caller_session(session, monkeypa
     assert notification_service.flush_pending(session) == 0  # swallowed, not propagated
     assert session.is_active
     session.commit()
+
+
+# --- T-18: truthful outcomes, capability probe and pending-row flush points -----------------
+
+LINK = "http://127.0.0.1:8321/tasks/7"
+REAL_PROBE = notification_service.probe_capabilities
+
+
+def _caps(*names):
+    return notification_service.DaemonCapabilities(True, frozenset(names), "GetCapabilities")
+
+
+def _clients(monkeypatch, *, present=("notify-send", "gdbus"), caps=None, replies=()):
+    seen, queued = [], list(replies)
+
+    def run(argv):
+        seen.append(argv)
+        return queued.pop(0) if queued else (argv[0], None, "")
+
+    monkeypatch.setattr(notification_service, "_run_client", run)
+    monkeypatch.setattr(notification_service.shutil, "which", lambda n: n if n in present else None)
+    monkeypatch.setattr(
+        notification_service, "probe_capabilities", lambda: caps or notification_service.UNPROBED
+    )
+    return seen
+
+
+def test_probe_parses_capabilities_and_fails_closed(monkeypatch):
+    class Reply:
+        def __init__(self, rc, out, err=""):
+            self.returncode, self.stdout, self.stderr = rc, out, err
+
+    monkeypatch.setattr(notification_service, "probe_capabilities", REAL_PROBE)
+    monkeypatch.setattr(notification_service.shutil, "which", lambda n: n)
+    monkeypatch.setattr(notification_service.subprocess, "run", lambda *a, **k: Reply(
+        0, "(['body', 'body-markup', 'body-hyperlinks'],)\n"))
+    caps = REAL_PROBE()
+    assert caps.probed and caps.supports("body-markup") and caps.supports("body-hyperlinks")
+    monkeypatch.setattr(notification_service.subprocess, "run", lambda *a, **k: Reply(1, "", "no"))
+    assert REAL_PROBE().probed is False
+
+    def boom(*_a, **_k):
+        raise subprocess.TimeoutExpired("gdbus", 2)
+
+    monkeypatch.setattr(notification_service.subprocess, "run", boom)
+    assert REAL_PROBE().probed is False
+    monkeypatch.setattr(notification_service.shutil, "which", lambda n: None)
+    assert REAL_PROBE().source == "gdbus not on PATH"
+
+
+def test_markup_daemon_gets_escaped_text_on_every_transport_and_no_hint(monkeypatch):
+    body = '<b>x</b> & "q"\nOpen: ' + LINK
+    seen = _clients(monkeypatch, present={"notify-send"}, caps=_caps("body-markup", "body-hyperlinks"))
+    result = notification_service.deliver("t", body, LINK)
+    assert (result.shape, result.channel) == ("markup-escaped", "notify-send")
+    assert seen[0][-1] == '&lt;b&gt;x&lt;/b&gt; &amp; "q"\nOpen: ' + LINK
+    seen = _clients(monkeypatch, present={"gdbus"}, caps=_caps("body-markup"),
+                    replies=[("gdbus", None, "(uint32 7,)\n")])
+    result = notification_service.deliver("t", body, LINK)
+    assert (result.shape, result.status) == ("markup-escaped", "delivered") and seen[0][-2] == "{}"
+    seen = _clients(monkeypatch, present={"gdbus"}, caps=_caps("body-markup", "body-hyperlinks"),
+                    replies=[("gdbus", None, "(uint32 8,)\n")])
+    assert notification_service.deliver("t", body, LINK).shape == "markup+hyperlink"
+    assert seen[0][-2] == "{}"
+    assert '<a href="' + LINK + '">Open task</a>' in json.loads(seen[0][-4])
+    seen = _clients(monkeypatch, present={"notify-send"}, caps=notification_service.UNPROBED)
+    notification_service.deliver("t", "raw <b>")
+    assert seen[0][-1] == "raw <b>"  # an unprobed daemon is not assumed to parse markup
+
+
+@pytest.mark.parametrize("present,replies,expected", [
+    ({"notify-send"}, [], ("delivered", "shown_unacknowledged")),
+    ({"gdbus"}, [("gdbus", None, "(uint32 42,)\n")], ("delivered", "")),
+    ({"notify-send"}, [("notify-send", "exit 1", "")], ("failed", "delivery_failed")),
+    ({"notify-send"}, [("notify-send", "timed out", "")], ("failed", "delivery_failed")),
+    (set(), [], ("failed", "delivery_failed")),
+])
+def test_every_transport_result_maps_to_one_frozen_status(
+    monkeypatch, present, replies, expected
+):
+    assert set(notification_service.STATUS_FOR_OUTCOME) == set(notification_service.OUTCOME_CLASSES)
+    assert set(notification_service.STATUS_FOR_OUTCOME.values()) <= {
+        "pending", "delivered", "failed", "skipped", "coalesced"}
+    _clients(monkeypatch, present=present, replies=replies)
+    result = notification_service.deliver("t", "b", LINK)
+    assert (result.status, result.reason) == expected
+
+
+def test_a_displayed_message_is_recorded_delivered_not_failed(session, monkeypatch):
+    task, run = _task_run(session)
+    settings_service.update(session, {MASTER_SETTING: True})
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 0.0)
+    _clients(monkeypatch, present={"notify-send"})
+    _log(session, "run_timeout", task, run, "timed out")
+    row = _rows(session)[0]
+    assert (row.status, row.reason, row.error) == ("delivered", "shown_unacknowledged", None)
+
+
+def test_the_standalone_path_reaches_the_same_outcome_classes(session, monkeypatch, tmp_path):
+    run, _ = _standalone_run(session, tmp_path)
+    settings_service.update(session, {MASTER_SETTING: True})
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 0.0)
+    _clients(monkeypatch, present={"gdbus"})
+    notification_service.notify_event(event="standalone_run", details=f"{run.title}: completed",
+                                      standalone_run_id=run.id)
+    row = _rows(session)[0]
+    assert (row.status, row.reason, row.link.endswith("/agents")) == (
+        "delivered", "shown_unacknowledged", True)
+
+
+def _pending(session, key, owner=None, title="pending row"):
+    row = Notification(trigger="run_completed", event="run_completed", status="pending",
+                       title=title, body="from a dead CLI timer", dedupe_key=key,
+                       details_json={notification_service.OWNER_KEY:
+                                     owner or notification_service.PROCESS_TOKEN})
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def test_exit_flush_delivers_and_terminates_only_real_rows_it_owns(session, monkeypatch):
+    """DoD 3: a real `notify_event` row carries this process's token, and only it is terminated."""
+    _task, run = _task_run(session)
+    other = _pending(session, "server:real", owner="server:pid")
+    settings_service.update(session, {MASTER_SETTING: True})
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
+    monkeypatch.setattr(notification_service, "_schedule", lambda: None)
+    assert notification_service.notify_event(event="run_completed", run_id=run.id) is not None
+    row = [r for r in _rows(session) if r.dedupe_key == f"{run.id}:run_completed"][0]
+    assert row.status == "pending"
+    assert row.details_json[notification_service.OWNER_KEY] == notification_service.PROCESS_TOKEN
+    monkeypatch.setattr(notification_service, "flush_pending", lambda session=None: 0)
+    assert notification_service.flush_pending_at_exit(session) == 1
+    assert (row.status, row.reason) == ("failed", "process_exit_undelivered")
+    assert other.status == "pending"
+
+
+def test_exit_flush_is_inert_before_the_database_exists(home):
+    assert notification_service.flush_pending_at_exit() == 0
+    assert not (home / "orchestrator.db").exists()

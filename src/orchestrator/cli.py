@@ -1449,11 +1449,8 @@ def main() -> None:
 def _flush_notifications_at_exit() -> None:
     """T-18 DoD 3: a CLI process must not leave its pending rows behind.
 
-    The coalescing timer is a thread that dies with the process, so a row created by a CLI
-    command would otherwise stay `pending` until an API startup that may never come. Exiting
-    delivers what it can and terminally marks what it could not. Inert (and side-effect free)
-    when the database has no notifications table yet, so `orchestrator --help` in a fresh home
-    still creates nothing.
+    The coalescing timer dies with the process, so exit delivers what it can and terminally marks
+    the rest. Inert in a fresh home, so `orchestrator --help` creates nothing.
     """
     try:
         from orchestrator.services import notification_service

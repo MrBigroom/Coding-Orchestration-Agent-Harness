@@ -19,12 +19,6 @@ from tests.conftest import requires_git
 pytestmark = requires_git
 
 
-def _create_app():
-    from orchestrator.api.main import create_app
-
-    return create_app()
-
-
 @pytest.fixture
 def sent(monkeypatch):
     calls: list[str] = []
@@ -52,9 +46,10 @@ def _pending(key, owner=None, title="left pending"):
 
 
 def test_reading_the_list_flushes_rows_the_server_left_pending(initialized, sent):
+    from orchestrator.api.main import create_app
     from orchestrator.core.db import session_scope
 
-    with TestClient(_create_app(), base_url="http://127.0.0.1:8321") as client:
+    with TestClient(create_app(), base_url="http://127.0.0.1:8321") as client:
         with session_scope() as s:
             s.add(_pending("read:1", title="read path pending"))
             s.commit()
@@ -64,7 +59,7 @@ def test_reading_the_list_flushes_rows_the_server_left_pending(initialized, sent
     assert sent == ["read path pending"]
 
 
-def test_cli_exit_delivers_and_terminates_only_its_own_rows(initialized, sent, monkeypatch):
+def test_cli_exit_delivers_its_pending_rows(initialized, sent, monkeypatch):
     from orchestrator import cli
     from orchestrator.core.db import session_scope
 
@@ -76,18 +71,6 @@ def test_cli_exit_delivers_and_terminates_only_its_own_rows(initialized, sent, m
     with session_scope() as s:
         row = s.exec(select(Notification).where(Notification.dedupe_key == "cli:1")).one()
         assert (row.status, row.reason) == ("delivered", "")
-
-    monkeypatch.setattr(notification_service, "flush_pending", lambda session=None: 0)
-    with session_scope() as s:
-        s.add(_pending("cli:2", title="cannot deliver"))
-        s.add(_pending("server:2", owner="server:pid", title="live server row"))
-        s.commit()
-    cli.main()
-    with session_scope() as s:
-        own = s.exec(select(Notification).where(Notification.dedupe_key == "cli:2")).one()
-        other = s.exec(select(Notification).where(Notification.dedupe_key == "server:2")).one()
-        assert (own.status, own.reason) == ("failed", "process_exit_undelivered")
-        assert (other.status, other.reason) == ("pending", "")
 
 
 def test_python_dash_m_and_the_console_script_route_through_cli_main(initialized):

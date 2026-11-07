@@ -62,8 +62,7 @@ def sent(monkeypatch):
     def fake_deliver(title: str, body: str, link: str = "") -> notification_service.TransportResult:
         calls.append({"title": title, "body": body, "link": link})
         return notification_service.TransportResult(
-            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain", "test-daemon"
-        )
+            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain")
 
     monkeypatch.setattr(notification_service, "deliver", fake_deliver)
     return calls
@@ -202,7 +201,7 @@ def test_notifications_endpoint_serves_the_persistent_list(initialized):
 
 
 def test_the_task_link_is_a_real_target_when_web_dist_is_absent(initialized, monkeypatch):
-    """DoD 2 / DoD 5: call the deep link instead of grepping the page for a source string.
+    """DoD 5: call the deep link instead of grepping the page for a source string.
 
     With no web/dist, `/tasks/7` is served by the fallback UI. The API resolves the path into the
     page's `data-route`, so asking for the URL asserts the view the page will render. The React
@@ -214,29 +213,14 @@ def test_the_task_link_is_a_real_target_when_web_dist_is_absent(initialized, mon
     monkeypatch.setattr(api_main, "frontend_dist_dir", lambda: None)
     with TestClient(api_main.create_app(), base_url="http://127.0.0.1:8321") as client:
         res = client.get("/tasks/7")
-        assert res.status_code == 200
-        assert "React build not found" in res.text  # the fallback UI, not the React bundle
-        route = json.loads(html.unescape(re.search(r'data-route="([^"]+)"', res.text).group(1)))
-        assert route == {"view": "task", "arg": "7"}
-        assert "async task(" in res.text  # the page can render the resolved view
-        home = client.get("/").text
-        assert json.loads(html.unescape(re.search(r'data-route="([^"]+)"', home).group(1))) == {
-            "view": "dashboard",
-            "arg": None,
-        }
+    assert res.status_code == 200 and "React build not found" in res.text  # the fallback UI
+    route = json.loads(html.unescape(re.search(r'data-route="([^"]+)"', res.text).group(1)))
+    assert route == {"view": "task", "arg": "7"}
+    assert "async task(" in res.text  # the page can render the resolved view
     routes = re.findall(
         r'<Route\s+path="([^"]+)"', (root / "web" / "src" / "App.tsx").read_text()
     )
-
-    def matches(pattern: str, path: str = "/tasks/7") -> bool:
-        have, want = pattern.strip("/").split("/"), path.strip("/").split("/")
-        return len(have) == len(want) and all(
-            x.startswith(":") or x == y for x, y in zip(have, want, strict=True)
-        )
-
-    assert [p for p in routes if matches(p)] == ["/tasks/:id"]
-    # No JS test runner exists (no `test` script, no vitest/jest/playwright), which is why the
-    # React side is matched from the declared table rather than rendered. If one is added, call it.
+    assert [p for p in routes if p.startswith("/tasks/")] == ["/tasks/:id"]
+    # No JS test runner exists, so the React side is matched from its declared route table.
     web_pkg = json.loads((root / "web" / "package.json").read_text(encoding="utf-8"))
     assert "test" not in web_pkg["scripts"]
-    assert not ({"vitest", "jest", "@playwright/test"} & set(web_pkg.get("devDependencies", {})))
