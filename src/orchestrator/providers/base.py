@@ -28,6 +28,11 @@ class BuiltPrompt:
     # Additive (T-16 DoD 3): the budgeted diff text actually rendered into this prompt. Diff
     # completeness is audited against THIS, not against the archived full patch.diff.
     rendered_diff: str = ""
+    # Additive (T-16 DoD 3, review round 3 finding 2): the per-build nonce in the diff block's
+    # sentinel. It makes the block unforgeable by Worker-supplied text quoting the header, so the
+    # as-sent diff audit reads the harness's own block and nothing else. Never rendered as a
+    # claim; only used to locate the diff the reviewer was actually sent.
+    diff_nonce: str = ""
     # Approved memory demoted by the per-section memory budget (id/bucket/scope/tokens/reason).
     # Never rendered into the prompt; surfaced in prompt preview as a warning.
     memory_exclusions: list[dict[str, Any]] = field(default_factory=list)

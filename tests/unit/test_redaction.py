@@ -330,3 +330,30 @@ def test_redaction_report_names_the_pattern_class_and_count_without_the_secret()
     assert secret not in str(report.hits)
     # Benign token counts produce no redaction row at all.
     assert redact_with_report("max_diff_tokens=4000").hits == ()
+
+
+def test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives():
+    """T-16 review round 3, finding 1: only a BRACED `${ENV_NAME}` reference is a placeholder.
+
+    The exemption read `$` + optional brace + identifier + optional brace, so any bare
+    `$identifier`-shaped value was treated as a variable reference and survived redaction --
+    including real secrets, because passwords, tokens and generated strings commonly contain `$`.
+    `utils/redaction.py` is a security control and the task forbids narrowing what counts as a
+    secret, so the unbraced form redacts again. The CLOSING brace stays optional because
+    `_ASSIGNMENT`'s value group is `[^\\s"\\',}]{4,}` and therefore never includes it: requiring it
+    would redact every legitimate `${ENV_NAME}` reference and leave a stray brace behind.
+    """
+    leaks = [
+        "DB_PASSWORD=$Sup3rSecretValue",
+        "API_TOKEN=$abcdef123456",
+        "TOKEN=$short",
+        "PASSWORD=$1$abcDEF$ghiJKL",
+    ]
+    for line in leaks:
+        out = redact(line)
+        assert REDACTED in out, line
+        assert line.split("=", 1)[1] not in out, out
+    # A braced reference names a variable instead of holding a value, so it stays readable and
+    # byte-identical -- including its closing brace.
+    for line in ("DB_PASSWORD=${db_password}", "API_TOKEN=${API_TOKEN}"):
+        assert redact(line) == line, line

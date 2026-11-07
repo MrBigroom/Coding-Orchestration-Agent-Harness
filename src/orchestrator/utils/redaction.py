@@ -125,10 +125,19 @@ _PLACEHOLDER_ANGLE_VALUE = (
 # URL userinfo is a credential pair (`https://user:pass@host.invalid`), so a URL with `@` in the
 # authority is never a placeholder. Colons are refused in the host too, and the email local part
 # excludes `:` so `user:pass@example.invalid` cannot slip through as a placeholder address.
+#
+# A `$` value is a placeholder ONLY when it opens with a brace, i.e. it is a `${ENV_NAME}`
+# reference that names a variable instead of holding a value. The earlier `\$\{?...\}?` also
+# exempted a bare `$identifier` shape, so a real secret beginning with `$` survived into
+# reviewer-visible text -- and passwords, tokens and generated strings commonly contain `$`. This
+# module is a security control and the task forbids narrowing what counts as a secret, so the
+# unbraced form redacts again (T-16 review round 3, finding 1). The CLOSING brace stays optional
+# because `_ASSIGNMENT`'s value group is `[^\s"',}]{4,}` and therefore never includes it: requiring
+# `}` would have made every legitimate `${ENV_NAME}` reference redact with a stray brace behind.
 _PLACEHOLDER_VALUE = re.compile(
     rf"""(?ix)^(?:
         {_PLACEHOLDER_ANGLE_VALUE}
-      | \$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?
+      | \$\{{[A-Za-z_][A-Za-z0-9_]*\}}?
       | not[-_]?a[-_]?secret(?:[-_.]?{_PLACEHOLDER_NUMBER})?
       | {_PLACEHOLDER_WORD}
          (?:[-_.]?{_PLACEHOLDER_DESCRIPTOR})?

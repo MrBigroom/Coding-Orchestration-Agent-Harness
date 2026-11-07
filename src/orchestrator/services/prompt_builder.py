@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -809,6 +810,7 @@ def _dynamic(
     state: DynamicState,
     recorder: TruncationRecorder | None = None,
     rendered_diff_out: list[str] | None = None,
+    diff_nonce: str = "",
 ) -> str:
     s = get_settings()
     parts: list[str] = []
@@ -887,7 +889,7 @@ def _dynamic(
         )
         if rendered_diff_out is not None:
             rendered_diff_out.append(rendered_diff)
-        parts.append("### Latest diff\n```diff\n" + rendered_diff + "\n```")
+        parts.append(_diff_block_open(diff_nonce) + rendered_diff + "\n```")
     if state.feedback:
         parts.append(
             "### Latest reviewer feedback\n"
@@ -900,8 +902,26 @@ def _dynamic(
     return "\n\n".join(parts)
 
 
-_DIFF_BLOCK_OPEN = "### Latest diff\n```diff\n"
+_DIFF_BLOCK_HEADER = "### Latest diff"
 _DIFF_BLOCK_CLOSE = "\n```"
+
+
+def _diff_block_open(diff_nonce: str) -> str:
+    """The sentinel that opens the diff block, carrying a per-build harness nonce.
+
+    The block is located by TEXT SEARCH inside `dynamic_state`, a section that also carries
+    Worker-written handoff text. With a fixed header, a submission could quote the header and a
+    fabricated hunk list and become the audit-of-record for `diff_completeness`,
+    `undelivered_compensation` and `supplied_evidence` -- the machinery whose whole purpose is to
+    check the reviewer's input would then be checking text the Worker supplied (T-16 review round
+    3, finding 2). The nonce is generated when the prompt is built, i.e. after every Worker string
+    was already written, so no submission can contain it.
+
+    A prompt built with an empty nonce is NOT injection-resistant; the review path always sets one
+    (`build_prompt`). The empty form exists only so a hand-built `DynamicState` in a test still
+    round-trips through `extract_rendered_diff`.
+    """
+    return f"{_DIFF_BLOCK_HEADER} {diff_nonce}\n```diff\n"
 
 
 def extract_rendered_diff(prompt: BuiltPrompt) -> str:
@@ -910,14 +930,18 @@ def extract_rendered_diff(prompt: BuiltPrompt) -> str:
     `review_service` audits exactly this string (T-16 DoD 3). An empty result means the aggregate
     context budget removed the diff block entirely, so the audit correctly reports that the
     reviewer received no hunks; it never silently falls back to the pre-budget render.
+
+    The block is found by the nonce-bearing sentinel, so Worker-supplied text that quotes the
+    header cannot substitute a fabricated diff for the real one (see `_diff_block_open`).
     """
+    sentinel = _diff_block_open(prompt.diff_nonce)
     for section in prompt.sections:
         if section.name != "dynamic_state":
             continue
-        start = section.content.find(_DIFF_BLOCK_OPEN)
+        start = section.content.find(sentinel)
         if start == -1:
             return ""
-        start += len(_DIFF_BLOCK_OPEN)
+        start += len(sentinel)
         end = section.content.find(_DIFF_BLOCK_CLOSE, start)
         return section.content[start:end] if end != -1 else section.content[start:]
     return ""
@@ -952,6 +976,8 @@ def build_prompt(
 
     history = state.history or ""
     rendered_diff_out: list[str] = []
+    # Per-build, so the diff sentinel cannot have been quoted by any Worker text already in `state`.
+    diff_nonce = uuid.uuid4().hex
     sections = [
         sec("system", system_prompt_for(role)),
         sec("global_memory", f"{memory.GLOBAL_HEADER}\n{mem['global']}" if mem["global"] else ""),
@@ -965,13 +991,14 @@ def build_prompt(
             "history",
             _limited(recorder, "history", "history", history, 2000),
         ),
-        sec("dynamic_state", _dynamic(state, recorder, rendered_diff_out)),
+        sec("dynamic_state", _dynamic(state, recorder, rendered_diff_out, diff_nonce)),
     ]
     prompt = BuiltPrompt(
         role=role,
         sections=sections,
         memory_exclusions=selection.excluded,
         memory_warnings=selection.warnings,
+        diff_nonce=diff_nonce,
     )
     prompt = enforce_budget(prompt, recorder)
     # T-16 DoD 3: report the diff text the reviewer is ACTUALLY sent. `enforce_budget` can trim
