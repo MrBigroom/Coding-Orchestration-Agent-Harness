@@ -1,48 +1,66 @@
-T-16 review index (HEAD 34c9d58; every claim is a file:line in this checkout)
-Evidence files in this directory: full-test.txt, new-tests.txt, lint.txt, parity-optin.txt.
-Full suite at this HEAD: 661 passed, 39 skipped, exit 0 (full-test.txt). Lint: All checks passed (lint.txt).
-Parity scenario opt-in: 30 passed, 3 skipped, exit 0 (parity-optin.txt).
+T-16 review index (HEAD dae0048beeb887d14a27126329af88a5129355e1; dirty-entries=0 excluding verify-evidence/T-16/)
+Every claim below is a file:line at this HEAD. Evidence files: full-test.txt, new-tests.txt,
+lint.txt, parity-optin.txt. Each starts with the HEAD and dirty-entry stamp it was captured at.
 
-DoD 1 - redactions are manifest rows, not invisible rewrites:
-  src/orchestrator/utils/redaction.py:139 redact_with_report() counts each named pattern class.
-  src/orchestrator/services/prompt_builder.py:109 record_redactions() writes one row per class/count.
-  src/orchestrator/services/prompt_builder.py:532 render_truncation_manifest() splits secret|budget|redaction.
-  Test: tests/unit/test_prompt_builder.py:93 (secret redacted, sk-ant count=1, secret/REDACTED absent from manifest).
-  Test: tests/unit/test_prompt_builder.py:116 (.env is "Withheld as a secret", not a budget cut).
-DoD 2 - over-match stopped without weakening credential patterns:
-  src/orchestrator/utils/redaction.py:117 _is_benign_assignment(): token-count punctuation + placeholders.
-  src/orchestrator/utils/redaction.py:102 _PLACEHOLDER_VALUE: narrow self-declared placeholders only.
-  Test: tests/unit/test_redaction.py:219 pins `max_diff_tokens=12000;` byte-identically and the exact
-        broken text `max_diff_tokens=[REDACTED]` is not produced.
-  Test: tests/unit/test_redaction.py:236 replays the R-52 synthetic-env fixture; real sk-ant still redacts.
-  Test: tests/unit/test_prompt_builder.py:137 end-to-end prompt preamble keeps max_diff_tokens=200;.
-  Existing credential matrix still green: tests/unit/test_redaction.py:92.
-DoD 3 - completeness audits the rendered reviewer diff:
-  src/orchestrator/services/review_audit.py:1326 diff_completeness(..., rendered=).
-  src/orchestrator/services/review_service.py:272 renders once and passes that text.
-  Test: tests/unit/test_review_audit.py:310 (dropped file -> no_hunk; present file clean).
-  Sensitive withholding is labelled, not a missing hunk: review_audit.py:1422; test at test_review_audit.py:325.
-DoD 4 - git capability floor:
-  src/orchestrator/services/review_audit.py:1279 MIN_GIT_VERSION_FOR_ATTRIBUTE_SOURCE=(2,40);
-  review_audit.py:1291 supports_check_attr_source(); fallback still reports attributes and fails closed.
-  Test: tests/unit/test_review_audit.py:342 forces the probe off, asserts the attribute row and the
-        "git < 2.40" wording, no exception.
-  Docs: docs/build-loop.md "Git capability floor (T-16 DoD 4)".
-DoD 5 - offline tests and no network: new-tests.txt (49 passed). Only local text/git/temp repos.
-DoD 6 - docs: docs/build-loop.md lines around 455 (parity opt-in), 531 (redaction visibility),
-  618-640 (rendered completeness, compensation budget, git floor); README.md Known limitations.
-DoD 7 - evidence is funded, never tail-dropped:
-  src/orchestrator/services/prompt_builder.py:278 COMPENSATION_BUDGET_FRACTION=1/3;
-  prompt_builder.py:281 is_compensation_artifact(); prompt_builder.py:394 two-group budget;
-  prompt_builder.py:484 undelivered_compensation(); prompt_builder.py:532 manifest shortfall text.
-  src/orchestrator/services/review_service.py:175 evidence_delivery_finding() and the
-  review_evidence_undelivered event; the same text is in the reviewer prompt via harness_text.
-  Test: tests/unit/test_review_budget.py:32 (source-heavy diff still carries evidence);
-        tests/unit/test_review_budget.py:53 (over-budget bundle -> manifest shortfall + exact finding).
-DoD 8 - bounded gate cost:
-  Evidence budget separate from source: prompt_builder.py:278/425.
-  Setup makes a constant number of git calls: test_review_audit.py:364.
-  Parity scenario opt-in: tests/conftest.py PARITY_ENV hook; test_review_budget.py:87.
-  No operator worktree mutation: tests/conftest.py session guard; test_review_budget.py:106.
+Full suite at this HEAD: 696 passed, 10 skipped, exit 0 (full-test.txt).
+Lint: All checks passed (lint.txt).
+Focused hermeticity/redaction/review suite: 84 passed, 4 skipped, exit 0 (new-tests.txt);
+this file keeps the individual PASSED lines, including the pre-existing credential matrix
+test_credentials_are_still_redacted_wherever_they_appear.
+Parity opt-in: 4 passed, 29 deselected, exit 0 (parity-optin.txt); the cheap 29 tests run in the
+gated suite above, so only the expensive 4 are opt-in.
 
-No compression commit was made for this evidence; the diff budget/finding handles an oversized bundle.
+Review round 1 findings -> fix and proof:
+F1 greedy evidence allocation -> src/orchestrator/services/prompt_builder.py:303
+   _allocate_diff_group (two-pass fair share; no greedy allowance).
+   tests/unit/test_review_budget.py:53 huge first log leaves every later file visible.
+F2 transient add+prune invisible to the guard -> tests/conftest.py:213 worktree_fingerprint
+   includes registry entries + registry/git-dir mtimes; :273 guard fails loudly if unreadable.
+   tests/unit/test_review_budget.py:160 detects add+prune whose listings are identical.
+F3 whole env module opt-in -> tests/integration/test_env_hermeticity.py:40 keeps cheap checks
+   gated; :176,:199,:216,:992 mark only the four expensive cases. 29 cheap tests now run in the
+   gated suite (full-test.txt); tests/unit/test_review_budget.py:122 pins both directions.
+F4 placeholder over-exemption -> src/orchestrator/utils/redaction.py:110 restricts the value to
+   placeholder vocabulary, digits and separators. tests/unit/test_redaction.py:263 asserts
+   placeholder-prefixed real secrets still redact while :236 keeps the R-52 fixtures intact.
+F5 audit before enforce_budget -> src/orchestrator/services/review_service.py:328 uses
+   prompt.rendered_diff (the final dynamic section); :330 audits it and :337 records a change
+   caused by the context budget. src/orchestrator/services/prompt_builder.py:868 re-extracts it;
+   tests/unit/test_prompt_builder.py:77 proves it is the post-budget text sent.
+F6 false "git < 2.40" reason -> src/orchestrator/services/review_audit.py:1297
+   attribute_source_status names merge-base/unknown-version/probe/old-version separately;
+   tests/unit/test_review_audit.py:342 (old Git) and :365 (empty merge-base, no false claim).
+F7 task-bound violates + unlabelled note -> src/orchestrator/services/review_service.py:175
+   generic harness-budget violates; :436 note starts "harness-detected:".
+   tests/unit/test_review_budget.py:86 asserts the finding is not pinned to T-16.
+F8 evidence stamps/trimmed PASSED -> every file above carries HEAD + dirty-entries; new-tests.txt
+   is untrimmed and names each test.
+
+DoD 1 - redactions are manifest rows: src/orchestrator/utils/redaction.py:148
+  redact_with_report(); prompt_builder.py:109 record_redactions(); :582 manifest splits
+  secret | budget | redaction. Test: tests/unit/test_prompt_builder.py:121.
+DoD 2 - over-match stopped, credential shapes kept: redaction.py:110/:126; tests at
+  test_redaction.py:219 (max_diff_tokens=12000; byte-identical, broken marker not produced),
+  :236 (R-52 synthetic fixtures), :263 (placeholder-prefixed real secrets redact), :69
+  (full credential matrix, individual PASSED line in new-tests.txt); end-to-end
+  test_prompt_builder.py:165.
+DoD 3 - completeness on the sent text: review_service.py:328-337; prompt_builder.py:868;
+  tests/unit/test_prompt_builder.py:77; tests/unit/test_review_audit.py:310 (dropped file is a
+  finding; present file is clean) and :325 (sensitive file labelled withheld, not missing).
+DoD 4 - honest git floor: review_audit.py:1279/:1297/:1367; tests/test_review_audit.py:342,:365;
+  docs/build-loop.md:640.
+DoD 5 - offline tests: all 84 focused tests use text/temp repos; no network provider calls. The
+  four sub-items map to test_prompt_builder.py:121 (5a), test_redaction.py:219 (5b),
+  test_redaction.py:69 (5c), test_review_audit.py:310 (5d), test_review_audit.py:342 (5e).
+DoD 6 - docs: docs/build-loop.md:459 (transient guard), :535 (redaction visibility),
+  :632 (fair evidence allocation), :640 (git floor); README.md:270 known limitation.
+DoD 7 - evidence funded or reported: prompt_builder.py:278 reserve, :303 fair allocation,
+  :426 rendered budget, :516 undelivered check, :582 manifest shortfall; review_service.py:175
+  harness finding. Tests: tests/unit/test_review_budget.py:32,:53,:76,:86.
+DoD 8 - bounded gate cost: prompt_builder.py:278 separate reserve; tests/conftest.py:160 parity
+  hook, :213 fingerprint, :273 guard; test_env_hermeticity.py:176/199/216/992 marker only the
+  expensive cases; tests/unit/test_review_budget.py:122 (opt-in), :144 (no operator mutation),
+  :160 (transient detection). Parity evidence: parity-optin.txt (4 passed, 29 deselected).
+
+No compression commit was made for this evidence; an over-budget bundle is reported by the
+manifest and the harness finding instead.

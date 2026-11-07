@@ -1,4 +1,5 @@
-# HEAD 34c9d58
+# HEAD dae0048beeb887d14a27126329af88a5129355e1
+# dirty-entries=0 (before writing evidence; excludes verify-evidence/T-16/)
 # command: ./scripts/orch_verify.sh test
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -9,13 +10,13 @@ orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchest
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/tests
 ........................................................................ [ 10%]
-.........................................sssssssssssssssssssssssssssssss [ 20%]
-ssssssss................................................................ [ 30%]
-........................................................................ [ 41%]
-........................................................................ [ 51%]
+.........................................sss.........................s.. [ 20%]
+..ssssss................................................................ [ 30%]
+........................................................................ [ 40%]
+........................................................................ [ 50%]
 ........................................................................ [ 61%]
-........................................................................ [ 72%]
-........................................................................ [ 82%]
-........................................................................ [ 92%]
-....................................................                     [100%]
-661 passed, 39 skipped in 133.23s (0:02:13)
+........................................................................ [ 71%]
+........................................................................ [ 81%]
+........................................................................ [ 91%]
+..........................................................               [100%]
+696 passed, 10 skipped in 142.10s (0:02:22)
