@@ -12,6 +12,7 @@ count (0) at run time.
 | `lint.txt` | `./scripts/orch_verify.sh lint` at the same HEAD: `All checks passed!`, `exit=0` |
 | `per_test.txt` | Every test in the two notification modules by name (`-vv`; a single `-v` cancels pyproject's `-q`): 38 passed |
 | `live_delivery.txt` | Real daemon on the dev machine, throwaway `ORCHESTRATOR_HOME` under `/tmp`: three real deliveries, **no `failed` row**; the live installation read `mode=ro` shows the before-state (49 failed, all `timed out after 10s`, 0 delivered) |
+| `mutation_check.txt` | Each new behaviour broken at runtime in-process (status map, capability routing, debounce, read-path flush, exit termination, `notify-send` success) and the guarding test goes red — six mutations, six red tests |
 | `zz_dod_map.txt` | DoD item → file:line + test name, small and sorts last so it survives a truncated review diff |
 
 ## DoD self-check, one line each
