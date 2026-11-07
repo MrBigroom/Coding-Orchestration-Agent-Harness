@@ -53,9 +53,12 @@ the task and run ids, the outcome, the next action and a link to the task. Deliv
 every decision is also kept in the **Notifications** page and `GET /api/notifications`, with
 "not attempted because notifications are off" (`skipped`) separate from "attempted and failed"
 (`failed`). The master switch `notifications_enabled` is **off on a new install** and every trigger
-is individually disable-able in Settings. See
+is individually disable-able in Settings. A record never claims more than happened: the daemon is
+asked for its capabilities before anything is rendered as markup, a message that was displayed is
+recorded `delivered` (with `reason=shown_unacknowledged` when nothing acknowledged it) rather than
+`failed`, and no default action is advertised until an `ActionInvoked` listener exists. See
 [`docs/build-loop.md`](docs/build-loop.md#terminal-run-events) and
-[`docs/configuration.md`](docs/configuration.md#runtime-settings-gui--patch-apisettings).
+[`docs/configuration.md`](docs/configuration.md#notification-delivery-and-status-t18).
 
 ### What the demo does
 
@@ -253,6 +256,16 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
+- **Desktop notifications: one channel, and the link is text on the transport this machine uses.**
+  The only channel exercised end-to-end is the freedesktop D-Bus one, on CachyOS/Hyprland with
+  quickshell's notification server (`notify-send`, `gdbus` as fallback). macOS and Windows
+  notification backends are out of scope and do not exist; nothing else was tested. Nothing
+  listens for `ActionInvoked`, so notifications carry no clickable action. A clickable `<a href>` is
+  only sent
+  through the `gdbus` transport and only when the daemon advertises both `body-markup` and
+  `body-hyperlinks`; `notify-send` always gets a plain-text body with the task URL as a copyable
+  `Open: <url>` line, because it attaches no `body-markup` hint. A daemon that cannot be probed
+  (no `gdbus`, a failed call) is treated as markup-less rather than assumed capable.
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify
