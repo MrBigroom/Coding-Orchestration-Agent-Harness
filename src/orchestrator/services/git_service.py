@@ -390,6 +390,9 @@ def _parity_lock_at(path: Path, dry_run: bool = False) -> Iterator[bool]:
             yield False
             return
     try:
+        # The flock is held, so the pid recorded earlier cannot be a live holder: either it is
+        # dead (a stale file) or it created the file and has not flocked yet (it will now fail its
+        # own non-blocking acquire). Recording ours keeps the file honest without breaking a lock.
         _write_lock_pid(fd)
         yield True
     finally:
