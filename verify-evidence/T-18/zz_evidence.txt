@@ -1,0 +1,72 @@
+# T-18 evidence at HEAD 987295cd873ca77957a5f909f4b4bda385ea683f (code commit; this file changes only verify-evidence/)
+# commands run with cwd = this worktree: ./scripts/orch_verify.sh test | lint
+# ORCH_VERIFY line from the suite:
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+# suite result:
+..............                                                           [100%]
+724 passed, 10 skipped in 120.96s (0:02:00)
+# lint result:
+orch-verify: lint target  ruff check src tests
+All checks passed!
+
+# Per-test evidence (-vv; pyproject addopts=-q so -v must be -vv):
+tests/unit/test_notifications.py::test_off_by_default_records_skip_and_delivers_nothing
+tests/unit/test_notifications.py::test_trigger_selection_against_the_real_event_vocabulary
+tests/unit/test_notifications.py::test_payload_shape_link_and_redaction
+tests/unit/test_notifications.py::test_parallel_runs_coalesce_and_a_trigger_is_deduped
+tests/unit/test_notifications.py::test_failures_never_lose_the_build_log_or_poison_the_session
+tests/unit/test_notifications.py::test_a_bug_inside_the_fanout_leaves_one_durable_failed_row
+tests/unit/test_notifications.py::test_noisy_events_are_silent_until_enabled
+tests/unit/test_notifications.py::test_duration_reports_compute_and_wall_and_only_names_a_large_freeze
+tests/unit/test_notifications.py::test_channel_actions_markup_and_no_client
+tests/unit/test_notifications.py::test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded
+tests/unit/test_notifications.py::test_a_failing_fanout_rolls_back_a_poisoned_caller_session
+tests/unit/test_notifications.py::test_an_event_arriving_mid_flush_rearms_the_timer
+tests/unit/test_notifications.py::test_standalone_run_trigger_is_subscribed_by_default_and_maps_directly
+tests/unit/test_notifications.py::test_a_completed_standalone_run_writes_one_row_naming_agent_and_report
+tests/unit/test_notifications.py::test_standalone_trigger_off_delivers_nothing
+tests/unit/test_notifications.py::test_a_skipped_standalone_run_is_reported_as_skipped
+tests/unit/test_notifications.py::test_a_failed_standalone_run_reports_its_error
+tests/unit/test_notifications.py::test_two_task_less_events_of_one_trigger_produce_two_rows
+tests/unit/test_notifications.py::test_flush_never_raises_and_never_poisons_a_caller_session
+tests/unit/test_notification_truthfulness.py::test_probe_parses_capabilities_and_fails_closed
+tests/unit/test_notification_truthfulness.py::test_markup_daemon_gets_escaped_text_on_every_transport_and_no_hint
+tests/unit/test_notification_truthfulness.py::test_every_transport_result_maps_to_one_frozen_status
+tests/unit/test_notification_truthfulness.py::test_a_displayed_message_is_recorded_delivered_not_failed
+tests/unit/test_notification_truthfulness.py::test_the_standalone_path_reaches_the_same_outcome_classes
+tests/unit/test_notification_truthfulness.py::test_exit_flush_delivers_own_rows_and_terminates_only_what_it_owns
+tests/unit/test_notification_truthfulness.py::test_exit_flush_delivers_a_pending_row
+tests/unit/test_notification_truthfulness.py::test_exit_flush_is_inert_before_the_database_exists
+tests/unit/test_notification_truthfulness.py::test_parallel_finishes_across_runs_are_one_message
+tests/integration/test_notifications.py::test_completed_mock_run_yields_one_coalesced_notification
+tests/integration/test_notifications.py::test_cancelled_run_emits_run_cancelled_once_and_fans_out
+tests/integration/test_notifications.py::test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending
+tests/integration/test_notifications.py::test_notifications_endpoint_serves_the_persistent_list
+tests/integration/test_notifications.py::test_the_task_link_is_a_real_target_when_web_dist_is_absent
+tests/integration/test_notification_delivery.py::test_reading_the_list_flushes_rows_the_server_left_pending
+tests/integration/test_notification_delivery.py::test_cli_exit_delivers_and_terminates_only_its_own_rows
+tests/integration/test_notification_delivery.py::test_python_dash_m_and_the_console_script_route_through_cli_main
+
+# Live acceptance on the dev machine (throwaway ORCHESTRATOR_HOME, real daemon;
+# tests never reach a daemon because conftest blocks _run_client and the probe):
+orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py
+git HEAD of the worktree: 987295cd873ca77957a5f909f4b4bda385ea683f
+ORCHESTRATOR_HOME = /tmp/t18-live-r60
+probe: GetCapabilities: actions,body,body-hyperlinks,body-images,body-markup,icon-static,persistence
+direct deliver: delivered shown_unacknowledged markup-escaped notify-send notify-send returned 0; dismissal is not observed
+(1, 'run_timeout', 'delivered', 'shown_unacknowledged', 'notify-send', None, 'shown_unacknowledged', 'markup-escaped')
+(2, 'task_review', 'delivered', 'shown_unacknowledged', 'notify-send', None, 'shown_unacknowledged', 'markup-escaped')
+failed_rows: []
+
+# Forced gdbus transport (notify-send hidden from PATH) to exercise the anchor shape:
+orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py
+git HEAD of the worktree: 987295cd873ca77957a5f909f4b4bda385ea683f
+PATH = /tmp/t18-bin notify-send: None gdbus: /tmp/t18-bin/gdbus
+probe: GetCapabilities: actions,body,body-hyperlinks,body-images,body-markup,icon-static,persistence
+gdbus deliver: delivered  markup+hyperlink gdbus daemon accepted notification id 97
+
+# read-only live tally of the operator's installation BEFORE this branch merges
+# (branch code is not live yet; the fix takes effect for events after the merge):
+coalesced|15
+failed|51
+skipped|64
