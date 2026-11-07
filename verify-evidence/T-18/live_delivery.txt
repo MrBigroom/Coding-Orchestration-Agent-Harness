@@ -1,0 +1,52 @@
+# T-18 live acceptance at HEAD 236978dfc66d92b4595241631750228e853a2862
+# worktree: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+# ORCHESTRATOR_HOME: /tmp/t18-live-evidence2 (throwaway; the live home was read read-only)
+# NOTE: this capture makes THREE real freedesktop notifications on the dev machine on purpose:
+# DoD 1 says a real event on this machine must stop being recorded failed. The gated tests
+# themselves never touch a daemon (tests/conftest.py blocks _run_client and the probe).
+
+orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py
+git HEAD of the worktree: 18
+threading state before any event: None None
+probe: True ['actions', 'body', 'body-hyperlinks', 'body-images', 'body-markup', 'icon-static', 'persistence'] | source: GetCapabilities
+
+rows written (id, trigger, status, reason, channel, error):
+  1 run_timeout      delivered  shown_unacknowledged   notify-send  -
+  2 merged           delivered  -                      gdbus        -
+  3 task_review      delivered  -                      gdbus        -
+
+outcome classes recorded: [(1, 'shown_unacknowledged', 'plain', 'notify-send returned 0; dismissal is not observed'), (2, 'delivered', 'plain', 'daemon accepted notification id 90'), (3, 'delivered', 'markup+hyperlink', 'daemon accepted notification id 91')]
+
+no row is 'failed': True
+
+commands actually executed against the daemon (argv), in order:
+[1] error=None stdout=''
+["notify-send", "--app-name=Coding Orchestrator", "--urgency=normal", "--icon=dialog-information", "orchestrator \u2014 Run timed out", "Task: orchestrator\nRun: no run (n/a)\nOutcome: run hit the adapter timeout\nNext: Decide whether to retry or block.\nDetail: T-18 acceptance: notify-send path, the trigger that was mislabelled in the live table"]
+    contains an action flag/array: False | action array: n/a
+[2] error=None stdout='(uint32 90,)'
+["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify", "\"Coding Orchestrator\"", "0", "\"\"", "\"orchestrator \\u2014 Branch merged\"", "\"Task: orchestrator\\nRun: no run (n/a)\\nOutcome: accepted phase branch merged with --no-ff\\nNext: No action unless a follow-up is needed.\\nDetail: T-18 acceptance: gdbus path (daemon-acknowledged)\"", "[]", "{}", "10000"]
+    body sent: Task: orchestrator
+Run: no run (n/a)
+Outcome: accepted phase branch merged with --no-ff
+Next: No action unless a follow-up is needed.
+Detail: T-18 acceptance: gdbus path (daemon-acknowledged)
+    contains an action flag/array: True | action array: []
+[3] error=None stdout='(uint32 91,)'
+["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify", "\"Coding Orchestrator\"", "0", "\"\"", "\"T-1 T-18 acceptance anchor \\u2014 Task awaiting review\"", "\"Task: T-1 T-18 acceptance anchor\\nRun: no run (n/a)\\nOutcome: task is in review and waiting for a human decision\\nNext: Accept it or request changes.\\n<a href=\\\"http://127.0.0.1:8321/tasks/1\\\">Open task</a>\"", "[]", "{'body-markup': <true>}", "10000"]
+    body sent: Task: T-1 T-18 acceptance anchor
+Run: no run (n/a)
+Outcome: task is in review and waiting for a human decision
+Next: Accept it or request changes.
+<a href="http://127.0.0.1:8321/tasks/1">Open task</a>
+    contains an action flag/array: False | action array: []
+
+--- live installation, read-only (mode=ro), for the before/after comparison ---
+live status counts before T-18 lands on that branch's code: [('coalesced', 15), ('failed', 49), ('skipped', 62)]
+live failed-row errors: [('timed out after 10s', 49)]
+exit=0
+
+--- corrected per-call action check, derived by re-parsing the argv lines above (no new delivery) ---
+# The earlier line's check searched every argv element for the substring 'action'; 'org.freedesktop.Notifications.Notify' contains it, so that line is a false positive for gdbus and is superseded by this table.
+{"call": 1, "action_flags": [], "gdbus_action_array": "n/a", "advertises_an_action": false}
+{"call": 2, "action_flags": [], "gdbus_action_array": "[]", "advertises_an_action": false}
+{"call": 3, "action_flags": [], "gdbus_action_array": "[]", "advertises_an_action": false}

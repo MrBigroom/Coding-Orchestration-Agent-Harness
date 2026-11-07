@@ -1,0 +1,23 @@
+# T-18 full suite at HEAD 236978dfc66d92b4595241631750228e853a2862 (worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18)
+# dirty entries (git status --porcelain -uall): 0
+ORCH_VERIFY stamp comes from the command output itself:
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/tests
+........................................................................ [  9%]
+.........................................sss.........................s.. [ 19%]
+..ssssss................................................................ [ 29%]
+........................................................................ [ 39%]
+........................................................................ [ 48%]
+........................................................................ [ 58%]
+........................................................................ [ 68%]
+........................................................................ [ 78%]
+........................................................................ [ 88%]
+........................................................................ [ 97%]
+................                                                         [100%]
+726 passed, 10 skipped in 121.04s (0:02:01)
