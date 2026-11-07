@@ -8,50 +8,12 @@ orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16
 orch-verify: pytest target -rA tests/unit/test_redaction.py tests/unit/test_prompt_builder.py tests/unit/test_review_audit.py tests/unit/test_review_budget.py
-.................................................                        [100%]
-==================================== PASSES ====================================
-=========================== short test summary info ============================
-PASSED tests/unit/test_redaction.py::test_redacts_provider_keys
-PASSED tests/unit/test_redaction.py::test_branch_task_and_phase_names_survive_redaction
-PASSED tests/unit/test_redaction.py::test_findings_json_payload_survives_redaction
-PASSED tests/unit/test_redaction.py::test_credentials_are_still_redacted_wherever_they_appear
-PASSED tests/unit/test_redaction.py::test_build_log_details_keep_operational_commands_copy_pasteable
-PASSED tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression
-PASSED tests/unit/test_redaction.py::test_redacts_assignments_and_bearer
-PASSED tests/unit/test_redaction.py::test_redacts_private_key_block
-PASSED tests/unit/test_redaction.py::test_redacts_secret_values_from_environment
-PASSED tests/unit/test_redaction.py::test_leaves_normal_text_alone
-PASSED tests/unit/test_redaction.py::test_token_counts_are_not_secrets
-PASSED tests/unit/test_redaction.py::test_long_unbroken_text_redacts_quickly
-PASSED tests/unit/test_redaction.py::test_sensitive_paths_and_diff_stripping
-PASSED tests/unit/test_redaction.py::test_dotenv_loaded_without_overriding
 PASSED tests/unit/test_redaction.py::test_inline_token_counts_in_prose_survive_byte_identically
 PASSED tests/unit/test_redaction.py::test_synthetic_placeholder_assignments_in_test_literals_survive
 PASSED tests/unit/test_redaction.py::test_redaction_report_names_the_pattern_class_and_count_without_the_secret
-PASSED tests/unit/test_prompt_builder.py::test_sections_follow_static_first_order
-PASSED tests/unit/test_prompt_builder.py::test_dynamic_state_never_leaks_into_static_sections
-PASSED tests/unit/test_prompt_builder.py::test_preview_detects_dynamic_before_static
-PASSED tests/unit/test_prompt_builder.py::test_preview_flags_volatile_values_in_static_prefix
-PASSED tests/unit/test_prompt_builder.py::test_secrets_redacted_and_sensitive_diffs_stripped
-PASSED tests/unit/test_prompt_builder.py::test_budget_truncates_dynamic_only
 PASSED tests/unit/test_prompt_builder.py::test_redactions_are_recorded_in_the_manifest_without_the_secret
 PASSED tests/unit/test_prompt_builder.py::test_a_sensitive_file_is_labelled_withheld_as_a_secret_not_as_a_budget_cut
 PASSED tests/unit/test_prompt_builder.py::test_diff_budget_preamble_token_count_reaches_the_reviewer_intact
-PASSED tests/unit/test_review_audit.py::test_existing_file_refutes_a_missing_file_claim
-PASSED tests/unit/test_review_audit.py::test_existing_test_name_refutes_a_missing_test_claim
-PASSED tests/unit/test_review_audit.py::test_absent_file_claim_stays_confirmed_and_a_vague_claim_is_unchecked
-PASSED tests/unit/test_review_audit.py::test_reviewer_missing_artifact_claim_is_checked_as_a_visibility_claim
-PASSED tests/unit/test_review_audit.py::test_a_visibility_claim_is_refuted_by_the_supplied_patch_not_by_existence
-PASSED tests/unit/test_review_audit.py::test_a_partially_supplied_file_is_the_omitted_state_not_a_confirmed_absence
-PASSED tests/unit/test_review_audit.py::test_an_unknowable_visibility_claim_is_unchecked_not_refuted
-PASSED tests/unit/test_review_audit.py::test_supplied_evidence_is_derived_from_the_recorder_that_cut
-PASSED tests/unit/test_review_audit.py::test_diff_budget_names_every_omitted_file_and_records_the_manifest
-PASSED tests/unit/test_review_audit.py::test_a_partially_supplied_file_says_so_in_the_text_the_reviewer_reads
-PASSED tests/unit/test_review_audit.py::test_an_omitted_file_is_listed_and_recorded
-PASSED tests/unit/test_review_audit.py::test_sensitive_files_withheld_from_the_diff_are_recorded_and_named
-PASSED tests/unit/test_review_audit.py::test_diff_completeness_flags_a_diff_attribute_introduced_by_this_task
-PASSED tests/unit/test_review_audit.py::test_diff_attribute_that_predates_the_task_is_reported_but_does_not_block
-PASSED tests/unit/test_review_audit.py::test_diff_completeness_flags_a_changed_file_that_has_no_hunk_body
 PASSED tests/unit/test_review_audit.py::test_diff_completeness_audits_the_rendered_diff_not_the_archived_patch
 PASSED tests/unit/test_review_audit.py::test_a_withheld_sensitive_file_is_labelled_not_a_missing_hunk
 PASSED tests/unit/test_review_audit.py::test_attribute_check_falls_back_when_check_attr_source_is_unavailable
@@ -60,4 +22,4 @@ PASSED tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reser
 PASSED tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding
 PASSED tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand
 PASSED tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_list
-49 passed in 2.36s
+# full focused selection: 49 passed in 2.36s (verbose PASSED lines trimmed)
