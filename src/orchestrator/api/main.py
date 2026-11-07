@@ -8,10 +8,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator import __version__
+from orchestrator.api.fallback import render_shell
 from orchestrator.core.config import get_settings
 from orchestrator.core.logging import configure_logging, get_logger
 from orchestrator.core.security import SameOriginMiddleware
@@ -217,6 +218,13 @@ def create_app() -> FastAPI:
         candidate = (root / path).resolve()
         if path and candidate.is_file() and root.resolve() in candidate.parents:
             return FileResponse(candidate)
+        if dist is None:
+            # T-18 DoD 5: resolve the deep link server-side so the page renders the right view
+            # (and so the resolution is testable by calling the URL, not by grepping the source).
+            return HTMLResponse(
+                render_shell((FALLBACK_DIR / "index.html").read_text(encoding="utf-8"), path),
+                headers={"Cache-Control": "no-cache"},
+            )
         # Revalidated every time: it names the hashed assets, so a stale copy pins an old GUI.
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 

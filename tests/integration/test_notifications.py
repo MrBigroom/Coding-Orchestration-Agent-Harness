@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import json
+import re
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,9 +59,11 @@ def project(session, tmp_path):
 def sent(monkeypatch):
     calls: list[dict[str, str]] = []
 
-    def fake_deliver(title: str, body: str, link: str = "") -> tuple[str, None]:
+    def fake_deliver(title: str, body: str, link: str = "") -> notification_service.TransportResult:
         calls.append({"title": title, "body": body, "link": link})
-        return "test-channel", None
+        return notification_service.TransportResult(
+            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain", "test-daemon"
+        )
 
     monkeypatch.setattr(notification_service, "deliver", fake_deliver)
     return calls
@@ -195,16 +201,147 @@ def test_notifications_endpoint_serves_the_persistent_list(initialized):
         assert client.get("/api/notifications?status=bogus").status_code == 422
 
 
-def test_the_task_link_is_a_real_target_when_web_dist_is_absent(initialized, monkeypatch):
-    """DoD 2 / review finding 4: the notification links to /tasks/<id>, the React route. With no
-    web/dist that URL is served by the fallback UI, which must route it to the task view rather
-    than silently showing the dashboard."""
+        rows = client.get("/api/notifications").json()
+        assert [(r["trigger"], r["status"]) for r in rows] == [("run_completed", "delivered")]
+        assert client.get("/api/notifications?status=bogus").status_code == 422
+
+
+def test_reading_the_list_flushes_rows_the_server_left_pending(initialized, sent):
+    """DoD 3: the read path is a flush point, so a long-running server cannot leave rows pending.
+
+    The row is inserted AFTER startup on purpose: startup recovery is a different flush point and
+    would otherwise be what delivered it, and this test would pass with the read-path flush gone.
+    """
+    from orchestrator.core.db import session_scope
+
+    with TestClient(_create_app(), base_url="http://127.0.0.1:8321") as client:
+        with session_scope() as s:
+            s.add(
+                Notification(
+                    trigger="run_completed",
+                    event="run_completed",
+                    status="pending",
+                    title="read path pending",
+                    body="the server never tried",
+                    dedupe_key="read-path:1",
+                    details_json={},
+                )
+            )
+            s.commit()
+        assert sent == []  # nothing delivered it yet
+        rows = client.get("/api/notifications").json()
+        assert [(r["title"], r["status"]) for r in rows] == [("read path pending", "delivered")]
+    assert [c["title"] for c in sent] == ["read path pending"]
+
+
+def test_cli_exit_delivers_rows_the_process_left_pending(initialized, sent, monkeypatch):
+    """DoD 3: the coalescing timer dies with the CLI, so exiting is a flush point."""
+    from orchestrator import cli
+    from orchestrator.core.db import session_scope
+
+    with session_scope() as s:
+        s.add(
+            Notification(
+                trigger="run_completed",
+                event="run_completed",
+                status="pending",
+                title="cli exit pending",
+                body="from a dead CLI timer",
+                dedupe_key="cli-exit:1",
+                details_json={},
+            )
+        )
+        s.commit()
+    monkeypatch.setattr(cli, "app", lambda: None)  # a command that wrote the row and returned
+    cli.main()
+    with session_scope() as s:
+        row = s.exec(
+            select(Notification).where(Notification.dedupe_key == "cli-exit:1")
+        ).one()
+        assert (row.status, row.reason, row.error) == ("delivered", "", None)
+    assert [c["title"] for c in sent] == ["cli exit pending"]
+
+
+def test_cli_exit_terminates_rows_it_cannot_deliver(initialized, monkeypatch):
+    """DoD 3: a process going away writes a terminal status, never a row pending forever."""
+    from orchestrator import cli
+    from orchestrator.core.db import session_scope
+
+    with session_scope() as s:
+        s.add(
+            Notification(
+                trigger="run_completed",
+                event="run_completed",
+                status="pending",
+                title="cannot deliver",
+                body="no channel here",
+                dedupe_key="cli-exit:2",
+                details_json={},
+            )
+        )
+        s.commit()
+    monkeypatch.setattr(notification_service, "flush_pending", lambda session=None: 0)
+    monkeypatch.setattr(cli, "app", lambda: None)
+    cli.main()
+    with session_scope() as s:
+        row = s.exec(
+            select(Notification).where(Notification.dedupe_key == "cli-exit:2")
+        ).one()
+        assert (row.status, row.reason) == ("failed", "process_exit_undelivered")
+
+
+def _served_route(page: str) -> dict[str, str | None]:
+    """The route the fallback page was served with (HTML-escaped JSON in `data-route`)."""
+    raw = html.unescape(re.search(r'data-route="([^"]+)"', page).group(1))
+    return json.loads(raw)
+
+
+def _fallback_views(page: str) -> set[str]:
+    """The fallback UI's view registry, parsed from the page the server actually served."""
+    block = page.split("const views = {", 1)[1].split("\n};", 1)[0]
+    return set(re.findall(r"^  (?:async )?(\w+)\(", block, re.MULTILINE))
+
+
+def _react_routes() -> list[str]:
+    app_tsx = (Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx").read_text()
+    return re.findall(r'<Route\s+path="([^"]+)"', app_tsx)
+
+
+def _match_route(pattern: str, path: str) -> dict[str, str] | None:
+    """Match a react-router path pattern (`/tasks/:id`) against a URL path."""
+    if pattern == "*":
+        return {}
+    pattern_parts = pattern.strip("/").split("/")
+    path_parts = path.strip("/").split("/")
+    if len(pattern_parts) != len(path_parts):
+        return None
+    params: dict[str, str] = {}
+    for expected, actual in zip(pattern_parts, path_parts, strict=True):
+        if expected.startswith(":"):
+            params[expected[1:]] = actual
+        elif expected != actual:
+            return None
+    return params
+
+
+def test_the_task_link_resolves_in_the_fallback_ui_and_the_react_router(initialized, monkeypatch):
+    """DoD 5: call the URL instead of grepping the page for a source string.
+
+    With no web/dist, `/tasks/<id>` (the link every notification carries) is served by the
+    fallback UI. The API resolves that path and the page renders the resolved view, so the route
+    is asserted by asking for it. The React router is asserted by matching the same URL against
+    the route table `web/src/App.tsx` really declares.
+    """
     from orchestrator.api import main as api_main
 
     monkeypatch.setattr(api_main, "frontend_dist_dir", lambda: None)
     with TestClient(api_main.create_app(), base_url="http://127.0.0.1:8321") as client:
-        res = client.get("/tasks/7")
-        assert res.status_code == 200
-        assert "React build not found" in res.text  # the fallback UI, not the React bundle
-        assert 'const name = view === "tasks" && arg ? "task" : view;' in res.text
-        assert 'location.pathname.replace(' in res.text
+        page = client.get("/tasks/7")
+        assert page.status_code == 200
+        assert "React build not found" in page.text  # the fallback UI, not the React bundle
+        resolved = _served_route(page.text)
+        assert resolved == {"view": "task", "arg": "7"}
+        assert resolved["view"] in _fallback_views(page.text)  # the page can render it
+        assert _served_route(client.get("/").text) == {"view": "dashboard", "arg": None}
+    matches = {path: _match_route(path, "/tasks/7") for path in _react_routes()}
+    assert [p for p, params in matches.items() if params == {"id": "7"}] == ["/tasks/:id"]
