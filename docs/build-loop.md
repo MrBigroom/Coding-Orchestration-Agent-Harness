@@ -464,10 +464,29 @@ Three things now keep that difference visible and harmless:
    `test-parity` creates a throwaway detached worktree of the **current HEAD** and runs it via
    `scripts/orch_verify.sh`; `doctor --env-parity` snapshots the project's configured **base
    branch** and runs the configured **test** command there, so a branch's own wrapper is not in
-   that snapshot (the same caveat as `--run-commands`). Both copy the local `.env` in with mode
-   `0600` (never world-readable), never print or commit its contents, and remove the tree on every
-   exit path. A run killed mid-copy leaves a seeded worktree behind: T-19 only **reports** it and
-   asks for `orchestrator cleanup` — sweeping that residue is T-20 and deliberately not here.
+   that snapshot (the same caveat as `--run-commands`). Neither path copies the real `.env`:
+   both read only the variable **names** and write a **synthetic** `.env` with placeholder
+   values (mode `0600`, never world-readable), so no credential value is ever written into a
+   harness-managed directory; contents are never printed or committed. The synthetic file is
+   removed on every normal exit path. A SIGKILL can still leave the synthetic tree behind, which
+   is residue but not a secret: `orchestrator cleanup`, and the start of the next
+   `doctor --env-parity`, reclaim orphaned `env-parity` worktrees and
+   `<tmpdir>/orch-env-parity.*` roots (each root records its checkout in `.repo`, so another
+   repository's run is not this project's failure). The sweep takes each destination's lock first,
+   so a tree a live parity run is still using is reported and skipped, never deleted. The doctor
+   path locks `<ORCHESTRATOR_HOME>/locks/<project_slug>-env-parity.lock`, outside the frozen
+   `<project_slug>/<task_id>` layout and outside `.managed/` (whose markers keep exactly their old
+   `<path>\n(detached)\n` meaning and are never used as locks). That lock records the holder's pid;
+   a stale lock is broken only when `os.kill(pid, 0)` says the holder is gone, and by atomic
+   rename-then-unlink rather than unlinking a path someone may still hold open. The shell path
+   locks `<tmpdir>/orch-env-parity.*/.lock`. A shell root without its `.repo` marker is judged a
+   starting run and skipped while it is younger than a 60-second grace window; an older unmarked
+   root is a pre-T-20 orphan and is reclaimed. A root that
+   is a symlink, owned by another user, or group/world-writable is refused rather than followed,
+   and `git worktree remove` runs only for a linked worktree git itself lists. Every removal is
+   re-checked afterwards, so a tree or registration that survived is reported as not reclaimed.
+   Recovery commits and worktree removal also treat untracked parity files as harness residue
+   (removed before staging) rather than worker dirt.
    `--env-parity` is off by default and CLI-only; the API/GUI doctor route keeps its static
    shape. Neither is wired into `make test`, `make verify` or any project `test_command` — a gate
    must stay env-free or its green stops meaning what it says. A parity green also requires the

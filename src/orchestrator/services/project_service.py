@@ -456,12 +456,66 @@ def _drop_snapshots(project: Project, key: str, add, label: str, report_success:
         add(label, False, f"{e}; run `orchestrator cleanup`")
 
 
-def _seeded_env_copy(source: Path, dest: Path) -> Path:
-    """Copy a real `.env` 0600, without clobbering one that already exists.
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-    A plain `shutil.copyfile` creates the destination with the process umask (typically 0644), so
-    the operator's credentials would be world-readable under ORCHESTRATOR_HOME. Three properties
-    matter here, and each one has been a bug:
+
+def _env_variable_names(source: Path) -> list[str]:
+    """The SORTED variable NAMES declared in an env file; values are never parsed.
+
+    The parity probe must reproduce the operator's *configuration surface* without ever writing a
+    credential value into a harness-managed directory (T-20 DoD 1). Only the name before the first
+    `=` leaves this function; comments, blank lines and `export` prefixes are handled. The order is
+    sorted, matching `sed ... | sort -u` in scripts/orch_env_parity.sh, so the two paths write the
+    same name sequence for the same file (T-20 review round 3); first-seen order would silently
+    differ whenever the operator's file is not alphabetical.
+    """
+    names: set[str] = set()
+    for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        name, sep, _value = line.partition("=")
+        name = name.strip()
+        if not sep or not _ENV_NAME_RE.match(name):
+            continue
+        names.add(name)
+    return sorted(names)
+
+
+def _synthetic_env_value(name: str) -> str:
+    """A benign placeholder for `name`; never the real value and never a valid secret.
+
+    The classification is by SUBSTRING, matching `parity_value` in scripts/orch_env_parity.sh: the
+    two parity paths must agree, and a suffix-only rule here made `SUPABASE_URL_*` a `synthetic`
+    string in one path and a URL in the other (T-20 review round 2).
+    """
+    upper = name.upper()
+    if any(word in upper for word in ("URL", "URI", "ENDPOINT")):
+        return "https://synthetic.invalid"
+    if "EMAIL" in upper:
+        return "synthetic@example.invalid"
+    if any(word in upper for word in ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD")):
+        return "synthetic-not-a-secret"
+    return "synthetic"
+
+
+def _synthetic_env_text(source: Path) -> str:
+    names = _env_variable_names(source)
+    lines = [
+        "# Synthetic parity environment: variable NAMES from the operator's env file.",
+        "# Values are placeholders. No credential value is copied into this worktree (T-20).",
+    ]
+    lines.extend(f"{name}={_synthetic_env_value(name)}" for name in names)
+    return "\n".join(lines) + "\n"
+
+
+def _synthetic_env_file(source: Path, dest: Path) -> Path:
+    """Write a synthetic `.env` from the variable NAMES in `source`, 0600 and create-only.
+
+    T-20 DoD 1: the real `.env` is never copied. T-19's crash-safety properties are kept, because
+    the synthetic file is still residue if the process dies between write and cleanup:
 
     * the bytes are written to a UNIQUE per-invocation staging name and only then linked into
       place, so a crash or a partial `os.write` never leaves a truncated `.env` that a later run
@@ -469,13 +523,13 @@ def _seeded_env_copy(source: Path, dest: Path) -> Path:
     * the link is create-only (`os.link`), never `os.replace`, so a destination this invocation
       did not create — a tracked `.env` in the snapshot, a retry after a crash, a reused temp
       path — is left byte-for-byte intact instead of being silently overwritten;
-    * the staging file is removed on every path, so a failed copy leaves no residue.
+    * the staging file is removed on every path, so a failed write leaves no residue in the tree.
 
     Returns the path this call created. Raises `OSError` (notably `FileExistsError` when `dest`
     already exists, or the source is unreadable); callers turn that into a reported check because
     `doctor` reports and never raises out.
     """
-    data = source.read_bytes()
+    data = _synthetic_env_text(source).encode()
     staging = dest.with_name(f"{dest.name}.{os.getpid()}-{uuid.uuid4().hex}.parity")
     try:
         fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -579,11 +633,12 @@ def run_in_worktree_checks(project: Project) -> list[dict[str, Any]]:
 # --- opt-in environment-parity probe (`project doctor --env-parity`) -----------------
 #
 # A DEVELOPER check, never a gate command: run the project's TEST command in a throwaway worktree
-# with a copy of the local `.env`, i.e. the world the human actually works in. Off by default and
-# CLI-only; it seeds a copy of the env file without reading, logging or committing its contents.
+# with a SYNTHETIC `.env` (variable names from the local file, placeholder values), i.e. the
+# configuration surface the human works in without their credentials. Off by default and CLI-only;
+# it never copies a value, never logs or commits the contents, and `0600`s what it writes.
 
 def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
-    from orchestrator.services import git_service, process_service
+    from orchestrator.services import git_service
 
     checks: list[dict[str, Any]] = []
 
@@ -591,21 +646,22 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
     repo = Path(project.path)
-    # A worktree left by a killed run is REPORTED, not swept: residue hygiene for the parity path
-    # is T-20 and deliberately out of scope for T-19.
-    stale = [
-        m
-        for m in git_service.managed_worktrees()
-        if m["project_slug"] == project.slug
-        and m["task_id"] == ENV_PARITY_SNAPSHOT_KEY
-        and m["exists"]
-    ]
-    if stale:
+    # T-20: reclaim anything an interrupted parity run left behind BEFORE looking at staleness.
+    # The sweep takes each destination's lock, so a tree another parity process is actively using
+    # is reported and skipped, never deleted. It is scoped to THIS checkout on both sides, so an
+    # unrelated repo's live run cannot fail this project's probe, and a root the process cannot
+    # open is reported instead of raised out of doctor().
+    swept = git_service.sweep_parity_residue(project.slug, repo=repo)
+    for action in swept:
+        # `ok` is the sweep's own verified outcome (T-20 review round 3), never a parse of the
+        # message: a tree or registration that survived is reported as a failed reclaim.
+        add("env-parity residue", action.ok, action.detail)
+    if any(action.busy for action in swept):
         add(
-            "env-parity stale worktree",
+            "env-parity suite",
             False,
-            f"{stale[0]['path']} is left over from an interrupted run; run `orchestrator cleanup` "
-            "(sweeping it is T-20)",
+            "another parity run on this checkout is active; wait for it or run "
+            "`orchestrator cleanup` afterwards",
         )
         return checks
 
@@ -622,16 +678,33 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         return checks
 
     try:
+        with git_service.parity_lock(project.slug):
+            _run_env_parity_locked(project, repo, source_env, add)
+    except git_service.ParityBusy as e:
+        add("env-parity suite", False, str(e))
+    return checks
+
+
+def _run_env_parity_locked(
+    project: Project, repo: Path, source_env: Path, add
+) -> None:
+    """The body of the parity probe, run while holding that project's parity lock.
+
+    Reports through `add`; returns nothing. The caller's `checks` list is the only output.
+    """
+    from orchestrator.services import git_service, process_service
+
+    try:
         info = git_service.ensure_snapshot(
             repo, project.slug, ENV_PARITY_SNAPSHOT_KEY, project.base_branch
         )
     except GitError as e:
         add("env-parity suite", False, f"throwaway worktree failed: {e}")
-        return checks
+        return
     seeded: Path | None = None
     try:
         try:
-            seeded = _seeded_env_copy(source_env, info.path / ".env")
+            seeded = _synthetic_env_file(source_env, info.path / ".env")
         except OSError as e:
             # `doctor` reports, it never raises out. A tracked `.env` already in
             # the snapshot or an unreadable source is a finding about the parity probe, not a
@@ -640,28 +713,30 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
             add(
                 "env-parity .env seeded",
                 False,
-                f"could not seed a copy of {source_env}: {type(e).__name__}: {e}",
+                f"could not write a synthetic env from {source_env}: {type(e).__name__}: {e}",
             )
-            return checks
+            return
+        names = _env_variable_names(source_env)
         add(
             "env-parity .env seeded",
             True,
-            f"copy of {source_env} (contents not logged, mode 0600)",
+            f"synthetic env from {len(names)} variable name(s) in {source_env} "
+            "(values never copied, contents not logged, mode 0600)",
         )
         try:
             argv = command_argv(project.test_command)
         except ProjectError as e:
             add("env-parity suite", False, str(e))
-            return checks
+            return
         try:
             code, output, timed_out = process_service.run_simple_sync(
                 argv, info.path, RUN_TIMEOUT_SECONDS
             )
         except Exception as e:  # noqa: BLE001 - doctor reports, it never raises out
             add("env-parity suite", False, f"could not run: {type(e).__name__}: {e}")
-            return checks
+            return
         ok = code == 0 and not timed_out
-        detail = f"exit {code} (cwd {info.path}, local .env seeded)"
+        detail = f"exit {code} (cwd {info.path}, synthetic .env seeded)"
         if timed_out:
             detail += f" after {RUN_TIMEOUT_SECONDS}s"
         rows = parse_orch_verify(output)
@@ -681,10 +756,10 @@ def run_env_parity_checks(project: Project) -> list[dict[str, Any]]:
         add("env-parity suite", ok, detail)
     finally:
         # Remove ONLY the file this invocation created, so the throwaway tree is clean enough for
-        # `remove_worktree` to delete it; a killed run's residue is T-20, above.
+        # `remove_worktree` to delete it. A killed run's synthetic residue is swept by the next
+        # `orchestrator cleanup` / parity probe.
         if seeded is not None:
             seeded.unlink(missing_ok=True)
         _drop_snapshots(
             project, ENV_PARITY_SNAPSHOT_KEY, add, "env-parity worktree removed", False
         )
-    return checks

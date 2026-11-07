@@ -1,0 +1,58 @@
+HEAD 5f1953f1d9db130872279e964afb7661ddd13e63 | dirty-entries 0 | 2026-11-07T16:06:12Z
+T-20 evidence: ./scripts/orch_verify.sh test -vv -k 'parity or cleanup or env_hermeticity'
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20/tests -vv -k parity or cleanup or env_hermeticity
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 686 items / 649 deselected / 37 selected
+
+tests/integration/test_cli.py::test_demo_and_cleanup_dry_run PASSED      [  2%]
+tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED [  5%]
+tests/integration/test_env_hermeticity.py::test_affected_subset_is_identical_with_and_without_a_seeded_dotenv SKIPPED [  8%]
+tests/integration/test_env_hermeticity.py::test_seeded_dotenv_changes_the_outcome_without_the_guard SKIPPED [ 10%]
+tests/integration/test_env_hermeticity.py::test_previously_failing_pair_and_collection_import_pass_with_a_seeded_dotenv SKIPPED [ 13%]
+tests/integration/test_env_hermeticity.py::test_verification_json_names_the_gated_environment PASSED [ 16%]
+tests/integration/test_env_hermeticity.py::test_doctor_env_parity_seeds_the_local_env_and_removes_the_tree PASSED [ 18%]
+tests/integration/test_env_hermeticity.py::test_env_parity_sweeps_a_leftover_worktree_from_a_killed_run PASSED [ 21%]
+tests/integration/test_env_hermeticity.py::test_env_parity_reports_a_preexisting_dotenv_instead_of_raising PASSED [ 24%]
+tests/integration/test_env_hermeticity.py::test_env_parity_never_unlinks_a_dotenv_it_did_not_create PASSED [ 27%]
+tests/integration/test_env_hermeticity.py::test_env_parity_rejects_a_command_without_an_orch_verify_marker PASSED [ 29%]
+tests/integration/test_env_hermeticity.py::test_make_target_is_documented_as_the_developer_parity_path PASSED [ 32%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_never_touches_a_tree_a_live_run_is_using PASSED [ 35%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_reclaims_an_orphaned_shell_script_tree PASSED [ 37%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_refuses_untrusted_temp_roots PASSED [ 40%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_remove_an_unregistered_tree PASSED [ 43%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_is_project_scoped_and_reports_unopenable_roots PASSED [ 45%]
+tests/integration/test_env_hermeticity.py::test_parity_placeholder_matches_between_the_python_and_shell_paths PASSED [ 48%]
+tests/integration/test_env_hermeticity.py::test_parity_env_name_order_matches_the_shell_path PASSED [ 51%]
+tests/integration/test_env_hermeticity.py::test_parity_lock_lives_under_orchestrator_home_not_the_managed_tree PASSED [ 54%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_breaks_a_stale_lock_by_rename_then_unlink PASSED [ 56%]
+tests/integration/test_env_hermeticity.py::test_breaking_a_stale_lock_never_renames_a_live_lock_that_replaced_it PASSED [ 59%]
+tests/integration/test_env_hermeticity.py::test_parity_lock_refuses_an_inode_swapped_between_open_and_flock PASSED [ 62%]
+tests/integration/test_env_hermeticity.py::test_a_dry_run_probe_never_blocks_a_live_parity_run PASSED [ 64%]
+tests/integration/test_env_hermeticity.py::test_the_shell_lock_names_exactly_one_holder_and_claims_no_closed_window PASSED [ 67%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_dry_run_creates_no_lock_and_mutates_nothing PASSED [ 70%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_skips_an_unmarked_root_until_the_grace_window_expires PASSED [ 72%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_reports_a_surviving_tree_as_not_reclaimed PASSED [ 75%]
+tests/integration/test_env_hermeticity.py::test_parity_sweep_does_not_claim_a_removal_rmtree_did_not_do PASSED [ 78%]
+tests/integration/test_env_hermeticity.py::test_git_service_keeps_the_posix_lock_import_lazy PASSED [ 81%]
+tests/integration/test_env_hermeticity.py::test_a_killed_shell_parity_run_leaves_no_registered_worktree PASSED [ 83%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_parity_residue PASSED [ 86%]
+tests/integration/test_env_hermeticity.py::test_recovery_commit_never_stages_a_leaked_dotenv_on_a_phase_branch PASSED [ 89%]
+tests/integration/test_env_hermeticity.py::test_remove_worktree_succeeds_with_parity_residue PASSED [ 91%]
+tests/integration/test_env_hermeticity.py::test_parity_synthesis_never_writes_a_real_credential_value PASSED [ 94%]
+tests/integration/test_git_worktree.py::test_cleanup_only_managed_and_never_deletes_branches PASSED [ 97%]
+tests/unit/test_recovery_markers.py::test_cleanup_still_refuses_untracked_output PASSED [100%]
+
+================ 34 passed, 3 skipped, 649 deselected in 2.98s =================
+exit=0
