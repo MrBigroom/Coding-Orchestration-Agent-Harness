@@ -1,4 +1,4 @@
-# HEAD=e01561db4c505a587902e515f9910e9db0b7a67e
+# HEAD=aa7699f29fd30aa921ab49d5720a1cfa119ba6da
 # command: static DoD map (the -vv run above supplies the PASSED lines for each node id)
 DoD 5(a) older HEAD -> stale check with the right paths/count:
   tests/unit/test_evidence_freshness.py::test_an_older_stamp_is_stale_with_the_paths_and_the_count

@@ -1,9 +1,9 @@
-# HEAD=e01561db4c505a587902e515f9910e9db0b7a67e
+# HEAD=aa7699f29fd30aa921ab49d5720a1cfa119ba6da
 # command: grep -n for the T-15 implementation anchors (source line numbers)
 40:CHECK_NAME = "committed evidence freshness"
-146:def parse_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
-306:def check_freshness(
-531:def regenerate_bundle(
+163:def parse_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
+320:def check_freshness(
+545:def regenerate_bundle(
 258:        freshness = evidence_freshness.check_freshness(
 338:    freshness = evidence_freshness.check_freshness(
 619:def task_evidence(
