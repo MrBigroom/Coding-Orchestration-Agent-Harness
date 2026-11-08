@@ -53,10 +53,17 @@ OWNER_KEY = "owner"  # the CLI exit terminates only rows its own process created
 PROCESS_TOKEN = f"{os.getpid()}:{uuid.uuid4().hex}"
 # A flusher claims rows with a conditional UPDATE before delivering them, because the
 # delivery lock is process-local and a CLI exit can race a server timer. The claim marker
-# lives in the free-text `reason` column (the status vocabulary is frozen), and a claim older
-# than the client timeout plus a margin is released so a crashed flusher cannot strand a row.
+# lives in the free-text `reason` column (the status vocabulary is frozen). The marker is the
+# claim's identity: it carries a per-attempt uuid, so two claims made in the same tick are
+# distinguishable, and the terminal write only lands while that exact marker is still ours.
 CLAIM_PREFIX = "claimed_by:"
-CLAIM_STALE_SECONDS = DELIVERY_TIMEOUT_SECONDS + 5
+CLAIM_MARGIN_SECONDS = 5
+# `deliver()` probes the daemon BEFORE it calls the client, so the stale window has to cover
+# the whole delivery path. A window derived from the client timeout alone would let a second
+# flusher reclaim a row that its owner is legitimately still delivering.
+CLAIM_STALE_SECONDS = PROBE_TIMEOUT_SECONDS + DELIVERY_TIMEOUT_SECONDS + CLAIM_MARGIN_SECONDS
+# Pinned separately from the seconds constant so the nanosecond maths stays readable.
+CLAIM_STALE_NS = CLAIM_STALE_SECONDS * 1_000_000_000
 MARKUP_CAPABILITY = "body-markup"
 HYPERLINK_CAPABILITY = "body-hyperlinks"
 
@@ -355,11 +362,23 @@ def deliver(title: str, body: str, link: str = "") -> TransportResult:
 
 
 def _claim_marker() -> str:
-    return f"{CLAIM_PREFIX}{PROCESS_TOKEN}:{uuid.uuid4().hex}:{int(time.time())}"
+    """One claim's identity: process token + a fresh uuid + a nanosecond stamp.
+
+    The uuid is what makes the claim unique -- truncated whole seconds let two claims made
+    inside the same second share an identity, so the loser's write could match the winner's.
+    """
+    return f"{CLAIM_PREFIX}{PROCESS_TOKEN}:{uuid.uuid4().hex}:{time.time_ns()}"
 
 
-def _claim_age(reason: str | None) -> int | None:
+def _claim_token(reason: str | None) -> str | None:
+    """The whole marker is the token a terminal write compares against."""
     if not reason or not reason.startswith(CLAIM_PREFIX):
+        return None
+    return reason
+
+
+def _claim_claimed_ns(reason: str | None) -> int | None:
+    if _claim_token(reason) is None:
         return None
     try:
         return int(reason.rsplit(":", 1)[1])
@@ -367,27 +386,47 @@ def _claim_age(reason: str | None) -> int | None:
         return None
 
 
-def _claim_is_live(reason: str | None, now: int | None = None) -> bool:
-    age = _claim_age(reason)
-    return age is not None and (now or int(time.time())) - age <= CLAIM_STALE_SECONDS
+def _claim_is_live(reason: str | None, now_ns: int | None = None) -> bool:
+    claimed_ns = _claim_claimed_ns(reason)
+    if claimed_ns is None:
+        return False
+    now = time.time_ns() if now_ns is None else now_ns
+    return now - claimed_ns <= CLAIM_STALE_NS
 
 
 def _release_stale_claims(session: Session) -> int:
     """Return claims of a dead flusher to the pool instead of stranding the row pending."""
     released = 0
-    for row in session.exec(select(Notification).where(
-            Notification.status == PENDING, Notification.reason.like(f"{CLAIM_PREFIX}%"))):
-        age = _claim_age(row.reason)
-        if age is not None and not _claim_is_live(row.reason):
-            row.reason = ""
-            session.add(row)
-            released += 1
+    now_ns = time.time_ns()
+    # Materialised first: the loop body executes an UPDATE on the same session.
+    candidates = list(session.exec(select(Notification).where(
+        Notification.status == PENDING, Notification.reason.like(f"{CLAIM_PREFIX}%"))))
+    for row in candidates:
+        # Compare-and-set: only a claim still older than the full delivery path is released.
+        # A claim that went stale between our read and this UPDATE belongs to a flusher that
+        # may have just finished, so the conditional write is what keeps us honest.
+        observed = row.reason
+        if _claim_is_live(observed, now_ns):
+            continue
+        released += session.execute(
+            update(Notification.__table__)
+            .where(
+                Notification.__table__.c.id == row.id,
+                Notification.__table__.c.status == PENDING,
+                Notification.__table__.c.reason == observed,
+            )
+            .values(reason="")
+            .execution_options(synchronize_session=False)
+        ).rowcount or 0
     if released:
         session.commit()
+        session.expire_all()
     return released
 
 
-def _claim_pending(session: Session, owner: str | None = None) -> list[Notification]:
+def _claim_pending(
+    session: Session, owner: str | None = None
+) -> tuple[str | None, list[Notification]]:
     """Atomically claim pending rows, so a racing process delivers nothing it did not win."""
     _release_stale_claims(session)
     rows = list(session.exec(
@@ -397,7 +436,7 @@ def _claim_pending(session: Session, owner: str | None = None) -> list[Notificat
         rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
     ids = [r.id for r in rows if r.id is not None]
     if not ids:
-        return []
+        return None, []
     marker = _claim_marker()
     table = Notification.__table__
     claimed = session.execute(
@@ -412,17 +451,63 @@ def _claim_pending(session: Session, owner: str | None = None) -> list[Notificat
     ).rowcount or 0
     session.commit()
     if not claimed:
-        return []
+        return None, []
     session.expire_all()
-    return list(session.exec(
+    return marker, list(session.exec(
         select(Notification).where(Notification.reason == marker)
         .order_by(col(Notification.id))
     ))
 
 
+def _write_outcome(
+    session: Session, marker: str | None, rows: list[Notification], title: str, body: str,
+    result: TransportResult,
+) -> bool:
+    """Write the terminal record only while this process still owns the claim.
+
+    Every write is a compare-and-set on the claim marker and on `status='pending'`. A flusher
+    whose claim was released and reclaimed mid-delivery (its window expired while the client
+    blocked) owns nothing any more: it writes NOTHING, so the winner's delivered/coalesced
+    record survives and a revoked flusher cannot overwrite it.
+    """
+    if marker is None or not rows:
+        return False
+    table = Notification.__table__
+    first = rows[0]
+    won = session.execute(
+        update(table)
+        .where(table.c.id == first.id, table.c.status == PENDING, table.c.reason == marker)
+        .values(
+            title=title, body=body, channel=result.channel, error=result.error,
+            status=result.status, reason=result.reason,
+            details_json={**(first.details_json or {}), **result.as_details()},
+        )
+        .execution_options(synchronize_session=False)
+    ).rowcount or 0
+    if not won:
+        session.rollback()
+        return False
+    for extra in rows[1:]:
+        session.execute(
+            update(table)
+            .where(table.c.id == extra.id, table.c.status == PENDING,
+                   table.c.reason == marker)
+            .values(
+                status=STATUS_FOR_OUTCOME[OUTCOME_COALESCED], coalesced_into=first.id,
+                channel=result.channel, reason=f"coalesced_into:{first.id}",
+                details_json={**(extra.details_json or {}),
+                              "outcome_class": OUTCOME_COALESCED, "coalesced_into": first.id},
+            )
+            .execution_options(synchronize_session=False)
+        )
+    session.commit()
+    session.expire_all()
+    return True
+
+
 def _deliver_pending_locked(session: Session, owner: str | None = None) -> int:
     """Claim pending rows, then deliver what this process won as one notification."""
-    rows = _claim_pending(session, owner)
+    marker, rows = _claim_pending(session, owner)
     if not rows:
         return 0
     first = rows[0]
@@ -434,18 +519,7 @@ def _deliver_pending_locked(session: Session, owner: str | None = None) -> int:
         result = deliver(title, body, first.link)
     except Exception as e:  # a notifier bug is recorded, never propagated
         result = TransportResult(OUTCOME_FAILED, None, redact(str(e))[:1000])
-    first.title, first.body, first.channel, first.error = title, body, result.channel, result.error
-    first.status, first.reason = result.status, result.reason
-    first.details_json = {**(first.details_json or {}), **result.as_details()}
-    for extra in rows[1:]:
-        extra.status, extra.coalesced_into = STATUS_FOR_OUTCOME[OUTCOME_COALESCED], first.id
-        extra.channel, extra.reason = result.channel, f"coalesced_into:{first.id}"
-        extra.details_json = {**(extra.details_json or {}), "outcome_class": OUTCOME_COALESCED,
-                              "coalesced_into": first.id}
-    for row in rows:
-        session.add(row)
-    session.commit()
-    return first.id or 0
+    return (first.id or 0) if _write_outcome(session, marker, rows, title, body, result) else 0
 
 
 def _deliver_pending(session: Session, owner: str | None = None) -> int:
@@ -505,18 +579,32 @@ def _terminate_pending_locked(
         rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
     # A fresh claim belongs to another flusher that may be delivering it right now; leaving it
     # pending is correct (that process resolves it), not a stranded row.
-    now = int(time.time())
-    rows = [r for r in rows if not _claim_is_live(r.reason, now)]
+    now_ns = time.time_ns()
+    rows = [r for r in rows if not _claim_is_live(r.reason, now_ns)]
+    table = Notification.__table__
+    terminated = 0
     for row in rows:
-        row.status = STATUS_FOR_OUTCOME[OUTCOME_FAILED]
-        row.reason = reason
-        row.error = row.error or error
-        row.details_json = {**(row.details_json or {}), "outcome_class": OUTCOME_FAILED,
-                            "detail": error}
-        session.add(row)
-    if rows:
+        # Compare-and-set on the state we read: a row a racing flusher changed is not ours to
+        # terminate, exactly as with the delivery path above.
+        observed_reason = row.reason
+        observed_error = row.error
+        mine = (table.c.reason == observed_reason if observed_reason is not None
+                else table.c.reason.is_(None))
+        terminated += session.execute(
+            update(table)
+            .where(table.c.id == row.id, table.c.status == PENDING, mine)
+            .values(
+                status=STATUS_FOR_OUTCOME[OUTCOME_FAILED], reason=reason,
+                error=observed_error or error,
+                details_json={**(row.details_json or {}), "outcome_class": OUTCOME_FAILED,
+                              "detail": error},
+            )
+            .execution_options(synchronize_session=False)
+        ).rowcount or 0
+    if terminated:
         session.commit()
-    return len(rows)
+        session.expire_all()
+    return terminated
 
 
 def flush_pending_at_exit(session: Session | None = None) -> int:

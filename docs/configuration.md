@@ -124,9 +124,14 @@ read as covering them.
 
 **Pending rows are never stranded.** A `pending` row is resolved by the 2s coalescing timer, API
 startup, the read path (`GET /api/notifications` flushes first), or CLI exit. Delivery claims rows
-with a conditional `UPDATE` (`reason=claimed_by:<token>:<epoch>`) before sending, so a CLI exit
-and a server timer cannot both deliver one row; a claim older than the client timeout plus five
-seconds is released, so a flusher that dies cannot strand its rows. `cli.main()` flushes **only
+with a conditional `UPDATE` (`reason=claimed_by:<process>:<uuid>:<nanoseconds>`) before sending, so
+a CLI exit and a server timer cannot both deliver one row. The claim carries a fresh per-attempt
+uuid, so two claims made in the same instant are distinguishable, and it is only released after
+`PROBE_TIMEOUT_SECONDS + DELIVERY_TIMEOUT_SECONDS + 5` seconds (17s by default) -- the capability
+probe happens before the client call, so a shorter window could revoke a claim whose owner is still
+legitimately delivering. Every terminal write (`delivered`/`coalesced`/`failed`) is a
+compare-and-set on that claim marker, so a flusher whose claim was revoked writes nothing and cannot
+overwrite the winner's record. `cli.main()` flushes **only
 rows that process created**, then writes `failed` / `process_exit_undelivered` for its own
 still-pending rows (`details_json.owner`); a live server's rows stay `pending`. The exit flush is
 inert without a database file. Coalescing is global: one message can carry several runs/triggers

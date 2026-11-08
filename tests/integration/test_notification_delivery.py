@@ -59,18 +59,38 @@ def test_reading_the_list_flushes_rows_the_server_left_pending(initialized, sent
     assert sent == ["read path pending"]
 
 
-def test_cli_exit_delivers_its_pending_rows(initialized, sent, monkeypatch):
+def test_cli_exit_delivers_a_row_the_production_path_created(initialized, sent, monkeypatch):
+    """Finding 2: the row comes from `notify_event`, so the owner stamp and the exit
+
+    flush are exercised together. If production stops stamping the owner the flush finds
+    nothing and this test fails, instead of passing on a hand-stamped fixture.
+    """
     from orchestrator import cli
     from orchestrator.core.db import session_scope
+    from orchestrator.core.notification_vocab import MASTER_SETTING
+    from orchestrator.services import settings_service
 
+    monkeypatch.setattr(notification_service, "COALESCE_SECONDS", 60.0)
+    monkeypatch.setattr(notification_service, "_schedule", lambda: None)
     with session_scope() as s:
-        s.add(_pending("cli:1", title="cli exit pending"))
-        s.commit()
+        settings_service.update(s, {MASTER_SETTING: True})
+    row = notification_service.notify_event(event="run_completed", details="finished")
+    assert row is not None and row.id is not None
+    with session_scope() as s:
+        pending = s.exec(select(Notification)).one()
+        assert (pending.status, pending.reason) == ("pending", "")
+        # The real fan-out stamped this process's owner token; nothing is hand-set here.
+        assert pending.details_json[notification_service.OWNER_KEY] == (
+            notification_service.PROCESS_TOKEN)
+        title = pending.title
+
     monkeypatch.setattr(cli, "app", lambda: None)
     cli.main()
+
     with session_scope() as s:
-        row = s.exec(select(Notification).where(Notification.dedupe_key == "cli:1")).one()
-        assert (row.status, row.reason) == ("delivered", "")
+        delivered = s.exec(select(Notification)).one()
+        assert (delivered.status, delivered.reason) == ("delivered", "")
+    assert sent == [title]
 
 
 def test_python_dash_m_and_the_console_script_route_through_cli_main(initialized):

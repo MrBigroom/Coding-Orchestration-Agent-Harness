@@ -739,21 +739,127 @@ def test_two_flushers_race_and_only_the_claim_winner_delivers(session, monkeypat
         with session_scope() as other:
             other_results.append(notification_service._deliver_pending_locked(other))
         return notification_service.TransportResult(
-            notification_service.OUTCOME_DELIVERED, "test-channel")
+            notification_service.OUTCOME_DELIVERED, "test-channel", None, "plain")
 
     monkeypatch.setattr(notification_service, "deliver", fake_deliver)
     assert notification_service.flush_pending(session) == row.id
     session.expire_all()
+    winner = _rows(session)[0]
     assert calls == ["race row"]
     assert other_results == [0]  # the racing flusher claimed nothing: no second popup
-    assert [(r.id, r.status) for r in _rows(session)] == [(row.id, "delivered")]
+    # Finding 1(c): the winner's record survives intact.
+    assert (winner.id, winner.status, winner.channel, winner.error) == (
+        row.id, "delivered", "test-channel", None)
+
+
+def test_a_flusher_whose_claim_was_revoked_mid_delivery_writes_nothing(session, monkeypatch):
+    """Finding 1(c): a stolen claim means the loser's terminal write must not land."""
+    from orchestrator.core.db import session_scope
+
+    row = _pending(session, "revoked:1", title="revoked row")
+    calls, other_results = [], []
+
+    def fake_deliver(title, body, link=""):
+        calls.append(title)
+        if len(calls) > 1:  # the flusher that stole the claim records a real delivery
+            return notification_service.TransportResult(
+                notification_service.OUTCOME_DELIVERED, "winner-channel", None, "plain")
+        # This flusher's window expires while it is blocked in the client call: a second
+        # flusher releases the stale claim, reclaims the row and delivers it for real.
+        with session_scope() as other:
+            owned = other.get(Notification, row.id)
+            owned.reason = _claim_marker_ago(notification_service.CLAIM_STALE_SECONDS + 1)
+            other.add(owned)
+            other.commit()
+            other_results.append(notification_service._deliver_pending_locked(other))
+        return notification_service.TransportResult(
+            notification_service.OUTCOME_FAILED, "loser-channel", "revoked write", "plain")
+
+    monkeypatch.setattr(notification_service, "deliver", fake_deliver)
+    assert notification_service.flush_pending(session) == 0  # the loser wrote nothing
+    session.expire_all()
+    survived = _rows(session)[0]
+    assert other_results == [row.id]  # the second flusher won and delivered
+    assert calls == ["revoked row", "revoked row"]
+    assert (survived.status, survived.channel, survived.error) == (
+        "delivered", "winner-channel", None)
+
+
+def _claim_marker_ago(seconds_ago: float) -> str:
+    """A syntactically real claim marker stamped `seconds_ago` in nanoseconds."""
+    stamp = time.time_ns() - int(seconds_ago * 1_000_000_000)
+    return f"{notification_service.CLAIM_PREFIX}dead:abc:{stamp}"
+
+
+def test_the_stale_window_covers_the_whole_delivery_path() -> None:
+    """Finding 1(a): deliver() probes before it calls the client, so both timeouts count."""
+    assert notification_service.CLAIM_STALE_SECONDS > (
+        notification_service.PROBE_TIMEOUT_SECONDS
+        + notification_service.DELIVERY_TIMEOUT_SECONDS
+    )
+
+
+def test_two_claims_in_the_same_instant_are_distinguishable(monkeypatch) -> None:
+    """Finding 1(b): the claim identity is a per-attempt uuid, not a whole-second stamp."""
+
+    class _FrozenTime:
+        @staticmethod
+        def time_ns() -> int:
+            return 1_700_000_000_000_000_000
+
+    monkeypatch.setattr(notification_service, "time", _FrozenTime)
+    first = notification_service._claim_marker()
+    second = notification_service._claim_marker()
+    assert first != second
+    assert notification_service._claim_token(first) != notification_service._claim_token(second)
+
+
+def test_a_live_claim_is_not_reclaimed_mid_delivery(session, monkeypatch):
+    """Finding 1(a): a claim inside the full-path window still belongs to its owner."""
+    row = _pending(session, "fresh-claim:1", title="fresh claim row")
+    live_marker = _claim_marker_ago(notification_service.CLAIM_STALE_SECONDS - 1)
+    row.reason = live_marker
+    session.add(row)
+    session.commit()
+    calls = []
+
+    def fake_deliver(title, body, link=""):
+        calls.append(title)
+        return notification_service.TransportResult(
+            notification_service.OUTCOME_DELIVERED, "test-channel")
+
+    monkeypatch.setattr(notification_service, "deliver", fake_deliver)
+    assert notification_service.flush_pending(session) == 0
+    session.expire_all()
+    still_owned = _rows(session)[0]
+    assert calls == []  # nothing delivered, nothing claimed by the second flusher
+    assert (still_owned.status, still_owned.reason) == ("pending", live_marker)
+
+
+def test_an_expired_claim_is_reclaimed_after_the_whole_delivery_path(session, monkeypatch):
+    """Finding 1(a): past probe+client+margin the claim is dead and the row is fair game."""
+    row = _pending(session, "expired-claim:1", title="expired claim row")
+    row.reason = _claim_marker_ago(notification_service.CLAIM_STALE_SECONDS + 1)
+    session.add(row)
+    session.commit()
+    calls = []
+
+    def fake_deliver(title, body, link=""):
+        calls.append(title)
+        return notification_service.TransportResult(
+            notification_service.OUTCOME_DELIVERED, "test-channel")
+
+    monkeypatch.setattr(notification_service, "deliver", fake_deliver)
+    assert notification_service.flush_pending(session) == row.id
+    assert calls == ["expired claim row"]
+    session.expire_all()
+    assert _rows(session)[0].status == "delivered"
 
 
 def test_a_dead_flushers_claim_is_released_instead_of_stranding_the_row(session, monkeypatch):
     """DoD 3: a process that claimed a row and died must not leave it pending forever."""
     row = _pending(session, "stale:1", title="stale row")
-    row.reason = (f"{notification_service.CLAIM_PREFIX}dead:abc:"
-                  f"{int(time.time()) - notification_service.CLAIM_STALE_SECONDS - 60}")
+    row.reason = _claim_marker_ago(notification_service.CLAIM_STALE_SECONDS + 60)
     session.add(row)
     session.commit()
     calls = []
