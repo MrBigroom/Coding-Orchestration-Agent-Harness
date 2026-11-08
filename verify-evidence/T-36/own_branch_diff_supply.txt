@@ -1,23 +1,24 @@
-# HEAD=d2989a3abd3200566b38b4f444a8462ed981d11d entries-outside-verify-evidence/T-36=0
+# HEAD=9e190a535370bc41c2ef6e9cdcfdeffb1953bb1a entries-outside-verify-evidence/T-36=0
 # command: PYTHONPATH=src <main>/.venv/bin/python (render_diff_budget over 'git diff <merge-base>...HEAD')
-BUDGET_default=12000 patch_tokens=22003 files=12 rendered_tokens=11119
-[review diff budget: max_diff_tokens=12000; 12 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 5 compensation artifact(s) have a reserved slice of 5467 tokens (per-file 1093); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
-FILE README.md hunks_in_supplied=1 supplied_tokens=431 available_tokens=431
-FILE docs/build-loop.md hunks_in_supplied=2 supplied_tokens=1395 available_tokens=1395
-FILE docs/configuration.md hunks_in_supplied=1 supplied_tokens=502 available_tokens=502
-FILE docs/decisions.md hunks_in_supplied=1 supplied_tokens=683 available_tokens=683
-FILE src/orchestrator/services/prompt_builder.py hunks_in_supplied=3 supplied_tokens=2298 available_tokens=6925
+BUDGET_default=12000 patch_tokens=24095 files=12 rendered_tokens=11924
+[review diff budget: max_diff_tokens=12000; 12 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 5 compensation artifact(s) have a reserved slice of 5291 tokens (per-file 1058); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
+FILE src/orchestrator/services/prompt_builder.py hunks_in_supplied=3 supplied_tokens=2298 available_tokens=7083
 FILE tests/integration/test_review_payload.py hunks_in_supplied=3 supplied_tokens=707 available_tokens=707
-FILE tests/unit/test_review_budget.py hunks_in_supplied=1 supplied_tokens=217 available_tokens=6689
-FILE verify-evidence/T-36/README.md hunks_in_supplied=1 supplied_tokens=1881 available_tokens=1881
+FILE tests/unit/test_review_budget.py hunks_in_supplied=1 supplied_tokens=217 available_tokens=7795
+FILE docs/build-loop.md hunks_in_supplied=2 supplied_tokens=1466 available_tokens=1466
+FILE docs/configuration.md hunks_in_supplied=1 supplied_tokens=502 available_tokens=502
+FILE docs/decisions.md hunks_in_supplied=1 supplied_tokens=788 available_tokens=788
+FILE README.md hunks_in_supplied=1 supplied_tokens=431 available_tokens=431
+FILE verify-evidence/T-36/README.md hunks_in_supplied=1 supplied_tokens=2429 available_tokens=2429
 FILE verify-evidence/T-36/full_suite.txt hunks_in_supplied=1 supplied_tokens=590 available_tokens=590
 FILE verify-evidence/T-36/lint.txt hunks_in_supplied=1 supplied_tokens=340 available_tokens=340
-FILE verify-evidence/T-36/own_branch_diff_supply.txt hunks_in_supplied=1 supplied_tokens=653 available_tokens=653
-FILE verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 supplied_tokens=1209 available_tokens=1209
+FILE verify-evidence/T-36/own_branch_diff_supply.txt hunks_in_supplied=1 supplied_tokens=671 available_tokens=671
+FILE verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 supplied_tokens=1261 available_tokens=1297
 BUDGET_files_with_zero_supplied_bytes=0 []
 BUDGET_files_without_a_hunk=0 []
 BUDGET_files_missing_from_supplied=0 []
-BUDGET_source_share=7800 source_delivered=6233 source_leftover=1567
+BUDGET_source_share=7800 source_delivered=6409 source_leftover=1391
 MANIFEST rows:
-MANIFEST diff:src/orchestrator/services/prompt_builder.py available=27702 included=9196 reason=per-file diff budget: 3 of 7 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
-MANIFEST diff:tests/unit/test_review_budget.py available=26758 included=868 reason=per-file diff budget: 1 of 2 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
+MANIFEST diff:src/orchestrator/services/prompt_builder.py available=28331 included=9196 reason=per-file diff budget: 3 of 7 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
+MANIFEST diff:tests/unit/test_review_budget.py available=31180 included=868 reason=per-file diff budget: 1 of 2 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
+MANIFEST diff:verify-evidence/T-36/targeted_tests.txt available=5187 included=5044 reason=per-file diff budget: 1 of 1 hunks, body cut inside the shown hunk shown; omitted hunk headers are named inline in the reviewer-visible text

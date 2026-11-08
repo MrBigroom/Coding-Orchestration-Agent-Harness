@@ -1,4 +1,4 @@
-# HEAD=d2989a3abd3200566b38b4f444a8462ed981d11d entries-outside-verify-evidence/T-36=0
+# HEAD=9e190a535370bc41c2ef6e9cdcfdeffb1953bb1a entries-outside-verify-evidence/T-36=0
 # command: ./scripts/orch_verify.sh lint
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness

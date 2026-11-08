@@ -1,4 +1,4 @@
-# HEAD=d2989a3abd3200566b38b4f444a8462ed981d11d entries-outside-verify-evidence/T-36=0
+# HEAD=9e190a535370bc41c2ef6e9cdcfdeffb1953bb1a entries-outside-verify-evidence/T-36=0
 # command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -14,35 +14,37 @@ cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 28 items
+collecting ... collected 30 items
 
 tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped PASSED [  3%]
-tests/unit/test_review_budget.py::test_a_large_first_evidence_log_does_not_starve_later_evidence PASSED [  7%]
+tests/unit/test_review_budget.py::test_a_large_first_evidence_log_does_not_starve_later_evidence PASSED [  6%]
 tests/unit/test_review_budget.py::test_an_unfundable_group_does_not_give_the_whole_budget_to_the_first_file PASSED [ 10%]
-tests/unit/test_review_budget.py::test_undelivered_compensation_uses_the_final_text_not_only_the_records PASSED [ 14%]
-tests/unit/test_review_budget.py::test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut PASSED [ 17%]
-tests/unit/test_review_budget.py::test_manifest_shortfall_is_computed_from_the_as_sent_text PASSED [ 21%]
-tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim PASSED [ 25%]
-tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 28%]
-tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 32%]
-tests/unit/test_review_budget.py::test_remainder_moves_past_a_hunk_boundary_instead_of_being_stranded PASSED [ 35%]
-tests/unit/test_review_budget.py::test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths PASSED [ 39%]
-tests/unit/test_review_budget.py::test_no_floor_render_costs_more_than_the_floor_even_for_a_long_path PASSED [ 42%]
-tests/unit/test_review_budget.py::test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held PASSED [ 46%]
-tests/unit/test_review_budget.py::test_own_branch_shape_reason_names_the_hunk_cause_and_keeps_every_floor PASSED [ 50%]
-tests/unit/test_review_budget.py::test_r68_shape_reason_names_the_hunk_cause_and_keeps_every_floor PASSED [ 53%]
-tests/unit/test_review_budget.py::test_floor_only_reason_at_or_below_the_floor_keeps_the_share_claim PASSED [ 57%]
-tests/unit/test_review_budget.py::test_the_distinct_floor_only_wording_is_what_the_allocation_decides PASSED [ 60%]
-tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 64%]
-tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 67%]
-tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 71%]
-tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 75%]
-tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 78%]
-tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand PASSED [ 82%]
-tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry PASSED [ 85%]
-tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune PASSED [ 89%]
-tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot PASSED [ 92%]
+tests/unit/test_review_budget.py::test_undelivered_compensation_uses_the_final_text_not_only_the_records PASSED [ 13%]
+tests/unit/test_review_budget.py::test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut PASSED [ 16%]
+tests/unit/test_review_budget.py::test_manifest_shortfall_is_computed_from_the_as_sent_text PASSED [ 20%]
+tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim PASSED [ 23%]
+tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 26%]
+tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 30%]
+tests/unit/test_review_budget.py::test_remainder_moves_past_a_hunk_boundary_instead_of_being_stranded PASSED [ 33%]
+tests/unit/test_review_budget.py::test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths PASSED [ 36%]
+tests/unit/test_review_budget.py::test_no_floor_render_costs_more_than_the_floor_even_for_a_long_path PASSED [ 40%]
+tests/unit/test_review_budget.py::test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held PASSED [ 43%]
+tests/unit/test_review_budget.py::test_own_branch_shape_reason_names_the_hunk_cause_and_keeps_every_floor PASSED [ 46%]
+tests/unit/test_review_budget.py::test_r68_shape_reason_names_the_hunk_cause_and_keeps_every_floor PASSED [ 50%]
+tests/unit/test_review_budget.py::test_default_budget_49_file_shape_emits_granularity_not_the_share_claim PASSED [ 53%]
+tests/unit/test_review_budget.py::test_the_allocator_emits_the_granularity_row_with_its_own_leftover PASSED [ 56%]
+tests/unit/test_review_budget.py::test_floor_only_reason_at_or_below_the_floor_keeps_the_share_claim PASSED [ 60%]
+tests/unit/test_review_budget.py::test_the_distinct_floor_only_wording_is_what_the_allocation_decides PASSED [ 63%]
+tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 66%]
+tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 70%]
+tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 73%]
+tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 76%]
+tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 80%]
+tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand PASSED [ 83%]
+tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry PASSED [ 86%]
+tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune PASSED [ 90%]
+tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot PASSED [ 93%]
 tests/unit/test_review_budget.py::test_an_unreadable_worktree_registry_fails_loudly PASSED [ 96%]
 tests/unit/test_review_budget.py::test_guard_message_does_not_blame_the_suite_without_spy_evidence PASSED [100%]
 
-============================== 28 passed in 0.93s ==============================
+============================== 30 passed in 5.80s ==============================
