@@ -1,36 +1,25 @@
 """Committed evidence freshness and the one-command evidence bundle (T-15).
 
 A committed evidence file is only trustworthy while the HEAD it was measured at is the commit
-under review. Before T-15 nothing in the gate compared the two, so a round could harden its
-assertions and still be reviewed against an older copy of its own tests (T-4 round 5: 66 of 68
-files carried the round-4 tip). This module is that comparison, plus the single generator that
-makes keeping a bundle honest cheap.
+under review. Before T-15 nothing compared the two, so a round could harden its assertions and be
+reviewed against an older copy of its own tests (T-4 round 5: 66 of 68 files carried the round-4
+tip). Four rules, each a measured defect in an earlier round:
 
-Four rules shape it, each of which was a measured defect in an earlier round:
+* The stamp is a legacy vocabulary, not one format: nine shapes exist, all are parsed, a short SHA
+  is prefix-resolved against the commit under verification, and an unreadable `HEAD=` line is stale.
+* A stamp is header metadata: only the first :data:`STAMP_WINDOW` lines are scanned and a bare
+  `HEAD <sha>` counts only at a line start or inside a leading `#` comment, so captured output that
+  *mentions* a stamp can neither stale a bundle nor be rewritten.
+* A different SHA is not automatically stale. Recovery and hand-fix commits are identified by their
+  git **trailers** (`%(trailers)`, never a substring of the body), and an evidence-only commit is
+  one that touches only `verify-evidence/` and not the `capture.sh` generator.
+* Deletion is its own state: a file committed earlier on the branch and gone at the reviewed commit
+  is a finding naming the paths and the deleting commit, never `not_applicable`.
 
-* **The stamp is a legacy vocabulary, not one format.** Nine shapes exist in the repository
-  (``# HEAD=<sha>``, ``# HEAD <sha>``, ``HEAD: <sha>``, pipe-delimited, prose in a comment,
-  ``== commit under test: ... ==``, short SHAs, ...). All are parsed; a short SHA is
-  prefix-resolved against the commit under verification, never string-compared. A stamp-shaped
-  line the parser cannot read is reported stale, never fresh.
-* **A stamp is header metadata.** Only the first :data:`STAMP_WINDOW` lines of a file are
-  scanned, and a bare ``HEAD <sha>`` is only recognized at the start of a line or inside a
-  leading ``#`` comment. Captured test output that merely *mentions* a stamp (parametrized test
-  ids embed the shapes) can therefore neither make a bundle look stale nor be rewritten.
-* **HEAD moves for reasons the Worker does not control.** A different SHA is not automatically
-  stale: harness recovery commits and operator hand-fixes are identified by their git
-  *trailers* (``git show --format=%(trailers)``, never a substring search of the body), and an
-  evidence-only commit is one that touches nothing but ``verify-evidence/`` and **not** the
-  ``capture.sh`` generator. A stamp that differs only by those is fresh with the explanation.
-* **Deletion is a state of its own.** A file committed earlier on the branch and gone at the
-  reviewed commit is a finding naming the paths and the deleting commit, not ``not_applicable``.
-  Deleting evidence must not be rewarded with a silent pass.
-
-The generator cannot lie by construction: it refuses a dirty tracked worktree (so the HEAD it
-stamps is the tree it measured), runs the committed ``capture.sh`` and nothing else, canonicalises
-**only the files the capture pass rewrote**, and writes ``manifest.json``. Files the pass did not
-touch keep their old stamps and are reported stale by the check — there is no stamp-only mode,
-because re-stamping old content at a new HEAD is exactly the failure this modules exists to catch.
+The generator cannot lie by construction: it refuses a dirty tracked worktree, runs the committed
+`capture.sh` and nothing else, canonicalises **only the files that pass rewrote**, and writes
+`manifest.json`. A file the pass did not rewrite keeps its old stamp and reads stale — there is no
+stamp-only mode, because re-stamping content that was not regenerated is this module's whole point.
 """
 
 from __future__ import annotations
@@ -54,35 +43,27 @@ CANONICAL_STAMP = "# HEAD={sha}"
 MANIFEST_NAME = "manifest.json"
 CAPTURE_NAME = "capture.sh"
 SELF_CHECK_NAME = "freshness_selfcheck.txt"
-#: Number of leading lines that may carry a stamp. Stamps are header metadata; capturing a
-#: transcript whose body happens to contain a stamp-shaped line must not rewrite or stale a file.
-STAMP_WINDOW = 20
-
-#: Git trailer keys, without their colon. Trailer parsing is git's own (`%(trailers)`), so a
-#: commit body that *mentions* one of these words in prose is not exempt.
+STAMP_WINDOW = 20  # stamps are header metadata; a transcript body may mention one harmlessly
 RECOVERY_TRAILER = "Orchestrator-Recovery"
 HAND_FIX_TRAILER = "Operator-Hand-Fix"
 
-#: Internal states. The *check record* status is a frozen vocabulary (pass/fail/skipped/
-#: not_applicable, docs/frozen-contracts.md); :func:`check_status` maps onto it.
+#: Internal states. The check-record status is a frozen vocabulary (docs/frozen-contracts.md), so
+#: :func:`check_status` maps onto it instead of adding a fifth value.
 STATE_PASS = "pass"  # noqa: S105 - a check state, not a credential
 STATE_STALE = "stale"
 STATE_NOT_APPLICABLE = "not_applicable"
 
 _HEX = r"[0-9a-fA-F]{7,40}"
 _NOT_HEX = r"(?![0-9a-fA-F])"
-# Order matters: the assignment form first, so `# HEAD=<sha> (short) branch=...` is one stamp.
 _STAMP_PATTERNS = (
     re.compile(rf"^\s*#?\s*HEAD\s*=\s*(?P<sha>{_HEX}){_NOT_HEX}"),
     re.compile(rf"^\s*#?\s*HEAD\s*:\s*(?P<sha>{_HEX}){_NOT_HEX}"),
     re.compile(rf"^\s*#?\s*HEAD\s+(?P<sha>{_HEX}){_NOT_HEX}"),
-    # Prose is only accepted when the line is a comment: `# T-18 full suite at HEAD 46bb10b`.
-    re.compile(rf"^\s*#.*?\bHEAD\s+(?P<sha>{_HEX}){_NOT_HEX}"),
+    re.compile(rf"^\s*#.*?\bHEAD\s+(?P<sha>{_HEX}){_NOT_HEX}"),  # prose, inside a comment
     re.compile(rf"^\s*==\s*commit under test:.*?@\s*(?P<sha>{_HEX})\s*==", re.IGNORECASE),
 )
-#: A line that *looks* like a stamp this parser failed on. Deliberately narrow: the assignment
-#: form and the T-6 commit-under-test marker. `HEAD tree  : <sha>` is a key/value table row, not a
-#: stamp, and must not be reported as an unparsable one.
+#: A stamp-shaped line this parser failed on. Deliberately narrow: the assignment/colon forms and
+#: the T-6 marker. `HEAD tree  : <sha>` is a table row, not an unparsable stamp.
 _LOOKS_LIKE_STAMP = re.compile(r"^\s*#?\s*HEAD\s*[=:]|^\s*==\s*commit under test", re.IGNORECASE)
 
 
@@ -147,14 +128,12 @@ class BundleResult:
 
 
 def check_status(result: FreshnessResult, strict: bool = False) -> str:
-    """Map the freshness state onto the frozen verification check-status vocabulary.
+    """Map the freshness state onto the frozen check-status vocabulary.
 
-    ``stale`` is reported, not failed: the check-record status Literal in
-    ``docs/frozen-contracts.md`` is frozen at ``pass | fail | skipped | not_applicable`` and this
-    phase has no contract-change authorization, so staleness rides in the row's ``evidence``
-    string and in the ``evidence_freshness_stale`` build-log payload; ``skipped`` is the
-    "compared but not certified" bucket. ``fail`` is reserved for the operator's opt-in strict
-    rule (``ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true``).
+    `stale` is reported, not failed: the Literal in docs/frozen-contracts.md is frozen at
+    `pass | fail | skipped | not_applicable` and this phase has no contract-change authorization,
+    so staleness rides in the row's `evidence` string and in the `evidence_freshness_stale`
+    build-log payload. `fail` is reserved for the operator's opt-in strict rule.
     """
     if result.state == STATE_PASS:
         return "pass"  # noqa: S105 - frozen status value
@@ -190,16 +169,13 @@ def _short(repo: Path, sha: str) -> str:
 
 
 def parse_stamps(text: str, window: int = STAMP_WINDOW) -> tuple[list[EvidenceStamp], list[str]]:
-    """All HEAD stamps in the first ``window`` lines, plus stamp-shaped lines that did not parse."""
+    """HEAD stamps in the first ``window`` lines, plus stamp-shaped lines that did not parse."""
     stamps: list[EvidenceStamp] = []
     unparsed: list[str] = []
     for number, line in enumerate(text.splitlines()[:window], 1):
-        found = None
-        for pattern in _STAMP_PATTERNS:
-            match = pattern.search(line)
-            if match:
-                found = match.group("sha")
-                break
+        found = next(
+            (m.group("sha") for p in _STAMP_PATTERNS if (m := p.search(line)) is not None), None
+        )
         if found:
             canonical = bool(re.fullmatch(rf"\s*#\s*HEAD={_HEX}\s*", line))
             stamps.append(EvidenceStamp(found, line, number, canonical=canonical))
@@ -213,7 +189,7 @@ def _is_stamp_line(line: str) -> bool:
 
 
 def _manifest_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
-    """``manifest.json`` carries its HEAD as a field, not in the header window."""
+    """`manifest.json` carries its HEAD as a field, not in the header window."""
     try:
         data = json.loads(text)
     except ValueError:
@@ -238,7 +214,7 @@ def _stamps_for_file(path: str, text: str) -> tuple[list[EvidenceStamp], list[st
 
 
 def _trailers(repo: Path, sha: str) -> list[str]:
-    """The commit's trailer block, as git itself parses it (empty when there is none)."""
+    """The commit's trailer block as git parses it (empty when there is none)."""
     out = _git_text(repo, ["show", "-s", "--format=%(trailers)", sha])
     return [line.strip() for line in out.splitlines() if line.strip()]
 
@@ -259,22 +235,13 @@ def _commit_is_exempt(repo: Path, sha: str) -> str | None:
     ]
     if not files:
         return "empty commit"
-    evidence_only = all(path.startswith(f"{EVIDENCE_ROOT}/") for path in files)
-    # The generator is code, not evidence: editing capture.sh changes what every number in the
-    # bundle means, so a commit that touches it is not an evidence-only commit.
-    touches_generator = any(Path(path).name == CAPTURE_NAME for path in files)
-    if evidence_only and not touches_generator:
+    # The generator is code: editing capture.sh changes what every number means, so a commit that
+    # touches it is not an evidence-only commit.
+    if all(p.startswith(f"{EVIDENCE_ROOT}/") for p in files) and (
+        not any(Path(p).name == CAPTURE_NAME for p in files)
+    ):
         return "evidence-only commit"
     return None
-
-
-def _is_ancestor(repo: Path, older: str, newer: str) -> bool:
-    return run_git(["merge-base", "--is-ancestor", older, newer], repo, check=False).code == 0
-
-
-def _commits_between(repo: Path, older: str, newer: str) -> list[str]:
-    out = _git_text(repo, ["rev-list", "--reverse", f"{older}..{newer}"])
-    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool, str]:
@@ -283,12 +250,16 @@ def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool,
         return False, f"stamp {stamp.sha} does not resolve to a commit"
     if full == target:
         return True, "matches the commit under verification"
-    if not _is_ancestor(repo, full, target):
+    if run_git(["merge-base", "--is-ancestor", full, target], repo, check=False).code != 0:
         return False, (
             f"stamp {_short(repo, full)} is not an ancestor of the commit under verification "
             f"{_short(repo, target)}"
         )
-    commits = _commits_between(repo, full, target)
+    commits = [
+        line.strip()
+        for line in _git_text(repo, ["rev-list", "--reverse", f"{full}..{target}"]).splitlines()
+        if line.strip()
+    ]
     exempt = [(sha, _commit_is_exempt(repo, sha)) for sha in commits]
     if all(reason for _sha, reason in exempt):
         labels = ", ".join(f"{_short(repo, sha)} ({reason})" for sha, reason in exempt)
@@ -309,9 +280,7 @@ def _worktree_files(root: Path, directory: str) -> list[str]:
     base = root / directory
     if not base.is_dir():
         return []
-    return sorted(
-        path.relative_to(root).as_posix() for path in base.rglob("*") if path.is_file()
-    )
+    return sorted(p.relative_to(root).as_posix() for p in base.rglob("*") if p.is_file())
 
 
 def _deleted_evidence(
@@ -320,23 +289,22 @@ def _deleted_evidence(
     """Paths under ``directory`` deleted between the branch base and ``commit``, still gone."""
     spec = f"{base_branch}..{commit}" if base_branch else commit
     if base_branch and _git_text(repo, ["rev-list", "--count", spec]).strip() == "0":
-        # The commit is on the base branch itself (or the branch never moved): search its own
-        # history rather than an empty range, which would hide the deletion entirely.
+        # The commit is on the base branch itself: searching an empty range would hide deletions.
         spec = commit
     out = _git_text(
         repo,
         ["log", "--format=commit %H", "--name-status", "--diff-filter=D", spec, "--", directory],
     )
     deleted: dict[str, str] = {}
-    deleting_commit = ""
+    deleting = ""
     for line in out.splitlines():
         if line.startswith("commit "):
-            deleting_commit = line.split(None, 1)[1].strip()
+            deleting = line.split(None, 1)[1].strip()
             continue
         parts = line.split("\t")
         if len(parts) >= 2 and parts[0].startswith("D"):
             # `git log` is newest first: the first deletion seen is the one that removed it.
-            deleted.setdefault(parts[1].strip(), deleting_commit)
+            deleted.setdefault(parts[1].strip(), deleting)
     gone = {path: sha for path, sha in deleted.items() if path not in current}
     return sorted(gone), gone
 
@@ -345,9 +313,8 @@ def _read_evidence(repo: Path, commit: str, path: str, from_worktree: bool) -> s
     if not from_worktree:
         show = run_git(["show", f"{commit}:{path}"], repo, check=False)
         return show.stdout if show.code == 0 else None
-    target = repo / path
     try:
-        return target.read_text(encoding="utf-8")
+        return (repo / path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -364,8 +331,8 @@ def check_freshness(
 ) -> FreshnessResult:
     """Compare every committed evidence stamp against ``commit`` (the run's ``commit_sha``).
 
-    ``from_worktree=True`` reads the files on disk instead of the commit's tree; the generator
-    uses it to certify the bundle it just wrote, before that bundle is committed.
+    ``from_worktree=True`` reads the files on disk; the generator uses it to certify the bundle it
+    just wrote, before that bundle is committed.
     """
     if repo is None:
         return FreshnessResult(STATE_NOT_APPLICABLE, "no worktree to inspect")
@@ -373,8 +340,7 @@ def check_freshness(
     target = _resolve_commit(root, commit)
     if target is None:
         return FreshnessResult(
-            STATE_NOT_APPLICABLE,
-            f"no resolvable commit under verification ({commit or 'none'})",
+            STATE_NOT_APPLICABLE, f"no resolvable commit under verification ({commit or 'none'})"
         )
     rel_dir = directory or f"{EVIDENCE_ROOT}/{normalize_label(label)}"
     target_short = _short(root, target)
@@ -386,7 +352,7 @@ def check_freshness(
     stale_paths: list[str] = []
     stale_reasons: dict[str, str] = {}
     unparsed_paths: list[str] = []
-    fresh_with_explanation: dict[str, str] = {}
+    fresh_by_exemption: dict[str, str] = {}
     stamped_files = 0
 
     for path in paths:
@@ -412,13 +378,22 @@ def check_freshness(
                 why for ok, why in verdicts if ok and why != "matches the commit under verification"
             ]
             if explanations:
-                fresh_with_explanation[path] = explanations[0]
+                fresh_by_exemption[path] = explanations[0]
             continue
         stale_paths.append(path)
         stale_reasons[path] = "; ".join(why for _ok, why in verdicts)
 
     deleted_paths, deleted_by = _deleted_evidence(root, target, rel_dir, base_branch, set(paths))
-
+    common = {
+        "compared_commit": target,
+        "stamped_files": stamped_files,
+        "stale_paths": sorted(stale_paths),
+        "stale_reasons": stale_reasons,
+        "deleted_paths": deleted_paths,
+        "deleted_by": deleted_by,
+        "unparsed_paths": unparsed_paths,
+        "fresh_with_explanation": fresh_by_exemption,
+    }
     if stale_paths or deleted_paths:
         parts = [
             f"{len(stale_paths)} stale of {stamped_files} stamped evidence file(s) against "
@@ -431,20 +406,8 @@ def check_freshness(
             f"{path}: deleted by {deleted_by[path]} and absent at {target_short}"
             for path in deleted_paths
         ]
-        notes += [f"{path}: {reason}" for path, reason in fresh_with_explanation.items()]
-        return FreshnessResult(
-            STATE_STALE,
-            evidence="; ".join(parts),
-            notes="\n".join(notes),
-            compared_commit=target,
-            stamped_files=stamped_files,
-            stale_paths=sorted(stale_paths),
-            stale_reasons=stale_reasons,
-            deleted_paths=deleted_paths,
-            deleted_by=deleted_by,
-            unparsed_paths=unparsed_paths,
-            fresh_with_explanation=fresh_with_explanation,
-        )
+        notes += [f"{path}: {reason}" for path, reason in fresh_by_exemption.items()]
+        return FreshnessResult(STATE_STALE, "; ".join(parts), "\n".join(notes), **common)
 
     if stamped_files == 0:
         reason = (
@@ -455,38 +418,34 @@ def check_freshness(
         return FreshnessResult(
             STATE_NOT_APPLICABLE, evidence=reason, compared_commit=target, stamped_files=0
         )
-
     # Say which sense of "fresh" applies: an exact match, or fresh only through exempt commits.
-    # The earlier round's self-check said "match <sha>" while its notes named a different commit.
-    exempt_note = (
-        f"; {len(fresh_with_explanation)} fresh only via exempt commit(s)"
-        if fresh_with_explanation
+    tail = (
+        f"; {len(fresh_by_exemption)} fresh only via exempt commit(s)"
+        if fresh_by_exemption
         else ""
     )
     return FreshnessResult(
         STATE_PASS,
         evidence=(
-            f"{stamped_files} stamped evidence file(s) fresh at {target_short} ({target})"
-            f"{exempt_note}"
+            f"{stamped_files} stamped evidence file(s) fresh at {target_short} ({target}){tail}"
         ),
-        notes="\n".join(f"{path}: {reason}" for path, reason in fresh_with_explanation.items()),
-        compared_commit=target,
-        stamped_files=stamped_files,
-        fresh_with_explanation=fresh_with_explanation,
+        notes="\n".join(f"{path}: {reason}" for path, reason in fresh_by_exemption.items()),
+        **common,
     )
 
 
 def review_finding(result: FreshnessResult) -> dict[str, str]:
     """The harness-detected finding body for the Architect payload."""
-    paths = ", ".join(result.stale_paths + result.deleted_paths)
     return {
-        "file_or_area": paths or "committed evidence",
+        "file_or_area": (
+            ", ".join(result.stale_paths + result.deleted_paths) or "committed evidence"
+        ),
         "issue": (
             "harness-detected evidence freshness: "
             f"{result.stale_count} stale and {len(result.deleted_paths)} deleted committed "
             f"evidence file(s) against the commit under verification. {result.evidence}. "
-            "Refresh the bundle with one command (`orchestrator task evidence <id>`), which "
-            f"regenerates every file it can from the current tip. Details: "
+            "Refresh the bundle with one command (`orchestrator task evidence <id>`); it "
+            "regenerates every file it can from the current tip. Details: "
             f"{result.notes.replace(chr(10), ' | ')}"
         ),
         "violates": "T-15 DoD 1 (committed evidence must match the commit under review)",
@@ -494,7 +453,7 @@ def review_finding(result: FreshnessResult) -> dict[str, str]:
 
 
 def canonicalize_stamps(path: Path, head: str) -> bool:
-    """Rewrite the (header) stamps in one file to the canonical line. True if bytes changed."""
+    """Rewrite the header stamps in one file to the canonical line. True if bytes changed."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -502,20 +461,17 @@ def canonicalize_stamps(path: Path, head: str) -> bool:
     stamps, _unparsed = parse_stamps(text)
     if not stamps:
         return False
-    lines = text.splitlines(keepends=True)
     out: list[str] = []
     inserted = False
-    for number, line in enumerate(lines, 1):
+    for number, line in enumerate(text.splitlines(keepends=True), 1):
         if number <= STAMP_WINDOW and _is_stamp_line(line):
             if not inserted:
                 out.append(CANONICAL_STAMP.format(sha=head) + ("\n" if line.endswith("\n") else ""))
                 inserted = True
             continue
         out.append(line)
-    if not inserted:
-        return False
     new_text = "".join(out)
-    if new_text == text:
+    if not inserted or new_text == text:
         return False
     path.write_text(new_text, encoding="utf-8")
     return True
@@ -543,10 +499,6 @@ def _tool_versions(root: Path) -> dict[str, str]:
     return versions
 
 
-def _utcnow() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def _manifest_payload(
     root: Path, directory: Path, label: str, head: str, command: str, previous: dict | None
 ) -> dict:
@@ -560,14 +512,13 @@ def _manifest_payload(
         "head": head,
         "head_short": _short(root, head),
         "stamp": CANONICAL_STAMP.format(sha=head),
-        "generated_at": _utcnow(),
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "command": command,
         "tool_versions": _tool_versions(root),
         "files": produced,
     }
-    # A second run at the same HEAD with the same produced files is a byte-for-byte no-op,
-    # timestamp included; otherwise the command would dirty its own manifest every time and
-    # DoD 5(d) (a clean second run) could never hold.
+    # A second run at the same HEAD with the same files is a byte-for-byte no-op, timestamp
+    # included; otherwise the command would dirty its own manifest and DoD 5(d) could not hold.
     comparable = {k: v for k, v in payload.items() if k != "generated_at"}
     if previous:
         old = {k: v for k, v in previous.items() if k != "generated_at"}
@@ -576,48 +527,53 @@ def _manifest_payload(
     return payload
 
 
-def _dirty_tracked(root: Path, rel_dir: str) -> list[str]:
-    out = _git_text(root, ["status", "--porcelain", "-uno"])
-    dirty = []
-    for line in out.splitlines():
-        path = line[3:].strip()
-        if not path or path.startswith(f"{rel_dir}/"):
-            continue
-        dirty.append(path)
-    return dirty
-
-
-def _write_self_check(root: Path, directory: Path, label: str, head: str) -> Path:
-    """Record the generator's own worktree-basis check next to the bundle it just wrote."""
-    # The manifest and this file are generator bookkeeping: the manifest is written after this
-    # pass and this file is written by it, so counting either would make a no-op run rewrite
-    # itself. The gate still checks the manifest's own stamp.
+def _write_self_check(root: Path, directory: Path, label: str, head: str) -> None:
+    """Record the pass's own worktree-basis check. Unstamped: it certifies the files around it."""
+    # The manifest and this file are generator bookkeeping (one written after, one by this pass), so
+    # counting either would make a no-op run rewrite itself. The gate still checks the manifest.
     result = check_freshness(
-        root, head, label, None, from_worktree=True,
+        root,
+        head,
+        label,
+        None,
+        from_worktree=True,
         ignore=frozenset({MANIFEST_NAME, SELF_CHECK_NAME}),
     )
-    lines = [
-        "# Evidence self-check written by the one bundle pass (not hand-edited, no HEAD stamp:",
-        "# it certifies the files around it, and the committed view is reported by the gate).",
-        f"# command: orchestrator task evidence {label}",
-        "# rewritten files, wall time and the command line are reported by that command itself;",
-        "# this file records only what the check saw, so a no-op second run is byte-identical.",
-        "basis=worktree",
-        "scope=every evidence file except manifest.json and this file",
-        f"compared_commit={result.compared_commit}",
-        f"status={result.state}",
-        f"stamped_files={result.stamped_files}",
-        f"stale_count={result.stale_count}",
-        f"deleted_count={len(result.deleted_paths)}",
-        f"evidence={result.evidence or 'n/a'}",
-        f"notes={result.notes or 'none'}",
-        "committed_view=the stamps above name this HEAD; the next commit must be evidence-only, "
-        "and the gate then reports pass with that explanation (see tests/unit/"
-        "test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).",
-    ]
-    path = directory / SELF_CHECK_NAME
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    (directory / SELF_CHECK_NAME).write_text(
+        "\n".join(
+            [
+                "# Evidence self-check written by the one bundle pass (not hand-edited, no HEAD",
+                "# stamp: it certifies the files around it; the gate reports the committed view).",
+                f"# command: orchestrator task evidence {label}",
+                "# rewrites and wall time are reported by that command; this file records only",
+                "# what the check saw, so a no-op second run is byte-identical.",
+                "basis=worktree",
+                "scope=every evidence file except manifest.json and this file",
+                f"compared_commit={result.compared_commit}",
+                f"status={result.state}",
+                f"stamped_files={result.stamped_files}",
+                f"stale_count={result.stale_count}",
+                f"deleted_count={len(result.deleted_paths)}",
+                f"evidence={result.evidence or 'n/a'}",
+                f"notes={result.notes or 'none'}",
+                "committed_view=the stamps name this HEAD, the next commit must be evidence-only, "
+                "and the gate then reports pass with that explanation (see "
+                "tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_"
+                "committed).",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _dirty_tracked(root: Path, rel_dir: str) -> list[str]:
+    dirty = []
+    for line in _git_text(root, ["status", "--porcelain", "-uno"]).splitlines():
+        path = line[3:].strip()
+        if path and not path.startswith(f"{rel_dir}/"):
+            dirty.append(path)
+    return dirty
 
 
 def regenerate_bundle(
@@ -631,7 +587,7 @@ def regenerate_bundle(
     """Regenerate one evidence directory in a single invocation.
 
     Runs the committed ``capture.sh`` (or ``command``), canonicalises **only the files that pass
-    rewrote**, writes ``manifest.json`` and ``freshness_selfcheck.txt``. There is no stamp-only
+    rewrote**, then writes ``manifest.json`` and ``freshness_selfcheck.txt``. There is no stamp-only
     mode: a file the generator did not rewrite keeps its old stamp and is reported stale.
     """
     root = Path(root)
@@ -662,8 +618,7 @@ def regenerate_bundle(
             raise EvidenceBundleError(
                 f"no committed generator at {rel_dir}/{CAPTURE_NAME}; commit one or pass --command"
             )
-        argv = [str(script)]
-        invoked = f"{rel_dir}/{CAPTURE_NAME}"
+        argv, invoked = [str(script)], f"{rel_dir}/{CAPTURE_NAME}"
     try:
         proc = subprocess.run(
             argv, cwd=root, capture_output=True, text=True, timeout=timeout, check=False
@@ -677,12 +632,10 @@ def regenerate_bundle(
         )
     if not directory.is_dir():
         raise EvidenceBundleError(f"generator produced no directory at {rel_dir}")
-    capture_hashes = _hash_tree(directory)
-    for rel in sorted(capture_hashes):
-        if Path(rel).name != MANIFEST_NAME and before.get(rel) != capture_hashes[rel]:
+    captured = _hash_tree(directory)
+    for rel in sorted(captured):
+        if Path(rel).name != MANIFEST_NAME and before.get(rel) != captured[rel]:
             canonicalize_stamps(directory / rel, head)
-    canonical_hashes = _hash_tree(directory)
-    changed = set(before) | set(canonical_hashes)
     duration = time.monotonic() - started
     _write_self_check(root, directory, label, head)
 
@@ -699,7 +652,7 @@ def regenerate_bundle(
         manifest_path.write_text(new_text, encoding="utf-8")
 
     after = _hash_tree(directory)
-    changed |= set(after)
+    changed = set(before) | set(captured) | set(after)
     rewritten = sorted(path for path in changed if before.get(path) != after.get(path))
     return BundleResult(
         label=label,
