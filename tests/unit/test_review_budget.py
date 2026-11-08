@@ -537,6 +537,21 @@ def _r68_sparse_patch() -> str:
     return patch + _chunk("verify-evidence/T-36/r68.txt", 10)
 
 
+def _forty_nine_file_default_budget_patch() -> str:
+    """The default-budget shape that separates the fair share from the effective ceiling.
+
+    A short path with a (12, 20000) hunk pair renders a 155-token first-hunk floor with the first
+    hunk fully shown, and the next hunk cannot fit even at the 3900-token cap. Forty-nine such
+    floors cost 7781 of the 7800-token source share; the top-up pass spends 18 of the 19 leftover
+    tokens in marker-sized increments and one token remains. `per_file` is 159 -- below the
+    160-token floor -- while `cap` is 3900, which is the exact contradiction round 8 finding 1
+    named. The compensation artifact keeps the T-16 source share at 7800 rather than 11700.
+    """
+    paths = [f"src/m{i}.py" for i in range(49)]
+    source = "".join(_multi_hunk_chunk(path, (12, 20000), "m") for path in paths)
+    return source + _chunk("verify-evidence/T-36/r8.txt", 10)
+
+
 def test_own_branch_shape_reason_names_the_hunk_cause_and_keeps_every_floor():
     """T-36 round 7: the measured own-branch shape must not claim its share was under the floor.
 
@@ -583,6 +598,74 @@ def test_r68_shape_reason_names_the_hunk_cause_and_keeps_every_floor():
     reason = prompt_builder._floor_only_reason(leftover, 260, 3900)
     _assert_reason_names_the_hunk_cause(reason, leftover, 260, 3900)
     _assert_floor_guarantee(patch, rendered, recorder)
+
+
+def test_default_budget_49_file_shape_emits_granularity_not_the_share_claim():
+    """Round-8 finding 1: compare the effective ceiling, not `per_file` alone.
+
+    The 49-file shape has `per_file=159` (under the floor) but `cap=3900` (far above it), so the
+    old `per_file <= DIFF_FILE_FLOOR_TOKENS` branch printed "share (159 tokens, cap 3900) did not
+    exceed that floor" -- a sentence contradicted by its own numbers. The allocator-emitted row
+    must be the granularity wording, and it must carry the measured per_file/cap/floor/leftover.
+    """
+    patch = _forty_nine_file_default_budget_patch()
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    assert "49 source file(s) share 7800 tokens (per-file 159, cap 3900)" in rendered, (
+        rendered.splitlines()[0]
+    )
+    leftover = _source_leftover(rendered, patch, 7800)
+    assert leftover > 0, leftover
+    floor_rows = [
+        record.as_dict()
+        for record in recorder.records
+        if record.as_dict()["kind"] == "budget"
+        and "floor only" in record.as_dict()["reason"]
+    ]
+    assert floor_rows, [record.as_dict() for record in recorder.records]
+    for row in floor_rows:
+        reason = row["reason"]
+        assert "next hunk did not fit" in reason, reason
+        assert "share under the floor" not in reason, reason
+        assert "did not exceed that floor" not in reason, reason
+    reason = floor_rows[0]["reason"]
+    assert "(159 tokens, cap 3900, effective ceiling 3900 tokens)" in reason, reason
+    assert f"the {leftover} tokens the group had left" in reason, reason
+    assert f"{prompt_builder.DIFF_FILE_FLOOR_TOKENS}-token per-file floor" in reason, reason
+    _assert_floor_guarantee(patch, rendered, recorder)
+
+
+def test_the_allocator_emits_the_granularity_row_with_its_own_leftover():
+    """Round-8 finding 2: the row must come from `render_diff_budget`, not a helper call.
+
+    Seven multi-hunk files at a 500-token budget: the allocator funds five 155-token floors, the
+    next hunk of every funded file is too large for its 210-token cap, and 5 tokens stay unspent.
+    The manifest row is therefore emitted by the same code path the reviewer payload uses.
+    """
+    paths = [f"src/g{i}.py" for i in range(7)]
+    patch = "".join(_multi_hunk_chunk(path, (3, 5000), "g") for path in paths)
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 500, recorder)
+    assert "per-file budget 120 tokens (one file may use up to 210)" in rendered, (
+        rendered.splitlines()[0]
+    )
+    leftover = _source_leftover(rendered, patch, 420)
+    assert leftover > 0, leftover
+    floor_rows = [
+        record.as_dict()
+        for record in recorder.records
+        if record.as_dict()["kind"] == "budget"
+        and "floor only" in record.as_dict()["reason"]
+    ]
+    assert floor_rows, [record.as_dict() for record in recorder.records]
+    reason = floor_rows[0]["reason"]
+    assert "next hunk did not fit" in reason, reason
+    assert "share under the floor" not in reason, reason
+    assert "(120 tokens, cap 210, effective ceiling 210 tokens)" in reason, reason
+    assert f"the {leftover} tokens the group had left" in reason, reason
+    assert f"{prompt_builder.DIFF_FILE_FLOOR_TOKENS}-token per-file floor" in reason, reason
 
 
 def test_floor_only_reason_at_or_below_the_floor_keeps_the_share_claim():

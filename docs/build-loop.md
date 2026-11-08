@@ -566,12 +566,14 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   A diff row's reason distinguishes the T-36 outcomes in the existing columns: **floor only,
   remainder exhausted** (the first hunk was supplied and the group budget was fully committed by
   delivered bytes), **floor only, share under the floor** (the group still had tokens but this
-  file's share, with its per-file cap, did not exceed the 160-token floor, so those tokens stayed
-  unspent rather than being allocated to this file), and **floor only, next hunk did not fit**
-  (the share was larger than the floor, but rendering is hunk-granular: the next hunk did not fit
-  inside what remained of that share, so the group's leftover tokens stayed unallocated because
-  no hunk could absorb them) from **omitted entirely** (not even the floor fitted, or no floor
-  render fits), so zero bytes can never look like a short first hunk.
+  file's **effective ceiling** -- `max(per_file, cap)` for the source group, which is what the
+  top-up pass may spend -- did not exceed the 160-token floor, so those tokens stayed unspent
+  rather than being allocated to this file; the evidence group is uncapped after its fair-share
+  pass and never receives this claim), and **floor only, next hunk did not fit** (the effective
+  ceiling was larger than the floor, but rendering is hunk-granular: the next hunk did not fit
+  inside what remained of that allowance, so the group's leftover tokens stayed unallocated
+  because no hunk could absorb them) from **omitted entirely** (not even the floor fitted, or no
+  floor render fits), so zero bytes can never look like a short first hunk.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
   in what is left — a reviewer verifying wiring needs one complete file far more than the first
@@ -588,11 +590,12 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   `@@` line and a short `... [review diff floor: <path> stopped at its first hunk; ...]` marker;
   a file that then receives no remainder is listed as `partially included` and its manifest row
   says **floor only, remainder exhausted** when the group budget was fully committed, **floor
-  only, share under the floor** when the group still had tokens but the file's share did not
-  exceed its floor, or **floor only, next hunk did not fit** when the share was larger than the
-  floor and hunk granularity left the group's leftover tokens unspent (these are different facts
-  and the manifest does not blur them). A file whose floor the group budget could not fund -- or
-  for which no floor render fits at all -- is named **omitted entirely** with the matching reason.
+  only, share under the floor** when the group still had tokens but the file's effective ceiling
+  (`max(per_file, cap)` for the source group; the evidence group is uncapped) did not exceed its
+  floor, or **floor only, next hunk did not fit** when that ceiling was larger than the floor and
+  hunk granularity left the group's leftover tokens unspent (these are different facts and the
+  manifest does not blur them). A file whose floor the group budget could not fund -- or for which
+  no floor render fits at all -- is named **omitted entirely** with the matching reason.
 - **The floor is a hard cap, not an average.** `_floor_head` tries variants in preference order
   (full diff header before the compact `diff --git` line, full marker before a short one, full
   first hunk before a middle slice) and returns the first whose `estimate_tokens` is **at most**

@@ -704,18 +704,23 @@ def _floor_only_reason(leftover: int, per_file: int, cap: int) -> str:
     Three outcomes, and the manifest must not blur them:
 
     * `leftover <= 0` -- the group budget really was fully committed by delivered bytes.
-    * `leftover > 0` and `per_file <= DIFF_FILE_FLOOR_TOKENS` -- the group still had tokens but
-      this file's share (and cap) never exceeded its floor, so no pass could hand it more.
-    * `leftover > 0` and `per_file > DIFF_FILE_FLOOR_TOKENS` -- the share *was* larger than the
-      floor, so the cause is hunk granularity: the next hunk did not fit inside what remained of
-      that share and no hunk could absorb the group's leftover tokens.
+    * `leftover > 0` and the file's **effective ceiling** is at or below the floor -- the group
+      still had tokens, but no pass could hand this file more. For the source group the ceiling
+      is `max(per_file, cap)`, because the top-up pass may spend up to `cap` even when the fair
+      share is smaller (default budget, 49 files: `per_file=159`, `cap=3900`). The evidence group
+      is uncapped after its fair-share pass, represented here by `cap == 0`: it can use the whole
+      remaining group budget, so it may never receive the "share under the floor" claim.
+    * otherwise -- the ceiling *was* larger than the floor, so the cause is hunk granularity: the
+      next hunk did not fit inside what remained of the file's allowance and no hunk could absorb
+      the group's leftover tokens.
 
     The pre-fix string asserted unconditionally that the share did not exceed the floor whenever
     `leftover > 0`, which is false for the measured shapes (this branch at `per_file=1114`,
-    `leftover=1769`; R-68 at `per_file=260`). It also claimed the unallocated tokens "went to
-    other files", contradicting itself: `leftover > 0` means they were not spent. The sentence is
-    now derived from a comparison that is actually performed, and no branch says the leftover was
-    allocated elsewhere (T-36 review round 7, blocking finding).
+    `leftover=1769`; R-68 at `per_file=260`; the default budget with 49 files at `per_file=159`,
+    `cap=3900`). It also claimed the unallocated tokens "went to other files", contradicting
+    itself: `leftover > 0` means they were not spent. The sentence is now derived from a comparison
+    that is actually performed, and no branch says the leftover was allocated elsewhere (T-36
+    review rounds 7 and 8, blocking findings).
     """
     if leftover <= 0:
         return (
@@ -724,20 +729,23 @@ def _floor_only_reason(leftover: int, per_file: int, cap: int) -> str:
             "spent by the floor pass and the remainder pass, so this file received no more "
             "than its floor"
         )
-    if per_file <= DIFF_FILE_FLOOR_TOKENS:
+    ceiling = max(per_file, cap)
+    if cap > 0 and ceiling <= DIFF_FILE_FLOOR_TOKENS:
         return (
             "floor only, share under the floor: the first hunk fits inside the "
-            f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor and this file's share ({per_file} "
-            f"tokens, cap {cap or 'none'}) did not exceed that floor, so the {leftover} tokens "
-            "the allocation passes left over stayed unspent instead of being allocated to "
-            "this file"
+            f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor and this file's share "
+            f"({per_file} tokens) and effective ceiling ({ceiling} tokens, cap {cap}) did "
+            f"not exceed that floor, so the {leftover} tokens the allocation passes left over "
+            "stayed unspent instead of being allocated to this file"
         )
+    ceiling_text = f"{ceiling} tokens" if cap > 0 else "uncapped"
     return (
         "floor only, next hunk did not fit: the first hunk fits inside the "
         f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor, but rendering is hunk-granular, so "
-        "this file's next hunk did not fit inside what remained of its own share "
-        f"({per_file} tokens, cap {cap or 'none'}); the {leftover} tokens the group had left "
-        "stayed unallocated because no hunk could absorb them"
+        "this file's next hunk did not fit inside what remained of its own allowance "
+        f"({per_file} tokens, cap {cap or 'none'}, effective ceiling {ceiling_text}); the "
+        f"{leftover} tokens the group had left stayed unallocated because no hunk could "
+        "absorb them"
     )
 
 

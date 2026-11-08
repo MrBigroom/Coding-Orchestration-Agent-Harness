@@ -419,11 +419,15 @@ Running log of architecture decisions. Newest last. Format: date â€” decision â€
   their floor (T-36 review round 6). The evidence reserve and the auditor are unchanged; a file
   still omitted at the default budget still raises `review_diff_incomplete`. The manifest keeps
   its columns and splits the floor-only reason: *remainder exhausted* only when the group budget
-  was fully committed by delivered bytes, *share under the floor* only when
-  `per_file <= DIFF_FILE_FLOOR_TOKENS`, and *next hunk did not fit* when the share was larger than
-  the floor and hunk granularity left the group's leftover tokens unspent. No branch claims the
-  unallocated tokens went to other files. (T-36 round 7 corrected a string that asserted the
-  share was under the floor without comparing it, on a branch whose measured `per_file` was 1114
-  with 1769 tokens unspent.) A path
+  was fully committed by delivered bytes, *share under the floor* only when the file's effective
+  ceiling is at or below `DIFF_FILE_FLOOR_TOKENS` -- `max(per_file, cap)` for the source group,
+  since the top-up pass may spend up to `cap` even when the fair share is smaller, and the evidence
+  group is uncapped after its fair-share pass so it never gets this claim -- and *next hunk did not
+  fit* when that ceiling was larger than the floor and hunk granularity left the group's leftover
+  tokens unspent. No branch claims the unallocated tokens went to other files. (T-36 round 7
+  corrected a string that asserted the share was under the floor without comparing it, on a branch
+  whose measured `per_file` was 1114 with 1769 tokens unspent. Round 8 corrected the comparison
+  again: `per_file` alone is not the ceiling, because at the default budget 49 files give
+  `per_file=159` while `cap=3900`.) A path
   whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor and is
   named omitted rather than given bytes that would break the bound.
