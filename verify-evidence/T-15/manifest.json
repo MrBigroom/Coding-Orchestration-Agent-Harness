@@ -7,42 +7,42 @@
     },
     {
       "path": "capture.sh",
-      "sha256": "0dc82934dce5947cff204cc5dcd7ed49c10a57430faa299976aa7e846d2da3a5"
+      "sha256": "cac8518522f3c0f5ac72ec4013ad47be41f43bae5488250df75c7e6ee0f8c3b0"
     },
     {
       "path": "dod_map.txt",
-      "sha256": "1543f9868fe7b6474dba5d19fb4e0d8782f001c580a6e0b9b4f3fac39f4c513e"
+      "sha256": "654d5ea315d1773ddc0a552f7419e24c363bdbc87ffe75ae3156dde88c8b222b"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "878e9e792eba330d6f51cee77d20564ea3260d99c3f162f853f59d2825f77297"
+      "sha256": "153a3d6b1cbaede4f10f1e715fc1bef908bf2827a51e5a52fd098cdb7a387929"
     },
     {
       "path": "freshness_tests.txt",
-      "sha256": "c8fbb8168de3b00ea3e36f53e82a261455c72ce4743109cd1af8a724bf37ec3c"
+      "sha256": "2193bb8f2e1055f8aa69eed2d9f785c9923096e2f98f1842b21fcbed6fd20845"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "7d3600a4a8d42999fb61c0f97d4e4a18e63c973994a2f3343659f364992b61fb"
+      "sha256": "b7785682fe8898640e4c197ecdcec95794178b0651921dfb768300c7003812c2"
     },
     {
       "path": "lint.txt",
-      "sha256": "3238214005c5a9ec7f8fd0134b2af455d9ceb310464bed7813b123accb778978"
+      "sha256": "b2646287fa82f935798bfddf146adf8e4dfecd9afaf20ebbc24e8c588d8446f1"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "b677048a5cd03cf0bfab78076cc12a496cf5e47a52da1a9c0ca358677ddcc575"
+      "sha256": "e9a541e5b78bf2030c7f668f0012dacfe8ff04cee9c0b597c997faf8a1b19c77"
     },
     {
       "path": "timing.txt",
-      "sha256": "00a09e4b5e1b2b94e19a0b09235818d6dc199bc5e21cd88eed62431cab958331"
+      "sha256": "693a2094ffff699888b0eede3d0b12121269b62f394b33da08746f987dcee447"
     }
   ],
-  "generated_at": "2026-11-08T16:08:11Z",
-  "head": "d4da3ade7453e30d8117cbdf916f033c6d549292",
-  "head_short": "d4da3ad",
+  "generated_at": "2026-11-08T16:11:06Z",
+  "head": "3ba76ac15a51ed522b90a272acc962a46709766d",
+  "head_short": "3ba76ac",
   "label": "T-15",
-  "stamp": "# HEAD=d4da3ade7453e30d8117cbdf916f033c6d549292",
+  "stamp": "# HEAD=3ba76ac15a51ed522b90a272acc962a46709766d",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",
