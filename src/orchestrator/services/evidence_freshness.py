@@ -54,6 +54,12 @@ MANIFEST_NAME = "manifest.json"
 CAPTURE_NAME = "capture.sh"
 SELF_CHECK_NAME = "freshness_selfcheck.txt"
 AT_TIP_NAME = "freshness_at_tip.txt"
+#: The hand-maintained index. Prose a human edits is not a measurement, so it is not hashed into
+#: the manifest (an edited paragraph must not put a false sha256 in the bundle it describes).
+INDEX_NAME = "README.md"
+#: Bundle bookkeeping the driver writes after the capture: listed as a file, but never a reason for
+#: a "rewrite" count or a false manifest hash.
+NOT_MEASURED = (MANIFEST_NAME, AT_TIP_NAME, INDEX_NAME)
 #: The check is a property of code-writing tasks; an `agent`/`review` task writes no code and has no
 #: evidence bundle. Both call sites (supervisor verification and the Architect review) use this one
 #: predicate so a finding can never appear without a matching verification row.
@@ -579,7 +585,7 @@ def _manifest_payload(
     produced = [
         {"path": path, "sha256": digest}
         for path, digest in _hash_tree(directory).items()
-        if path not in (MANIFEST_NAME, AT_TIP_NAME)
+        if path not in NOT_MEASURED
     ]
     payload = {
         "label": label,
@@ -870,7 +876,7 @@ def regenerate_bundle(
         raise EvidenceBundleError(f"generator produced no directory at {rel_dir}")
     captured = _hash_tree(directory)
     for rel in sorted(captured):
-        if Path(rel).name in (MANIFEST_NAME, AT_TIP_NAME):
+        if Path(rel).name in NOT_MEASURED:
             continue
         if selected and rel not in selected:
             # A file this pass did not select keeps whatever stamp it had: unstamped is a lie, and
@@ -975,6 +981,8 @@ def write_at_tip_report(
 
 __all__ = [
     "AT_TIP_NAME",
+    "INDEX_NAME",
+    "NOT_MEASURED",
     "CAPTURE_NAME",
     "CHECK_NAME",
     "EVIDENCE_ROOT",

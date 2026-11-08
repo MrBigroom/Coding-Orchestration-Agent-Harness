@@ -545,6 +545,18 @@ def _selective_bundle_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def test_editing_the_hand_maintained_index_does_not_dirty_the_bundle(tmp_path: Path) -> None:
+    """Prose a human maintains is not a measurement: no false hash, no rewrite, no restamp."""
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    manifest = json.loads((repo / "verify-evidence/T-1" / ef.MANIFEST_NAME).read_text())
+    assert ef.INDEX_NAME not in {entry["path"] for entry in manifest["files"]}
+    (repo / "verify-evidence/T-1" / ef.INDEX_NAME).write_text("# index\n\nedited prose\n")
+    second = ef.regenerate_bundle(repo, "T-1")
+    assert second.rewritten == []
+    assert "# index" not in (repo / "verify-evidence/T-1/suite.txt").read_text()
+
+
 def test_only_refreshes_the_named_output_and_refuses_an_unknown_name(tmp_path: Path) -> None:
     """A subset refresh reselects a DECLARED output; an unknown name is refused, not guessed."""
     repo = _selective_bundle_repo(tmp_path)
