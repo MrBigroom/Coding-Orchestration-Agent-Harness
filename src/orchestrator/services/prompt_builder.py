@@ -279,30 +279,20 @@ def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, 
 # harness-detected finding rather than leaving a reviewer to conclude the evidence is missing.
 COMPENSATION_BUDGET_FRACTION = 1 / 3
 
-# T-36: the allocator must satisfy the invariant the auditor enforces. Every file named by the
-# diffstat gets a first-hunk floor before any file receives more than its floor. The floor is 160
-# estimated tokens (~640 bytes); a file bigger than that is shown up to its first hunk, a smaller
-# file is shown whole. `_floor_head` is HARD-capped at that number: it returns the longest of a
-# fixed list of (header, marker, body) variants whose rendered cost is `<= DIFF_FILE_FLOOR_TOKENS`
-# by `estimate_tokens`, so a long path or a long marker can never make one floor cost more than
-# another. That is what makes the arithmetic below an upper bound rather than an average.
-#
-# Arithmetic for the DoD 1 guarantee, at the default `max_diff_tokens=12000`:
-#   post-header budget   = 12000 - 300                    = 11700   (header_reserve, max 300)
-#   source share, reserve = 11700 * (1 - 1/3)              =  7800   (T-16 compensation reserve)
-#   floor for N files     = N * 160
-#   40 files             = 40 * 160                        =  6400  <= 7800, leaving 1400
-#   48 files             = 48 * 160                        =  7680  <= 7800, leaving  120
-# The floor holds for **48 changed files** with the compensation reserve in force and for 73
-# (11700 // 160) without it. 40 is the number the DoD asks to be provable, and it is proved by
-# `test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths`, whose fixture
-# contains `verify-evidence/` files so the 7800-token source share (not the full 11700) is the
-# budget actually exercised. A file that still cannot get its floor -- because the group budget
-# ran out, not because the floor render was too big -- is named `omitted entirely`.
-#
-# The floor is deliberately not raised to buy a larger first hunk, because the remainder pass
-# below still gives a big source file the lion's share while this floor keeps README/docs/tests
-# from being starved to zero bytes (the R-68 shape: 8 of 30 files at 0).
+# T-36: the allocator must satisfy the invariant the auditor enforces. Every diffstat file gets
+# a first-hunk floor before any file receives more, and `_floor_head` is HARD-capped at
+# `DIFF_FILE_FLOOR_TOKENS` by `estimate_tokens` (longest fitting variant of header/marker/body),
+# so a long path or marker cannot make one floor cost more than another. Arithmetic for the DoD 1
+# guarantee at the default `max_diff_tokens=12000`:
+#   post-header  12000 - 300 = 11700   (header_reserve, capped at 300)
+#   source share 11700 * 2/3 = 7800    (T-16 compensation reserve in force)
+#   40 files     40 * 160    = 6400  <= 7800, leaving 1400;  48 files = 7680 <= 7800
+#   73 files = 11700 // 160 when there is no compensation reserve.
+# Proved by `test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths`, whose
+# fixture carries `verify-evidence/` files so the 7800 share (not the full 11700) is exercised.
+# The floor stays at 160 rather than buying a bigger first hunk: the remainder pass still gives a
+# big source file the lion's share, while this keeps README/docs/tests off zero bytes (R-68: 8 of
+# 30 files at 0).
 DIFF_FILE_FLOOR_TOKENS = 160
 DIFF_GROUP_MINIMUM_TOKENS = 60  # ~ a file header plus one short hunk
 

@@ -402,26 +402,20 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   trustworthy as its resolver, so read the row's resolution evidence before believing a
   `confirmed`.
 
-- **2026-11-08 — T-36: the allocator must satisfy the invariant the auditor enforces.** T-16 made
-  the budget honest; what it exposed was that `render_diff_budget` allocated first-come-first-served
-  until the group budget ran out, so on a large branch the tail of the file list got exactly 0 bytes
-  and `review_audit.diff_completeness` then filed a **blocking** harness finding for every one of
-  them — measured on R-68: 8 of 30 files at zero bytes and 9 of that round's 17 findings were
-  budget artifacts. Raising `max_diff_tokens` does not fix it: doubling it to 24000 moved the
-  per-file share 709 -> 929 because the share is `budget // file_count` and the file count grew.
-  So every diffstat file now gets a **160-token first-hunk floor before any file receives more**,
-  and the floor render is **hard-capped** at that number by `estimate_tokens` (variants in
-  preference order: full header before the compact `diff --git` line, full marker before a short
-  one, whole first hunk before a middle slice), so `file_count * 160` is a bound and not an
-  average. At the default `max_diff_tokens=12000` the post-header budget is 11700, the T-16
-  compensation reserve leaves the source group 7800, and `40 * 160 = 6400` fits with 1400 for the
-  remainder (48 files still fit; 73 without a reserve). The remainder pass is unchanged, so a big
-  source file keeps the lion's share and the evidence reserve is untouched. Deliberately **not**
-  done: raising either budget default (measured to be the wrong lever), and weakening the auditor —
-  a file still omitted at the default budget still raises `review_diff_incomplete`. The manifest
-  keeps its columns and splits the floor-only reason in two: *remainder exhausted* only when the
-  group budget really was fully committed, *remainder allocated elsewhere* when the file's share
-  did not exceed its floor and tokens went elsewhere or stayed unspent under the cap (the review
-  caught the single sentence overclaiming). A path whose own `diff --git` header exceeds the floor
-  (measured: >289 characters) has no floor at all and is named omitted, never given bytes that
-  would break the bound.
+- **2026-11-08 — T-36: the allocator must satisfy the invariant the auditor enforces.**
+  `render_diff_budget` allocated first-come-first-served until the group budget ran out, so on a
+  large branch the tail of the file list got exactly 0 bytes and `review_audit.diff_completeness`
+  then filed a blocking finding for each one (measured on R-68: 8 of 30 files at zero bytes, and 9
+  of that round's 17 findings were budget artifacts). Raising `max_diff_tokens` did not help:
+  doubling it to 24000 moved the per-file share only 709 -> 929, because the share is
+  `budget // file_count` and the file count had grown. So every diffstat file now gets a
+  **160-token first-hunk floor before any file receives more**, and the floor render is hard-capped
+  at that number by `estimate_tokens`, making `file_count * 160` a bound rather than an average.
+  At the default `max_diff_tokens=12000`: post-header 11700, source share 7800 with the T-16
+  compensation reserve, `40 * 160 = 6400` leaves 1400 for the remainder (48 files still fit; 73
+  without a reserve). The remainder pass, the evidence reserve and the auditor are unchanged; a
+  file still omitted at the default budget still raises `review_diff_incomplete`. The manifest keeps
+  its columns and splits the floor-only reason: *remainder exhausted* only when the group budget was
+  fully committed, *remainder allocated elsewhere* when the file's share did not exceed its floor.
+  A path whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor
+  and is named omitted rather than given bytes that would break the bound.
