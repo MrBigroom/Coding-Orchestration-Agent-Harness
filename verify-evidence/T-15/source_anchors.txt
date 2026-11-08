@@ -1,4 +1,4 @@
-# HEAD=526598bb3af2bde83daac349d0780b9766f9ecb7
+# HEAD=ed13e8a2e5cee93b0ce3724521c499266240bcdf
 # command: grep -nF for the T-15 anchors (source line numbers at this HEAD)
 41:CHECK_NAME = "committed evidence freshness"
 45:SELF_CHECK_NAME = "freshness_selfcheck.txt"
