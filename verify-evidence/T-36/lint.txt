@@ -1,0 +1,13 @@
+HEAD: 7d1b9c5384e9db6bb5fcbc02348dd3f8a6e1da4d
+dirty_entries: 1
+command: ./scripts/orch_verify.sh lint
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
+orch-verify: lint target  ruff check src tests
+All checks passed!
+lint_exit=0
