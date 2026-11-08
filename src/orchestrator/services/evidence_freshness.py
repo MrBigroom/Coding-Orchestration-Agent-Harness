@@ -55,7 +55,6 @@ _STAMP_PATTERNS = (
     re.compile(rf"(?i)\bHEAD\s+(?P<sha>{_HEX})\b"),
     re.compile(rf"(?i)^\s*==\s*commit under test:.*?@\s*(?P<sha>{_HEX})\s*=="),
 )
-_STAMP_LOOKING = re.compile(r"(?i)\bHEAD\b|commit under test")
 
 
 class EvidenceBundleError(ValueError):
@@ -143,6 +142,24 @@ def _short(repo: Path, sha: str) -> str:
     return r.stdout.strip() if r.code == 0 and r.stdout.strip() else sha[:7]
 
 
+def _looks_like_stamp(line: str) -> bool:
+    """A stamp-shaped line the parser failed on, not any prose that happens to say HEAD.
+
+    A capture-script comment like "# ... at the code HEAD you want to certify" is documentation,
+    not a stamp. Only a line whose first token is HEAD/=HEAD or the T-6 commit-under-test marker
+    is reported as unparsable, so an honest failure mode cannot be manufactured by prose.
+    """
+    stripped = line.lstrip()
+    upper = stripped.upper()
+    return (
+        upper.startswith("# HEAD")
+        or upper.startswith("#HEAD")
+        or upper.startswith("HEAD ")
+        or upper.startswith("HEAD=")
+        or upper.startswith("== COMMIT UNDER TEST")
+    )
+
+
 def parse_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
     """All HEAD stamps in ``text`` plus stamp-shaped lines the parser could not read.
 
@@ -162,10 +179,7 @@ def parse_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
             canonical = bool(re.fullmatch(rf"\s*#\s*HEAD={_HEX}\s*", line))
             stamps.append(EvidenceStamp(found, line, number, canonical=canonical))
             continue
-        stripped = line.lstrip()
-        if _STAMP_LOOKING.search(line) and (
-            stripped.startswith("#") or stripped.startswith("HEAD") or stripped.startswith("==")
-        ):
+        if _looks_like_stamp(line):
             unparsed.append(line)
     return stamps, unparsed
 

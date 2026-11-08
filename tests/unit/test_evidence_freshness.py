@@ -104,6 +104,13 @@ def test_a_file_with_no_stamp_is_unstamped_not_an_error() -> None:
     assert unparsed == []
 
 
+def test_a_comment_that_merely_says_head_is_not_an_unparsable_stamp() -> None:
+    text = "# Run from the repo root at the code HEAD you want to certify.\n3 passed\n"
+    stamps, unparsed = ef.parse_stamps(text)
+    assert stamps == []
+    assert unparsed == []
+
+
 def test_an_unparsable_stamp_is_reported_not_treated_as_fresh(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     head = _commit(repo, "evidence", _evidence("# HEAD=not-a-sha"))
