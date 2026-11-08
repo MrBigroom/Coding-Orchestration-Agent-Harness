@@ -1,4 +1,4 @@
-# HEAD=c6c6cab510366af0e2a1c30c055c07e6c208dcf9 mode=full
+# HEAD=32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c mode=full
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 tests/unit/test_evidence_freshness.py::test_every_legacy_stamp_shape_is_parsed[# HEAD=0123456789abcdef0123456789abcdef01234567-0123456789abcdef0123456789abcdef01234567] PASSED
@@ -36,6 +36,7 @@ tests/unit/test_evidence_freshness.py::test_an_edited_generator_is_refused_even_
 tests/unit/test_evidence_freshness.py::test_a_generator_that_is_not_committed_is_refused PASSED
 tests/unit/test_evidence_freshness.py::test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh PASSED
 tests/unit/test_evidence_freshness.py::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest PASSED
+tests/unit/test_evidence_freshness.py::test_a_merge_commit_never_certifies_a_stamp PASSED
 tests/integration/test_evidence_freshness.py::test_stale_evidence_is_reported_without_flipping_the_verdict PASSED
 tests/integration/test_evidence_freshness.py::test_the_existing_checks_and_frozen_artifact_names_are_unchanged PASSED
 tests/integration/test_evidence_freshness.py::test_an_absent_bundle_is_not_applicable PASSED
@@ -44,4 +45,4 @@ tests/integration/test_evidence_freshness.py::test_deleted_evidence_is_reported_
 tests/integration/test_evidence_freshness.py::test_never_committed_evidence_is_not_applicable_not_a_deletion PASSED
 tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone PASSED
 tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes PASSED
-============================== 43 passed ==============================
+============================== 44 passed ==============================

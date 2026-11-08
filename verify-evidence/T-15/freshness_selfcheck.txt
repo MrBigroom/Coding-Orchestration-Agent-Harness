@@ -6,11 +6,11 @@ mode=full
 # what the check saw, so a no-op second run is byte-identical.
 basis=worktree
 scope=every evidence file except manifest.json and this file
-compared_commit=c6c6cab510366af0e2a1c30c055c07e6c208dcf9
+compared_commit=32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c
 status=pass
 stamped_files=7
 stale_count=0
 deleted_count=0
-evidence=7 stamped evidence file(s) fresh at c6c6cab (c6c6cab510366af0e2a1c30c055c07e6c208dcf9)
+evidence=7 stamped evidence file(s) fresh at 32ba7ad (32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c)
 notes=none
 committed_view=the stamps name this HEAD, the next commit must be evidence-only, and the gate then reports pass with that explanation (see tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).

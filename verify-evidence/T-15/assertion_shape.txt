@@ -1,4 +1,4 @@
-# HEAD=c6c6cab510366af0e2a1c30c055c07e6c208dcf9 mode=full
+# HEAD=32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c mode=full
 # command: python3 scripts/t15_assertion_shape.py (AST, no pinned counts)
 tests/unit/test_memory_scopes.py: conjoined_asserts=4 undocumented=0
 tests/unit/test_memory_scopes.py: reason_substring_asserts=0
