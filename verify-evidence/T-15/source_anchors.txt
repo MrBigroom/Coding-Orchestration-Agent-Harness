@@ -1,11 +1,11 @@
-# HEAD=4e8d1889d1b8e11f714a4ecf6b4a0cba0ceedcae
+# HEAD=d849f04f5b5ee38d3cc15feaa21f880d439d890c
 # command: grep -nF for the T-15 anchors (source line numbers at this HEAD)
-52:CHECK_NAME = "committed evidence freshness"
-56:SELF_CHECK_NAME = "freshness_selfcheck.txt"
-192:def parse_stamps(text: str, window: int = STAMP_WINDOW) -> tuple[list[EvidenceStamp], list[str]]:
-355:def check_freshness(
-149:def check_status(result: FreshnessResult, strict: bool = False) -> str:
-623:def regenerate_bundle(
+41:CHECK_NAME = "committed evidence freshness"
+45:SELF_CHECK_NAME = "freshness_selfcheck.txt"
+171:def parse_stamps(text: str, window: int = STAMP_WINDOW) -> tuple[list[EvidenceStamp], list[str]]:
+322:def check_freshness(
+130:def check_status(result: FreshnessResult, strict: bool = False) -> str:
+579:def regenerate_bundle(
 260:        freshness = evidence_freshness.check_freshness(
 338:    freshness = evidence_freshness.check_freshness(
 619:def task_evidence(

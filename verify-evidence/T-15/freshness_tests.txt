@@ -1,4 +1,4 @@
-# HEAD=4e8d1889d1b8e11f714a4ecf6b4a0cba0ceedcae
+# HEAD=d849f04f5b5ee38d3cc15feaa21f880d439d890c
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 tests/unit/test_evidence_freshness.py::test_every_legacy_stamp_shape_is_parsed[# HEAD=0123456789abcdef0123456789abcdef01234567-0123456789abcdef0123456789abcdef01234567] PASSED
