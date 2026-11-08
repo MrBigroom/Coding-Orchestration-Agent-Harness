@@ -1,0 +1,73 @@
+# T-18 focused per-test run at HEAD 46bb10b
+# command: ./scripts/orch_verify.sh test tests/unit/test_notifications.py tests/integration/test_notifications.py tests/integration/test_notification_delivery.py -vv
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+orch-verify: pytest target tests/unit/test_notifications.py tests/integration/test_notifications.py tests/integration/test_notification_delivery.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 52 items
+
+tests/unit/test_notifications.py::test_off_by_default_records_skip_and_delivers_nothing PASSED [  1%]
+tests/unit/test_notifications.py::test_trigger_selection_against_the_real_event_vocabulary PASSED [  3%]
+tests/unit/test_notifications.py::test_payload_shape_link_and_redaction PASSED [  5%]
+tests/unit/test_notifications.py::test_parallel_runs_coalesce_and_a_trigger_is_deduped PASSED [  7%]
+tests/unit/test_notifications.py::test_failures_never_lose_the_build_log_or_poison_the_session PASSED [  9%]
+tests/unit/test_notifications.py::test_a_bug_inside_the_fanout_leaves_one_durable_failed_row PASSED [ 11%]
+tests/unit/test_notifications.py::test_noisy_events_are_silent_until_enabled PASSED [ 13%]
+tests/unit/test_notifications.py::test_duration_reports_compute_and_wall_and_only_names_a_large_freeze PASSED [ 15%]
+tests/unit/test_notifications.py::test_channel_actions_markup_and_no_client PASSED [ 17%]
+tests/unit/test_notifications.py::test_timer_is_cleared_before_delivery_and_a_missing_client_is_recorded PASSED [ 19%]
+tests/unit/test_notifications.py::test_a_failing_fanout_rolls_back_a_poisoned_caller_session PASSED [ 21%]
+tests/unit/test_notifications.py::test_an_event_arriving_mid_flush_rearms_the_timer PASSED [ 23%]
+tests/unit/test_notifications.py::test_standalone_run_trigger_is_subscribed_by_default_and_maps_directly PASSED [ 25%]
+tests/unit/test_notifications.py::test_a_completed_standalone_run_writes_one_row_naming_agent_and_report PASSED [ 26%]
+tests/unit/test_notifications.py::test_standalone_trigger_off_delivers_nothing PASSED [ 28%]
+tests/unit/test_notifications.py::test_a_skipped_standalone_run_is_reported_as_skipped PASSED [ 30%]
+tests/unit/test_notifications.py::test_a_failed_standalone_run_reports_its_error PASSED [ 32%]
+tests/unit/test_notifications.py::test_two_task_less_events_of_one_trigger_produce_two_rows PASSED [ 34%]
+tests/unit/test_notifications.py::test_flush_never_raises_and_never_poisons_a_caller_session PASSED [ 36%]
+tests/unit/test_notifications.py::test_probe_parses_capabilities_and_fails_closed PASSED [ 38%]
+tests/unit/test_notifications.py::test_markup_daemon_gets_escaped_text_on_every_transport_and_no_hint PASSED [ 40%]
+tests/unit/test_notifications.py::test_every_transport_result_maps_to_one_frozen_status[present0-replies0-expected0] PASSED [ 42%]
+tests/unit/test_notifications.py::test_every_transport_result_maps_to_one_frozen_status[present1-replies1-expected1] PASSED [ 44%]
+tests/unit/test_notifications.py::test_every_transport_result_maps_to_one_frozen_status[present2-replies2-expected2] PASSED [ 46%]
+tests/unit/test_notifications.py::test_every_transport_result_maps_to_one_frozen_status[present3-replies3-expected3] PASSED [ 48%]
+tests/unit/test_notifications.py::test_every_transport_result_maps_to_one_frozen_status[present4-replies4-expected4] PASSED [ 50%]
+tests/unit/test_notifications.py::test_a_displayed_message_is_recorded_delivered_not_failed PASSED [ 51%]
+tests/unit/test_notifications.py::test_a_client_timeout_after_spawn_records_the_unknown_display_caveat PASSED [ 53%]
+tests/unit/test_notifications.py::test_the_standalone_path_reaches_every_outcome_class[delivered-present0-replies0-True-expected0] PASSED [ 55%]
+tests/unit/test_notifications.py::test_the_standalone_path_reaches_every_outcome_class[shown-present1-replies1-True-expected1] PASSED [ 57%]
+tests/unit/test_notifications.py::test_the_standalone_path_reaches_every_outcome_class[failed-present2-replies2-True-expected2] PASSED [ 59%]
+tests/unit/test_notifications.py::test_the_standalone_path_reaches_every_outcome_class[skipped-present3-replies3-False-expected3] PASSED [ 61%]
+tests/unit/test_notifications.py::test_two_standalone_runs_coalesce_into_one_message PASSED [ 63%]
+tests/unit/test_notifications.py::test_two_runs_finishing_together_produce_one_message PASSED [ 65%]
+tests/unit/test_notifications.py::test_exit_flush_delivers_and_terminates_only_real_rows_it_owns PASSED [ 67%]
+tests/unit/test_notifications.py::test_exit_flush_is_inert_before_the_database_exists PASSED [ 69%]
+tests/unit/test_notifications.py::test_cli_exit_never_delivers_a_row_the_server_created PASSED [ 71%]
+tests/unit/test_notifications.py::test_two_flushers_race_and_only_the_claim_winner_delivers PASSED [ 73%]
+tests/unit/test_notifications.py::test_a_flusher_whose_claim_was_revoked_mid_delivery_writes_nothing PASSED [ 75%]
+tests/unit/test_notifications.py::test_the_stale_window_covers_the_whole_delivery_path PASSED [ 76%]
+tests/unit/test_notifications.py::test_two_claims_in_the_same_instant_are_distinguishable PASSED [ 78%]
+tests/unit/test_notifications.py::test_a_live_claim_is_not_reclaimed_mid_delivery PASSED [ 80%]
+tests/unit/test_notifications.py::test_an_expired_claim_is_reclaimed_after_the_whole_delivery_path PASSED [ 82%]
+tests/unit/test_notifications.py::test_a_dead_flushers_claim_is_released_instead_of_stranding_the_row PASSED [ 84%]
+tests/integration/test_notifications.py::test_completed_mock_run_yields_one_coalesced_notification PASSED [ 86%]
+tests/integration/test_notifications.py::test_cancelled_run_emits_run_cancelled_once_and_fans_out PASSED [ 88%]
+tests/integration/test_notifications.py::test_startup_recovery_delivers_rows_a_dead_cli_process_left_pending PASSED [ 90%]
+tests/integration/test_notifications.py::test_notifications_endpoint_serves_the_persistent_list PASSED [ 92%]
+tests/integration/test_notifications.py::test_the_task_link_is_a_real_target_when_web_dist_is_absent PASSED [ 94%]
+tests/integration/test_notification_delivery.py::test_reading_the_list_flushes_rows_the_server_left_pending PASSED [ 96%]
+tests/integration/test_notification_delivery.py::test_cli_exit_delivers_a_row_the_production_path_created PASSED [ 98%]
+tests/integration/test_notification_delivery.py::test_python_dash_m_and_the_console_script_route_through_cli_main PASSED [100%]
+
+============================== 52 passed in 5.15s ==============================
+# exit=0

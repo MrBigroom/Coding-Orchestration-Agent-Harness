@@ -1,0 +1,51 @@
+T-18 DoD -> file:line -> proving log line (code HEAD 46bb10b; evidence commit after it)
+
+DoD1 truthful outcome classes
+  src/orchestrator/services/notification_service.py:43-50  OUTCOME_CLASSES + STATUS_FOR_OUTCOME
+  src/orchestrator/services/notification_service.py:320-334 _classify (timeout-after-spawn -> shown_unacknowledged)
+  src/orchestrator/services/notification_service.py:462-506 _write_outcome writes status/reason under the claim CAS
+  per_test.txt:40-51  PASSED every outcome class (5 cases), timeout caveat, displayed-not-failed, standalone classes
+  live_delivery.txt:4  direct delivery: status=delivered reason='shown_unacknowledged'
+  live_delivery.txt:10 failed_rows: []
+  live_delivery.txt:11 delivered_rows: [1]
+  mutation_check.txt M1/M2  DETECTED
+
+DoD2 probe capability, no advertised action
+  src/orchestrator/services/notification_service.py:274   probe_capabilities (GetCapabilities, fails closed)
+  src/orchestrator/services/notification_service.py:316   _body_for (escape/anchor only on probed caps)
+  src/orchestrator/services/notification_service.py:343   deliver (no --action, []/{} on gdbus)
+  per_test.txt:38-39  PASSED probe + markup shape tests
+  live_delivery.txt:3 probe: probed=True caps=actions,body,body-hyperlinks,...
+  mutation_check.txt M2  DETECTED
+
+DoD3 pending rows durable; claim not revocable mid-delivery; terminal reason when undeliverable
+  src/orchestrator/api/routes/notifications.py:31        read-path flush
+  src/orchestrator/cli.py:1446,1458                      CLI-exit flush
+  src/orchestrator/services/notification_service.py:60-66   full-path stale window (probe+client+margin)
+  src/orchestrator/services/notification_service.py:364-395 unique per-attempt claim token + liveness
+  src/orchestrator/services/notification_service.py:397-425 stale-claim release via compare-and-set
+  src/orchestrator/services/notification_service.py:427-460 claim via conditional UPDATE
+  src/orchestrator/services/notification_service.py:462-506 terminal write = CAS on the marker
+  src/orchestrator/services/notification_service.py:573-620 owner scoping + process_exit_undelivered (CAS)
+  src/orchestrator/services/notification_service.py:725  notify_event stamps details_json owner
+  per_test.txt:56-62  PASSED race winner, revoked flusher writes nothing, window covers probe, unique token,
+                            live claim not reclaimed, expired claim reclaimed, dead claim released
+  per_test.txt:63-64  PASSED exit scope + terminate only own rows
+  per_test.txt:68  PASSED read path flushes server-left rows
+  per_test.txt:69  PASSED CLI exit delivers a row notify_event created (no hand-stamped fixture)
+  live_delivery.txt:13 pending_rows: []
+  mutation_check.txt M6/M7/M8/M9  DETECTED (revoked write, window, token, owner stamp)
+
+DoD4 coalesce across runs, one row per run+trigger
+  src/orchestrator/services/notification_service.py:508-527 N-updates fold
+  per_test.txt:52  PASSED two runs -> ONE message (distinct run ids)
+  per_test.txt:51  PASSED two standalone runs -> ONE message
+  live_delivery.txt:8-9  two runs pending -> deliver_calls 1, title '2 updates', run_ids [1, 2]
+  live_delivery.txt:12 coalesced_rows: [2]
+
+DoD5 deep link: call, not grep (React half partial by operator ruling 3)
+  tests/integration/test_notifications.py:203-227  GET /tasks/7 -> data-route {view:task,arg:7}
+  per_test.txt:67  PASSED test_the_task_link_is_a_real_target_when_web_dist_is_absent
+  mutation_check.txt M5  shipped {view:task,arg:7}; mutant {} (placeholder left in place) DETECTED
+
+Full gate: full_suite.txt:22 740 passed, 10 skipped in 132.60s (exit 0); lint.txt:11 All checks passed!

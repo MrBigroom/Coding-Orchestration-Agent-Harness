@@ -53,9 +53,10 @@ the task and run ids, the outcome, the next action and a link to the task. Deliv
 every decision is also kept in the **Notifications** page and `GET /api/notifications`, with
 "not attempted because notifications are off" (`skipped`) separate from "attempted and failed"
 (`failed`). The master switch `notifications_enabled` is **off on a new install** and every trigger
-is individually disable-able in Settings. See
-[`docs/build-loop.md`](docs/build-loop.md#terminal-run-events) and
-[`docs/configuration.md`](docs/configuration.md#runtime-settings-gui--patch-apisettings).
+is individually disable-able in Settings. A record never claims more than happened: capabilities
+are probed before markup, a displayed message is recorded `delivered` (`reason=shown_unacknowledged`
+when nothing acknowledged it) rather than `failed`, and no default action is advertised. See
+[`docs/configuration.md`](docs/configuration.md#notification-delivery-and-status-t-18).
 
 ### What the demo does
 
@@ -253,6 +254,19 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
+- **Desktop notifications: one channel, and the link is usually text.** Only the `notify-send`
+  path was live-tested (CachyOS/Hyprland's mako/portal stack); the `gdbus` transport, its
+  `Notify` id parsing and the `<a href>` branch are covered against a fake transport, not a live
+  daemon click. macOS/Windows backends do not exist. `GetCapabilities` is probed first: a
+  `body-markup` daemon parses every body, so its text is HTML-escaped on both transports; an
+  `<a href>` needs `gdbus` plus `body-hyperlinks`. `notify-send`, unprobed daemons, and any daemon
+  without `body-markup` or `body-hyperlinks` get an `Open: <url>` line or raw text. No
+  `ActionInvoked` listener exists, so no action is advertised. Dunst and other daemons have not
+  been probed here; see `docs/configuration.md` for which shapes were observed vs expected.
+- **Deep-link routing: the React half is route-table inspection only.** `GET /tasks/<id>` with no
+  `web/dist` is a real request and the fallback UI's resolved `data-route` is asserted. The React
+  router half asserts the declared `/tasks/:id` route in `web/src/App.tsx`; this repo has no JS
+  test runner, so the router is not mounted in a test (adding one is T-31's scope).
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify

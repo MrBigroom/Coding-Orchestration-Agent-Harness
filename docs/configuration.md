@@ -70,6 +70,73 @@ The React GUI doesn't read the stored `theme` setting. Theme is a per-browser ch
 and saved in the browser's `localStorage` under `orchestrator.theme`. The fallback UI is
 dark only.
 
+## Notification delivery and status (T-18)
+
+`notifications_enabled` is **off on a new install**; each trigger has its own
+`notification_<trigger>` switch (human-must-act on, noisy machinery off). A channel that is off
+writes `skipped` (`master_disabled`/`trigger_disabled`), never the `failed` of an attempt.
+
+Each transport result maps to one frozen CCR-T9-01 status; `details_json.outcome_class` names the
+finer class:
+
+| Outcome class | Status | When (`reason`) |
+|---|---|---|
+| `delivered` | `delivered` | `gdbus` `Notify` returned a notification id (empty) |
+| `shown_unacknowledged` | `delivered` | `notify-send` exited 0, or a client was launched but timed out: shown, no acknowledgement observed (`shown_unacknowledged`) |
+| `failed` | `failed` | the client was not launched (missing/`OSError`) or exited non-zero, or the notifier raised (`delivery_failed`) |
+| `skipped` | `skipped` | master or trigger off, nothing attempted (`master_disabled` / `trigger_disabled`) |
+| `coalesced` | `coalesced` | folded into an earlier popup (`coalesced_into:<id>`) |
+
+A shown message is never `failed`; `shown_unacknowledged` has no status of its own (the vocabulary
+is frozen) and maps to `delivered`. Nothing sends `--action` (it implies `--wait`, blocking until a
+dismissal mako never sends) or an action array: no `ActionInvoked` listener exists.
+
+**The timeout case was the defect.** A client that was spawned and then had to be killed at
+`DELIVERY_TIMEOUT_SECONDS` is recorded `delivered` / `shown_unacknowledged`, because the old
+`--action`/`--wait` trap showed the popup and then blocked; the row carries
+`details_json.delivery_note` saying the display is unconfirmed. Only a client that could not be
+started, or that exited non-zero, is `failed`. This ambiguity is documented rather than hidden in
+the `error` column.
+
+**Capabilities decide the body shape.** `probe_capabilities()` calls `GetCapabilities` first.
+`body-markup` is a capability, not a hint: `gdbus` sends `{}`, and a markup daemon parses every
+body, so text is HTML-escaped on both transports when `body-markup` is advertised; an anchor is
+added only on `gdbus` with `body-hyperlinks`. `details_json.body_shape` records what was sent.
+
+Observed on the development machine (CachyOS/Hyprland, 2026-11-08): `GetCapabilities` returned
+`actions, body, body-hyperlinks, body-images, body-markup, icon-static, persistence`. `notify-send`
+is chosen first, so in practice this machine receives `markup-escaped` text with an `Open: <url>`
+line; the `body-hyperlinks` anchor path is covered by a fake-transport test, not by a live click.
+Every other row below is expected-but-**unobserved** here: a daemon that advertises a capability
+is not proof that its client renders it, so no shape is claimed for a daemon this project has not
+probed.
+
+| Daemon / probe result | Body | Link |
+|---|---|---|
+| `gdbus` with `body-markup` + `body-hyperlinks` (**expected**; not observed live here) | escaped text + one `<a href>` (`markup+hyperlink`) | untested live |
+| `gdbus` with `body-markup` but not `body-hyperlinks` (**expected**; not observed live here) | escaped text, URL kept as `Open: <url>` (`markup-escaped`) | text |
+| `notify-send`, on any daemon, including this machine's Hyprland/mako stack (**observed**) | escaped text when `body-markup` is advertised, else raw text (`markup-escaped` / `plain`) | text |
+| probe failed (no `gdbus`, failed/timed-out call) or no `body-markup` (**observed for the probe-failure branch**) | raw plain text (`plain`) | text |
+
+Dunst and other freedesktop daemons have **not** been probed by this project; whether they
+advertise `body-hyperlinks` is unknown here, and none of the table's hyperlink claims should be
+read as covering them.
+
+**Pending rows are never stranded.** A `pending` row is resolved by the 2s coalescing timer, API
+startup, the read path (`GET /api/notifications` flushes first), or CLI exit. Delivery claims rows
+with a conditional `UPDATE` (`reason=claimed_by:<process>:<uuid>:<nanoseconds>`) before sending, so
+a CLI exit and a server timer cannot both deliver one row. The claim carries a fresh per-attempt
+uuid, so two claims made in the same instant are distinguishable, and it is only released after
+`PROBE_TIMEOUT_SECONDS + DELIVERY_TIMEOUT_SECONDS + 5` seconds (17s by default) -- the capability
+probe happens before the client call, so a shorter window could revoke a claim whose owner is still
+legitimately delivering. Every terminal write (`delivered`/`coalesced`/`failed`) is a
+compare-and-set on that claim marker, so a flusher whose claim was revoked writes nothing and cannot
+overwrite the winner's record. `cli.main()` flushes **only
+rows that process created**, then writes `failed` / `process_exit_undelivered` for its own
+still-pending rows (`details_json.owner`); a live server's rows stay `pending`. The exit flush is
+inert without a database file. Coalescing is global: one message can carry several runs/triggers
+while `dedupe_key` still allows at most one row per run per trigger.
+
 ## Provider variables
 
 `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `QWEN_OPENAI_BASE_URL`, `QWEN_API_KEY`,

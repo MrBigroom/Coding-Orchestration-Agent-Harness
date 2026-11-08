@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 
 from orchestrator.api.dependencies import AUTH, SessionDep
 from orchestrator.core.models import Notification
+from orchestrator.services import notification_service
 
 router = APIRouter(dependencies=AUTH)
 
@@ -26,6 +27,8 @@ def list_notifications(
     task_id: int | None = None,
     session: Session = SessionDep,
 ) -> list[dict[str, Any]]:
+    # T-18 DoD 3: the read path flushes, so rows cannot sit pending forever.
+    notification_service.flush_pending_if_any(session)
     q = select(Notification).order_by(col(Notification.id).desc()).limit(limit)
     if status is not None:
         q = q.where(Notification.status == status)

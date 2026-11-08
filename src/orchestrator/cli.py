@@ -1440,7 +1440,24 @@ def sync_now() -> None:
 
 
 def main() -> None:
-    app()
+    try:
+        app()
+    finally:
+        _flush_notifications_at_exit()
+
+
+def _flush_notifications_at_exit() -> None:
+    """T-18 DoD 3: a CLI process must not leave its pending rows behind.
+
+    The coalescing timer dies with the process, so exit delivers what it can and terminally marks
+    the rest. Inert in a fresh home, so `orchestrator --help` creates nothing.
+    """
+    try:
+        from orchestrator.services import notification_service
+
+        notification_service.flush_pending_at_exit()
+    except Exception:  # noqa: BLE001, S110 - a notification must never change the exit code
+        pass
 
 
 if __name__ == "__main__":

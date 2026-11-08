@@ -1,0 +1,38 @@
+2026-11-08 23:04:41,504 INFO httpx2: HTTP Request: GET http://127.0.0.1:8321/tasks/7 "HTTP/1.1 200 OK"
+# throwaway ORCHESTRATOR_HOME=/tmp/t18-mut5-6888svnb
+# HEAD=46bb10b
+# CLAIM_STALE_SECONDS=17 (PROBE=2 + CLIENT=10 + MARGIN=5)
+  stolen-row winner wrote row 1
+
+## M6: a flusher whose claim was revoked writes nothing
+shipped: status=delivered error=None loser_flush_returned=0
+  stolen-row winner wrote row 2
+mutant:  status=failed error='revoked write' loser_flush_returned=2
+mutant overwrote the winner: True -> the CAS test would fail: True
+
+## M7: a claim inside the probe+client window is not reclaimed
+shipped: a claim 16s old, window 17s -> flush claimed nothing
+mutant:  window=15s (client timeout only) -> flush delivered row 3 -> test asserting no claim would fail: True
+
+## M8: two claims in the same instant are distinguishable
+shipped: same-nanosecond markers differ: True
+mutant:  whole-second stamp -> markers equal: True -> uniqueness test would fail: True
+
+## M9: the production notify_event row is owner-stamped and the exit flush delivers it
+shipped: owner='2816010:d7783b098700444eb6fad18ea29332ee' status_after_exit=delivered
+mutant:  owner='None' status_after_exit=pending -> production-path test would fail: True
+
+## M1: shown_unacknowledged must map to delivered
+shipped: delivered
+mutant:  failed -> test asserting ('delivered','shown_unacknowledged') would fail
+
+## M2: a launched client killed at the timeout is not 'failed'
+shipped: ('delivered', 'shown_unacknowledged')
+mutant:  failed -> the timeout-caveat test would fail: True
+
+## M5: /tasks/7 resolves to the task view in the fallback UI
+shipped: data-route='{&quot;view&quot;: &quot;task&quot;, &quot;arg&quot;: &quot;7&quot;}'
+mutant:  data-route='' (route mapping removed) -> test asserting the task view would fail: True
+
+# end of round-5 mutation checks
+# exit=0

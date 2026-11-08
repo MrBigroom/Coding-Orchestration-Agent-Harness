@@ -32,7 +32,7 @@
   .note { background:rgba(210,153,34,.1); border:1px solid var(--warn); color:var(--warn); padding:8px 10px; border-radius:6px; margin-bottom:14px; font-size:13px; }
 </style>
 </head>
-<body>
+<body data-route="__ORCH_ROUTE__">
 <nav>
   <h1>coding-orchestrator</h1><small>fallback UI</small>
   <a data-view="dashboard">Dashboard</a><a data-view="tasks">Tasks</a><a data-view="agents">Agents</a><a data-view="memory">Memory</a>
@@ -47,6 +47,8 @@ const TONE = { accepted:"ok", completed:"ok", pass:"ok", APPROVED:"ok", approved
   in_progress:"warn", running:"warn", testing:"warn", pending:"warn", CHANGES_REQUESTED:"warn", blocked:"bad", failed:"bad",
   rejected:"bad", timeout:"bad", fail:"bad", NEEDS_HUMAN:"bad" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+// Server-resolved path deep link (/tasks/7); hash navigation still wins in-page.
+const initialState = (() => { try { return JSON.parse(document.body.dataset.route || "{}"); } catch { return {}; } })();
 const badge = (v) => v ? `<span class="b ${TONE[v] || ""}">${esc(v)}</span>` : '<span class="muted">—</span>';
 function token() { try { return localStorage.getItem("orchestrator.token") || ""; } catch { return ""; } }
 async function api(path, opts = {}) {
@@ -192,11 +194,10 @@ const views = {
 
 function route() {
   clearTimeout(timer);
-  // Deep links from notifications use the React path form (/tasks/<id>) because that is the GUI's
-  // route. Without web/dist this page is what serves that URL, so map the path form onto the
-  // equivalent hash view instead of silently showing the dashboard.
-  const fromPath = location.pathname.replace(/^\/+|\/+$/g, "");
-  const [view, arg] = (location.hash.slice(1) || fromPath || "dashboard").split("/");
+  // Deep links use the React path form (/tasks/<id>); the server resolved it into data-route.
+  const [view, arg] = location.hash.slice(1)
+    ? location.hash.slice(1).split("/")
+    : [initialState.view || "dashboard", initialState.arg || undefined];
   const name = view === "tasks" && arg ? "task" : view;
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === name || (name === "task" && a.dataset.view === "tasks")));
   show('<span class="muted">loading…</span>');

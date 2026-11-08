@@ -98,6 +98,18 @@ def _hermetic_environment():
         clear_ambient_environment()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_notification_daemon(monkeypatch):
+    """No test may reach the operator's real daemon or D-Bus session (T-18 DoD 5)."""
+    from orchestrator.services import notification_service
+
+    monkeypatch.setattr(notification_service, "_run_client",
+                        lambda argv: notification_service.ClientReply(
+                            argv[0], "blocked by the test suite"))
+    monkeypatch.setattr(notification_service, "probe_capabilities",
+                        lambda: notification_service.UNPROBED)
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch) -> Path:
     h = tmp_path / "orch-home"
