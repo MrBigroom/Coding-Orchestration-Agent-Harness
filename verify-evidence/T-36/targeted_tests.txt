@@ -1,6 +1,6 @@
-HEAD: e282fda5ee9b030201752aa2f184867b9897ffe1
-dirty_entries: 0
-command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k "r68 or floor or over_budget or rendering_the_same or budget_rendered" -vv
+HEAD: 0afb70bedba44ecc8aaf835cdfe88d967273c366
+dirty_entries: 1
+command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k "r68 or forty or floor or over_budget or rendering_the_same or budget_rendered" -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -8,23 +8,24 @@ orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/tests
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-orch-verify: pytest target tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k r68 or floor or over_budget or rendering_the_same or budget_rendered -vv
+orch-verify: pytest target tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k r68 or forty or floor or over_budget or rendering_the_same or budget_rendered -vv
 ============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
 cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 28 items / 20 deselected / 8 selected
+collecting ... collected 29 items / 20 deselected / 9 selected
 
-tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 12%]
-tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 25%]
-tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 37%]
-tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 50%]
-tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 62%]
-tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 75%]
-tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 87%]
+tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 11%]
+tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 22%]
+tests/unit/test_review_budget.py::test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths PASSED [ 33%]
+tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 44%]
+tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 55%]
+tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 66%]
+tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 77%]
+tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 88%]
 tests/integration/test_review_payload.py::test_an_over_budget_diff_still_fires_review_diff_incomplete PASSED [100%]
 
-======================= 8 passed, 20 deselected in 1.00s =======================
+======================= 9 passed, 20 deselected in 1.12s =======================
 targeted_exit=0
