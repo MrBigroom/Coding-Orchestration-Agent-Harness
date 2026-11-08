@@ -184,13 +184,46 @@ def test_unstamped_evidence_is_not_applicable(tmp_path: Path) -> None:
     assert "no stamped evidence" in result.evidence
 
 
-def test_the_check_status_stays_inside_the_frozen_vocabulary(tmp_path: Path) -> None:
-    """`stale` is reported, not failed: the check-record status Literal is frozen at four values."""
+def test_the_check_status_uses_the_approved_stale_value() -> None:
+    """CCR-T15-01 (approved 2026-11-08): a compared-and-out-of-date bundle is `stale`.
+
+    One assertion per outcome: the fifth value, the strict override, and the two unchanged values.
+    """
     stale = ef.FreshnessResult(ef.STATE_STALE, "1 stale of 1")
-    assert ef.check_status(stale) == "skipped"
+    assert ef.check_status(stale) == "stale"
     assert ef.check_status(stale, strict=True) == "fail"
     assert ef.check_status(ef.FreshnessResult(ef.STATE_PASS)) == "pass"
     assert ef.check_status(ef.FreshnessResult(ef.STATE_NOT_APPLICABLE)) == "not_applicable"
+
+
+def test_the_stale_row_renders_into_verification_md() -> None:
+    """The renderer is a consumer of the new value: it must emit `stale`, not fall back."""
+    from orchestrator.core.schemas import VerificationCheck, VerificationResult
+    from orchestrator.services import artifact_service
+
+    result = VerificationResult(
+        phase="phase-15",
+        final_result="pass",
+        checks=[
+            VerificationCheck(
+                name=ef.CHECK_NAME,
+                status="stale",
+                evidence="1 stale of 1 stamped evidence file(s) against abc1234 (abcdef1)",
+                notes="verify-evidence/T-1/full_suite.txt: stamp predates commit",
+            )
+        ],
+    )
+    md = artifact_service.render_verification_md(result)
+    assert f"| {ef.CHECK_NAME} | stale |" in md
+    assert "1 stale of 1 stamped evidence file(s)" in md
+
+
+def test_the_freshness_scope_is_the_two_code_writing_kinds() -> None:
+    """One predicate for both call sites: agent/review tasks get neither row nor finding."""
+    assert ef.applies_to_kind("coding") is True
+    assert ef.applies_to_kind("maintenance") is True
+    assert ef.applies_to_kind("agent") is False
+    assert ef.applies_to_kind("review") is False
 
 
 # ------------------------------------------------------------------ HEAD moved for other reasons
@@ -395,8 +428,34 @@ def test_a_dirty_tracked_worktree_is_refused_rather_than_stamped(tmp_path: Path)
     (repo / "README.md").write_text("# edited but not committed\n")
     with pytest.raises(ef.EvidenceBundleError) as exc:
         ef.regenerate_bundle(repo, "T-1")
-    assert "uncommitted tracked changes" in str(exc.value)
+    assert "uncommitted inputs" in str(exc.value)
+    assert "README.md" in str(exc.value)
     assert not (repo / "verify-evidence/T-1/suite.txt").exists()
+
+
+def test_an_untracked_source_file_is_refused_because_the_stamp_would_certify_it(
+    tmp_path: Path,
+) -> None:
+    """`capture.sh` measures the tree on disk; an untracked file is code the commit lacks."""
+    repo = _bundle_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "untracked.py").write_text("x = 1\n")
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1")
+    assert "untracked" in str(exc.value)
+    assert "src/untracked.py" in str(exc.value)
+    assert not (repo / "verify-evidence/T-1/suite.txt").exists()
+
+
+def test_no_arbitrary_command_is_accepted_because_only_the_committed_generator_runs() -> None:
+    """A command the branch does not contain can re-stamp content it never measured."""
+    import inspect
+
+    from orchestrator import cli
+
+    assert "command" not in inspect.signature(ef.regenerate_bundle).parameters
+    assert "only" in inspect.signature(ef.regenerate_bundle).parameters
+    assert "command" not in inspect.signature(cli.task_evidence).parameters
 
 
 def test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir(
@@ -449,3 +508,169 @@ def test_a_merge_commit_never_certifies_a_stamp(tmp_path: Path) -> None:
     certifies, reason = ef._commit_class(repo, merge)
     assert certifies is False
     assert reason == "merge commit (explained, not certified)"
+
+
+# ------------------------------------------------------------------ --only, timing and the tip
+
+
+SELECTIVE = """#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+OUT="$ROOT/verify-evidence/T-1"
+SHA="$(git rev-parse HEAD)"
+ONLY="${T15_ONLY:-}"
+want() {
+  [ -z "$ONLY" ] && return 0
+  case ",$ONLY," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+mkdir -p "$OUT"
+if want suite.txt; then
+  printf 'T15_STEP|suite|7\\n'
+  printf '# HEAD=%s\\nsuite: 3 passed\\n' "$SHA" > "$OUT/suite.txt"
+fi
+if want slow.txt; then
+  printf 'T15_STEP|slow|11\\n'
+  printf '# HEAD=%s\\nslow: 1 passed\\n' "$SHA" > "$OUT/slow.txt"
+fi
+"""
+
+
+def _selective_bundle_repo(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path)
+    script = repo / "verify-evidence/T-1/capture.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(SELECTIVE)
+    script.chmod(0o755)
+    _commit(repo, "add the evidence generator", {"verify-evidence/T-1/capture.sh": SELECTIVE})
+    return repo
+
+
+def test_only_refreshes_the_named_output_and_refuses_an_unknown_name(tmp_path: Path) -> None:
+    """A subset refresh reselects a DECLARED output; an unknown name is refused, not guessed."""
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    _commit(repo, "fix(phase-1): change the code", {"src/app.py": "x = 1\n"})
+
+    result = ef.regenerate_bundle(repo, "T-1", only=["slow.txt"])
+    assert result.only == ["slow.txt"]
+    assert "slow.txt" in result.rewritten
+    assert "suite.txt" not in result.rewritten
+    fresh = ef.check_freshness(repo, "HEAD", "T-1", "main", from_worktree=True)
+    assert fresh.stale_paths == ["verify-evidence/T-1/suite.txt"]
+
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1", only=["not-a-real-file.txt"])
+    assert "does not declare as an output" in str(exc.value)
+    assert "slow.txt" in str(exc.value)  # the refusal lists the names it does recognise
+
+
+def test_only_refuses_before_there_is_a_committed_manifest_to_select_from(tmp_path: Path) -> None:
+    """Without a committed manifest there is no declaration of what the generator produces."""
+    repo = _selective_bundle_repo(tmp_path)
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1", only=["slow.txt"])
+    assert "run a full pass and commit it first" in str(exc.value)
+
+
+def test_timing_txt_holds_both_pass_modes_with_wall_time_and_rewrites(tmp_path: Path) -> None:
+    """DoD 3: one committed file, both modes, numbers that come from the passes themselves.
+
+    `files`/`rewritten` count what the GENERATOR saw and rewrote in that pass; the driver's own
+    bookkeeping (manifest.json, the self-check, this file) is written after the capture and is not
+    counted, which is what keeps the numbers identical to the ones the command prints.
+    """
+    repo = _selective_bundle_repo(tmp_path)
+    fast = ef.regenerate_bundle(repo, "T-1")
+    _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    _commit(repo, "fix(phase-1): change the code", {"src/app.py": "x = 1\n"})
+    full = ef.regenerate_bundle(repo, "T-1", full=True)
+    text = (repo / "verify-evidence/T-1/timing.txt").read_text()
+    assert text.startswith(
+        f"# HEAD={full.head} mode=full"
+    )  # a canonical stamp, so the gate can read it
+    assert f"mode=fast wall_seconds={round(fast.duration_seconds, 2):.2f} files=3 rewritten=2" in text
+    assert f"mode=full wall_seconds={round(full.duration_seconds, 2):.2f} files=4 rewritten=2" in text
+    assert "suite_ms=7" in text
+    assert "slow_ms=11" in text
+
+
+def test_a_fast_pass_leaves_timing_txt_untouched_so_a_second_run_is_a_no_op(
+    tmp_path: Path,
+) -> None:
+    """The fast pass is the idempotent one; a measurement log must not dirty what it certifies."""
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    ef.regenerate_bundle(repo, "T-1", full=True)
+    before = (repo / "verify-evidence/T-1/timing.txt").read_text()
+    ef.regenerate_bundle(repo, "T-1")
+    assert (repo / "verify-evidence/T-1/timing.txt").read_text() == before
+
+
+def test_the_at_tip_report_names_the_commit_it_compared(tmp_path: Path) -> None:
+    """The committed-view proof at the delivered tip: names the commit, and is not a stamp."""
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    head = _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    result, path = ef.write_at_tip_report(repo, "T-1")
+    text = path.read_text()
+    assert result.state == ef.STATE_PASS
+    assert f"compared_commit={head}" in text
+    assert "status=pass" in text
+    # A report, not evidence measured at that commit: the parser reads no stamp in it.
+    stamps, unparsed = ef.parse_stamps(text)
+    assert stamps == []
+    assert unparsed == []
+    # And an evidence-only commit on top still reads fresh, with the explanation.
+    _commit(repo, "test(phase-1): add the tip report", {str(path.relative_to(repo)): text})
+    at_tip = ef.check_freshness(repo, "HEAD", "T-1", "main")
+    assert at_tip.state == ef.STATE_PASS
+    assert "evidence-only commit" in at_tip.notes  # the explanation lives in the per-file notes
+
+
+def test_the_at_tip_report_refuses_to_claim_pass_on_a_stale_bundle(tmp_path: Path) -> None:
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    _commit(repo, "fix(phase-1): code moves on", {"src/app.py": "x = 1\n"})
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.write_at_tip_report(repo, "T-1")
+    assert "refusing to write freshness_at_tip.txt" in str(exc.value)
+    assert not (repo / "verify-evidence/T-1" / ef.AT_TIP_NAME).exists()
+
+
+# ------------------------------------------------------------------ DoD 4 shape rule
+
+
+def _assertion_shape():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "t15_assertion_shape.py"
+    spec = importlib.util.spec_from_file_location("t15_assertion_shape", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_memory_scope_tests_keep_their_assertion_shape(tmp_path: Path) -> None:
+    """DoD 4's rule, not a count (T-17 touches these files next).
+
+    Mutation-checked in the same process against a copy of the tree, never the committed files.
+    """
+    shape = _assertion_shape()
+    assert shape.shape_failures() == []
+
+    root = tmp_path / "shape"
+    for name in shape.FILES:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((shape.repo_root() / name).read_text())
+    target = root / shape.FILES[0]
+    target.write_text(
+        target.read_text()
+        + '\n\ndef test_mutated(session):\n    assert "rejected" in row["why"]\n'
+    )
+    failures = shape.shape_failures(root)
+    assert len(failures) == 1
+    assert failures[0].endswith('reason asserted by substring: "rejected" in row["why"]')

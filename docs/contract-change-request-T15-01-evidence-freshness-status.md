@@ -1,31 +1,42 @@
 # Contract-change request CCR-T15-01 — an additive `stale` status on verification check records
 
-Status: **requested, not taken.** T-15 does not rely on this change; its code reports staleness
-inside the frozen vocabulary described at the bottom of this file.
+- **Status:** APPROVED by the operator, 2026-11-08, and applied to `docs/frozen-contracts.md` in the
+  same round (the additive fifth value plus a line naming this request and its approval date). The
+  file name is `contract-change-request-T15-01-evidence-freshness-status.md`, settled by use in the
+  operator ruling of 2026-11-08 (b): the earlier review objection was to the status marker, not the
+  name. House style follows CCR-T9-01 and CCR-T11-01.
+- **Why a request:** `verification.json` / `VerificationCheck.status` is a frozen Literal
+  (`pass | fail | skipped | not_applicable`, `docs/frozen-contracts.md`), and T-15's DoD 1 asks for a
+  check whose status is `pass / stale / not_applicable`. A fifth value is a contract change, so it
+  was requested rather than improvised. Until approval the code carried staleness as `skipped` with
+  a `stale:` prefix in the row's `evidence` string, `state: "stale"` in the
+  `evidence_freshness_stale` build-log payload, and `fail` only behind
+  `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`.
 
 ## What changes
 
-`verification.json` (and the identical `VerificationCheck` model) would gain one additive value on
-the existing `status` Literal: `pass | fail | skipped | not_applicable | stale`. No key, check name,
-artifact name or response shape changes, and no existing value changes meaning. A first-class
-`stale` would let a machine consumer distinguish "the bundle was compared and is out of date" from
-`skipped` ("compared but not certified", the value T-15 uses today) without parsing prose.
+`verification.json` (and the identical `VerificationCheck` model) gains one additive value on the
+existing `status` Literal: `pass | fail | skipped | not_applicable | stale`. No key, check name,
+artifact name or response shape changes, and no existing value changes meaning. `stale` means "the
+bundle was compared with the commit under verification and is out of date", which is distinct from
+`skipped` ("not attempted / not certified") and from `fail` (reserved for the operator's opt-in
+strict rule). A run written before this change simply never uses the new value.
 
-## Why the phase did not take it
+## What was implemented on approval
 
-T-15's Definition of Done asks for a check with status `pass / stale / not_applicable`, but does not
-authorize editing `docs/frozen-contracts.md`, and the task's own frozen line states that "the
-verification.json check-record shape and the existing check names are frozen; new checks are
-additive entries". `supervisor_service.contract_findings` would flag an unauthorized edit to the
-contract file. So the additive status waits for operator approval, and until then:
+1. `core/schemas.py`: the Literal gains `stale`.
+2. `services/evidence_freshness.py::check_status`: a compared-and-out-of-date bundle returns
+   `stale`; strict mode still returns `fail`; absent/unstamped stays `not_applicable`.
+3. `services/supervisor_service.py::verify`: the freshness row reports `stale`, with the offending
+   paths in `notes` and the same `evidence_freshness_stale` build-log payload (`state: "stale"`).
+4. `web/src/components/ui.tsx`: `stale -> warn` in the status-to-tone map.
+5. `services/artifact_service.py::render_verification_md`: renders the row from `c.status`
+   unchanged, so it emits `stale` with no code change; pinned by
+   `tests/unit/test_evidence_freshness.py::test_the_stale_row_renders_into_verification_md`.
+6. `docs/frozen-contracts.md`: the verification.json entry lists the fifth value and this request.
 
-- fresh bundle -> `pass`
-- absent or unstamped evidence -> `not_applicable`
-- stale bundle -> `skipped`, with `stale:` leading the `evidence` string, the paths in `notes`, and
-  `state: "stale"` in the `evidence_freshness_stale` build-log payload
-- `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true` -> `fail`
+`grep -rn "not_applicable\|verification_status"` over `src/`, `web/` and `tests/` is quoted in the
+handoff to show the consumer list is complete.
 
-## Consumers to update if approved
-
-`web/src/components/ui.tsx` (status -> tone map), `artifact_service.render_verification_md` (renders
-whatever the status is), and any operator query filtering `verification_status`.
+The check still never flips the final verdict by itself: `stale` is a reported status, `fail` is
+only the operator's configurable strict rule, and a stale bundle never sets `contradicts_worker`.

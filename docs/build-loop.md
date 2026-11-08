@@ -707,14 +707,17 @@ at, and the deterministic Supervisor check **committed evidence freshness** comp
 with the run's `commit_sha`. It is a pure equality test, reported next to "claimed files exist on
 disk", so no reviewer has to discover staleness by reading an old copy of the Worker's own tests.
 
-The row's *status* stays inside the frozen check vocabulary (`pass | fail | skipped |
-not_applicable`, `docs/frozen-contracts.md`): a fresh bundle is `pass`, absent or unstamped
-evidence is `not_applicable`, and a stale one is `skipped` with `stale:` leading the `evidence`
-string, the offending paths in `notes`, and `state=stale` in the `evidence_freshness_stale`
-build-log payload. A fifth status would be a contract change; it is proposed in
-`docs/contract-change-request-T15-01-evidence-freshness-status.md` and not taken here. Staleness
-never sets `contradicts_worker` and never fails the gate unless the operator opts in with
-`ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`. The check reports; it does not force a re-run.
+The row's *status* uses the check vocabulary in `docs/frozen-contracts.md`: a fresh bundle is
+`pass`, absent or unstamped evidence is `not_applicable`, and a compared-and-out-of-date one is
+`stale` — the fifth, additive value approved as CCR-T15-01 (operator, 2026-11-08; see
+`docs/contract-change-request-T15-01-evidence-freshness-status.md`). The row's `evidence` string
+names the stale count, the paths and the commit it compared, the paths and reasons are in `notes`,
+and the `evidence_freshness_stale` build-log payload carries `state=stale`. Staleness never sets
+`contradicts_worker` and never fails the gate unless the operator opts in with
+`ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`, which turns it into `fail`. The check reports; it
+does not force a re-run. Scope is the two code-writing kinds (`coding`, `maintenance`) through one
+predicate used by both the Supervisor verification pass and the Architect review, so a freshness
+finding in `review.json` always has a matching verification row.
 
 The parser accepts the repository's legacy stamp shapes (`# HEAD=<sha>`, `# HEAD <sha>`,
 `HEAD: <sha>`, prose in a comment, the pipe-delimited T-20 form, short SHAs, `== commit under test:
@@ -741,20 +744,34 @@ orchestrator task evidence T-15 --check    # read-only: exit 1 when stale
 ```
 
 It runs the committed `verify-evidence/<task>/capture.sh` and nothing else — there is no
-stamp-only mode, because re-stamping content that was not regenerated is the failure the check
-exists to catch. It refuses a worktree with uncommitted tracked changes, **including an edited
-`capture.sh`**, and it refuses a generator that is not committed at `HEAD`: a stamp names a tree
-that was actually measured and a command reproducible from the branch. It canonicalises **only the
-files that pass rewrote**, and writes `manifest.json` (HEAD, timestamp, command line, mode, tool
-versions, produced files) plus a self-check. A file the pass did not rewrite keeps its old stamp
-and is reported stale.
+arbitrary-command mode and no stamp-only mode, because re-stamping content that was not regenerated
+is the failure the check exists to catch, and a command the branch does not contain cannot be
+reproduced from it. A subset refresh is `--only <name>`: the name must be an output the *committed*
+manifest declares, it re-runs that generator step, and an unknown name is refused. It refuses a
+worktree with **any** uncommitted input — tracked modifications *and* untracked source or test
+files, because `capture.sh` measures the tree on disk while the stamp names a commit — **including
+an edited `capture.sh`**. It also refuses a generator that is not committed at `HEAD`. It
+canonicalises **only the files that pass rewrote**, and writes `manifest.json` (HEAD, timestamp,
+command line, mode, `--only` selection, tool versions, produced files) plus a self-check. A file
+the pass did not rewrite keeps its old stamp and is reported stale.
 
 The default pass is cheap by design: it regenerates everything except the expensive full-suite
 capture, so it finishes in seconds and reports its elapsed time and rewrite count. `--full` sets
 `T15_FULL=1` for the generator and runs the suite too; the mode is recorded in `manifest.json` and
 in every canonical stamp (`# HEAD=<sha> mode=fast|full`), so a reader can tell a cheap refresh from
-a complete one. It needs no network or API key, and a second run at the same HEAD is byte-identical
-so the diff stays reviewable.
+a complete one. `timing.txt` holds **both** modes' wall time, file count and rewrite count — written
+only by a `--full` pass so the fast pass stays byte-identical on a re-run — and any number quoted in
+a bundle README or a handoff must come from that file, never from a scratch or `/tmp` log. It needs
+no network or API key, and a second fast run at the same HEAD is byte-identical so the diff stays
+reviewable.
+
+A file cannot contain the SHA of the commit that adds it. The bundle's own `freshness_selfcheck.txt`
+is therefore the worktree-basis check of the pass that wrote it (generated LAST, naming the commit
+it compared), and `orchestrator task evidence <id> --at-tip`, run after the commit that delivers the
+bundle, writes `freshness_at_tip.txt`: the committed-view check, naming the commit it compared and
+refusing to write at all unless the bundle is fresh. That report is unstamped — it is a statement
+about a commit, not a measurement taken at one — and the commit that adds it touches only
+`verify-evidence/`, so the gate reports `pass` with that explanation at the delivered tip.
 
 ## Build log
 

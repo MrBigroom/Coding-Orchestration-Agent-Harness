@@ -619,31 +619,48 @@ def task_show(task: str, as_json: bool = typer.Option(False, "--json")) -> None:
 def task_evidence(
     task: str,
     root: str = typer.Option(None, help="Worktree root (default: current directory)."),
-    command: str = typer.Option(
-        None, help="Generator command; default verify-evidence/<id>/capture.sh."
-    ),
     check: bool = typer.Option(
         False, "--check", help="Only report freshness (no writes); exit 1 when stale."
     ),
+    at_tip: bool = typer.Option(
+        False,
+        "--at-tip",
+        help="Write freshness_at_tip.txt for the committed view; exit 1 unless fresh.",
+    ),
     full: bool = typer.Option(
         False, "--full", help="Also run the expensive full-suite capture (minutes, not seconds)."
+    ),
+    only: list[str] = typer.Option(
+        None,
+        "--only",
+        help="Refresh only these named outputs (repeatable); must be declared by the manifest.",
     ),
 ) -> None:
     """Regenerate (or check) one task's committed evidence bundle.
 
     No database and no network: the command maps a task id to ``verify-evidence/<id>/`` in this
     worktree, runs the committed ``capture.sh``, canonicalises only the files that pass rewrote,
-    and writes ``manifest.json``. The default pass skips the expensive full-suite capture; pass
-    ``--full`` to run it too, and the manifest plus every rewritten stamp records which mode ran.
-    There is deliberately no stamp-only mode: re-stamping content that was not regenerated is the
-    staleness this check exists to catch. Files the pass did not rewrite are left untouched, so a
-    second run at the same HEAD leaves the diff clean.
+    and writes ``manifest.json``. There is deliberately no arbitrary-command or stamp-only mode:
+    a stamp may only be written by a pass that re-ran the command recorded for that file, because
+    re-stamping content that was not regenerated is the staleness this check exists to catch. The
+    default pass skips the expensive full-suite capture; ``--full`` runs it too, and the manifest
+    plus every rewritten stamp records which mode ran. ``--only <name>`` refreshes one output the
+    committed manifest declares and nothing else. ``--at-tip`` records the committed-view check at
+    the delivered tip. Files the pass did not rewrite are left untouched, so a second run at the
+    same HEAD leaves the diff clean.
     """
     from orchestrator.services import evidence_freshness
 
     repo = Path(root).expanduser().resolve() if root else Path.cwd().resolve()
-    if check:
+    if check or at_tip:
         freshness = evidence_freshness.check_freshness(repo, "HEAD", task)
+        if at_tip:
+            try:
+                freshness, path = evidence_freshness.write_at_tip_report(repo, task, "HEAD")
+            except evidence_freshness.EvidenceBundleError as exc:
+                console.print(f"[red]evidence[/red] {exc}")
+                raise typer.Exit(code=1) from exc
+            console.print(f"[green]evidence[/green] wrote {path}")
         _print_json(
             {
                 "label": evidence_freshness.normalize_label(task),
@@ -666,12 +683,14 @@ def task_evidence(
         if freshness.state == evidence_freshness.STATE_STALE:
             raise typer.Exit(code=1)
         return
-    result = evidence_freshness.regenerate_bundle(repo, task, command=command, full=full)
+    result = evidence_freshness.regenerate_bundle(repo, task, full=full, only=only)
     _print_json(result.as_dict())
     console.print(
         f"[green]evidence[/green] {result.label}: {len(result.files)} file(s), "
         f"{len(result.rewritten)} rewritten at {result.head_short} ({result.manifest}) "
-        f"in {result.duration_seconds:.1f}s ({result.mode} pass)"
+        f"in {result.duration_seconds:.1f}s ({result.mode} pass"
+        + (f", only {', '.join(result.only)}" if result.only else "")
+        + ")"
     )
 
 

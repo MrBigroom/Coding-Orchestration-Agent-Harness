@@ -130,8 +130,13 @@ def test_stale_evidence_is_reported_without_flipping_the_verdict(session, projec
     run, checks, result = _verify(session, task, project, new)
 
     fresh = checks[evidence_freshness.CHECK_NAME]
-    assert fresh.status == "skipped"
-    assert fresh.evidence.startswith("stale: ")
+    # CCR-T15-01 (approved 2026-11-08): `stale` is the fifth status value, so a machine consumer
+    # never has to parse prose. The reason names the count, the paths and the commit it compared.
+    assert fresh.status == "stale"
+    assert fresh.evidence == (
+        f"1 stale of 1 stamped evidence file(s) against "
+        f"{evidence_freshness._short(Path(project.path), new)} ({new})"
+    )
     assert f"verify-evidence/{task.short_id}/full_suite.txt" in fresh.notes
     assert result.final_result == "pass"  # reported, never a failing check by default
     assert result.contradicts_worker is False
@@ -139,7 +144,7 @@ def test_stale_evidence_is_reported_without_flipping_the_verdict(session, projec
     events = [e for e in session.exec(select(BuildLogEntry)) if e.event == "evidence_freshness_stale"]
     payload = json.loads(events[-1].details.split("findings_json=", 1)[1])
     assert payload["state"] == "stale"
-    assert payload["check_status"] == "skipped"
+    assert payload["check_status"] == "stale"
 
 
 def test_the_existing_checks_and_frozen_artifact_names_are_unchanged(session, project):
@@ -202,7 +207,7 @@ def test_deleted_evidence_is_reported_with_the_deleting_commit(session, project)
 
     _run, checks, result = _verify(session, task, project, deleted)
     fresh = checks[evidence_freshness.CHECK_NAME]
-    assert fresh.status == "skipped"
+    assert fresh.status == "stale"
     assert f"verify-evidence/{task.short_id}/README.md: deleted by {deleted}" in fresh.notes
     assert "1 deleted evidence file(s)" in fresh.evidence
     assert result.contradicts_worker is False
@@ -216,3 +221,64 @@ def test_never_committed_evidence_is_not_applicable_not_a_deletion(session, proj
     assert fresh.status == "not_applicable"
     assert "deleted" not in fresh.evidence
     assert fresh.notes == ""
+
+
+def test_an_agent_kind_task_gets_neither_the_row_nor_the_finding(session, project):
+    """One scope for both call sites (T-15): an agent task writes no code and has no bundle.
+
+    The control matters: the agent's OWN evidence directory is stale at the same commit and the raw
+    check reads `stale` for it, so this test fails if the scope guard is removed from either call
+    site rather than passing because there was nothing to compare.
+    """
+    from orchestrator.core.models import TaskKind
+    from orchestrator.services import review_service
+
+    coding = _task(session, project, phase=7)
+    agent = task_service.create(
+        session,
+        TaskCreate(
+            title="T-15 freshness probe (agent)",
+            project_id=project.id,
+            kind=TaskKind.agent,
+            tags=["mock"],
+            phase_number=8,
+            phase_slug="p8",
+            definition_of_done=["answer the question"],
+        ),
+    )
+    repo = Path(project.path)
+    old = _commit(
+        repo,
+        "evidence",
+        {
+            f"verify-evidence/{coding.short_id}/full_suite.txt": "# HEAD=PARENT\n3 passed\n",
+            f"verify-evidence/{agent.short_id}/full_suite.txt": "# HEAD=PARENT\n3 passed\n",
+        },
+    )
+    _commit(
+        repo,
+        "evidence stamped at the round-4 tip",
+        {**_stamped(coding.short_id, old), **_stamped(agent.short_id, old)},
+    )
+    new = _commit(repo, "round 5 code", {"src/app.py": "x = 2\n"})
+
+    # The control: the agent's own bundle really is stale if anything compared it.
+    assert (
+        evidence_freshness.check_freshness(repo, new, agent.short_id, project.base_branch).state
+        == evidence_freshness.STATE_STALE
+    )
+
+    coding_run, coding_checks, _result = _verify(session, coding, project, new)
+    assert coding_checks[evidence_freshness.CHECK_NAME].status == "stale"
+    assert (
+        review_service.review_freshness(
+            coding, repo, coding_run, project.base_branch
+        ).state
+        == evidence_freshness.STATE_STALE
+    )
+
+    agent_run, agent_checks, _result = _verify(session, agent, project, new)
+    assert evidence_freshness.CHECK_NAME not in agent_checks
+    agent_review = review_service.review_freshness(agent, repo, agent_run, project.base_branch)
+    assert agent_review.state == evidence_freshness.STATE_NOT_APPLICABLE
+    assert agent_review.stale_paths == []

@@ -304,6 +304,24 @@ Audited against the budgeted text the prompt builder actually emitted, not the a
 """
 
 
+def review_freshness(
+    task: Task, cwd: Path | None, run: Run, base_branch: str | None
+) -> evidence_freshness.FreshnessResult:
+    """The one freshness comparison used for BOTH the reviewer prompt and review.json.
+
+    Scoped to code-writing kinds through the same predicate `supervisor_service.verify` uses, so a
+    harness freshness finding can never arrive in review.json without a matching verification row:
+    an `agent`/`review` task writes no code and gets neither.
+    """
+    if not evidence_freshness.applies_to_kind(task.kind):
+        kind = str(getattr(task.kind, "value", task.kind))
+        return evidence_freshness.FreshnessResult(
+            evidence_freshness.STATE_NOT_APPLICABLE,
+            f"{kind} task writes no code, so it has no evidence bundle to compare",
+        )
+    return evidence_freshness.check_freshness(cwd, run.commit_sha, task.short_id, base_branch)
+
+
 async def architect_review(
     session: Session,
     task: Task,
@@ -335,9 +353,7 @@ async def architect_review(
         cwd, base_branch, patch_text, rendered=rendered_diff
     )
     harness_text = harness_findings_section(session, task, run, project, pre_diff_issues)
-    freshness = evidence_freshness.check_freshness(
-        cwd, run.commit_sha, task.short_id, base_branch
-    )
+    freshness = review_freshness(task, cwd, run, base_branch)
     if freshness.state == evidence_freshness.STATE_STALE:
         harness_text += (
             "\nHARNESS FINDING: committed evidence is STALE against the commit under "

@@ -250,13 +250,13 @@ async def verify(
 
     # 4b. Committed evidence freshness (T-15 DoD 1). A pure comparison of the HEAD stamp in each
     # committed evidence file against the run's commit_sha, so the reviewer never has to discover
-    # staleness by reading an old copy of the Worker's own tests. The check-record status stays
-    # inside the frozen vocabulary: fresh is `pass`, absent/unstamped is `not_applicable`, and a
-    # stale bundle is `skipped` with `stale:` leading the evidence string (a fifth status would be
-    # a contract change this phase is not authorized to make). `fail` is reserved for
-    # ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true. This check never sets `contradicts` and never
-    # by itself flips the verdict.
-    if cwd and project and task.kind in (TaskKind.coding, TaskKind.maintenance):
+    # staleness by reading an old copy of the Worker's own tests. The status is `stale` (the fifth,
+    # additive value approved as CCR-T15-01), `pass` for a fresh bundle and `not_applicable` when
+    # the task has no evidence at all; `fail` is reserved for the strict env flag below.
+    # Scope: code-writing kinds only, via the same predicate the Architect review uses, so a finding
+    # can never appear in review.json without a matching verification row. This check never sets
+    # `contradicts` and never by itself flips the verdict.
+    if cwd and project and evidence_freshness.applies_to_kind(task.kind):
         freshness = evidence_freshness.check_freshness(
             cwd, run.commit_sha, task.short_id, project.base_branch
         )
@@ -267,7 +267,7 @@ async def verify(
             VerificationCheck(
                 name=evidence_freshness.CHECK_NAME,
                 status=status,
-                evidence=(f"stale: {freshness.evidence}" if stale else freshness.evidence),
+                evidence=freshness.evidence,
                 notes=(
                     freshness.notes
                     + (

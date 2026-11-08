@@ -429,3 +429,21 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   leaves the expensive full-suite capture alone; `--full` runs it, and the mode is recorded in
   `manifest.json` and in every canonical stamp. Deleting evidence earlier on the branch is a stale
   finding naming the path and the deleting commit, distinct from evidence that never existed.
+- **2026-11-09 — T-15 round 5: CCR-T15-01 approved (`stale`), no arbitrary command, untracked
+  inputs count, one timing file.** The operator approved the additive fifth check status `stale`
+  (2026-11-08), so `VerificationCheck.status` gains it, `check_status` returns it for a
+  compared-and-out-of-date bundle, `docs/frozen-contracts.md` records it with the CCR name and
+  date, `web/src/components/ui.tsx` maps it to `warn`, and `render_verification_md` renders it
+  unchanged. `fail` remains the operator's opt-in strict rule and the check never flips a verdict.
+  The generator's arbitrary-command mode is deleted: only the committed in-repo `capture.sh` may
+  run, because a command the branch does not contain can re-stamp content it never measured; a
+  subset refresh is `--only <name>` against the outputs the committed manifest declares, and an
+  unknown name is refused. The dirty guard now covers **untracked** source and test files as well
+  as tracked ones (`capture.sh` measures the tree on disk while the stamp names a commit), and the
+  generator is never exempt. `timing.txt` holds both pass modes' wall time, file count and rewrite
+  count and is written only by a `--full` pass, so the fast pass stays byte-identical on a re-run;
+  it is the single source for every timing quoted in a README or handoff. A committed-view
+  `freshness_at_tip.txt` (`--at-tip`, refusing to write unless fresh) proves the check at the
+  delivered tip, because a file cannot contain the SHA of the commit that adds it. One scope
+  predicate (`applies_to_kind`) is used by the Supervisor and the Architect review, so a freshness
+  finding can never arrive without a verification row.

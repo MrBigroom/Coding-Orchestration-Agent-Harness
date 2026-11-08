@@ -247,9 +247,14 @@ stamp names the commit it was taken at, and the deterministic Supervisor check c
 with the run's `commit_sha`. A stale bundle is reported with the offending paths, a deleted file
 with the commit that deleted it — never as absent evidence. A recovery or hand-fix **trailer** is
 explained, not certified: it names the intervening commit but the bundle still reads stale, because
-a Worker can write a trailer too. Refresh the whole bundle with one command (`orchestrator task
-evidence <id>`, `--full` for the suite), which runs the committed `capture.sh`, rewrites only what
-it regenerates and writes `manifest.json` with its mode. Keep memory entries about verification results
+a Worker can write a trailer too. The row's status is `stale` (the fifth check value, CCR-T15-01),
+`pass` when fresh and `not_applicable` when a task committed no evidence. Refresh the whole bundle
+with one command (`orchestrator task evidence <id>`, `--full` for the suite, `--only <name>` for one
+declared output), which runs the committed `capture.sh` and nothing else, rewrites only what it
+regenerates and writes `manifest.json` with its mode; `--at-tip` afterwards records the
+committed-view check at the delivered tip. A stamp is only written by a pass that re-ran that
+file's command, so `timing.txt` (both pass modes) and the bundle README are the only places a
+timing number may be quoted from. Keep memory entries about verification results
 phrased relative to that stamp — "at `<sha>` the suite was green", not "the suite is green" —
 because a remembered green outlives the code it described. The check reports staleness; it does
 not force a re-run.
