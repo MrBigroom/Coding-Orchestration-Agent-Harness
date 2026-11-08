@@ -1,18 +1,20 @@
-# HEAD=6e3d64f2682286693eb08c7a5d5f15ff0412c45b
-# command: check_freshness(commit=6e3d64f, label=T-15, base_branch=main)
+# HEAD=357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5
+# command: check_freshness(commit=357a41d, label=T-15, base_branch=main)
 status=pass
-compared_commit=6e3d64f2682286693eb08c7a5d5f15ff0412c45b
-stamped_files=6
+compared_commit=357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5
+stamped_files=7
 stale_count=0
 deleted_count=0
-evidence=6 stamped evidence file(s) match 6e3d64f (6e3d64f2682286693eb08c7a5d5f15ff0412c45b)
-notes=verify-evidence/T-15/dod_map.txt: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
-  verify-evidence/T-15/freshness_tests.txt: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
-  verify-evidence/T-15/full_suite.txt: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
-  verify-evidence/T-15/lint.txt: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
-  verify-evidence/T-15/manifest.json: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
-  verify-evidence/T-15/source_anchors.txt: differs only by exempt commit(s): 6e3d64f (evidence-only commit)
+evidence=7 stamped evidence file(s) match 357a41d (357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5)
+notes=verify-evidence/T-15/dod_map.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/freshness_selfcheck.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/freshness_tests.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/full_suite.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/lint.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/manifest.json: differs only by exempt commit(s): 357a41d (evidence-only commit)
+  verify-evidence/T-15/source_anchors.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
 
-Interpretation: the stamps name the code commit aa7699f; this file was written at the
-evidence-only commit on top of it, so the check reports pass with an evidence-only
-commit explanation rather than a bare mismatch.
+Interpretation: the code under test is aa7699f; every later commit on this branch touches
+only verify-evidence/T-15/. The stamps name the evidence commit whose tree this bundle
+certifies, and the check reports pass with an evidence-only explanation rather than a bare
+mismatch.

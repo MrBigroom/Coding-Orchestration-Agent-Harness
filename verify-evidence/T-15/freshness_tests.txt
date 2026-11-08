@@ -1,4 +1,4 @@
-# HEAD=6e3d64f2682286693eb08c7a5d5f15ff0412c45b
+# HEAD=357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py tests/unit/test_memory_scopes.py tests/integration/test_memory_scope_boundary.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 tests/unit/test_evidence_freshness.py::test_every_legacy_stamp_shape_is_parsed[# HEAD=0123456789abcdef0123456789abcdef01234567-0123456789abcdef0123456789abcdef01234567] PASSED [  1%]
