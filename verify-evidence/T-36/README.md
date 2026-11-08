@@ -8,7 +8,7 @@ code HEAD (the commit before that evidence commit).
 | --- | --- |
 | `full_suite.txt` | `./scripts/orch_verify.sh test` -> `747 passed, 10 skipped`, `suite_exit=0`, with the `ORCH_VERIFY|...` line proving `orchestrator.__file__` resolved inside this worktree |
 | `lint.txt` | `./scripts/orch_verify.sh lint` -> `All checks passed!`, `lint_exit=0` |
-| `targeted_tests.txt` | the two touched test files with `-vv` -> `28 passed`; the T-36 node ids are named in the log |
+| `targeted_tests.txt` | the two touched test files with `-k` and `-vv` -> `8 passed, 20 deselected`; all eight T-36 node ids are named in the log |
 
 ## DoD -> evidence
 
@@ -27,7 +27,7 @@ code HEAD (the commit before that evidence commit).
    Pinned by `tests/unit/test_review_budget.py:346`
    `test_the_floor_pass_leaves_the_t16_evidence_reserve_working` (source-heavy diff, every
    `verify-evidence/` file present and the big source still larger) and the existing T-16 tests
-   at `:42`, `:63`, `:86` all pass in `targeted_tests.txt`.
+   at `:42`, `:63`, `:86` all pass in `full_suite.txt`.
 3. Manifest truthful and additive
    The existing columns are unchanged (`prompt_builder.py:723-744` `_manifest_table`); only the
    `reason` text is more specific. Floor-only and omitted rows are asserted distinct in

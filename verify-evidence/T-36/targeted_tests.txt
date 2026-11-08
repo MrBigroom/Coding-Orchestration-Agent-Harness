@@ -1,6 +1,6 @@
-HEAD: 1002c0d9ce2aa5aa4a423fa9174c09ea792e6dd8
-dirty_entries: 1
-command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py tests/integration/test_review_payload.py -vv
+HEAD: e282fda5ee9b030201752aa2f184867b9897ffe1
+dirty_entries: 0
+command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k "r68 or floor or over_budget or rendering_the_same or budget_rendered" -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -8,43 +8,23 @@ orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/work
 orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/tests
 orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-orch-verify: pytest target tests/unit/test_review_budget.py tests/integration/test_review_payload.py -vv
+orch-verify: pytest target tests/unit/test_review_budget.py tests/integration/test_review_payload.py -k r68 or floor or over_budget or rendering_the_same or budget_rendered -vv
 ============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
 cachedir: .pytest_cache
 rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 configfile: pyproject.toml
 plugins: anyio-4.15.1
-collecting ... collected 28 items
+collecting ... collected 28 items / 20 deselected / 8 selected
 
-tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped PASSED [  3%]
-tests/unit/test_review_budget.py::test_a_large_first_evidence_log_does_not_starve_later_evidence PASSED [  7%]
-tests/unit/test_review_budget.py::test_an_unfundable_group_does_not_give_the_whole_budget_to_the_first_file PASSED [ 10%]
-tests/unit/test_review_budget.py::test_undelivered_compensation_uses_the_final_text_not_only_the_records PASSED [ 14%]
-tests/unit/test_review_budget.py::test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut PASSED [ 17%]
-tests/unit/test_review_budget.py::test_manifest_shortfall_is_computed_from_the_as_sent_text PASSED [ 21%]
-tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim PASSED [ 25%]
-tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 28%]
-tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 32%]
-tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 35%]
-tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 39%]
-tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 42%]
-tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 46%]
-tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 50%]
-tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand PASSED [ 53%]
-tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry PASSED [ 57%]
-tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune PASSED [ 60%]
-tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot PASSED [ 64%]
-tests/unit/test_review_budget.py::test_an_unreadable_worktree_registry_fails_loudly PASSED [ 67%]
-tests/unit/test_review_budget.py::test_guard_message_does_not_blame_the_suite_without_spy_evidence PASSED [ 71%]
-tests/integration/test_review_payload.py::test_review_payload_is_archived_and_names_what_truncation_dropped PASSED [ 75%]
-tests/integration/test_review_payload.py::test_refuted_absence_finding_does_not_requeue_and_never_becomes_an_approval PASSED [ 78%]
-tests/integration/test_review_payload.py::test_visibility_claim_is_refuted_by_the_supplied_patch_not_by_the_file_existing PASSED [ 82%]
-tests/integration/test_review_payload.py::test_an_over_budget_diff_still_fires_review_diff_incomplete PASSED [ 85%]
-tests/integration/test_review_payload.py::test_harness_and_reviewer_missing_artifacts_live_in_separate_payload_sections PASSED [ 89%]
-tests/integration/test_review_payload.py::test_manifest_names_the_files_a_diff_budget_dropped PASSED [ 92%]
-tests/integration/test_review_payload.py::test_archived_payload_carries_the_resolution_evidence_for_each_verdict PASSED [ 96%]
-tests/integration/test_review_payload.py::test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absent PASSED [100%]
+tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 12%]
+tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 25%]
+tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 37%]
+tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 50%]
+tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 62%]
+tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 75%]
+tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 87%]
+tests/integration/test_review_payload.py::test_an_over_budget_diff_still_fires_review_diff_incomplete PASSED [100%]
 
-============================== 28 passed in 5.70s ==============================
+======================= 8 passed, 20 deselected in 1.00s =======================
 targeted_exit=0
