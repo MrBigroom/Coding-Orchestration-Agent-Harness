@@ -1,4 +1,4 @@
-# HEAD=d9588f1cd325d0d6bba206cce14dfeda9d37975a mode=full
+# HEAD=fe6c4c2b1c96b1085b3802101de573b600420f82 mode=full
 # command: grep -nF for the T-15 anchors (source line numbers at this HEAD)
 51:CHECK_NAME = "committed evidence freshness"
 55:SELF_CHECK_NAME = "freshness_selfcheck.txt"
@@ -10,7 +10,7 @@
 668:def _uncommitted_inputs(root: Path, rel_dir: str) -> list[str]:
 785:def regenerate_bundle(
 937:def write_at_tip_report(
-260:        freshness = evidence_freshness.check_freshness(
+184:        freshness = evidence_freshness.check_freshness(
 322:    return evidence_freshness.check_freshness(cwd, run.commit_sha, task.short_id, base_branch)
 619:def task_evidence(
 56:    status: Literal["READY_FOR_REVIEW", "CHANGES_APPLIED", "BLOCKED"]

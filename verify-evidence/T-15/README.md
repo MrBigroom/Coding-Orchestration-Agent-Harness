@@ -23,8 +23,8 @@ Measured timings, from `timing.txt` (the only place a number may be quoted from)
 
 | pass | wall | files the generator saw | files it rewrote |
 |---|---|---|---|
-| `fast` (default) | 4.28 s | 11 | 5 |
-| `full` (`--full`) | 146.19 s | 11 | 6 |
+| `fast` (default) | 4.25 s | 11 | 5 |
+| `full` (`--full`) | 145.03 s | 11 | 6 |
 
 `timing.txt` is written only by a `--full` pass, so the default pass stays byte-identical on a
 re-run (DoD 5(d)); the next `--full` pass refreshes both rows. A mode switch rewrites the stamp line
