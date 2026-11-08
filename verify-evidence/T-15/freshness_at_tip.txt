@@ -2,19 +2,19 @@
 # this is a report about the commit it names, not evidence measured at it).
 # command: orchestrator task evidence T-15 --at-tip
 basis=committed
-compared_commit=7c8bc26f9810c61a1c1ee785805b71c0fd43c558
-compared_short=7c8bc26
+compared_commit=9c29b3ab9aa4cf4361caf86728bc0503982abbb3
+compared_short=9c29b3a
 status=pass
 stamped_files=8
 stale_count=0
 deleted_count=0
-evidence=8 stamped evidence file(s) fresh at 7c8bc26 (7c8bc26f9810c61a1c1ee785805b71c0fd43c558); 8 fresh only via exempt commit(s)
-notes=verify-evidence/T-15/assertion_shape.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/dod_map.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/freshness_tests.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/full_suite.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/lint.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/manifest.json: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/source_anchors.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
-verify-evidence/T-15/timing.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit)
+evidence=8 stamped evidence file(s) fresh at 9c29b3a (9c29b3ab9aa4cf4361caf86728bc0503982abbb3); 8 fresh only via exempt commit(s)
+notes=verify-evidence/T-15/assertion_shape.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/dod_map.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/freshness_tests.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/full_suite.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/lint.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/manifest.json: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/source_anchors.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
+verify-evidence/T-15/timing.txt: differs only by evidence-only commit(s): 7c8bc26 (evidence-only commit), 9c29b3a (evidence-only commit)
 delivery=the commit adding this file touches only verify-evidence/, so the same check at the final tip reports pass naming that evidence-only commit.
