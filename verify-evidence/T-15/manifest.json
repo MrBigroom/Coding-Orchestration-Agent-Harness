@@ -3,46 +3,51 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "511990217f57a8a9c1b88f7466d67820ab9690113f89574cd93f1f98113c83f5"
+      "sha256": "df344043df3c68cf6a52b4c848952048325d1f5af207756cfa6cbb7531f7ade2"
+    },
+    {
+      "path": "assertion_shape.txt",
+      "sha256": "aa68fe1277e39329edb843300d5294237d16278add54dcd24ec3bcccf1e54bc5"
     },
     {
       "path": "capture.sh",
-      "sha256": "cac8518522f3c0f5ac72ec4013ad47be41f43bae5488250df75c7e6ee0f8c3b0"
+      "sha256": "6260cdee369505ef4d7ef420cf18c13a98660fcdf2b7d45d80eef97ef32d576b"
     },
     {
       "path": "dod_map.txt",
-      "sha256": "e87c640550e5fc426fde26ae42f780c19ac93ef84abf6c1ef8528528b9429ec2"
+      "sha256": "e640ed8b75cc46f9ed0db6f5a14a7fcfca97039085e4a5aa20bf0db257f11493"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "0a2240886b8d20876c21fbf5a5916ffd35730c9feecce20876646471c81382b4"
+      "sha256": "819d142eaa39a20bf16d77dd423795378d6eb460066e54ac8df0b098e02d7d91"
     },
     {
       "path": "freshness_tests.txt",
-      "sha256": "63631c6b0649a008400cab14526379c6de3f545cd99370a4270a5a21087d0870"
+      "sha256": "abbfd30d78cff4f9bd842821edeb4ba75ad72b8c29ca1b7b56724eb57d04ed6a"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "4c14b7179f06b3fe1a9a09cae538de6efecaafcbb8f0412c06915fc297f7ee61"
+      "sha256": "c638aff9f560080a5bb24ed172a75e0d930f2d38ea26314a433a525fec6f1434"
     },
     {
       "path": "lint.txt",
-      "sha256": "faeba13f4396d7470c868e7ac223c391ad5ff28257faf105335e1e3be0842a7f"
+      "sha256": "3fce5e5a2b02835db4e33adc64440e8da7aab112383402897232e17b0d5de2e3"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "0fe9feb46bed529f917a0381359fe20e6256daf07125105d616d88b561f7d938"
+      "sha256": "5a50e7eec8e45d699c39dffb582b3ecb02e1ee5c738893d91da274b3ef4e16e9"
     },
     {
       "path": "timing.txt",
-      "sha256": "897e7bda309403216627cb73a5df5a02f1abd58d60930896f14bf7c02f6f7eab"
+      "sha256": "df84911040bbe5a27e7fee517a6de5f08921d9296e83a73c3179de406f2c8aa6"
     }
   ],
-  "generated_at": "2026-11-08T16:21:58Z",
-  "head": "c3f05846c35b2560f6da0f88aae305ea9b03dcb2",
-  "head_short": "c3f0584",
+  "generated_at": "2026-11-08T16:40:15Z",
+  "head": "c6c6cab510366af0e2a1c30c055c07e6c208dcf9",
+  "head_short": "c6c6cab",
   "label": "T-15",
-  "stamp": "# HEAD=c3f05846c35b2560f6da0f88aae305ea9b03dcb2",
+  "mode": "full",
+  "stamp": "# HEAD=c6c6cab510366af0e2a1c30c055c07e6c208dcf9 mode=full",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",

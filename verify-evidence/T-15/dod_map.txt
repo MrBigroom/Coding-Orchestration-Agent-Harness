@@ -1,4 +1,4 @@
-# HEAD=c3f05846c35b2560f6da0f88aae305ea9b03dcb2
+# HEAD=c6c6cab510366af0e2a1c30c055c07e6c208dcf9 mode=full
 # command: static DoD map; the -v run above supplies each node's PASSED line
 5a older HEAD -> stale with the right paths/count:
    unit::test_an_older_stamp_is_stale_with_the_paths_and_the_count
@@ -9,6 +9,10 @@
 5c unstamped or absent evidence -> not_applicable (never a false failure):
    unit::test_absent_evidence_is_not_applicable, unit::test_unstamped_evidence_is_not_applicable
    integration::test_an_absent_bundle_is_not_applicable
+   integration::test_never_committed_evidence_is_not_applicable_not_a_deletion
+   deleted evidence -> stale naming the deleting commit, never not_applicable:
+   unit::test_deleted_evidence_names_the_paths_and_the_deleting_commit
+   integration::test_deleted_evidence_is_reported_with_the_deleting_commit
 5d regeneration is idempotent; the second run rewrites nothing:
    unit::test_regeneration_is_one_command_and_a_second_run_rewrites_nothing
 5e existing verification checks and frozen artifact names unchanged:
@@ -16,5 +20,13 @@
 5f split assertions pass; the reason-shaped one fails when the reason changes:
    unit_memory::test_fix_scopes_leaves_rejected_rows_alone
    unit_memory::test_the_rejected_reason_assertion_fails_when_the_reason_changes
-   unit::test_the_memory_scope_tests_keep_their_assertion_shape (AST inventory)
+   scripts/t15_assertion_shape.py output in assertion_shape.txt (AST, comments at every site)
+generator integrity and mode:
+   unit::test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir
+   unit::test_a_generator_that_is_not_committed_is_refused
+   unit::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest
+trailer honesty / security:
+   unit::test_a_recovery_trailer_is_explained_not_certified
+   unit::test_an_operator_hand_fix_trailer_is_explained_not_certified
+   unit::test_a_worker_can_fake_the_hand_fix_trailer_and_still_reads_stale
 also: integration::test_strict_mode_is_the_only_way_staleness_fails_the_gate

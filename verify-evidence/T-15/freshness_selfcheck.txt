@@ -1,16 +1,16 @@
 # Evidence self-check written by the one bundle pass (not hand-edited, no HEAD
 # stamp: it certifies the files around it; the gate reports the committed view).
-# command: orchestrator task evidence T-15
+# command: orchestrator task evidence T-15 --full
+mode=full
 # rewrites and wall time are reported by that command; this file records only
 # what the check saw, so a no-op second run is byte-identical.
 basis=worktree
 scope=every evidence file except manifest.json and this file
-compared_commit=c3f05846c35b2560f6da0f88aae305ea9b03dcb2
+compared_commit=c6c6cab510366af0e2a1c30c055c07e6c208dcf9
 status=pass
-stamped_files=6
+stamped_files=7
 stale_count=0
 deleted_count=0
-evidence=6 stamped evidence file(s) fresh at c3f0584 (c3f05846c35b2560f6da0f88aae305ea9b03dcb2); 2 fresh only via exempt commit(s)
-notes=verify-evidence/T-15/full_suite.txt: differs only by exempt commit(s): c3f0584 (evidence-only commit)
-verify-evidence/T-15/timing.txt: differs only by exempt commit(s): c3f0584 (evidence-only commit)
+evidence=7 stamped evidence file(s) fresh at c6c6cab (c6c6cab510366af0e2a1c30c055c07e6c208dcf9)
+notes=none
 committed_view=the stamps name this HEAD, the next commit must be evidence-only, and the gate then reports pass with that explanation (see tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).

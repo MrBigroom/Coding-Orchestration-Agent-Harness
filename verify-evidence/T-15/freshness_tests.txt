@@ -1,4 +1,4 @@
-# HEAD=c3f05846c35b2560f6da0f88aae305ea9b03dcb2
+# HEAD=c6c6cab510366af0e2a1c30c055c07e6c208dcf9 mode=full
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 tests/unit/test_evidence_freshness.py::test_every_legacy_stamp_shape_is_parsed[# HEAD=0123456789abcdef0123456789abcdef01234567-0123456789abcdef0123456789abcdef01234567] PASSED
@@ -20,8 +20,9 @@ tests/unit/test_evidence_freshness.py::test_a_stamp_that_differs_only_by_an_evid
 tests/unit/test_evidence_freshness.py::test_absent_evidence_is_not_applicable PASSED
 tests/unit/test_evidence_freshness.py::test_unstamped_evidence_is_not_applicable PASSED
 tests/unit/test_evidence_freshness.py::test_the_check_status_stays_inside_the_frozen_vocabulary PASSED
-tests/unit/test_evidence_freshness.py::test_a_recovery_commit_trailer_is_explained_not_called_stale PASSED
-tests/unit/test_evidence_freshness.py::test_an_operator_hand_fix_trailer_is_explained_not_called_stale PASSED
+tests/unit/test_evidence_freshness.py::test_a_recovery_trailer_is_explained_not_certified PASSED
+tests/unit/test_evidence_freshness.py::test_an_operator_hand_fix_trailer_is_explained_not_certified PASSED
+tests/unit/test_evidence_freshness.py::test_a_worker_can_fake_the_hand_fix_trailer_and_still_reads_stale PASSED
 tests/unit/test_evidence_freshness.py::test_a_body_that_merely_mentions_the_trailer_is_not_exempt PASSED
 tests/unit/test_evidence_freshness.py::test_a_commit_that_only_touches_the_generator_is_not_evidence_only PASSED
 tests/unit/test_evidence_freshness.py::test_a_code_commit_after_the_stamp_is_stale PASSED
@@ -31,12 +32,16 @@ tests/unit/test_evidence_freshness.py::test_the_manifest_names_the_head_command_
 tests/unit/test_evidence_freshness.py::test_regeneration_does_not_restamp_a_file_the_generator_did_not_rewrite PASSED
 tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed PASSED
 tests/unit/test_evidence_freshness.py::test_a_dirty_tracked_worktree_is_refused_rather_than_stamped PASSED
+tests/unit/test_evidence_freshness.py::test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir PASSED
+tests/unit/test_evidence_freshness.py::test_a_generator_that_is_not_committed_is_refused PASSED
 tests/unit/test_evidence_freshness.py::test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh PASSED
-tests/unit/test_evidence_freshness.py::test_the_memory_scope_tests_keep_their_assertion_shape PASSED
+tests/unit/test_evidence_freshness.py::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest PASSED
 tests/integration/test_evidence_freshness.py::test_stale_evidence_is_reported_without_flipping_the_verdict PASSED
 tests/integration/test_evidence_freshness.py::test_the_existing_checks_and_frozen_artifact_names_are_unchanged PASSED
 tests/integration/test_evidence_freshness.py::test_an_absent_bundle_is_not_applicable PASSED
 tests/integration/test_evidence_freshness.py::test_strict_mode_is_the_only_way_staleness_fails_the_gate PASSED
+tests/integration/test_evidence_freshness.py::test_deleted_evidence_is_reported_with_the_deleting_commit PASSED
+tests/integration/test_evidence_freshness.py::test_never_committed_evidence_is_not_applicable_not_a_deletion PASSED
 tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone PASSED
 tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes PASSED
-============================== 38 passed ==============================
+============================== 43 passed ==============================
