@@ -10,12 +10,14 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import or_, update
 from sqlmodel import Session, col, select
 
 from orchestrator.core.config import get_settings
@@ -49,6 +51,12 @@ STATUS_FOR_OUTCOME = dict(zip(
 PROCESS_EXIT_REASON = "process_exit_undelivered"
 OWNER_KEY = "owner"  # the CLI exit terminates only rows its own process created
 PROCESS_TOKEN = f"{os.getpid()}:{uuid.uuid4().hex}"
+# A flusher claims rows with a conditional UPDATE before delivering them, because the
+# delivery lock is process-local and a CLI exit can race a server timer. The claim marker
+# lives in the free-text `reason` column (the status vocabulary is frozen), and a claim older
+# than the client timeout plus a margin is released so a crashed flusher cannot strand a row.
+CLAIM_PREFIX = "claimed_by:"
+CLAIM_STALE_SECONDS = DELIVERY_TIMEOUT_SECONDS + 5
 MARKUP_CAPABILITY = "body-markup"
 HYPERLINK_CAPABILITY = "body-hyperlinks"
 
@@ -206,11 +214,22 @@ def _notification_env() -> dict[str, str]:
 
 
 @dataclass(frozen=True)
+class ClientReply:
+    """One client invocation. `timed_out` means it was launched but never reported back."""
+
+    channel: str
+    error: str | None = None
+    stdout: str = ""
+    timed_out: bool = False
+
+
+@dataclass(frozen=True)
 class TransportResult:
     outcome: str
     channel: str | None = None
     error: str | None = None
     shape: str = "plain"
+    note: str = ""
 
     @property
     def status(self):
@@ -223,7 +242,10 @@ class TransportResult:
                 OUTCOME_COALESCED: "coalesced"}[self.outcome]
 
     def as_details(self):
-        return {"outcome_class": self.outcome, "body_shape": self.shape}
+        details = {"outcome_class": self.outcome, "body_shape": self.shape}
+        if self.note:
+            details["delivery_note"] = self.note
+        return details
 
 
 @dataclass(frozen=True)
@@ -265,21 +287,23 @@ def probe_capabilities() -> DaemonCapabilities:
                               "GetCapabilities")
 
 
-def _run_client(argv: list[str]) -> tuple[str, str | None, str]:
+def _run_client(argv: list[str]) -> ClientReply:
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, never a shell
             argv, env=_notification_env(), capture_output=True, text=True,
             timeout=DELIVERY_TIMEOUT_SECONDS, check=False,
         )
     except subprocess.TimeoutExpired:
-        return (argv[0], f"timed out after {DELIVERY_TIMEOUT_SECONDS}s "
-                "(client killed; display state unknown)", "")
+        # The spawn succeeded, so a `--wait`-style block is the likely cause; the message may
+        # well be on screen. Never call that attempted-and-failed.
+        return ClientReply(argv[0], f"timed out after {DELIVERY_TIMEOUT_SECONDS}s "
+                          "(client killed; no exit reported)", timed_out=True)
     except OSError as e:
-        return argv[0], redact(str(e)), ""
+        return ClientReply(argv[0], redact(str(e)))
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()[-500:]
-        return argv[0], redact(err or f"exit {proc.returncode}"), proc.stdout or ""
-    return argv[0], None, proc.stdout or ""
+        return ClientReply(argv[0], redact(err or f"exit {proc.returncode}"), proc.stdout or "")
+    return ClientReply(argv[0], None, proc.stdout or "")
 
 
 def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> tuple[str, str]:
@@ -293,40 +317,112 @@ def _body_for(body: str, link: str, caps: DaemonCapabilities, channel: str) -> t
     return "\n".join(lines), "markup-escaped"
 
 
+def _classify(reply: ClientReply, shape: str) -> TransportResult:
+    """One client reply -> one outcome class; only a timeout after spawn is not `failed`."""
+    if reply.error is not None:
+        if reply.timed_out:
+            return TransportResult(
+                OUTCOME_SHOWN_UNACKNOWLEDGED, reply.channel, None, shape,
+                note=f"client timed out: {reply.error}; display unconfirmed",
+            )
+        return TransportResult(OUTCOME_FAILED, reply.channel, reply.error, shape)
+    match = _NOTIFICATION_ID_RE.search(reply.stdout)
+    return TransportResult(
+        OUTCOME_DELIVERED if match else OUTCOME_SHOWN_UNACKNOWLEDGED,
+        reply.channel, None, shape,
+    )
+
+
 def deliver(title: str, body: str, link: str = "") -> TransportResult:
     """Send one notification and classify it; no `--action` (it implies a blocking `--wait`)."""
     caps = probe_capabilities()
     if shutil.which("notify-send"):
         text, shape = _body_for(body, link, caps, "notify-send")
-        channel, error, _ = _run_client([
+        return _classify(_run_client([
             "notify-send", "--app-name=Coding Orchestrator", "--urgency=normal",
-            "--icon=dialog-information", title, text])
-        if error is not None:
-            return TransportResult(OUTCOME_FAILED, channel, error, shape)
-        return TransportResult(OUTCOME_SHOWN_UNACKNOWLEDGED, channel, None, shape)
+            "--icon=dialog-information", title, text]), shape)
     if shutil.which("gdbus"):
         text, shape = _body_for(body, link, caps, "gdbus")
         # No hints and no action array: body-markup is a capability, not a hint.
-        channel, error, stdout = _run_client([
+        return _classify(_run_client([
             "gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
             "--object-path", "/org/freedesktop/Notifications", "--method",
             "org.freedesktop.Notifications.Notify", json.dumps("Coding Orchestrator"), "0",
-            json.dumps(""), json.dumps(title), json.dumps(text), "[]", "{}", "10000"])
-        if error is not None:
-            return TransportResult(OUTCOME_FAILED, channel, error, shape)
-        match = _NOTIFICATION_ID_RE.search(stdout)
-        return TransportResult(OUTCOME_DELIVERED if match else OUTCOME_SHOWN_UNACKNOWLEDGED,
-                               channel, None, shape)
+            json.dumps(""), json.dumps(title), json.dumps(text), "[]", "{}", "10000"]), shape)
     return TransportResult(OUTCOME_FAILED, None,
                            "no freedesktop notification client on PATH (notify-send/gdbus)",
                            "plain")
 
 
-def _deliver_pending_locked(session: Session) -> int:
-    """Deliver every pending row as one notification, recording each row's outcome."""
+def _claim_marker() -> str:
+    return f"{CLAIM_PREFIX}{PROCESS_TOKEN}:{uuid.uuid4().hex}:{int(time.time())}"
+
+
+def _claim_age(reason: str | None) -> int | None:
+    if not reason or not reason.startswith(CLAIM_PREFIX):
+        return None
+    try:
+        return int(reason.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def _claim_is_live(reason: str | None, now: int | None = None) -> bool:
+    age = _claim_age(reason)
+    return age is not None and (now or int(time.time())) - age <= CLAIM_STALE_SECONDS
+
+
+def _release_stale_claims(session: Session) -> int:
+    """Return claims of a dead flusher to the pool instead of stranding the row pending."""
+    released = 0
+    for row in session.exec(select(Notification).where(
+            Notification.status == PENDING, Notification.reason.like(f"{CLAIM_PREFIX}%"))):
+        age = _claim_age(row.reason)
+        if age is not None and not _claim_is_live(row.reason):
+            row.reason = ""
+            session.add(row)
+            released += 1
+    if released:
+        session.commit()
+    return released
+
+
+def _claim_pending(session: Session, owner: str | None = None) -> list[Notification]:
+    """Atomically claim pending rows, so a racing process delivers nothing it did not win."""
+    _release_stale_claims(session)
     rows = list(session.exec(
         select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))
     ))
+    if owner is not None:
+        rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
+    ids = [r.id for r in rows if r.id is not None]
+    if not ids:
+        return []
+    marker = _claim_marker()
+    table = Notification.__table__
+    claimed = session.execute(
+        update(table)
+        .where(
+            table.c.id.in_(ids),
+            table.c.status == PENDING,
+            or_(table.c.reason == "", table.c.reason.is_(None)),
+        )
+        .values(reason=marker)
+        .execution_options(synchronize_session=False)
+    ).rowcount or 0
+    session.commit()
+    if not claimed:
+        return []
+    session.expire_all()
+    return list(session.exec(
+        select(Notification).where(Notification.reason == marker)
+        .order_by(col(Notification.id))
+    ))
+
+
+def _deliver_pending_locked(session: Session, owner: str | None = None) -> int:
+    """Claim pending rows, then deliver what this process won as one notification."""
+    rows = _claim_pending(session, owner)
     if not rows:
         return 0
     first = rows[0]
@@ -352,10 +448,10 @@ def _deliver_pending_locked(session: Session) -> int:
     return first.id or 0
 
 
-def _deliver_pending(session: Session) -> int:
-    """One delivery at a time: a second flush re-selects only what is still pending."""
+def _deliver_pending(session: Session, owner: str | None = None) -> int:
+    """One delivery at a time in this process; the database claim covers other processes."""
     with _deliver_lock:
-        return _deliver_pending_locked(session)
+        return _deliver_pending_locked(session, owner)
 
 
 def _flush_thread() -> None:
@@ -379,11 +475,11 @@ def _schedule() -> None:
         _timer.start()
 
 
-def flush_pending(session: Session | None = None) -> int:
+def flush_pending(session: Session | None = None, owner: str | None = None) -> int:
     """Deliver pending rows now; never raises and never poisons a caller-supplied session."""
     try:
         with (nullcontext(session) if session is not None else session_scope()) as s:
-            return _deliver_pending(s)
+            return _deliver_pending(s, owner)
     except Exception as e:  # noqa: BLE001 - delivery is best-effort by contract
         try:
             if session is not None:
@@ -407,6 +503,10 @@ def _terminate_pending_locked(
         select(Notification).where(Notification.status == PENDING).order_by(col(Notification.id))))
     if owner is not None:
         rows = [r for r in rows if (r.details_json or {}).get(OWNER_KEY) == owner]
+    # A fresh claim belongs to another flusher that may be delivering it right now; leaving it
+    # pending is correct (that process resolves it), not a stranded row.
+    now = int(time.time())
+    rows = [r for r in rows if not _claim_is_live(r.reason, now)]
     for row in rows:
         row.status = STATUS_FOR_OUTCOME[OUTCOME_FAILED]
         row.reason = reason
@@ -425,7 +525,8 @@ def flush_pending_at_exit(session: Session | None = None) -> int:
     if session is None and url.startswith("sqlite:///") and not Path(
             url.removeprefix("sqlite:///")).exists():
         return 0
-    delivered = flush_pending(session)
+    # Only this process's rows: a live server's pending rows are not the CLI's to deliver.
+    delivered = flush_pending(session, owner=PROCESS_TOKEN)
     try:
         with (nullcontext(session) if session is not None else session_scope()) as s:
             return delivered + _terminate_pending_locked(

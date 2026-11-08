@@ -254,12 +254,19 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 
 ## Known limitations
 
-- **Desktop notifications: one channel, and the link is usually text.** Only the freedesktop D-Bus
-  channel is tested end-to-end (CachyOS/Hyprland with quickshell: `notify-send`, then `gdbus`);
-  macOS/Windows backends do not exist. `GetCapabilities` is probed first: a `body-markup` daemon
-  parses every body, so its text is HTML-escaped on both transports; an `<a href>` needs `gdbus`
-  plus `body-hyperlinks`. Mako/dunst, `notify-send`, and unprobed daemons get an `Open: <url>`
-  line. No `ActionInvoked` listener exists, so no action is advertised.
+- **Desktop notifications: one channel, and the link is usually text.** Only the `notify-send`
+  path was live-tested (CachyOS/Hyprland's mako/portal stack); the `gdbus` transport, its
+  `Notify` id parsing and the `<a href>` branch are covered against a fake transport, not a live
+  daemon click. macOS/Windows backends do not exist. `GetCapabilities` is probed first: a
+  `body-markup` daemon parses every body, so its text is HTML-escaped on both transports; an
+  `<a href>` needs `gdbus` plus `body-hyperlinks`. `notify-send`, unprobed daemons, and any daemon
+  without `body-markup` or `body-hyperlinks` get an `Open: <url>` line or raw text. No
+  `ActionInvoked` listener exists, so no action is advertised. Dunst and other daemons have not
+  been probed here; see `docs/configuration.md` for which shapes were observed vs expected.
+- **Deep-link routing: the React half is route-table inspection only.** `GET /tasks/<id>` with no
+  `web/dist` is a real request and the fallback UI's resolved `data-route` is asserted. The React
+  router half asserts the declared `/tasks/:id` route in `web/src/App.tsx`; this repo has no JS
+  test runner, so the router is not mounted in a test (adding one is T-31's scope).
 - **Real harness adapters have had only small real-model checks.** Pi, DeepSeek Harness,
   Qwen Code and ZCode ran two fixture tasks on the Token Plan. OpenCode has only run
   against a local mock API. Aider and Claude Code templates come from public docs. Verify

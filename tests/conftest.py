@@ -104,7 +104,8 @@ def _no_real_notification_daemon(monkeypatch):
     from orchestrator.services import notification_service
 
     monkeypatch.setattr(notification_service, "_run_client",
-                        lambda argv: (argv[0], "blocked by the test suite", ""))
+                        lambda argv: notification_service.ClientReply(
+                            argv[0], "blocked by the test suite"))
     monkeypatch.setattr(notification_service, "probe_capabilities",
                         lambda: notification_service.UNPROBED)
 

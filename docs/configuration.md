@@ -81,9 +81,9 @@ finer class:
 
 | Outcome class | Status | When (`reason`) |
 |---|---|---|
-| `delivered` | `delivered` | `gdbus` `Notify` returned an id (empty) |
-| `shown_unacknowledged` | `delivered` | `notify-send` exited 0: shown, no dismissal observed (`shown_unacknowledged`) |
-| `failed` | `failed` | client non-zero/timed out/missing/raised (`delivery_failed`) |
+| `delivered` | `delivered` | `gdbus` `Notify` returned a notification id (empty) |
+| `shown_unacknowledged` | `delivered` | `notify-send` exited 0, or a client was launched but timed out: shown, no acknowledgement observed (`shown_unacknowledged`) |
+| `failed` | `failed` | the client was not launched (missing/`OSError`) or exited non-zero, or the notifier raised (`delivery_failed`) |
 | `skipped` | `skipped` | master or trigger off, nothing attempted (`master_disabled` / `trigger_disabled`) |
 | `coalesced` | `coalesced` | folded into an earlier popup (`coalesced_into:<id>`) |
 
@@ -91,23 +91,46 @@ A shown message is never `failed`; `shown_unacknowledged` has no status of its o
 is frozen) and maps to `delivered`. Nothing sends `--action` (it implies `--wait`, blocking until a
 dismissal mako never sends) or an action array: no `ActionInvoked` listener exists.
 
+**The timeout case was the defect.** A client that was spawned and then had to be killed at
+`DELIVERY_TIMEOUT_SECONDS` is recorded `delivered` / `shown_unacknowledged`, because the old
+`--action`/`--wait` trap showed the popup and then blocked; the row carries
+`details_json.delivery_note` saying the display is unconfirmed. Only a client that could not be
+started, or that exited non-zero, is `failed`. This ambiguity is documented rather than hidden in
+the `error` column.
+
 **Capabilities decide the body shape.** `probe_capabilities()` calls `GetCapabilities` first.
 `body-markup` is a capability, not a hint: `gdbus` sends `{}`, and a markup daemon parses every
 body, so text is HTML-escaped on both transports when `body-markup` is advertised; an anchor is
 added only on `gdbus` with `body-hyperlinks`. `details_json.body_shape` records what was sent.
 
+Observed on the development machine (CachyOS/Hyprland, 2026-11-08): `GetCapabilities` returned
+`actions, body, body-hyperlinks, body-images, body-markup, icon-static, persistence`. `notify-send`
+is chosen first, so in practice this machine receives `markup-escaped` text with an `Open: <url>`
+line; the `body-hyperlinks` anchor path is covered by a fake-transport test, not by a live click.
+Every other row below is expected-but-**unobserved** here: a daemon that advertises a capability
+is not proof that its client renders it, so no shape is claimed for a daemon this project has not
+probed.
+
 | Daemon / probe result | Body | Link |
 |---|---|---|
-| freedesktop-compliant with `body-markup` + `body-hyperlinks`, via `gdbus` | escaped text + one `<a href>` (`markup+hyperlink`) | clickable |
-| `body-markup` without `body-hyperlinks` (mako/dunst defaults, most tiling-WM notifiers), or any non-`gdbus` transport including `notify-send` | escaped text, URL kept as `Open: <url>` (`markup-escaped`) | text |
-| probe failed (no `gdbus`, failed/timed-out call) or no `body-markup` (minimal daemons) | raw plain text (`plain`) | text |
+| `gdbus` with `body-markup` + `body-hyperlinks` (**expected**; not observed live here) | escaped text + one `<a href>` (`markup+hyperlink`) | untested live |
+| `gdbus` with `body-markup` but not `body-hyperlinks` (**expected**; not observed live here) | escaped text, URL kept as `Open: <url>` (`markup-escaped`) | text |
+| `notify-send`, on any daemon, including this machine's Hyprland/mako stack (**observed**) | escaped text when `body-markup` is advertised, else raw text (`markup-escaped` / `plain`) | text |
+| probe failed (no `gdbus`, failed/timed-out call) or no `body-markup` (**observed for the probe-failure branch**) | raw plain text (`plain`) | text |
+
+Dunst and other freedesktop daemons have **not** been probed by this project; whether they
+advertise `body-hyperlinks` is unknown here, and none of the table's hyperlink claims should be
+read as covering them.
 
 **Pending rows are never stranded.** A `pending` row is resolved by the 2s coalescing timer, API
-startup, the read path (`GET /api/notifications` flushes first), or CLI exit. `cli.main()` flushes,
-then writes `failed` / `process_exit_undelivered` only for rows **that process** created
-(`details_json.owner`); a live server's rows stay `pending`. The exit flush is inert without a
-database file. Coalescing is global: one message can carry several runs/triggers while `dedupe_key`
-still allows at most one row per run per trigger.
+startup, the read path (`GET /api/notifications` flushes first), or CLI exit. Delivery claims rows
+with a conditional `UPDATE` (`reason=claimed_by:<token>:<epoch>`) before sending, so a CLI exit
+and a server timer cannot both deliver one row; a claim older than the client timeout plus five
+seconds is released, so a flusher that dies cannot strand its rows. `cli.main()` flushes **only
+rows that process created**, then writes `failed` / `process_exit_undelivered` for its own
+still-pending rows (`details_json.owner`); a live server's rows stay `pending`. The exit flush is
+inert without a database file. Coalescing is global: one message can carry several runs/triggers
+while `dedupe_key` still allows at most one row per run per trigger.
 
 ## Provider variables
 
