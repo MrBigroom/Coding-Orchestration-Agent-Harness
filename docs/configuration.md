@@ -34,7 +34,7 @@ the providers/adapters when they run.
 | `ORCHESTRATOR_ALLOW_GUI_COMMANDS` | `false` | Allow running a project's configured test/lint/build from the GUI |
 | `ORCHESTRATOR_MAX_PROMPT_CONTEXT_TOKENS` | `60000` | Prompt budget (~4 chars/token) |
 | `ORCHESTRATOR_MAX_LOG_TOKENS` | `8000` | Per-log/handoff budget in prompts (4000 was measured to truncate a normal handoff every round; still a hard cap, and any cut is named in the review payload manifest) |
-| `ORCHESTRATOR_MAX_DIFF_TOKENS` | `12000` | Diff budget in prompts |
+| `ORCHESTRATOR_MAX_DIFF_TOKENS` | `12000` | Diff budget in prompts. Every changed file first gets a 160-token first-hunk floor before any file receives more (40 files need 6400 of the 7800-token source share at the default, so the auditor's "every file has a hunk" invariant holds for at least 40); raising the number widens the remainder, not the floor |
 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_GLOBAL` | `2000` | Cap on the injected global memory section |
 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_ROLE` | `800` | Cap on the injected role memory section |
 | `ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT` | `4000` | Cap on the injected project memory section |

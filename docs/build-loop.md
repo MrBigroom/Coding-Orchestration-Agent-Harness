@@ -563,6 +563,10 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   included, the budget that caused the cut, and the reason. The recorder sits in the same code
   that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
   sensitive-file strip (`.env`, keys), which used to vanish between `patch.diff` and the prompt.
+  A diff row's reason distinguishes the T-36 outcomes in the existing columns: **floor only,
+  remainder exhausted** (the first hunk was supplied but no more budget reached the file) from
+  **omitted entirely** (not even the floor fitted), so zero bytes can never look like a short
+  first hunk.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
   in what is left — a reviewer verifying wiring needs one complete file far more than the first
@@ -572,6 +576,20 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   marker, then the rest are named as omitted. In the source group one file may consume at most
   half the group's budget so a single generated artifact cannot starve the rest, and the whole
   thing stays inside `max_diff_tokens`: the budget is never widened.
+- **First-hunk floor (T-36).** Before any file receives more than its floor, every file named by
+  the diffstat is given a **160-token first-hunk floor** (or its whole content when smaller). This
+  is the invariant `review_audit.diff_completeness` enforces: a diffstat file with no hunk in the
+  supplied patch is a blocking harness finding. The floor renderer keeps the diff header, the
+  `@@` line and a short `... [review diff floor: <path> stopped at its first hunk; ...]` marker;
+  a file that then receives no remainder is listed as `partially included` and its manifest row
+  says **floor only, remainder exhausted**, while a file whose floor did not fit at all is named
+  **omitted entirely**. The arithmetic for the guarantee: at the default
+  `max_diff_tokens=12000` the post-header budget is `12000 - 300 = 11700`; with the compensation
+  reserve the source share is `11700 * 2/3 = 7800`, and `40 * 160 = 6400`, leaving 1400 tokens
+  for the remainder (without a reserve the whole 11700 is available). Only after all floors are
+  funded does the remainder pass run, so one large source file still gets the lion's share and the
+  T-16 evidence reserve is unchanged. If a file is still omitted at the default budget the auditor
+  keeps firing `review_diff_incomplete`; it is never weakened to make the allocator look correct.
 - **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
   directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
   payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,

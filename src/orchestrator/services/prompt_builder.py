@@ -279,6 +279,22 @@ def _chunk_head(chunk: str, max_tokens: int, path: str = "") -> tuple[str, int, 
 # harness-detected finding rather than leaving a reviewer to conclude the evidence is missing.
 COMPENSATION_BUDGET_FRACTION = 1 / 3
 
+# T-36: the allocator must satisfy the invariant the auditor enforces. Every file named by the
+# diffstat gets a first-hunk floor before any file receives more than its floor. The floor is 160
+# estimated tokens (~640 bytes); a file bigger than that is shown up to its first hunk, a smaller
+# file is shown whole. The floor renderer keeps the diff header and a short marker inside that
+# budget whenever the header is normal-sized, so the arithmetic is direct: at the default
+# max_diff_tokens=12000 the post-header budget is 12000 - 300 = 11700; even when compensation
+# artifacts reserve one third, the source share is 11700 * 2/3 = 7800, and 40 changed files need
+# 40 * 160 = 6400, leaving 1400 for the remainder. Without a compensation reserve the whole
+# 11700 is available. A pathologically long header can cost more than 160, in which case the file
+# either still gets its floor or is named as omitted; the floor is deliberately not raised to buy
+# a larger first hunk, because the remainder pass below still gives a big source file the lion's
+# share while this floor keeps README/docs/tests from being starved to zero bytes (the R-68
+# shape: 8 of 30 files at 0).
+DIFF_FILE_FLOOR_TOKENS = 160
+DIFF_GROUP_MINIMUM_TOKENS = 60  # ~ a file header plus one short hunk
+
 
 def is_compensation_artifact(path: str) -> bool:
     """A path whose purpose is making a Worker claim checkable, not implementing the task."""
@@ -302,6 +318,35 @@ def _record_omitted(
         recorder.record("dynamic_state", f"diff:{path}", chunk, "", budget_text, reason)
 
 
+def _floor_head(chunk: str, max_tokens: int, path: str) -> tuple[str, int, int, bool]:
+    """Render only the first hunk, keeping the header and a visible floor marker.
+
+    The allocator uses this for a file that gets its floor but no remainder. It always keeps the
+    `@@` line (the auditor asks for one hunk body, not a complete hunk), and it says in the text
+    that the file was stopped at the floor. The marker is shorter than `_chunk_head`'s because a
+    floor render is deliberately small; the manifest still has the byte counts and the reason.
+    """
+    lines = chunk.splitlines(keepends=True)
+    hunk_starts = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    if estimate_tokens(chunk) <= max_tokens:
+        return chunk, 1, 1, False
+    if not hunk_starts:
+        return truncate_middle(chunk, max_tokens), 1, 1, True
+    header = "".join(lines[: hunk_starts[0]])
+    hunks: list[str] = []
+    for n, start in enumerate(hunk_starts):
+        end = hunk_starts[n + 1] if n + 1 < len(hunk_starts) else len(lines)
+        hunks.append("".join(lines[start:end]))
+    marker = (
+        f"\n... [review diff floor: {path or 'this file'} stopped at its first hunk; "
+        "the remainder did not fit after every file's floor — see the truncation manifest] ...\n"
+    )
+    body_budget = max_tokens - estimate_tokens(header) - estimate_tokens(marker)
+    body_budget = max(24, body_budget)
+    rendered = header + truncate_middle(hunks[0], body_budget) + marker
+    return rendered, 1, len(hunks), True
+
+
 def _allocate_diff_group(
     group: list[tuple[str, str]],
     budget: int,
@@ -316,16 +361,26 @@ def _allocate_diff_group(
 ) -> int:
     """Spend one group's budget; returns the tokens actually used.
 
-    The source group keeps the historical cap (one file may use at most half its group budget).
-    The evidence group is allocated **fairly**, not greedily: every file first receives at most
-    `budget // len(group)`, and only after every file has had that share is any leftover handed
-    back to files that still need more. A large first evidence log therefore cannot consume the
-    budget that a later `zz_review_index.txt` needs; the earlier greedy rule
+    T-36 floor pass: every file in the group first receives its first-hunk floor
+    (`DIFF_FILE_FLOOR_TOKENS`, or its whole content when smaller). Only after that does any file
+    receive more, so a large first file cannot leave later README/docs/test files at 0 bytes. A
+    file whose floor does not fit is named in the manifest as omitted entirely; an evidence file
+    that cannot even get its floor keeps the old sub-minimum behaviour so a tiny budget still
+    shows something and says it is below the floor.
+
+    After the floor, the source group keeps its historical cap (one file may use at most half its
+    group budget) and is topped up in priority order, so the big source file still gets the
+    remainder. The evidence group is allocated **fairly**, not greedily: every file is brought up
+    to `budget // len(group)` before any leftover is handed back to files that still need more. A
+    large first evidence log therefore cannot consume the budget that a later
+    `zz_review_index.txt` needs; the earlier greedy rule
     (`max(per_file, remaining - minimum * left)`) let it do exactly that (T-16 review round 1,
     finding 1).
     """
     if not group:
         return 0
+    sizes = [estimate_tokens(chunk) for _path, chunk in group]
+    minimum = DIFF_GROUP_MINIMUM_TOKENS
     if budget <= 0:
         for path, chunk in group:
             omitted.append(path)
@@ -334,25 +389,81 @@ def _allocate_diff_group(
                 path,
                 chunk,
                 f"max_diff_tokens={max_tokens} tokens",
-                "omitted because the diff budget was exhausted by higher-priority files",
+                "omitted entirely: omitted because the diff budget was exhausted by "
+                "higher-priority files",
             )
         return 0
-    sizes = [estimate_tokens(chunk) for _path, chunk in group]
-    minimum = 60  # ~ a file header plus one short hunk
+
     share = max(0, budget // max(1, len(group)))
-    if evidence:
-        allocations = [0] * len(group)
-        remaining = budget
-        if share < minimum:
-            # The budget cannot fund every file: give the minimum to as many as fit, in priority
-            # order, rather than confirming every file at a useless sub-minimum share. A huge
-            # first file takes only its minimum here, not the whole remainder.
+    allocations = [0] * len(group)
+    floor_allocations = [0] * len(group)
+    floored = [False] * len(group)
+    remaining = budget
+    if evidence and share < minimum:
+        # The budget cannot fund every file: keep the T-16 behaviour of a minimum slice for as
+        # many files as fit, in priority order, rather than confirming every file at a useless
+        # sub-minimum share. This branch is not the normal floor pass; the manifest below says
+        # each file is below the floor.
+        for idx, size in enumerate(sizes):
+            if remaining < minimum:
+                break
+            take = min(size, minimum)
+            allocations[idx] = take
+            remaining -= take
+        for idx, size in enumerate(sizes):
+            if remaining <= 0:
+                break
+            if not allocations[idx]:
+                continue
+            take = min(size - allocations[idx], remaining)
+            allocations[idx] += take
+            remaining -= take
+        per_file, cap = share, 0
+    else:
+        # Floor pass. Render the floor once so the budget accounts for the header and marker it
+        # will actually cost; a file smaller than the floor is simply included whole.
+        floor_renders: list[str] = []
+        floor_costs: list[int] = []
+        for (path, chunk), size in zip(group, sizes, strict=True):
+            if size <= DIFF_FILE_FLOOR_TOKENS:
+                floor_renders.append(chunk)
+                floor_costs.append(size)
+            else:
+                rendered, _shown, _total, _sliced = _floor_head(
+                    chunk, DIFF_FILE_FLOOR_TOKENS, path
+                )
+                floor_renders.append(rendered)
+                floor_costs.append(estimate_tokens(rendered))
+        for idx, need in enumerate(floor_costs):
+            need = min(need, sizes[idx])
+            if remaining >= need:
+                allocations[idx] = need
+                floor_allocations[idx] = need
+                floored[idx] = True
+                remaining -= need
+
+        # A budget too small for even the floor of an evidence file still shows a minimum slice
+        # for as many as fit, so a tiny budget is not silently blank.
+        if evidence and remaining >= minimum:
             for idx, size in enumerate(sizes):
-                if remaining < minimum:
-                    break
-                take = min(size, minimum)
-                allocations[idx] = take
+                if floored[idx] or allocations[idx]:
+                    continue
+                need = min(size, minimum)
+                if remaining < need:
+                    continue
+                allocations[idx] = need
+                remaining -= need
+
+        if evidence:
+            # Pass 1: bring every included file up to its fair share.
+            for idx, size in enumerate(sizes):
+                if not allocations[idx]:
+                    continue
+                target = min(size, share)
+                take = min(max(0, target - allocations[idx]), remaining)
+                allocations[idx] += take
                 remaining -= take
+            # Pass 2: only now may a file take leftover the others did not need.
             for idx, size in enumerate(sizes):
                 if remaining <= 0:
                     break
@@ -361,46 +472,40 @@ def _allocate_diff_group(
                 take = min(size - allocations[idx], remaining)
                 allocations[idx] += take
                 remaining -= take
+            per_file, cap = share, 0
         else:
-            # Pass 1: a fair share for every file, so one huge log cannot starve later ones.
-            for idx, size in enumerate(sizes):
-                take = min(size, share, remaining)
-                allocations[idx] = take
-                remaining -= take
-            # Pass 2: only now may a file take leftover the others did not need.
+            per_file = max(120, budget // max(1, len(group)))
+            cap = max(per_file, budget // 2)
+            # Top up in priority order, capped. Files that could not get a floor are not
+            # resurrected here: their floor was unaffordable, and the manifest names them omitted.
             for idx, size in enumerate(sizes):
                 if remaining <= 0:
                     break
-                take = min(size - allocations[idx], remaining)
+                if not allocations[idx]:
+                    continue
+                target = min(size, max(cap, allocations[idx]))
+                take = min(max(0, target - allocations[idx]), remaining)
                 allocations[idx] += take
                 remaining -= take
-        per_file = share
-        cap = 0
-    else:
-        per_file = max(120, budget // max(1, len(group)))
-        cap = max(per_file, budget // 2)
-        allocations = []
-        remaining = budget
-        for size in sizes:
-            take = min(size, cap, max(remaining, 0))
-            allocations.append(take)
-            remaining -= take
+
     used = 0
-    for (path, chunk), size, file_budget in zip(group, sizes, allocations, strict=True):
+    for idx, ((path, chunk), size) in enumerate(zip(group, sizes, strict=True)):
+        file_budget = allocations[idx]
         budget_text = (
             f"max_diff_tokens={max_tokens} tokens; evidence fair share={per_file} "
-            f"tokens; compensation reserve in force"
+            "tokens; compensation reserve in force"
             if evidence
             else f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}"
         )
-        if file_budget < minimum and size > file_budget:
+        if file_budget <= 0:
             omitted.append(path)
             _record_omitted(
                 recorder,
                 path,
                 chunk,
                 budget_text,
-                "omitted because the diff budget for this group was exhausted",
+                "omitted entirely because the group budget could not fund this file's "
+                f"{DIFF_FILE_FLOOR_TOKENS}-token floor after higher-priority files",
             )
             continue
         if size <= file_budget:
@@ -408,16 +513,33 @@ def _allocate_diff_group(
             hunks_shown, hunks_total, sliced = 1, 1, False
             full.append(path)
             reason = "included in full"
+        elif floored[idx] and file_budget == floor_allocations[idx]:
+            rendered = floor_renders[idx]
+            partial.append(f"{path} (first hunk only, floor allocation)")
+            reason = (
+                "floor only, remainder exhausted: the first hunk fits inside the "
+                f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor, but this file received no "
+                "share of the remainder because every file's floor was funded first"
+            )
         else:
             rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, file_budget, path)
             detail = f"{hunks_shown} of {hunks_total} hunks"
             if sliced:
                 detail += ", body cut inside the shown hunk"
-            partial.append(f"{path} ({detail})")
-            reason = (
-                f"per-file diff budget: {detail} shown; omitted hunk headers are named inline in "
-                "the reviewer-visible text"
-            )
+            if floored[idx]:
+                partial.append(f"{path} ({detail})")
+                reason = (
+                    f"per-file diff budget: {detail} shown; omitted hunk headers are named inline "
+                    "in the reviewer-visible text"
+                )
+            else:
+                detail += ", below floor"
+                partial.append(f"{path} ({detail})")
+                reason = (
+                    "below floor: the group budget could not fund this file's "
+                    f"{DIFF_FILE_FLOOR_TOKENS}-token floor; a {minimum}-token minimum was shown "
+                    "instead"
+                )
         rendered_parts.append(rendered)
         cost = estimate_tokens(rendered)
         remaining -= cost
@@ -456,6 +578,10 @@ def render_diff_budget(
     added to it. Files in that group get a fair share so one huge evidence log cannot tail-drop
     the rest. If even the reserved slice cannot carry them, the manifest records the shortfall
     and `review_service` raises a harness-detected finding.
+
+    T-36: before any of that, every file gets its first-hunk floor, so the auditor's invariant
+    (every diffstat file has a hunk in the supplied patch) holds for at least 40 files at the
+    default budget. Raising `max_diff_tokens` is not the fix; the floor is.
     """
     chunks = split_diff_files(patch)
     if not chunks or estimate_tokens(patch) <= max_tokens:
@@ -506,14 +632,16 @@ def render_diff_budget(
             f"{len(source)} source file(s) share {source_budget} tokens (per-file "
             f"{source_per_file}, cap {source_cap}); {len(compensation)} compensation artifact(s) "
             f"have a reserved slice of {evidence_budget} tokens (per-file {evidence_per_file}); "
-            "files are ordered source-first, but the evidence that makes the source checkable is "
-            "never left to the tail."
+            f"every file first gets a {DIFF_FILE_FLOOR_TOKENS}-token first-hunk floor before any "
+            "file gets more; files are ordered source-first, but the evidence that makes the "
+            "source checkable is never left to the tail."
         )
     else:
         budget_line = (
             f"[review diff budget: max_diff_tokens={max_tokens}; {len(ordered)} file(s); "
             f"per-file budget {source_per_file} tokens (one file may use up to {source_cap}); "
-            "files are ordered source-first so code is funded before evidence."
+            f"every file first gets a {DIFF_FILE_FLOOR_TOKENS}-token first-hunk floor before any "
+            "file gets more; files are ordered source-first so code is funded before evidence."
         )
     preamble = (
         budget_line

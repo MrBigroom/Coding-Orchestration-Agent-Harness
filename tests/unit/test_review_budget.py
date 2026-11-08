@@ -22,8 +22,10 @@ from orchestrator.services import (
     task_service,
 )
 from orchestrator.services.prompt_builder import DynamicState
+from orchestrator.utils.git import run_git
 from orchestrator.utils.redaction import redact
 from tests import conftest
+from tests.conftest import make_repo, requires_git
 
 
 def _chunk(path: str, lines: int, tag: str = "line") -> str:
@@ -232,6 +234,182 @@ class _FakeItem:
 
     def add_marker(self, marker: object) -> None:
         self.markers.append(marker)
+
+
+# --- T-36: the allocator must satisfy the invariant the diff auditor enforces. -----------------
+
+R68_FILES: tuple[tuple[str, int], ...] = (
+    ("src/orchestrator/services/large_generated.py", 1400),
+    ("README.md", 50),
+    ("docs/build-loop.md", 180),
+    ("docs/decisions.md", 140),
+    ("docs/frozen-contracts.md", 60),
+    ("docs/memory.md", 80),
+    ("scripts/t15_assertion_shape.py", 160),
+    ("tests/unit/test_evidence_freshness.py", 800),
+    ("tests/unit/test_memory_scopes.py", 500),
+    *((f"src/orchestrator/services/module_{i}.py", 60 + i) for i in range(8)),
+    *((f"tests/unit/test_module_{i}.py", 80 + i) for i in range(5)),
+    *((f"docs/note_{i}.md", 30 + i) for i in range(4)),
+    *((f"scripts/t36_script_{i}.py", 40 + i) for i in range(2)),
+    *((f"web/src/module_{i}.ts", 45 + i) for i in range(2)),
+)
+
+
+def _r68_patch() -> str:
+    """The R-68 shape: one ~43KB source file plus 29 smaller files, docs and tests included."""
+    assert len(R68_FILES) == 30
+    return "".join(_chunk(path, lines, "r68-generated-body-line") for path, lines in R68_FILES)
+
+
+def _list_section(rendered: str, name: str) -> str:
+    return rendered.split(f"{name} (", 1)[1].split("]", 1)[0]
+
+
+def _commit_repo(repo, message: str) -> None:
+    run_git(["-c", "user.name=w", "-c", "user.email=w@w", "add", "-A"], repo)
+    run_git(["-c", "user.name=w", "-c", "user.email=w@w", "commit", "-q", "-m", message], repo)
+
+
+def test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget():
+    """DoD 1/5(a): the measured R-68 starvation shape is the named fixture."""
+    patch = _r68_patch()
+    assert len(prompt_builder.split_diff_files(patch)[0][1].encode("utf-8")) > 43_000
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    chunks = dict(prompt_builder.split_diff_files(rendered))
+    missing = [path for path, _lines in R68_FILES if path not in chunks]
+    no_hunk = [
+        path
+        for path, _lines in R68_FILES
+        if path in chunks
+        and not any(line.startswith("@@") for line in chunks[path].splitlines())
+    ]
+    assert missing == [], missing
+    assert no_hunk == [], no_hunk
+    rows = {
+        record.as_dict()["item"]: record.as_dict()
+        for record in recorder.records
+        if str(record.item).startswith("diff:")
+    }
+    zero_rows = [item for item, row in rows.items() if row["bytes_included"] == 0]
+    assert zero_rows == [], zero_rows
+    assert _list_section(rendered, "omitted").strip() == "0): none"
+
+
+def get_settings_default_max_diff_tokens() -> int:
+    return prompt_builder.get_settings().max_diff_tokens
+
+
+def test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted():
+    """DoD 3/5(b): 'floor only, remainder exhausted' is not 'omitted entirely'."""
+    paths = [f"src/floor{i}.py" for i in range(4)]
+    big = "".join(_chunk(path, 400, "floor") for path in paths)
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(big, 1000, recorder)
+    rows = {
+        record.as_dict()["item"]: record.as_dict() for record in recorder.records
+    }
+    floor_rows = [
+        rows[f"diff:{path}"]
+        for path in paths
+        if f"diff:{path}" in rows and "floor only, remainder exhausted" in rows[f"diff:{path}"]["reason"]
+    ]
+    assert floor_rows, rows
+    assert "src/floor0.py" in _list_section(rendered, "partially included")
+    assert "first hunk only, floor allocation" in _list_section(rendered, "partially included")
+
+    # A small file that fits in full has no manifest row at all; it is the other outcome.
+    small_recorder = prompt_builder.TruncationRecorder()
+    small_rendered = prompt_builder.render_diff_budget(
+        _chunk("src/small.py", 3) + _chunk("src/large.py", 2000), 5000, small_recorder
+    )
+    assert "src/small.py" in _list_section(small_rendered, "included in full")
+    assert not any(
+        record.item == "diff:src/small.py" for record in small_recorder.records
+    )
+
+    # A budget too small for every floor omits the tail and says so explicitly.
+    omitted_recorder = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(big, 300, omitted_recorder)
+    omitted_rows = [
+        record.as_dict()
+        for record in omitted_recorder.records
+        if str(record.item).startswith("diff:") and record.bytes_included == 0
+    ]
+    assert omitted_rows, [r.as_dict() for r in omitted_recorder.records]
+    assert all("omitted entirely" in row["reason"] for row in omitted_rows)
+
+
+def test_the_floor_pass_leaves_the_t16_evidence_reserve_working():
+    """DoD 2/5(c): a source-heavy diff still funds verify-evidence/ after the floor pass."""
+    source = "".join(_chunk(f"src/big{i}.py", 400, "source") for i in range(6))
+    evidence_paths = [f"verify-evidence/T-36/e{i}.txt" for i in range(4)]
+    evidence = "".join(_chunk(path, 20, "evidence") for path in evidence_paths)
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(source + evidence, 12000, recorder)
+    rows = {record.item: record.as_dict() for record in recorder.records}
+    for path in evidence_paths:
+        assert f"+++ b/{path}" in rendered, path
+        row = rows.get(f"diff:{path}")
+        assert row is None or row["bytes_included"] > 0, row
+    assert all(path not in _list_section(rendered, "omitted") for path in evidence_paths)
+    # The large source file still gets the lion's share of the remainder.
+    shown = dict(prompt_builder.split_diff_files(rendered))
+    assert len(shown["src/big0.py"]) > len(shown[evidence_paths[0]])
+
+
+@requires_git
+def test_budget_rendered_diff_has_no_blocking_completeness_issue(tmp_path):
+    """DoD 5(d): the auditor accepts the text the new allocator actually emits."""
+    files = {
+        "src/app.py": "\n".join(f"old {i}" for i in range(200)),
+        "docs/guide.md": "\n".join(f"old doc {i}" for i in range(120)),
+        "tests/unit/test_app.py": "\n".join(f"old test {i}" for i in range(400)),
+    }
+    repo = make_repo(tmp_path / "repo", files)
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    for name in files:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text("\n".join(f"new {i}" for i in range(400)) + "\n")
+    _commit_repo(repo, "change files")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=rendered)
+    assert [issue for issue in issues if issue.blocks] == [], issues
+
+
+@requires_git
+def test_over_budget_still_omits_a_file_and_the_auditor_still_blocks(tmp_path):
+    """DoD 5(e): the auditor is not weakened to make the allocator look correct."""
+    files = {f"src/f{i}.py": f"old = {i}\n" for i in range(8)}
+    repo = make_repo(tmp_path / "repo", files)
+    run_git(["checkout", "-q", "-b", "task"], repo)
+    for name in files:
+        (repo / name).write_text("\n".join(f"new {i}" for i in range(300)) + "\n")
+    _commit_repo(repo, "change files")
+    patch = run_git(["diff", "main...HEAD"], repo).stdout
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 300, recorder)
+    omitted = _list_section(rendered, "omitted")
+    assert "src/f" in omitted, omitted
+    issues = review_audit.diff_completeness(repo, "main", patch, rendered=rendered)
+    blocking = [issue for issue in issues if issue.blocks and issue.kind == "no_hunk"]
+    assert blocking, issues
+    assert any(issue.path in omitted for issue in blocking)
+
+
+def test_rendering_the_same_diff_twice_is_byte_identical():
+    """DoD 5(f): allocation must not depend on set order, time or a random tie-break."""
+    patch = _r68_patch()
+    first = prompt_builder.render_diff_budget(patch, 12000, prompt_builder.TruncationRecorder())
+    second = prompt_builder.render_diff_budget(patch, 12000, prompt_builder.TruncationRecorder())
+    assert first == second
 
 
 def test_parity_scenario_is_skipped_by_default_and_enabled_on_demand(monkeypatch):
