@@ -435,7 +435,7 @@ def test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held():
     Two scenarios, one assertion each, because the two outcomes are the point. In the first the
     group budget is fully committed before the last floor is funded; in the second every floor is
     funded and the per-file `cap` (below the floor) is what stops the top-up, so tokens stay
-    unallocated.
+    unallocated under the file's own share.
     """
     exhausted = prompt_builder.TruncationRecorder()
     prompt_builder.render_diff_budget(
@@ -445,9 +445,7 @@ def test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held():
         r.as_dict()["reason"] for r in exhausted.records if r.as_dict()["kind"] == "budget"
     ]
     assert any("floor only, remainder exhausted" in reason for reason in exhausted_reasons)
-    assert not any(
-        "floor only, remainder allocated elsewhere" in reason for reason in exhausted_reasons
-    )
+    assert not any("floor only, " in reason and "exhausted" not in reason for reason in exhausted_reasons)
 
     capped = prompt_builder.TruncationRecorder()
     prompt_builder.render_diff_budget(
@@ -456,10 +454,160 @@ def test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held():
     capped_reasons = [
         r.as_dict()["reason"] for r in capped.records if r.as_dict()["kind"] == "budget"
     ]
-    assert any("floor only, remainder allocated elsewhere" in reason for reason in capped_reasons), (
+    assert any("floor only, share under the floor" in reason for reason in capped_reasons), (
         capped_reasons
     )
     assert not any("floor only, remainder exhausted" in reason for reason in capped_reasons)
+    assert not any("hunk-granular" in reason for reason in capped_reasons)
+
+
+def _assert_reason_names_the_hunk_cause(reason: str, leftover: int, per_file: int, cap: int) -> None:
+    """The false share claim is gone and the real numbers are in the string (T-36 round 7)."""
+    assert "did not exceed that floor" not in reason, reason
+    assert "went to other files" not in reason, reason
+    assert "hunk-granular" in reason, reason
+    assert "stayed unallocated" in reason, reason
+    for number in (leftover, per_file, cap, prompt_builder.DIFF_FILE_FLOOR_TOKENS):
+        assert str(number) in reason, (number, reason)
+
+
+def _assert_floor_guarantee(patch: str, rendered: str, recorder) -> None:
+    """Every diffstat file has bytes and a hunk, and no manifest row reports zero bytes."""
+    paths = [path for path, _chunk in prompt_builder.split_diff_files(patch)]
+    shown = dict(prompt_builder.split_diff_files(rendered))
+    missing = [path for path in paths if path not in shown or not shown[path]]
+    no_hunk = [
+        path
+        for path in paths
+        if path in shown
+        and not any(line.startswith("@@") for line in shown[path].splitlines())
+    ]
+    assert missing == [], missing
+    assert no_hunk == [], no_hunk
+    zero_rows = [
+        record.as_dict()["item"]
+        for record in recorder.records
+        if record.as_dict()["kind"] == "budget"
+        and str(record.item).startswith("diff:")
+        and record.as_dict()["bytes_included"] == 0
+    ]
+    assert zero_rows == [], zero_rows
+
+
+def _source_leftover(rendered: str, patch: str, source_budget: int) -> int:
+    """Source-group tokens the allocation passes did not deliver, measured on the as-sent text."""
+    body = rendered.split("]\n", 1)[1]
+    shown = dict(prompt_builder.split_diff_files(body))
+    paths = [
+        path
+        for path, _chunk in prompt_builder.split_diff_files(patch)
+        if not prompt_builder.is_compensation_artifact(path)
+    ]
+    delivered = sum(estimate_tokens(shown[path]) for path in paths if path in shown)
+    return source_budget - delivered
+
+
+def _own_branch_shape_patch() -> str:
+    """Seven source files plus five compensation artifacts: per_file 1114, cap 3900."""
+    source = [_multi_hunk_chunk(f"src/part_{i}.py", (3, 20000), f"p{i}") for i in range(7)]
+    evidence = [_chunk(f"verify-evidence/T-36/e{i}.txt", 30 + i) for i in range(5)]
+    return "".join(source + evidence)
+
+
+def _r68_sparse_patch() -> str:
+    """The R-68 shape at the default budget with a real leftover: 30 source files, per_file 260."""
+    files = [
+        ("src/orchestrator/services/large_generated.py", 1400),
+        ("README.md", 10),
+        ("docs/build-loop.md", 15),
+        ("docs/decisions.md", 15),
+        ("docs/frozen-contracts.md", 8),
+        ("docs/memory.md", 12),
+        ("scripts/t15_assertion_shape.py", 18),
+        ("tests/unit/test_evidence_freshness.py", 20),
+        ("tests/unit/test_memory_scopes.py", 15),
+        *((f"src/orchestrator/services/module_{i}.py", 6 + i) for i in range(8)),
+        *((f"tests/unit/test_module_{i}.py", 7 + i) for i in range(5)),
+        *((f"docs/note_{i}.md", 5 + i) for i in range(4)),
+        *((f"scripts/t36_script_{i}.py", 6 + i) for i in range(2)),
+        *((f"web/src/module_{i}.ts", 7 + i) for i in range(2)),
+    ]
+    assert len(files) == 30
+    patch = "".join(_chunk(path, lines, "r68") for path, lines in files)
+    return patch + _chunk("verify-evidence/T-36/r68.txt", 10)
+
+
+def test_own_branch_shape_reason_names_the_hunk_cause_and_keeps_every_floor():
+    """T-36 round 7: the measured own-branch shape must not claim its share was under the floor.
+
+    R-71 measured this branch's own source group at per_file=1114, cap=3900 with 1769 tokens
+    unspent. The old string called that share "did not exceed" the 160-token floor and said the
+    unallocated tokens "went to other files". Both claims are false and the second contradicts
+    `leftover > 0` by construction.
+    """
+    measured = prompt_builder._floor_only_reason(1769, 1114, 3900)
+    _assert_reason_names_the_hunk_cause(measured, 1769, 1114, 3900)
+
+    patch = _own_branch_shape_patch()
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    assert "7 source file(s) share 7800 tokens (per-file 1114, cap 3900)" in rendered, (
+        rendered.splitlines()[0]
+    )
+    leftover = _source_leftover(rendered, patch, 7800)
+    assert leftover > 0, leftover
+    _assert_reason_names_the_hunk_cause(
+        prompt_builder._floor_only_reason(leftover, 1114, 3900), leftover, 1114, 3900
+    )
+    _assert_floor_guarantee(patch, rendered, recorder)
+
+
+def test_r68_shape_reason_names_the_hunk_cause_and_keeps_every_floor():
+    """T-36 round 7: the R-68 shape (30 files, one ~43KB, per_file 260) gets the real cause."""
+    patch = _r68_sparse_patch()
+    large = dict(prompt_builder.split_diff_files(patch))[
+        "src/orchestrator/services/large_generated.py"
+    ]
+    assert len(large.encode("utf-8")) > 43_000, len(large.encode("utf-8"))
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    assert "30 source file(s) share 7800 tokens (per-file 260, cap 3900)" in rendered, (
+        rendered.splitlines()[0]
+    )
+    leftover = _source_leftover(rendered, patch, 7800)
+    assert leftover > 0, leftover
+    reason = prompt_builder._floor_only_reason(leftover, 260, 3900)
+    _assert_reason_names_the_hunk_cause(reason, leftover, 260, 3900)
+    _assert_floor_guarantee(patch, rendered, recorder)
+
+
+def test_floor_only_reason_at_or_below_the_floor_keeps_the_share_claim():
+    """The other branch of the conditional: here the share really is at or below the floor."""
+    reason = prompt_builder._floor_only_reason(120, 150, 150)
+    assert "floor only, share under the floor" in reason, reason
+    assert "did not exceed that floor" in reason, reason
+    assert "hunk-granular" not in reason, reason
+    assert "went to other files" not in reason, reason
+    for number in (120, 150, prompt_builder.DIFF_FILE_FLOOR_TOKENS):
+        assert str(number) in reason, (number, reason)
+
+    # End to end: two files, 300 tokens -> per_file=cap=150, below the 160-token floor.
+    recorder = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(
+        "".join(_chunk(f"src/c{i}.py", 400, "c") for i in range(2)), 300, recorder
+    )
+    emitted = [
+        record.as_dict()["reason"]
+        for record in recorder.records
+        if record.as_dict()["kind"] == "budget" and "floor only" in record.as_dict()["reason"]
+    ]
+    assert emitted, [record.as_dict() for record in recorder.records]
+    assert all("share under the floor" in reason for reason in emitted), emitted
+    assert all("did not exceed that floor" in reason for reason in emitted), emitted
 
 
 def test_the_distinct_floor_only_wording_is_what_the_allocation_decides(monkeypatch):
@@ -474,7 +622,7 @@ def test_the_distinct_floor_only_wording_is_what_the_allocation_decides(monkeypa
         "".join(_chunk(f"src/c{i}.py", 400, "c") for i in range(2)), 300, forced
     )
     reasons = [r.as_dict()["reason"] for r in forced.records if r.as_dict()["kind"] == "budget"]
-    assert not any("allocated elsewhere" in reason for reason in reasons), reasons
+    assert not any("share under the floor" in reason for reason in reasons), reasons
     assert any("forced" in reason for reason in reasons), reasons
 
 

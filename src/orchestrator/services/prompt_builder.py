@@ -415,8 +415,8 @@ def _allocate_diff_group(
     `DIFF_FILE_FLOOR_TOKENS` by `estimate_tokens` (`_floor_head`), so the floor pass can never
     spend more than `DIFF_FILE_FLOOR_TOKENS * len(group)`, which is what the DoD 1 arithmetic
     relies on. A file that is floored but gets no remainder is recorded with
-    `_floor_only_reason(...)`, which distinguishes an exhausted group budget from one that was
-    allocated elsewhere.
+    `_floor_only_reason(...)`, which distinguishes an exhausted group budget from a share under
+    the floor and from a next hunk that did not fit (hunk granularity).
 
     After the floor, the source group keeps its historical cap (one file may use at most half its
     group budget) and is topped up in priority order, so the big source file still gets the
@@ -701,11 +701,21 @@ def _allocate_diff_group(
 def _floor_only_reason(leftover: int, per_file: int, cap: int) -> str:
     """Why a file that received its floor received nothing more (T-36 DoD 3).
 
-    Two outcomes, and the manifest must not blur them: the group budget really was committed
-    elsewhere (`leftover == 0`), or it still had tokens the file did not take because its share
-    did not exceed its floor (`leftover > 0`). The old single sentence claimed the remainder was
-    *exhausted* in both cases, which overclaims when the remainder is handed to other files or
-    stays unspent under the per-file cap (T-36 review finding 4).
+    Three outcomes, and the manifest must not blur them:
+
+    * `leftover <= 0` -- the group budget really was fully committed by delivered bytes.
+    * `leftover > 0` and `per_file <= DIFF_FILE_FLOOR_TOKENS` -- the group still had tokens but
+      this file's share (and cap) never exceeded its floor, so no pass could hand it more.
+    * `leftover > 0` and `per_file > DIFF_FILE_FLOOR_TOKENS` -- the share *was* larger than the
+      floor, so the cause is hunk granularity: the next hunk did not fit inside what remained of
+      that share and no hunk could absorb the group's leftover tokens.
+
+    The pre-fix string asserted unconditionally that the share did not exceed the floor whenever
+    `leftover > 0`, which is false for the measured shapes (this branch at `per_file=1114`,
+    `leftover=1769`; R-68 at `per_file=260`). It also claimed the unallocated tokens "went to
+    other files", contradicting itself: `leftover > 0` means they were not spent. The sentence is
+    now derived from a comparison that is actually performed, and no branch says the leftover was
+    allocated elsewhere (T-36 review round 7, blocking finding).
     """
     if leftover <= 0:
         return (
@@ -714,11 +724,20 @@ def _floor_only_reason(leftover: int, per_file: int, cap: int) -> str:
             "spent by the floor pass and the remainder pass, so this file received no more "
             "than its floor"
         )
+    if per_file <= DIFF_FILE_FLOOR_TOKENS:
+        return (
+            "floor only, share under the floor: the first hunk fits inside the "
+            f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor and this file's share ({per_file} "
+            f"tokens, cap {cap or 'none'}) did not exceed that floor, so the {leftover} tokens "
+            "the allocation passes left over stayed unspent instead of being allocated to "
+            "this file"
+        )
     return (
-        "floor only, remainder allocated elsewhere: the first hunk fits inside the "
-        f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor and this file's share ({per_file} "
-        f"tokens, cap {cap or 'none'}) did not exceed that floor, so the {leftover} tokens the "
-        "allocation passes left unallocated went to other files or stayed unspent under the cap"
+        "floor only, next hunk did not fit: the first hunk fits inside the "
+        f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor, but rendering is hunk-granular, so "
+        "this file's next hunk did not fit inside what remained of its own share "
+        f"({per_file} tokens, cap {cap or 'none'}); the {leftover} tokens the group had left "
+        "stayed unallocated because no hunk could absorb them"
     )
 
 
