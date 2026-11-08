@@ -1,4 +1,4 @@
-# HEAD=ed13e8a2e5cee93b0ce3724521c499266240bcdf
+# HEAD=c3f05846c35b2560f6da0f88aae305ea9b03dcb2
 # command: static DoD map; the -v run above supplies each node's PASSED line
 5a older HEAD -> stale with the right paths/count:
    unit::test_an_older_stamp_is_stale_with_the_paths_and_the_count
