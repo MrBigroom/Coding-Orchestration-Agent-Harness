@@ -30,9 +30,9 @@ LINT_MS=$(ms "$LINT_START" "$(now)")
 
 TESTS_START=$(now)
 { echo "$STAMP"
-  echo "# command: ./scripts/orch_verify.sh test -v tests/unit/test_evidence_freshness.py" \
+  echo "# command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py" \
        "tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes"
-  ./scripts/orch_verify.sh test -v tests/unit/test_evidence_freshness.py \
+  ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py \
     tests/integration/test_evidence_freshness.py \
     tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone \
     tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes

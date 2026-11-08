@@ -1,2 +1,4 @@
+# HEAD=d4da3ade7453e30d8117cbdf916f033c6d549292
+# command: ./scripts/orch_verify.sh test -v tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 ============================== 38 passed ==============================
