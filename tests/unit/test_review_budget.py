@@ -540,9 +540,9 @@ def _r68_sparse_patch() -> str:
 def _forty_nine_file_default_budget_patch() -> str:
     """The default-budget shape that separates the fair share from the effective ceiling.
 
-    A short path with a (12, 20000) hunk pair renders a 155-token first-hunk floor with the first
-    hunk fully shown, and the next hunk cannot fit even at the 3900-token cap. Forty-nine such
-    floors cost 7781 of the 7800-token source share; the top-up pass spends 18 of the 19 leftover
+    A short path with a (12, 20000) hunk pair renders a ~159-token first-hunk floor with the
+    first hunk fully shown, and the next hunk cannot fit even at the 3900-token cap. Forty-nine
+    such floors cost 7781 of the 7800-token source share; the top-up pass spends 18 of the 19 left
     tokens in marker-sized increments and one token remains. `per_file` is 159 -- below the
     160-token floor -- while `cap` is 3900, which is the exact contradiction round 8 finding 1
     named. The compensation artifact keeps the T-16 source share at 7800 rather than 11700.
@@ -640,7 +640,7 @@ def test_default_budget_49_file_shape_emits_granularity_not_the_share_claim():
 def test_the_allocator_emits_the_granularity_row_with_its_own_leftover():
     """Round-8 finding 2: the row must come from `render_diff_budget`, not a helper call.
 
-    Seven multi-hunk files at a 500-token budget: the allocator funds five 155-token floors, the
+    Seven multi-hunk files at a 500-token budget: the allocator funds five ~83-token floors, the
     next hunk of every funded file is too large for its 210-token cap, and 5 tokens stay unspent.
     The manifest row is therefore emitted by the same code path the reviewer payload uses.
     """
