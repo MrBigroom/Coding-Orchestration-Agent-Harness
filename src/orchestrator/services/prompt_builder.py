@@ -287,11 +287,13 @@ COMPENSATION_BUDGET_FRACTION = 1 / 3
 # max_diff_tokens=12000 the post-header budget is 12000 - 300 = 11700; even when compensation
 # artifacts reserve one third, the source share is 11700 * 2/3 = 7800, and 40 changed files need
 # 40 * 160 = 6400, leaving 1400 for the remainder. Without a compensation reserve the whole
-# 11700 is available. A pathologically long header can cost more than 160, in which case the file
-# either still gets its floor or is named as omitted; the floor is deliberately not raised to buy
-# a larger first hunk, because the remainder pass below still gives a big source file the lion's
-# share while this floor keeps README/docs/tests from being starved to zero bytes (the R-68
-# shape: 8 of 30 files at 0).
+# 11700 is available. For a pathologically long path, `_floor_head` drops the redundant `---`/`+++`
+# path copies and keeps the one `diff --git` header line the splitter needs, so even a 120-path
+# fixture of 40 files keeps every floor inside that source share; a file that still cannot get
+# its floor is named as omitted. The floor is deliberately not raised to buy a larger first hunk,
+# because the remainder pass below still gives a big source file the lion's share while this
+# floor keeps README/docs/tests from being starved to zero bytes (the R-68 shape: 8 of 30 files
+# at 0).
 DIFF_FILE_FLOOR_TOKENS = 160
 DIFF_GROUP_MINIMUM_TOKENS = 60  # ~ a file header plus one short hunk
 
@@ -341,6 +343,12 @@ def _floor_head(chunk: str, max_tokens: int, path: str) -> tuple[str, int, int, 
         f"\n... [review diff floor: {path or 'this file'} stopped at its first hunk; "
         "the remainder did not fit after every file's floor — see the truncation manifest] ...\n"
     )
+    if path and estimate_tokens(header) + estimate_tokens(marker) + 24 > max_tokens:
+        # A pathologically long path can make the four-line diff header alone exceed the floor.
+        # Keep the one header line `split_diff_files` needs for the path and drop the redundant
+        # ---/+++ copies, so the floor still carries an @@ hunk instead of being omitted for a
+        # header. The manifest and the preamble still name the full path.
+        header = f"diff --git a/{path} b/{path}\n"
     body_budget = max_tokens - estimate_tokens(header) - estimate_tokens(marker)
     body_budget = max(24, body_budget)
     rendered = header + truncate_middle(hunks[0], body_budget) + marker
