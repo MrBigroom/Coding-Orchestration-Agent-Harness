@@ -1,4 +1,4 @@
-# HEAD=f49416ed3f12fa6000c691fb2d2970f7e2e56fb9 entries-outside-verify-evidence/T-36=0
+# HEAD=b4b1a597fe30a5dc492662e2466714175c2f12ec entries-outside-verify-evidence/T-36=0
 # command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py -vv -k
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
 tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [  9%]
@@ -12,4 +12,4 @@ tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_re
 tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 81%]
 tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 90%]
 tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [100%]
-====================== 11 passed, 13 deselected in 0.35s =======================
+====================== 11 passed, 13 deselected in 0.42s =======================

@@ -1,6 +1,6 @@
-# HEAD=f49416ed3f12fa6000c691fb2d2970f7e2e56fb9 entries-outside-verify-evidence/T-36=0
+# HEAD=b4b1a597fe30a5dc492662e2466714175c2f12ec entries-outside-verify-evidence/T-36=0
 # command: PYTHONPATH=src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python (render_diff_budget over 'git diff <merge-base>...HEAD')
-BUDGET_default=12000 patch_tokens=16894 files=12 rendered_tokens=9012
+BUDGET_default=12000 patch_tokens=16569 files=13 rendered_tokens=8700
 FLOOR_file README.md hunks_in_supplied=1 bytes=637
 FLOOR_file docs/build-loop.md hunks_in_supplied=1 bytes=634
 FLOOR_file docs/configuration.md hunks_in_supplied=1 bytes=639
@@ -8,11 +8,12 @@ FLOOR_file docs/decisions.md hunks_in_supplied=1 bytes=639
 FLOOR_file src/orchestrator/services/prompt_builder.py hunks_in_supplied=4 bytes=13491
 FLOOR_file tests/integration/test_review_payload.py hunks_in_supplied=3 bytes=2828
 FLOOR_file tests/unit/test_review_budget.py hunks_in_supplied=1 bytes=868
-FLOOR_file verify-evidence/T-36/README.md hunks_in_supplied=1 bytes=4480
+FLOOR_file verify-evidence/T-36/README.md hunks_in_supplied=1 bytes=4985
 FLOOR_file verify-evidence/T-36/capture.sh hunks_in_supplied=1 bytes=3909
-FLOOR_file verify-evidence/T-36/full_suite.txt hunks_in_supplied=1 bytes=2350
-FLOOR_file verify-evidence/T-36/lint.txt hunks_in_supplied=1 bytes=1347
-FLOOR_file verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 bytes=3252
-[review diff budget: max_diff_tokens=12000; 12 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 5 compensation artifact(s) have a reserved slice of 6768 tokens (per-file 1353); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
+FLOOR_file verify-evidence/T-36/full_suite.txt hunks_in_supplied=1 bytes=640
+FLOOR_file verify-evidence/T-36/lint.txt hunks_in_supplied=1 bytes=597
+FLOOR_file verify-evidence/T-36/own_branch_diff_supply.txt hunks_in_supplied=1 bytes=1907
+FLOOR_file verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 bytes=2001
+[review diff budget: max_diff_tokens=12000; 13 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 6 compensation artifact(s) have a reserved slice of 6768 tokens (per-file 1128); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
 BUDGET_files_with_zero_supplied_bytes=0 []
 BUDGET_files_without_a_hunk=0 []
