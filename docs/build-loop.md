@@ -564,12 +564,11 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
   sensitive-file strip (`.env`, keys), which used to vanish between `patch.diff` and the prompt.
   A diff row's reason distinguishes the T-36 outcomes in the existing columns: **floor only,
-  remainder exhausted** (the first hunk was supplied, the group budget was fully committed and no
-  more reached the file) and **floor only, remainder allocated elsewhere** (the file's share did
-  not exceed its floor, so tokens went to other files or stayed unspent under the cap) from
-  **omitted entirely** (not even the floor fitted, or no floor render fits), so zero bytes can
-  never look like a short
-  first hunk.
+  remainder exhausted** (the first hunk was supplied and the group budget was fully committed by
+  delivered bytes) and **floor only, remainder allocated elsewhere** (the file's share did not
+  exceed its floor, so tokens went to other files or stayed unspent under the per-file cap or
+  whole-hunk granularity) from **omitted entirely** (not even the floor fitted, or no floor render
+  fits), so zero bytes can never look like a short first hunk.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
   in what is left — a reviewer verifying wiring needs one complete file far more than the first
@@ -601,11 +600,17 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   budget is `12000 - 300 = 11700` (`header_reserve`, capped at 300). With the T-16 compensation
   reserve in force the source share is `11700 * 2/3 = 7800`; `40 * 160 = 6400 <= 7800` leaves 1400
   tokens for the remainder, and `48 * 160 = 7680 <= 7800` still fits. Without a reserve the whole
-  11700 is available, i.e. `11700 // 160 = 73` files. The 40-file test carries `verify-evidence/`
-  files on purpose so it exercises the 7800 share and not the 11700 one. Only after all floors are
-  funded does the remainder pass run, so one large source file still gets the lion's share and the
-  T-16 evidence reserve is unchanged. If a file is still omitted at the default budget the auditor
-  keeps firing `review_diff_incomplete`; it is never weakened to make the allocator look correct.
+  11700 is available, i.e. `11700 // 160 = 73` files. Floor capacity is therefore
+  `(max_diff_tokens - header_reserve) // 160`, two-thirds of it when the evidence reserve is in
+  force; raising the budget raises that capacity as well as the remainder, and the tests pin the
+  default rather than a raised number. The 40-file test carries `verify-evidence/` files on purpose
+  so it exercises the 7800 share and not the 11700 one. Only after all floors are funded does the
+  remainder pass run, so one large source file still gets the lion's share and the T-16 evidence
+  reserve is unchanged. The remainder is allocated and accounted by **delivered** bytes, not by the
+  token target: `_chunk_head` stops on whole hunk boundaries, so a share that renders short is
+  offered back to the group instead of being counted as spent (T-36 review round 6, findings 1/2).
+  If a file is still omitted at the default budget the auditor keeps firing `review_diff_incomplete`;
+  it is never weakened to make the allocator look correct.
 - **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
   directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
   payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,

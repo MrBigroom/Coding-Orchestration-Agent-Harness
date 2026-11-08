@@ -413,9 +413,13 @@ Running log of architecture decisions. Newest last. Format: date â€” decision â€
   at that number by `estimate_tokens`, making `file_count * 160` a bound rather than an average.
   At the default `max_diff_tokens=12000`: post-header 11700, source share 7800 with the T-16
   compensation reserve, `40 * 160 = 6400` leaves 1400 for the remainder (48 files still fit; 73
-  without a reserve). The remainder pass, the evidence reserve and the auditor are unchanged; a
-  file still omitted at the default budget still raises `review_diff_incomplete`. The manifest keeps
-  its columns and splits the floor-only reason: *remainder exhausted* only when the group budget was
-  fully committed, *remainder allocated elsewhere* when the file's share did not exceed its floor.
-  A path whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor
-  and is named omitted rather than given bytes that would break the bound.
+  without a reserve). The remainder is allocated by **delivered** bytes rather than by the token
+  target: `_chunk_head` stops on whole hunk boundaries, so a share that renders short is offered
+  back to the group and later files instead of being counted as spent while README/docs sit at
+  their floor (T-36 review round 6). The evidence reserve and the auditor are unchanged; a file
+  still omitted at the default budget still raises `review_diff_incomplete`. The manifest keeps
+  its columns and splits the floor-only reason: *remainder exhausted* only when the group budget
+  was fully committed by delivered bytes, *remainder allocated elsewhere* when the file's share
+  did not exceed its floor or the per-file cap / hunk granularity left tokens unspent. A path
+  whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor and is
+  named omitted rather than given bytes that would break the bound.
