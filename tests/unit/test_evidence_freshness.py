@@ -1,12 +1,17 @@
 """T-15: committed evidence freshness is a deterministic equality test, not a reviewer's reading.
 
 Offline, local git repositories only: every case builds its own history with real stamps, so the
-checks run against the same shapes the repository carries (nine stamp formats, recovery commits,
-operator hand-fixes, evidence-only commits, short SHAs and deleted bundles).
+checks run against the shapes the repository actually carries (legacy stamp formats, recovery
+commits, operator hand-fixes, evidence-only commits, short SHAs, deleted bundles).
+
+The generator cases exist because an earlier round let `--no-capture` re-stamp old content at the
+current HEAD, which turned a stale bundle into `pass` with one command. A pass here means the
+bytes were regenerated, not that a stamp was moved.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -30,11 +35,7 @@ ENV = {
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=ENV,
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=ENV
     ).stdout
 
 
@@ -44,9 +45,7 @@ def _commit(repo: Path, subject: str, files: dict[str, str], body: str | None = 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
     _git(repo, "add", "-A")
-    args = ["commit", "-q", "-m", subject]
-    if body:
-        args += ["-m", body]
+    args = ["commit", "-q", "-m", subject] + (["-m", body] if body else [])
     _git(repo, *args)
     return _git(repo, "rev-parse", "HEAD").strip()
 
@@ -55,41 +54,27 @@ def _repo(tmp_path: Path) -> Path:
     return make_repo(tmp_path / "repo", {"README.md": "# test\n"})
 
 
-def _evidence(stamp: str, text: str = "suite: 3 passed\n") -> dict[str, str]:
-    return {"verify-evidence/T-1/full_suite.txt": f"{stamp}\n{text}"}
+def _stamp_file(sha: str, text: str = "suite: 3 passed\n") -> dict[str, str]:
+    return {"verify-evidence/T-1/full_suite.txt": f"# HEAD={sha}\n{text}"}
 
 
-# ------------------------------------------------------------------ parsing the stamp shapes
+# ------------------------------------------------------------------ the legacy stamp vocabulary
+
+FULL = "0123456789abcdef0123456789abcdef01234567"
 
 
 @pytest.mark.parametrize(
     ("line", "sha"),
     [
-        (
-            "# HEAD=0123456789abcdef0123456789abcdef01234567",
-            "0123456789abcdef0123456789abcdef01234567",
-        ),
-        (
-            "# HEAD=0123456789abcdef0123456789abcdef01234567 (0123456) branch=task-4",
-            "0123456789abcdef0123456789abcdef01234567",
-        ),
-        (
-            "# HEAD 0123456789abcdef0123456789abcdef01234567",
-            "0123456789abcdef0123456789abcdef01234567",
-        ),
-        ("# T-18 full suite at HEAD 0123456", "0123456"),
+        (f"# HEAD={FULL}", FULL),
+        (f"# HEAD={FULL} ({FULL[:7]}) branch=task-4", FULL),
+        (f"# HEAD {FULL}", FULL),
+        (f"# HEAD: {FULL}", FULL),                        # the T-9 shape
+        ("# T-18 full suite at HEAD 0123456", "0123456"),  # prose, but in a comment
         ("# HEAD=0123456 tracked-dirty-entries=0", "0123456"),
-        (
-            "HEAD 0123456789abcdef0123456789abcdef01234567 | dirty-entries 0 | "
-            "2026-11-08T00:00:00Z",
-            "0123456789abcdef0123456789abcdef01234567",
-        ),
-        (
-            "# HEAD=0123456789abcdef0123456789abcdef01234567 "
-            "tracked-and-untracked-entries-outside-this-dir=0",
-            "0123456789abcdef0123456789abcdef01234567",
-        ),
-        ("== commit under test: task-6 @ 0123456 ==", "0123456"),
+        (f"HEAD {FULL} | dirty-entries 0 | 2026-11-08T00:00:00Z", FULL),  # the T-20 shape
+        (f"# HEAD={FULL} tracked-and-untracked-entries-outside-this-dir=0", FULL),
+        ("== commit under test: task-6 @ 0123456 ==", "0123456"),  # the T-6 shape
     ],
 )
 def test_every_legacy_stamp_shape_is_parsed(line: str, sha: str) -> None:
@@ -98,25 +83,43 @@ def test_every_legacy_stamp_shape_is_parsed(line: str, sha: str) -> None:
     assert unparsed == []
 
 
-def test_a_file_with_no_stamp_is_unstamped_not_an_error() -> None:
-    stamps, unparsed = ef.parse_stamps("suite: 3 passed\n")
-    assert stamps == []
-    assert unparsed == []
-
-
-def test_a_comment_that_merely_says_head_is_not_an_unparsable_stamp() -> None:
-    text = "# Run from the repo root at the code HEAD you want to certify.\n3 passed\n"
+def test_prose_and_a_key_value_table_row_are_neither_stamps_nor_unparsable() -> None:
+    text = (
+        "# Run from the repo root at the code HEAD you want to certify.\n"
+        "   HEAD tree  : 751117fcb41ce51b820ed208fa29104a4bedc469\n"
+    )
     stamps, unparsed = ef.parse_stamps(text)
     assert stamps == []
+    assert unparsed == []  # reported as an unparsable stamp only for `HEAD=`, `HEAD:` markers
+
+
+def test_a_stamp_mentioned_inside_captured_output_is_not_a_stamp() -> None:
+    """The parametrized ids in this very repo embed the stamp shapes with a fake sha."""
+    mention = "tests/unit/test_x.py::test_y[# HEAD=0123456789abcdef-0123456789abcdef] PASSED"
+    stamps, unparsed = ef.parse_stamps(mention + "\n")
+    assert stamps == []
     assert unparsed == []
+
+
+def test_a_stamp_below_the_header_window_is_neither_counted_nor_rewritten(tmp_path: Path) -> None:
+    """Stamps are header metadata; a transcript body must not stale or be rewritten by one."""
+    body = "\n".join(f"line {i}" for i in range(30))
+    text = f"# HEAD={FULL}\n{body}\n# HEAD=deadbeef\n"
+    stamps, _unparsed = ef.parse_stamps(text)
+    assert [stamp.sha for stamp in stamps] == [FULL]
+    path = tmp_path / "log.txt"
+    path.write_text(text)
+    assert ef.canonicalize_stamps(path, "cafe123") is True
+    written = path.read_text()
+    assert written.startswith("# HEAD=cafe123\n")
+    assert "# HEAD=deadbeef" in written  # the deep line is captured output, not a stamp
 
 
 def test_an_unparsable_stamp_is_reported_not_treated_as_fresh(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    head = _commit(repo, "evidence", _evidence("# HEAD=not-a-sha"))
+    head = _commit(repo, "evidence", _stamp_file("not-a-sha"))
     result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.status == ef.STATUS_STALE
-    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
+    assert result.state == ef.STATE_STALE
     assert result.unparsed_paths == ["verify-evidence/T-1/full_suite.txt"]
     assert "unparsable HEAD stamp" in result.notes
 
@@ -126,13 +129,13 @@ def test_a_short_sha_is_prefix_resolved_against_the_commit_under_verification(
 ) -> None:
     repo = _repo(tmp_path)
     head = _commit(repo, "code", {"src/app.py": "x = 1\n"})
-    stamp = ef.EvidenceStamp(ef._short(repo, head), f"# HEAD={ef._short(repo, head)}", 1)
-    ok, reason = ef._stamp_verdict(repo, stamp, head)
+    short = ef._short(repo, head)
+    ok, reason = ef._stamp_verdict(repo, ef.EvidenceStamp(short, f"# HEAD={short}", 1), head)
     assert ok is True
     assert reason == "matches the commit under verification"
 
 
-# ------------------------------------------------------------------ stale / pass / not_applicable
+# ------------------------------------------------------------------ pass / stale / not_applicable
 
 
 def test_an_older_stamp_is_stale_with_the_paths_and_the_count(tmp_path: Path) -> None:
@@ -140,7 +143,7 @@ def test_an_older_stamp_is_stale_with_the_paths_and_the_count(tmp_path: Path) ->
     old = _commit(repo, "round 4 evidence", {"verify-evidence/T-1/old.txt": "old\n"})
     _commit(
         repo,
-        "round 4 evidence, stamped",
+        "evidence stamped at the round-4 tip",
         {
             "verify-evidence/T-1/full_suite.txt": f"# HEAD={old}\n3 passed\n",
             "verify-evidence/T-1/tests.txt": f"# HEAD={old}\n2 passed\n",
@@ -148,12 +151,12 @@ def test_an_older_stamp_is_stale_with_the_paths_and_the_count(tmp_path: Path) ->
     )
     new = _commit(repo, "round 5 code", {"src/app.py": "def handle():\n    return 1\n"})
     result = ef.check_freshness(repo, new, "T-1", "main")
-    assert result.status == ef.STATUS_STALE
-    assert result.stale_count == 2
+    assert result.state == ef.STATE_STALE
     assert result.stale_paths == [
         "verify-evidence/T-1/full_suite.txt",
         "verify-evidence/T-1/tests.txt",
     ]
+    assert result.stale_count == 2
     assert ef._short(repo, new) in result.evidence
     assert "non-evidence commit" in result.notes
 
@@ -161,187 +164,222 @@ def test_an_older_stamp_is_stale_with_the_paths_and_the_count(tmp_path: Path) ->
 def test_a_stamp_that_differs_only_by_an_evidence_only_commit_passes(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     first = _commit(repo, "code", {"src/app.py": "x = 1\n"})
-    head = _commit(repo, "evidence", _evidence(f"# HEAD={first}"))
+    head = _commit(repo, "evidence", _stamp_file(first))
     result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.status == ef.STATUS_PASS
+    assert result.state == ef.STATE_PASS
     assert "evidence-only commit" in result.notes
 
 
 def test_absent_evidence_is_not_applicable(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    head = _commit(repo, "code only", {"src/app.py": "x = 1\n"})
-    result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.status == ef.STATUS_NOT_APPLICABLE
+    result = ef.check_freshness(repo, _commit(repo, "code", {"src/app.py": "x"}), "T-1", "main")
+    assert result.state == ef.STATE_NOT_APPLICABLE
     assert "no committed evidence" in result.evidence
 
 
 def test_unstamped_evidence_is_not_applicable(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    head = _commit(
-        repo,
-        "evidence without a stamp",
-        {"verify-evidence/T-1/full_suite.txt": "3 passed\n"},
-    )
+    head = _commit(repo, "evidence", {"verify-evidence/T-1/notes.txt": "3 passed\n"})
     result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.status == ef.STATUS_NOT_APPLICABLE
+    assert result.state == ef.STATE_NOT_APPLICABLE
     assert "no stamped evidence" in result.evidence
+
+
+def test_the_check_status_stays_inside_the_frozen_vocabulary(tmp_path: Path) -> None:
+    """`stale` is reported, not failed: the check-record status Literal is frozen at four values."""
+    stale = ef.FreshnessResult(ef.STATE_STALE, "1 stale of 1")
+    assert ef.check_status(stale) == "skipped"
+    assert ef.check_status(stale, strict=True) == "fail"
+    assert ef.check_status(ef.FreshnessResult(ef.STATE_PASS)) == "pass"
+    assert ef.check_status(ef.FreshnessResult(ef.STATE_NOT_APPLICABLE)) == "not_applicable"
 
 
 # ------------------------------------------------------------------ HEAD moved for other reasons
 
 
 def _stamped_then(repo: Path, files: dict[str, str], subject: str, body: str | None = None) -> str:
-    """Create evidence stamped at a known commit, then one more commit on top."""
+    """A bundle stamped at a real commit, then one more commit on top of it."""
     stamped = _commit(repo, "evidence", {"verify-evidence/T-1/full_suite.txt": "# HEAD=PARENT\n"})
-    stamped = _commit(
-        repo,
-        "evidence re-stamped",
-        {"verify-evidence/T-1/full_suite.txt": f"# HEAD={stamped}\n3 passed\n"},
-    )
+    stamped = _commit(repo, "evidence re-stamped", _stamp_file(stamped))
     return _commit(repo, subject, files, body=body)
 
 
-def test_a_recovery_commit_after_the_stamp_is_explained_not_called_stale(tmp_path: Path) -> None:
+def test_a_recovery_commit_trailer_is_explained_not_called_stale(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    recovered = _stamped_then(
-        repo,
-        {"scratch.txt": "leftover\n"},
-        "chore(orchestrator-recovery): sweep",
+    head = _stamped_then(
+        repo, {"scratch.txt": "leftover\n"}, "chore(recovery): sweep",
         body="Orchestrator-Recovery: R-1",
     )
-    result = ef.check_freshness(repo, recovered, "T-1", "main")
-    assert result.status == ef.STATUS_PASS
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_PASS
     assert "harness recovery commit" in result.notes
 
 
-def test_an_operator_hand_fix_after_the_stamp_is_explained_not_called_stale(tmp_path: Path) -> None:
+def test_an_operator_hand_fix_trailer_is_explained_not_called_stale(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    fixed = _stamped_then(
-        repo,
-        {"src/app.py": "x = 1\n"},
-        "fix(phase-1): operator repair",
+    head = _stamped_then(
+        repo, {"src/app.py": "x = 1\n"}, "fix(phase-1): operator repair",
         body="Operator-Hand-Fix: chat-10",
     )
-    result = ef.check_freshness(repo, fixed, "T-1", "main")
-    assert result.status == ef.STATUS_PASS
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_PASS
     assert "operator hand-fix commit" in result.notes
 
 
-def test_an_evidence_only_commit_after_the_stamp_is_explained_not_called_stale(
-    tmp_path: Path,
-) -> None:
+def test_a_body_that_merely_mentions_the_trailer_is_not_exempt(tmp_path: Path) -> None:
+    """Trailers are parsed by git, not found by substring: prose is not an exemption."""
     repo = _repo(tmp_path)
-    stamped = _commit(repo, "evidence", {"verify-evidence/T-1/full_suite.txt": "# HEAD=PARENT\n"})
-    stamped = _commit(
-        repo,
-        "evidence re-stamped",
-        {"verify-evidence/T-1/full_suite.txt": f"# HEAD={stamped}\n3 passed\n"},
+    head = _stamped_then(
+        repo, {"src/app.py": "x = 2\n"}, "fix(phase-1): worker changed the code"
     )
-    later = _commit(
+    _git(repo, "commit", "-q", "--amend", "-m",
+         "fix(phase-1): worker changed the code\n\n"
+         "A paragraph that says Operator-Hand-Fix: chat-3 while describing the protocol.\n")
+    amended = _git(repo, "rev-parse", "HEAD").strip()
+    assert amended != head
+    result = ef.check_freshness(repo, amended, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
+
+
+def test_a_commit_that_only_touches_the_generator_is_not_evidence_only(tmp_path: Path) -> None:
+    """Editing capture.sh changes what every number means, so it is a code commit."""
+    repo = _repo(tmp_path)
+    head = _stamped_then(
         repo,
-        "test(phase-1): more evidence",
-        {"verify-evidence/T-1/lint.txt": f"# HEAD={stamped}\nAll checks passed\n"},
+        {"verify-evidence/T-1/capture.sh": "#!/usr/bin/env bash\necho changed\n"},
+        "fix(phase-1): change what the capture measures",
     )
-    result = ef.check_freshness(repo, later, "T-1", "main")
-    assert result.status == ef.STATUS_PASS
-    assert "evidence-only commit" in result.notes
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_STALE
 
 
 def test_a_code_commit_after_the_stamp_is_stale(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    code = _stamped_then(repo, {"src/app.py": "x = 2\n"}, "fix(phase-1): change the code")
-    result = ef.check_freshness(repo, code, "T-1", "main")
-    assert result.status == ef.STATUS_STALE
-    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
-    assert ef._short(repo, code) in result.notes
+    head = _stamped_then(repo, {"src/app.py": "x = 2\n"}, "fix(phase-1): change the code")
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert ef._short(repo, head) in result.notes
 
 
-# ------------------------------------------------------------------ deletion is a finding
+# ------------------------------------------------------------------ deletion is its own finding
 
 
 def test_deleted_evidence_names_the_paths_and_the_deleting_commit(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    first = _commit(
-        repo,
-        "evidence",
-        {
-            "verify-evidence/T-1/full_suite.txt": "# HEAD=PARENT\n3 passed\n",
-            "verify-evidence/T-1/README.md": "# evidence\n",
-        },
-    )
-    _commit(
-        repo,
-        "evidence re-stamped",
-        {
-            "verify-evidence/T-1/full_suite.txt": f"# HEAD={first}\n3 passed\n",
-            "verify-evidence/T-1/README.md": "# evidence\n",
-        },
-    )
+    files = {
+        "verify-evidence/T-1/full_suite.txt": "# HEAD=PARENT\n3 passed\n",
+        "verify-evidence/T-1/README.md": "# evidence\n",
+    }
+    first = _commit(repo, "evidence", files)
+    _commit(repo, "evidence re-stamped", {**_stamp_file(first), **_readme()})
     (repo / "verify-evidence/T-1/README.md").unlink()
     deleted = _commit(repo, "test(phase-1): delete README evidence", {})
     result = ef.check_freshness(repo, deleted, "T-1", None)
-    assert result.status == ef.STATUS_STALE
+    assert result.state == ef.STATE_STALE
     assert result.deleted_paths == ["verify-evidence/T-1/README.md"]
     assert result.deleted_by["verify-evidence/T-1/README.md"] == deleted
     assert "deleted by" in result.notes
 
 
-# ------------------------------------------------------------------ the single generator
+def _readme() -> dict[str, str]:
+    return {"verify-evidence/T-1/README.md": "# evidence\n"}
 
+
+# ------------------------------------------------------------------ the single generator
 
 CAPTURE = """#!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 OUT="$ROOT/verify-evidence/T-1"
 SHA="$(git rev-parse HEAD)"
-printf '# HEAD=%s\\n' "$SHA" > "$OUT/full_suite.txt"
-printf 'suite: 3 passed\\n' >> "$OUT/full_suite.txt"
-printf '# HEAD=%s\\n# HEAD=%s\\n' "$SHA" "$SHA" > "$OUT/two_stamps.txt"
+mkdir -p "$OUT"
+printf '# HEAD=%s\\nsuite: 3 passed\\n' "$SHA" > "$OUT/suite.txt"
+if [ ! -f "$OUT/slow.txt" ]; then printf '# HEAD=%s\\nslow: 1 passed\\n' "$SHA" > "$OUT/slow.txt"; fi
 """
 
 
 def _bundle_repo(tmp_path: Path) -> Path:
     repo = _repo(tmp_path)
-    evidence = repo / "verify-evidence/T-1"
-    evidence.mkdir(parents=True)
-    script = evidence / "capture.sh"
+    script = repo / "verify-evidence/T-1/capture.sh"
+    script.parent.mkdir(parents=True)
     script.write_text(CAPTURE)
     script.chmod(0o755)
-    _commit(repo, "add evidence generator", {"verify-evidence/T-1/capture.sh": CAPTURE})
-    script.chmod(0o755)
+    _commit(repo, "add the evidence generator", {"verify-evidence/T-1/capture.sh": CAPTURE})
     return repo
 
 
-def test_regeneration_is_one_command_and_second_run_is_a_no_op(tmp_path: Path) -> None:
+def _commit_all(repo: Path, subject: str) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+def test_regeneration_is_one_command_and_a_second_run_rewrites_nothing(tmp_path: Path) -> None:
     repo = _bundle_repo(tmp_path)
     first = ef.regenerate_bundle(repo, "T-1")
     assert first.head == _git(repo, "rev-parse", "HEAD").strip()
-    assert set(first.files) == {"capture.sh", "full_suite.txt", "two_stamps.txt"}
-    assert first.manifest.endswith("verify-evidence/T-1/manifest.json")
-    assert "manifest.json" in first.rewritten or "two_stamps.txt" in first.rewritten
-
+    assert set(first.files) == {"capture.sh", "suite.txt", "slow.txt", ef.SELF_CHECK_NAME}
+    assert Path(first.manifest).name == ef.MANIFEST_NAME
+    assert {"suite.txt", "slow.txt"} <= set(first.rewritten)
     second = ef.regenerate_bundle(repo, "T-1")
     assert second.rewritten == []
     assert second.generated_at == first.generated_at
 
 
-def test_the_generator_writes_the_manifest_fields_and_one_canonical_stamp(tmp_path: Path) -> None:
+def test_the_manifest_names_the_head_command_versions_and_files(tmp_path: Path) -> None:
     repo = _bundle_repo(tmp_path)
     result = ef.regenerate_bundle(repo, "T-1")
-    manifest = json.loads((repo / "verify-evidence/T-1/manifest.json").read_text())
+    manifest = json.loads((repo / "verify-evidence/T-1" / ef.MANIFEST_NAME).read_text())
     assert manifest["head"] == result.head
     assert manifest["command"] == "verify-evidence/T-1/capture.sh"
     assert manifest["generated_at"].endswith("Z")
-    assert manifest["tool_versions"]["python"]
-    assert manifest["tool_versions"]["git"]
+    assert manifest["tool_versions"]["python"] and manifest["tool_versions"]["git"]
+    assert manifest["stamp"] == f"# HEAD={result.head}"
     assert {entry["path"] for entry in manifest["files"]} == {
         "capture.sh",
-        "full_suite.txt",
-        "two_stamps.txt",
+        "suite.txt",
+        "slow.txt",
+        ef.SELF_CHECK_NAME,
     }
-    text = (repo / "verify-evidence/T-1/two_stamps.txt").read_text()
-    assert text.count("# HEAD=") == 1
-    assert text.startswith("# HEAD=" + result.head + "\n")
+    assert "# HEAD=" not in (repo / "verify-evidence/T-1/suite.txt").read_text().split("\n", 1)[1]
+
+
+def test_regeneration_does_not_restamp_a_file_the_generator_did_not_rewrite(
+    tmp_path: Path,
+) -> None:
+    """The stamp-only hole: old bytes re-stamped at a new HEAD would pass the check."""
+    repo = _bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    _commit_all(repo, "test(phase-1): evidence-only commit")
+    new = _commit(repo, "fix(phase-1): change the code", {"src/app.py": "x = 1\n"})
+    result = ef.regenerate_bundle(repo, "T-1")
+    assert "suite.txt" in result.rewritten
+    assert "slow.txt" not in result.rewritten  # capture.sh deliberately left it alone here
+    committed = ef.check_freshness(repo, new, "T-1", "main", from_worktree=True)
+    assert committed.stale_paths == ["verify-evidence/T-1/slow.txt"]
+
+
+def test_the_generated_bundle_is_fresh_once_committed(tmp_path: Path) -> None:
+    repo = _bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    head = _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    selfcheck = (repo / "verify-evidence/T-1" / ef.SELF_CHECK_NAME).read_text()
+    assert "basis=worktree" in selfcheck
+    assert "status=pass" in selfcheck
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_PASS
+    assert result.stamped_files == 3  # suite.txt, slow.txt and the manifest each carry a HEAD
+    assert result.stale_paths == []
+
+
+def test_a_dirty_tracked_worktree_is_refused_rather_than_stamped(tmp_path: Path) -> None:
+    repo = _bundle_repo(tmp_path)
+    (repo / "README.md").write_text("# edited but not committed\n")
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1")
+    assert "uncommitted tracked changes" in str(exc.value)
+    assert not (repo / "verify-evidence/T-1/suite.txt").exists()
 
 
 def test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh(tmp_path: Path) -> None:
@@ -351,14 +389,31 @@ def test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh(tmp_path: Pa
     assert "no committed generator" in str(exc.value)
 
 
-def test_the_generated_bundle_is_reported_fresh_by_the_check(tmp_path: Path) -> None:
-    repo = _bundle_repo(tmp_path)
-    ef.regenerate_bundle(repo, "T-1")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "evidence")
-    head = _git(repo, "rev-parse", "HEAD").strip()
-    # The stamps name the parent (the commit the generator ran at); committing the generated
-    # files is an evidence-only commit, so the bundle is still fresh at the tip.
-    result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.status == ef.STATUS_PASS
-    assert result.stamped_files == 3  # full_suite, two_stamps and manifest all carry HEAD
+# ------------------------------------------------------------------ DoD 4 assertion-shape guard
+
+MEMORY_TESTS = {
+    "tests/unit/test_memory_scopes.py": 14,
+    "tests/integration/test_memory_scope_boundary.py": 8,
+}
+
+
+def _conjoined(path: Path) -> int:
+    tree = ast.parse(path.read_text())
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assert)
+        and isinstance(node.test, ast.BoolOp)
+        and isinstance(node.test.op, ast.And)
+    )
+
+
+def test_the_memory_scope_tests_keep_their_assertion_shape() -> None:
+    """An inventory, not a claim: the measured count of `assert a and b` per file, at one place.
+
+    The base commit had 26 and 15 of them; the sites that could fail in two unrelated ways were
+    split, the remainder are one outcome over two fields (documented at the top of each file).
+    Pinning the numbers means a new conjoined assertion is a deliberate edit to this test.
+    """
+    root = Path(__file__).resolve().parents[2]
+    assert {name: _conjoined(root / name) for name in MEMORY_TESTS} == MEMORY_TESTS

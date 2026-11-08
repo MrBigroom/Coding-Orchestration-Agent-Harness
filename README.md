@@ -298,12 +298,13 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
   environment-parity tests are opt-in
   (`ORCH_ENV_PARITY_TESTS=1`; nested-suite cases also need `ORCH_ENV_SPAWN_TESTS=1`).
 - **Evidence freshness is reported, not enforced.** The deterministic Supervisor check compares
-  each committed `verify-evidence/<task>/` HEAD stamp with the run's `commit_sha` and reports
-  `pass | stale | not_applicable` (deleted evidence names the deleting commit). It does not force
-  a re-run and does not fail the gate unless `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`; the
-  Worker still has to run `orchestrator task evidence <id>` to refresh the bundle. The check
-  accepts the repository's legacy stamp shapes but only the committed `capture.sh` can regenerate
-  a task-specific bundle, so a tree without one cannot be refreshed by the generic command.
+  each committed `verify-evidence/<task>/` HEAD stamp with the run's `commit_sha`; a stale bundle
+  is `skipped` with `stale:` in its evidence string (deleted evidence names the deleting commit),
+  and it does not fail the gate unless `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`. It does not
+  force a re-run: the Worker still runs `orchestrator task evidence <id>`, which regenerates the
+  bundle from the committed `capture.sh` and refuses a dirty worktree. A tree without a committed
+  `capture.sh` cannot be refreshed by the generic command, and a file the generator does not
+  rewrite keeps its old stamp rather than being silently re-stamped.
 - **A gate green is a green in a clean environment, not in your checkout.** Gated runs execute in
   a tracked-files-only worktree: no `.env`, no `node_modules`, no `.venv`. The suite itself is
   hermetic against a repo-level `.env`, and `verification.json` records which world the gate used;

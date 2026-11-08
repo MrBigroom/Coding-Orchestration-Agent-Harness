@@ -241,16 +241,16 @@ API: `GET /api/memory/export`, `POST /api/memory/import`. The export format is
 
 ## Committed artifacts are only trustworthy while they match the commit under review
 
-This is the companion convention to the evidence-freshness check (`docs/build-loop.md`,
-"Evidence freshness"). A `verify-evidence/<task>/` file is a measurement, not a permanent truth:
-its HEAD stamp names the commit it was taken at. The deterministic Supervisor check compares that
-stamp with the run's `commit_sha` and reports `stale` when code moved after the capture; a deleted
-file is reported with the commit that deleted it, not treated as absent evidence. Refresh the whole
-bundle with one command (`orchestrator task evidence <id>`), which runs the committed
-`capture.sh`, canonicalises every stamp and writes `manifest.json`. Keep memory entries about
-verification results phrased relative to that stamp — "at `<sha>` the suite was green", not "the
-suite is green" — because a remembered green outlives the code it described. The check reports
-staleness; it does not force a re-run.
+This is the companion convention to the evidence-freshness check (`docs/build-loop.md`, "Evidence
+freshness"). A `verify-evidence/<task>/` file is a measurement, not a permanent truth: its HEAD
+stamp names the commit it was taken at, and the deterministic Supervisor check compares that stamp
+with the run's `commit_sha`. A stale bundle is reported with the offending paths, a deleted file
+with the commit that deleted it — never as absent evidence. Refresh the whole bundle with one
+command (`orchestrator task evidence <id>`), which runs the committed `capture.sh`, rewrites only
+what it regenerates and writes `manifest.json`. Keep memory entries about verification results
+phrased relative to that stamp — "at `<sha>` the suite was green", not "the suite is green" —
+because a remembered green outlives the code it described. The check reports staleness; it does
+not force a re-run.
 
 ## Relationship to prompt caching
 

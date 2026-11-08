@@ -81,10 +81,10 @@ class ReviewResult(BaseModel):
 
 class VerificationCheck(BaseModel):
     name: str
-    # `stale` is an additive status used by the T-15 evidence-freshness check. It is reported but
-    # does not fail the gate unless ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true; the existing
-    # check records and their statuses are unchanged.
-    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
+    # The frozen vocabulary (docs/frozen-contracts.md). T-15's evidence-freshness check reports
+    # staleness in this row's `evidence` string (and `skipped` as its status) rather than adding a
+    # fifth value: a new status would be a contract change this phase is not authorized to make.
+    status: Literal["pass", "fail", "skipped", "not_applicable"]
     command: str = ""
     evidence: str = ""
     notes: str = ""

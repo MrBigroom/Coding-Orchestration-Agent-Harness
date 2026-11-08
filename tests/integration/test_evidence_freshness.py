@@ -1,7 +1,8 @@
 """T-15 end to end: the Supervisor verification pass reports stale committed evidence.
 
-Offline: local git repo, the project's own trivial test command, no harness or network. The check
-is additive to verification.json; the existing check names and artifact names stay untouched.
+Offline: local git repo, the project's own trivial test command, no harness and no network. The
+row is additive to verification.json — the frozen check-record keys, the existing check names and
+the frozen artifact names are all asserted unchanged here.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from sqlmodel import select
 
 from orchestrator.core import config as config_mod
-from orchestrator.core.models import Run
+from orchestrator.core.models import BuildLogEntry, Run
 from orchestrator.core.schemas import Handoff, HandoffTests, ProjectCreate, TaskCreate
 from orchestrator.services import (
     artifact_service,
@@ -35,16 +37,12 @@ ENV = {
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@t",
 }
-RUN_TESTS = "print('3 passed, 0 failed')\n"
+FROZEN_KEYS = {"name", "status", "command", "evidence", "notes"}
 
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=ENV,
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=ENV
     ).stdout
 
 
@@ -63,21 +61,16 @@ def project(session, tmp_path):
     repo = make_repo(
         tmp_path / "proj",
         {
-            "run_tests.py": RUN_TESTS,
+            "run_tests.py": "print('3 passed, 0 failed')\n",
             "README.md": "x\n",
             "docs/frozen-contracts.md": "# frozen contracts\n",
         },
     )
     project = project_service.create(
         session,
-        ProjectCreate(
-            name="proj",
-            path=str(repo),
-            test_command="python3 run_tests.py",
-        ),
+        ProjectCreate(name="proj", path=str(repo), test_command="python3 run_tests.py"),
     )
-    # Keep the initial commit on `main` and do the Work on a task branch, as the real harness
-    # does: the deletion scan is `main..commit`, which is empty on main itself.
+    # Work happens on a task branch, as in the harness: the deletion scan is `main..commit`.
     _git(repo, "checkout", "-q", "-b", "task")
     return project
 
@@ -115,79 +108,67 @@ def _verify(session, task, project, commit_sha: str):
         summary="freshness probe",
         tests=HandoffTests(command="python3 run_tests.py", passed=3),
     )
-    result = asyncio.run(
-        supervisor_service.verify(session, task, run, project, handoff, False)
-    )
+    result = asyncio.run(supervisor_service.verify(session, task, run, project, handoff, False))
     return run, {check.name: check for check in result.checks}, result
 
 
-def _stamp_file(label: str, stamp: str) -> dict[str, str]:
-    return {f"verify-evidence/{label}/full_suite.txt": f"{stamp}\n3 passed\n"}
+def _stamped(label: str, sha: str) -> dict[str, str]:
+    return {f"verify-evidence/{label}/full_suite.txt": f"# HEAD={sha}\n3 passed\n"}
 
 
-def test_stale_evidence_is_reported_as_stale_and_does_not_flip_the_verdict(
-    session, project, tmp_path
-):
+def _stale_evidence(session, project, task, tmp_path):
+    """A bundle stamped at an older commit, then one code commit on top of it."""
     repo = Path(project.path)
+    old = _commit(repo, "evidence", {f"verify-evidence/{task.short_id}/old.txt": "old\n"})
+    _commit(repo, "evidence stamped at the round-4 tip", _stamped(task.short_id, old))
+    return _commit(repo, "round 5 code", {"src/app.py": "x = 2\n"})
+
+
+def test_stale_evidence_is_reported_without_flipping_the_verdict(session, project, tmp_path):
     task = _task(session, project)
-    label = task.short_id
-    old = _commit(repo, "evidence", {f"verify-evidence/{label}/old.txt": "old\n"})
-    _commit(
-        repo,
-        "evidence stamped at the round-4 tip",
-        _stamp_file(label, f"# HEAD={old}"),
-    )
-    new = _commit(repo, "round 5 code", {"src/app.py": "x = 2\n"})
+    new = _stale_evidence(session, project, task, tmp_path)
     run, checks, result = _verify(session, task, project, new)
 
-    freshness = checks[evidence_freshness.CHECK_NAME]
-    assert freshness.status == "stale"
-    assert "1 stale of 1 stamped evidence file(s)" in freshness.evidence
-    assert f"verify-evidence/{label}/full_suite.txt" in freshness.notes
+    fresh = checks[evidence_freshness.CHECK_NAME]
+    assert fresh.status == "skipped"
+    assert fresh.evidence.startswith("stale: ")
+    assert f"verify-evidence/{task.short_id}/full_suite.txt" in fresh.notes
     assert result.final_result == "pass"  # reported, never a failing check by default
     assert result.contradicts_worker is False
+    # The machine-readable state is in the build-log payload, next to the human string.
+    events = [e for e in session.exec(select(BuildLogEntry)) if e.event == "evidence_freshness_stale"]
+    payload = json.loads(events[-1].details.split("findings_json=", 1)[1])
+    assert payload["state"] == "stale"
+    assert payload["check_status"] == "skipped"
 
-    # The existing checks and frozen artifact names are untouched; this is an additive row.
+
+def test_the_existing_checks_and_frozen_artifact_names_are_unchanged(session, project):
+    task = _task(session, project, phase=2)
+    first = _commit(Path(project.path), "code", {"src/app.py": "x = 1\n"})
+    head = _commit(Path(project.path), "evidence at the code HEAD", _stamped(task.short_id, first))
+    run, checks, result = _verify(session, task, project, head)
+
     assert {"tests", "migrations apply/downgrade", "endpoints against live stack"} <= set(checks)
     names = {a["name"] for a in artifact_service.list_artifacts(run.id)}
     assert {"test.log", "test_summary.txt", "verification.json", "verification.md"} <= names
     saved = json.loads(artifact_service.read_text(run.id, "verification.json"))
     assert {c["name"] for c in saved["checks"]} == set(checks)
-    assert set(saved["checks"][0]) == {"name", "status", "command", "evidence", "notes"}
-
-
-def test_a_fresh_bundle_is_reported_as_pass(session, project):
-    repo = Path(project.path)
-    task = _task(session, project, phase=2)
-    first = _commit(repo, "code", {"src/app.py": "x = 1\n"})
-    head = _commit(
-        repo,
-        "evidence stamped at the code commit",
-        _stamp_file(task.short_id, f"# HEAD={first}"),
-    )
-    _run, checks, result = _verify(session, task, project, head)
+    assert all(set(c) == FROZEN_KEYS for c in saved["checks"])
     assert checks[evidence_freshness.CHECK_NAME].status == "pass"
     assert result.final_result == "pass"
 
 
 def test_an_absent_bundle_is_not_applicable(session, project):
-    repo = Path(project.path)
-    head = _commit(repo, "code without evidence", {"src/app.py": "x = 1\n"})
     task = _task(session, project, phase=3)
+    head = _commit(Path(project.path), "code without evidence", {"src/app.py": "x = 1\n"})
     _run, checks, result = _verify(session, task, project, head)
     assert checks[evidence_freshness.CHECK_NAME].status == "not_applicable"
     assert result.final_result == "pass"
 
 
-def test_strict_mode_is_the_only_way_staleness_fails_the_gate(
-    session, project, monkeypatch
-):
-    repo = Path(project.path)
+def test_strict_mode_is_the_only_way_staleness_fails_the_gate(session, project, monkeypatch):
     task = _task(session, project, phase=4)
-    label = task.short_id
-    old = _commit(repo, "evidence", {f"verify-evidence/{label}/old.txt": "old\n"})
-    _commit(repo, "evidence stamped", _stamp_file(label, f"# HEAD={old}"))
-    new = _commit(repo, "code", {"src/app.py": "x = 3\n"})
+    new = _stale_evidence(session, project, task, None)
     monkeypatch.setenv("ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT", "true")
     config_mod.reset_settings_cache()
     try:

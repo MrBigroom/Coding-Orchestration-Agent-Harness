@@ -250,23 +250,24 @@ async def verify(
 
     # 4b. Committed evidence freshness (T-15 DoD 1). A pure comparison of the HEAD stamp in each
     # committed evidence file against the run's commit_sha, so the reviewer never has to discover
-    # staleness by reading an old copy of the Worker's own tests. `stale` is reported, not `fail`,
-    # unless the operator opts into strict mode: existing projects may carry untracked or unstamped
-    # evidence, and DoD 1 reserves a failing check for a configurable rule. This check never sets
-    # `contradicts` and never by itself flips the verdict.
+    # staleness by reading an old copy of the Worker's own tests. The check-record status stays
+    # inside the frozen vocabulary: fresh is `pass`, absent/unstamped is `not_applicable`, and a
+    # stale bundle is `skipped` with `stale:` leading the evidence string (a fifth status would be
+    # a contract change this phase is not authorized to make). `fail` is reserved for
+    # ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true. This check never sets `contradicts` and never
+    # by itself flips the verdict.
     if cwd and project and task.kind in (TaskKind.coding, TaskKind.maintenance):
         freshness = evidence_freshness.check_freshness(
             cwd, run.commit_sha, task.short_id, project.base_branch
         )
         strict = get_settings().evidence_freshness_strict
-        status = freshness.status
-        if status == evidence_freshness.STATUS_STALE and strict:
-            status = "fail"
+        status = evidence_freshness.check_status(freshness, strict)
+        stale = freshness.state == evidence_freshness.STATE_STALE
         checks.append(
             VerificationCheck(
                 name=evidence_freshness.CHECK_NAME,
                 status=status,
-                evidence=freshness.evidence,
+                evidence=(f"stale: {freshness.evidence}" if stale else freshness.evidence),
                 notes=(
                     freshness.notes
                     + (
@@ -278,13 +279,15 @@ async def verify(
                 ),
             )
         )
-        if freshness.status == evidence_freshness.STATUS_STALE:
+        if stale:
             log_service.log_event(
                 session,
                 "evidence_freshness_stale",
                 structured_log.attach(
                     "committed evidence does not match the commit under verification",
                     {
+                        "state": freshness.state,
+                        "check_status": status,
                         "task_id": task.id,
                         "run_id": run.id,
                         "commit_sha": run.commit_sha,

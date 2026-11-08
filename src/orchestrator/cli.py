@@ -622,27 +622,51 @@ def task_evidence(
     command: str = typer.Option(
         None, help="Generator command; default verify-evidence/<id>/capture.sh."
     ),
-    no_capture: bool = typer.Option(
-        False, help="Only re-stamp the existing bundle and write its manifest."
+    check: bool = typer.Option(
+        False, "--check", help="Only report freshness (no writes); exit 1 when stale."
     ),
 ) -> None:
-    """Regenerate one task's committed evidence bundle in a single invocation.
+    """Regenerate (or check) one task's committed evidence bundle.
 
-    No database or network: the command maps a task id/short id to
-    ``verify-evidence/<id>/`` in this worktree, runs the committed ``capture.sh``, rewrites every
-    stamp it finds to the canonical ``# HEAD=<sha>`` form, and writes ``manifest.json``. Files
-    whose bytes did not change are left untouched, so a second run leaves the diff clean.
+    No database and no network: the command maps a task id to ``verify-evidence/<id>/`` in this
+    worktree, runs the committed ``capture.sh``, canonicalises only the files that pass rewrote,
+    and writes ``manifest.json``. There is deliberately no stamp-only mode: re-stamping content
+    that was not regenerated is the staleness this check exists to catch. Files the pass did not
+    rewrite are left untouched, so a second run at the same HEAD leaves the diff clean.
     """
     from orchestrator.services import evidence_freshness
 
     repo = Path(root).expanduser().resolve() if root else Path.cwd().resolve()
-    result = evidence_freshness.regenerate_bundle(
-        repo, task, command=command, capture=not no_capture
-    )
+    if check:
+        freshness = evidence_freshness.check_freshness(repo, "HEAD", task)
+        _print_json(
+            {
+                "label": evidence_freshness.normalize_label(task),
+                "state": freshness.state,
+                "check_status": evidence_freshness.check_status(freshness),
+                "compared_commit": freshness.compared_commit,
+                "stamped_files": freshness.stamped_files,
+                "stale_paths": freshness.stale_paths,
+                "deleted_paths": freshness.deleted_paths,
+                "unparsed_paths": freshness.unparsed_paths,
+                "evidence": freshness.evidence,
+                "notes": freshness.notes,
+            }
+        )
+        console.print(
+            f"[green]evidence[/green] {evidence_freshness.normalize_label(task)}: "
+            f"{freshness.state} ({freshness.stamped_files} stamped file(s) at "
+            f"{(freshness.compared_commit or 'HEAD')[:7]})"
+        )
+        if freshness.state == evidence_freshness.STATE_STALE:
+            raise typer.Exit(code=1)
+        return
+    result = evidence_freshness.regenerate_bundle(repo, task, command=command)
     _print_json(result.as_dict())
     console.print(
         f"[green]evidence[/green] {result.label}: {len(result.files)} file(s), "
-        f"{len(result.rewritten)} rewritten at {result.head_short} ({result.manifest})"
+        f"{len(result.rewritten)} rewritten at {result.head_short} ({result.manifest}) "
+        f"in {result.duration_seconds:.1f}s"
     )
 
 

@@ -402,18 +402,19 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   trustworthy as its resolver, so read the row's resolution evidence before believing a
   `confirmed`.
 - **2026-11-08 — T-15: committed evidence freshness is a deterministic stamp comparison, and the
-  bundle has one committed generator.** The gate adds an additive verification check
-  (`committed evidence freshness`) with status `pass | stale | not_applicable`; `stale` is a
-  report, and a failing check is reserved for `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`.
-  The parser accepts all legacy stamp shapes and prefix-resolves short SHAs against the run's
-  `commit_sha`; a stamp that differs only by an `Orchestrator-Recovery:` commit, an
-  `Operator-Hand-Fix:` commit or an evidence-only commit is fresh with that explanation, while a
-  code commit after the stamp is stale. An unparsable stamp is stale. Deleted evidence is stale
-  with the paths and deleting commit, never `not_applicable`. One command
-  (`orchestrator task evidence <id>`) runs the committed `verify-evidence/<task>/capture.sh`,
-  canonicalises every stamp to `# HEAD=<full sha>` and writes `manifest.json` (HEAD, timestamp,
-  command line, tool versions, produced files); a second run is a byte-for-byte no-op, and files
-  whose content did not change are not rewritten. The `stale` status is an additive value on a new
-  check record, not a change to any existing check name or artifact name; the task DoD explicitly
-  grants the new check, so no contract-change request is needed. The limitation is recorded in the
-  README: the check reports staleness, it does not force a re-run.
+  bundle has one committed generator.** The gate adds one additive verification check
+  (`committed evidence freshness`) next to "claimed files exist on disk". Its status stays in the
+  frozen vocabulary — `pass` fresh, `not_applicable` absent/unstamped, `skipped` + `stale:` in the
+  evidence string for a stale bundle, `fail` only under
+  `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`; a first-class `stale` status is requested in
+  `docs/contract-change-request-T15-01-evidence-freshness-status.md` instead of being added here,
+  because a fifth value changes `verification.json`'s frozen schema. Exemptions are read from git
+  *trailers* (never a substring of the body) for `Orchestrator-Recovery:`/`Operator-Hand-Fix:`,
+  plus commits touching only `verify-evidence/` **excluding** `capture.sh`, which is code. Stamps
+  are header metadata (first 20 lines), short SHAs are prefix-resolved, and an unparsable `HEAD=`
+  line is stale rather than fresh. Deleted evidence is stale with the deleting commit, never
+  `not_applicable`. One command (`orchestrator task evidence <id>`, or `--check` to only report)
+  runs the committed `capture.sh`, refuses a dirty tracked worktree, canonicalises only the files
+  that pass rewrote and writes `manifest.json` + a self-check; a second run is byte-identical, and
+  a file the pass did not rewrite keeps its old stamp so it reads stale. There is deliberately no
+  stamp-only mode. The README keeps the limitation: the check reports, it does not force a re-run.
