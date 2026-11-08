@@ -7,7 +7,7 @@
     },
     {
       "path": "assertion_shape.txt",
-      "sha256": "c9885754e0a51578c007cd78ceb486bb1f7388abf2eaa23aba5d7d82e759f0d1"
+      "sha256": "bffb4b840c930c94ad19c1a9ba5528f1d0c5fdb9034294b1236ee382abbebc67"
     },
     {
       "path": "capture.sh",
@@ -15,19 +15,19 @@
     },
     {
       "path": "dod_map.txt",
-      "sha256": "a9cadc7ae3d7223680ce1796a6ea3fab2b99ee842cc9f86608482b5fcc61c0b8"
+      "sha256": "d5b89b64fe6f2eb8d7749f1dd6d3118adb70294f5cc078c8aed1432b9d4c0534"
     },
     {
       "path": "freshness_at_tip.txt",
-      "sha256": "20e70271e1b5ae2b6b60334022e278fc908fe24cb706d91de303b07533cb84eb"
+      "sha256": "d94ad70cbf767ffdb5da4e08e23e254a957204e99889e8ed0177a2cd4d22eb92"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "e7994729cf263a40fb37c73019577194e2066788d247bb5696918cf28fc67ca1"
+      "sha256": "feb498af23fae0cfd3d0246d2082d7e713d6fec28358bfd563e7573ab33c8df9"
     },
     {
       "path": "freshness_tests.txt",
-      "sha256": "606a6c6d0d5d6d692728e1139eb2b2742f47105f78d95db992bb4d7057afc733"
+      "sha256": "9048416d926f38eb86719b4d4a98a0b74c2e98a24efa91eb45c34ccbb8b61180"
     },
     {
       "path": "full_suite.txt",
@@ -35,23 +35,23 @@
     },
     {
       "path": "lint.txt",
-      "sha256": "b342bb5326f3fcc70e4505b7969a9d66b11fc4866004e8e00b3cb16e41bb4bdf"
+      "sha256": "a47a4cc5d86fa6d53196dc9803c9245456f0ac055972a98f5b1795fbb3f027df"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "12b1c56ba82cd7eb09cc8b996fd271094ff4ebac99314dfb3e8e7333bc4ac7a7"
+      "sha256": "78d9eb06de0d1481510c29ea48759853912e1db4f707bf4c2dbf7a16998dce25"
     },
     {
       "path": "timing.txt",
       "sha256": "fe879b1232b14d24c41705462c9dc2cd7c569bac3ab3d9d0639e745029468c38"
     }
   ],
-  "generated_at": "2026-11-08T16:47:45Z",
-  "head": "32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c",
-  "head_short": "32ba7ad",
+  "generated_at": "2026-11-08T16:48:03Z",
+  "head": "f0c7bea75b242285a004c250e7f8fdb978e90c2d",
+  "head_short": "f0c7bea",
   "label": "T-15",
-  "mode": "full",
-  "stamp": "# HEAD=32ba7addfe80c54bd59122f70cfb0d6e8c21cf0c mode=full",
+  "mode": "fast",
+  "stamp": "# HEAD=f0c7bea75b242285a004c250e7f8fdb978e90c2d mode=fast",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",
