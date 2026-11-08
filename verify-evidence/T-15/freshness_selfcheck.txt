@@ -1,20 +1,15 @@
-# HEAD=357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5
-# command: check_freshness(commit=357a41d, label=T-15, base_branch=main)
+# Evidence self-check written by the one bundle pass (not hand-edited, no HEAD stamp:
+# it certifies the files around it, and the committed view is reported by the gate).
+# command: orchestrator task evidence T-15
+# rewritten files, wall time and the command line are reported by that command itself;
+# this file records only what the check saw, so a no-op second run is byte-identical.
+basis=worktree
+scope=every evidence file except manifest.json and this file
+compared_commit=b369a84082c183225db7f0cb9955fd5e8959acd5
 status=pass
-compared_commit=357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5
-stamped_files=7
+stamped_files=3
 stale_count=0
 deleted_count=0
-evidence=7 stamped evidence file(s) match 357a41d (357a41d7f4bfa1fbb9aacd67cf9d5d823b191ed5)
-notes=verify-evidence/T-15/dod_map.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/freshness_selfcheck.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/freshness_tests.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/full_suite.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/lint.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/manifest.json: differs only by exempt commit(s): 357a41d (evidence-only commit)
-  verify-evidence/T-15/source_anchors.txt: differs only by exempt commit(s): 357a41d (evidence-only commit)
-
-Interpretation: the code under test is aa7699f; every later commit on this branch touches
-only verify-evidence/T-15/. The stamps name the evidence commit whose tree this bundle
-certifies, and the check reports pass with an evidence-only explanation rather than a bare
-mismatch.
+evidence=3 stamped evidence file(s) match b369a84 (b369a84082c183225db7f0cb9955fd5e8959acd5)
+notes=none
+committed_view=the stamps above name this HEAD; the next commit must be evidence-only, and the gate then reports pass with that explanation (see tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).

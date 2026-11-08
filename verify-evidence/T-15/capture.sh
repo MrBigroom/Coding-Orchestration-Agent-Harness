@@ -14,7 +14,7 @@ cd "$ROOT"
 OUT="$ROOT/verify-evidence/T-15"
 STAMP="# HEAD=$(git rev-parse HEAD)"
 SHORT="$(git rev-parse --short HEAD)"
-KEEP='ORCH_VERIFY\||[0-9]+ (passed|failed)|All checks passed'
+KEEP='ORCH_VERIFY\||[0-9]+ (passed|failed)|All checks passed|^# (HEAD|command)'
 # Drop " in 12.34s (0:00:12)" and pytest's "[ 42%]" so evidence bytes depend only on the code.
 stable() { sed -E -e 's/ in [0-9.]+s( \([0-9:]+\))?//' -e 's/ \[ *[0-9]+%\]//'; }
 now() { date +%s%N; }
@@ -36,7 +36,7 @@ TESTS_START=$(now)
     tests/integration/test_evidence_freshness.py \
     tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone \
     tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes
-} 2>&1 | grep -E "PASSED|FAILED|ERROR|passed|failed|ORCH_VERIFY\|" | stable \
+} 2>&1 | grep -E "PASSED|FAILED|ERROR|passed|failed|ORCH_VERIFY\||^# (HEAD|command)" | stable \
   > "$OUT/freshness_tests.txt"
 TESTS_MS=$(ms "$TESTS_START" "$(now)")
 
