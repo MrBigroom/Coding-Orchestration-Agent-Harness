@@ -1,15 +1,45 @@
-# HEAD=83b99e94fbcccebd457d558a6e6c9fc604119e9c entries-outside-verify-evidence/T-36=0
-# command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py -vv -k
+# HEAD=c178ec3ce5eada572f094d4cd1b432abee2745d5 entries-outside-verify-evidence/T-36=0
+# command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py -vv
+orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
+orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
+orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src
+orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/tests
+orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [  9%]
-tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 18%]
-tests/unit/test_review_budget.py::test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths PASSED [ 27%]
-tests/unit/test_review_budget.py::test_no_floor_render_costs_more_than_the_floor_even_for_a_long_path PASSED [ 36%]
-tests/unit/test_review_budget.py::test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held PASSED [ 45%]
-tests/unit/test_review_budget.py::test_the_distinct_floor_only_wording_is_what_the_allocation_decides PASSED [ 54%]
-tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 63%]
-tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 72%]
-tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 81%]
-tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 90%]
-tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [100%]
-====================== 11 passed, 13 deselected in 0.43s =======================
+orch-verify: pytest target tests/unit/test_review_budget.py -vv
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.7.0 -- /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 25 items
+
+tests/unit/test_review_budget.py::test_compensation_artifacts_get_a_reserved_slice_and_are_not_tail_dropped PASSED [  4%]
+tests/unit/test_review_budget.py::test_a_large_first_evidence_log_does_not_starve_later_evidence PASSED [  8%]
+tests/unit/test_review_budget.py::test_an_unfundable_group_does_not_give_the_whole_budget_to_the_first_file PASSED [ 12%]
+tests/unit/test_review_budget.py::test_undelivered_compensation_uses_the_final_text_not_only_the_records PASSED [ 16%]
+tests/unit/test_review_budget.py::test_a_redacted_evidence_file_is_delivered_not_reported_as_a_budget_cut PASSED [ 20%]
+tests/unit/test_review_budget.py::test_manifest_shortfall_is_computed_from_the_as_sent_text PASSED [ 24%]
+tests/unit/test_review_budget.py::test_evidence_delivery_finding_never_downgrades_or_asks_the_worker_to_trim PASSED [ 28%]
+tests/unit/test_review_budget.py::test_over_budget_evidence_bundle_reports_a_shortfall_and_the_exact_finding PASSED [ 32%]
+tests/unit/test_review_budget.py::test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget PASSED [ 36%]
+tests/unit/test_review_budget.py::test_remainder_moves_past_a_hunk_boundary_instead_of_being_stranded PASSED [ 40%]
+tests/unit/test_review_budget.py::test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths PASSED [ 44%]
+tests/unit/test_review_budget.py::test_no_floor_render_costs_more_than_the_floor_even_for_a_long_path PASSED [ 48%]
+tests/unit/test_review_budget.py::test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held PASSED [ 52%]
+tests/unit/test_review_budget.py::test_the_distinct_floor_only_wording_is_what_the_allocation_decides PASSED [ 56%]
+tests/unit/test_review_budget.py::test_a_floor_only_file_is_reported_distinctly_from_full_and_omitted PASSED [ 60%]
+tests/unit/test_review_budget.py::test_the_floor_pass_leaves_the_t16_evidence_reserve_working PASSED [ 64%]
+tests/unit/test_review_budget.py::test_budget_rendered_diff_has_no_blocking_completeness_issue PASSED [ 68%]
+tests/unit/test_review_budget.py::test_over_budget_still_omits_a_file_and_the_auditor_still_blocks PASSED [ 72%]
+tests/unit/test_review_budget.py::test_rendering_the_same_diff_twice_is_byte_identical PASSED [ 76%]
+tests/unit/test_review_budget.py::test_parity_scenario_is_skipped_by_default_and_enabled_on_demand PASSED [ 80%]
+tests/unit/test_review_budget.py::test_a_gate_review_setup_does_not_touch_the_operator_worktree_registry PASSED [ 84%]
+tests/unit/test_review_budget.py::test_the_worktree_spy_catches_a_transient_add_and_prune PASSED [ 88%]
+tests/unit/test_review_budget.py::test_mtime_only_git_activity_does_not_change_the_compared_snapshot PASSED [ 92%]
+tests/unit/test_review_budget.py::test_an_unreadable_worktree_registry_fails_loudly PASSED [ 96%]
+tests/unit/test_review_budget.py::test_guard_message_does_not_blame_the_suite_without_spy_evidence PASSED [100%]
+
+============================== 25 passed in 0.73s ==============================

@@ -1,24 +1,22 @@
-# HEAD=83b99e94fbcccebd457d558a6e6c9fc604119e9c entries-outside-verify-evidence/T-36=0
+# HEAD=c178ec3ce5eada572f094d4cd1b432abee2745d5 entries-outside-verify-evidence/T-36=0
 # command: PYTHONPATH=src <main>/.venv/bin/python (render_diff_budget over 'git diff <merge-base>...HEAD')
-BUDGET_default=12000 patch_tokens=15694 files=12 rendered_tokens=7817
-FLOOR_file README.md hunks_in_supplied=1 bytes=637
-FLOOR_file docs/build-loop.md hunks_in_supplied=1 bytes=634
-FLOOR_file docs/configuration.md hunks_in_supplied=1 bytes=639
-FLOOR_file docs/decisions.md hunks_in_supplied=1 bytes=639
-FLOOR_file src/orchestrator/services/prompt_builder.py hunks_in_supplied=4 bytes=13491
-FLOOR_file tests/integration/test_review_payload.py hunks_in_supplied=3 bytes=2828
-FLOOR_file tests/unit/test_review_budget.py hunks_in_supplied=1 bytes=868
-FLOOR_file verify-evidence/T-36/README.md hunks_in_supplied=1 bytes=5307
-FLOOR_file verify-evidence/T-36/full_suite.txt hunks_in_supplied=1 bytes=640
-FLOOR_file verify-evidence/T-36/lint.txt hunks_in_supplied=1 bytes=597
-FLOOR_file verify-evidence/T-36/own_branch_diff_supply.txt hunks_in_supplied=1 bytes=1996
-FLOOR_file verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 bytes=2001
-[review diff budget: max_diff_tokens=12000; 12 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 5 compensation artifact(s) have a reserved slice of 6768 tokens (per-file 1353); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
+BUDGET_default=12000 patch_tokens=17882 files=12 rendered_tokens=9087
+[review diff budget: max_diff_tokens=12000; 12 file(s); 7 source file(s) share 7800 tokens (per-file 1114, cap 3900); 5 compensation artifact(s) have a reserved slice of 5669 tokens (per-file 1133); every file first gets a 160-token first-hunk floor before any file gets more; files are ordered source-first, but the evidence that makes the source checkable is never left to the tail.
+FILE README.md hunks_in_supplied=1 supplied_tokens=431 available_tokens=431
+FILE docs/build-loop.md hunks_in_supplied=2 supplied_tokens=1283 available_tokens=1283
+FILE docs/configuration.md hunks_in_supplied=1 supplied_tokens=502 available_tokens=502
+FILE docs/decisions.md hunks_in_supplied=1 supplied_tokens=605 available_tokens=605
+FILE src/orchestrator/services/prompt_builder.py hunks_in_supplied=3 supplied_tokens=2286 available_tokens=6609
+FILE tests/integration/test_review_payload.py hunks_in_supplied=3 supplied_tokens=707 available_tokens=707
+FILE tests/unit/test_review_budget.py hunks_in_supplied=1 supplied_tokens=217 available_tokens=4904
+FILE verify-evidence/T-36/README.md hunks_in_supplied=1 supplied_tokens=1366 available_tokens=1366
+FILE verify-evidence/T-36/full_suite.txt hunks_in_supplied=1 supplied_tokens=160 available_tokens=160
+FILE verify-evidence/T-36/lint.txt hunks_in_supplied=1 supplied_tokens=150 available_tokens=150
+FILE verify-evidence/T-36/own_branch_diff_supply.txt hunks_in_supplied=1 supplied_tokens=667 available_tokens=667
+FILE verify-evidence/T-36/targeted_tests.txt hunks_in_supplied=1 supplied_tokens=501 available_tokens=501
 BUDGET_files_with_zero_supplied_bytes=0 []
-BUDGET_files_without_a_hunk=0
-MANIFEST diff:src/orchestrator/services/prompt_builder.py available=21940 included=13491 reason=per-file diff budget: 4 of 9 hunks shown; omitted hunk heade
-MANIFEST diff:tests/unit/test_review_budget.py available=17375 included=868 reason=per-file diff budget: 1 of 2 hunks shown; omitted hunk heade
-MANIFEST diff:docs/build-loop.md available=4573 included=634 reason=floor only, remainder exhausted: the first hunk fits inside 
-MANIFEST diff:docs/configuration.md available=1754 included=639 reason=floor only, remainder exhausted: the first hunk fits inside 
-MANIFEST diff:docs/decisions.md available=2056 included=639 reason=floor only, remainder exhausted: the first hunk fits inside 
-MANIFEST diff:README.md available=1721 included=637 reason=floor only, remainder exhausted: the first hunk fits inside 
+BUDGET_files_without_a_hunk=0 []
+BUDGET_files_missing_from_supplied=0 []
+MANIFEST rows:
+MANIFEST diff:src/orchestrator/services/prompt_builder.py available=26438 included=9148 reason=per-file diff budget: 3 of 7 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
+MANIFEST diff:tests/unit/test_review_budget.py available=19618 included=868 reason=per-file diff budget: 1 of 2 hunks shown; omitted hunk headers are named inline in the reviewer-visible text
