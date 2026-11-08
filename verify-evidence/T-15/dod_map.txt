@@ -1,0 +1,21 @@
+# HEAD=e01561db4c505a587902e515f9910e9db0b7a67e
+# command: static DoD map (the -vv run above supplies the PASSED lines for each node id)
+DoD 5(a) older HEAD -> stale check with the right paths/count:
+  tests/unit/test_evidence_freshness.py::test_an_older_stamp_is_stale_with_the_paths_and_the_count
+  tests/integration/test_evidence_freshness.py::test_stale_evidence_is_reported_as_stale_and_does_not_flip_the_verdict
+DoD 5(b) a freshly regenerated bundle -> pass:
+  tests/unit/test_evidence_freshness.py::test_a_stamp_that_differs_only_by_an_evidence_only_commit_passes
+  tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_reported_fresh_by_the_check
+  tests/integration/test_evidence_freshness.py::test_a_fresh_bundle_is_reported_as_pass
+DoD 5(c) unstamped or absent evidence -> not_applicable:
+  tests/unit/test_evidence_freshness.py::test_absent_evidence_is_not_applicable
+  tests/unit/test_evidence_freshness.py::test_unstamped_evidence_is_not_applicable
+  tests/integration/test_evidence_freshness.py::test_an_absent_bundle_is_not_applicable
+DoD 5(d) regeneration is idempotent; second run rewrites nothing:
+  tests/unit/test_evidence_freshness.py::test_regeneration_is_one_command_and_second_run_is_a_no_op
+DoD 5(e) existing verification checks + frozen artifact names unchanged:
+  tests/integration/test_evidence_freshness.py::test_stale_evidence_is_reported_as_stale_and_does_not_flip_the_verdict
+DoD 5(f) split assertions pass; the reason-shaped one fails when the reason changes:
+  tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone
+  tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes
+  tests/integration/test_memory_scope_boundary.py (all split assertions)

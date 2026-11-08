@@ -1,0 +1,43 @@
+{
+  "command": "verify-evidence/T-15/capture.sh",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "65487c8b3910045c68eee25113b91482ae5fa06403bbb8f59393f2dfcf3d5f31"
+    },
+    {
+      "path": "capture.sh",
+      "sha256": "066651caeff5bc128d099d1a627b9dfbf93119876d5f98de5ddfe04663d7cea0"
+    },
+    {
+      "path": "dod_map.txt",
+      "sha256": "2d65cf745380dcd57e8bb88df649ea6f8c357060ecd3b4eb8c0e872dc7d1c2bb"
+    },
+    {
+      "path": "freshness_tests.txt",
+      "sha256": "1ce58cfb928cb440c327e4a9681348ec64a68c296e5e30348ea16d1db49a4351"
+    },
+    {
+      "path": "full_suite.txt",
+      "sha256": "5e2e8b18c4d68b5530ca36d61057d055bdd29cc6964fa2ba94d26d97333ed37c"
+    },
+    {
+      "path": "lint.txt",
+      "sha256": "9c5bb5f126e21caa883e35b7f80a964c1c80340e6106aea8e69494a730123777"
+    },
+    {
+      "path": "source_anchors.txt",
+      "sha256": "6a7f694f683053e9d9c52bf6b98fcfdf792ae95cf0190d1416bceebc0f1b5339"
+    }
+  ],
+  "generated_at": "2026-11-08T15:38:25Z",
+  "head": "e01561db4c505a587902e515f9910e9db0b7a67e",
+  "head_short": "e01561d",
+  "label": "T-15",
+  "stamp": "# HEAD=e01561db4c505a587902e515f9910e9db0b7a67e",
+  "tool_versions": {
+    "git": "git version 2.56.0",
+    "pytest": "9.1.1",
+    "python": "3.13.15"
+  }
+}
