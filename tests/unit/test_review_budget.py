@@ -299,6 +299,26 @@ def test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget():
     assert _list_section(rendered, "omitted").strip() == "0): none"
 
 
+def test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths():
+    """DoD 1: the floor is sized for at least 40 files, not only the measured 30."""
+    paths = [f"src/{'long_path_' + 'a' * 100}_{i}.py" for i in range(40)]
+    assert len(paths) == 40
+    patch = "".join(_chunk(path, 400, "forty") for path in paths)
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(
+        patch, get_settings_default_max_diff_tokens(), recorder
+    )
+    chunks = dict(prompt_builder.split_diff_files(rendered))
+    missing = [
+        path
+        for path in paths
+        if path not in chunks
+        or not any(line.startswith("@@") for line in chunks[path].splitlines())
+    ]
+    assert missing == [], missing
+    assert _list_section(rendered, "omitted").strip() == "0): none"
+
+
 def get_settings_default_max_diff_tokens() -> int:
     return prompt_builder.get_settings().max_diff_tokens
 
