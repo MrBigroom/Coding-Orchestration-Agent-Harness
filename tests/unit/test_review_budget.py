@@ -24,6 +24,7 @@ from orchestrator.services import (
 from orchestrator.services.prompt_builder import DynamicState
 from orchestrator.utils.git import run_git
 from orchestrator.utils.redaction import redact
+from orchestrator.utils.truncate import estimate_tokens, truncate_middle
 from tests import conftest
 from tests.conftest import make_repo, requires_git
 
@@ -300,23 +301,135 @@ def test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget():
 
 
 def test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths():
-    """DoD 1: the floor is sized for at least 40 files, not only the measured 30."""
+    """DoD 1: the floor is sized for at least 40 files under the REDUCED source share.
+
+    The fixture contains `verify-evidence/` files on purpose. With compensation artifacts present
+    the source group gets `11700 * 2/3 = 7800` tokens, not the full 11700, and 40 floors cost
+    `40 * 160 = 6400`. Without an evidence file this test would exercise 11700 and prove nothing
+    about the arithmetic the docs state (T-36 review finding 2).
+    """
     paths = [f"src/{'long_path_' + 'a' * 100}_{i}.py" for i in range(40)]
     assert len(paths) == 40
-    patch = "".join(_chunk(path, 400, "forty") for path in paths)
+    evidence_paths = [f"verify-evidence/T-36/e{i}.txt" for i in range(2)]
+    patch = "".join(_chunk(path, 400, "forty") for path in paths + evidence_paths)
     recorder = prompt_builder.TruncationRecorder()
     rendered = prompt_builder.render_diff_budget(
         patch, get_settings_default_max_diff_tokens(), recorder
     )
+    # The compensation reserve is in force, so the source share really is 7800 and not 11700.
+    assert "40 source file(s) share 7800 tokens" in rendered, rendered.splitlines()[0]
     chunks = dict(prompt_builder.split_diff_files(rendered))
     missing = [
         path
-        for path in paths
+        for path in paths + evidence_paths
         if path not in chunks
         or not any(line.startswith("@@") for line in chunks[path].splitlines())
     ]
     assert missing == [], missing
     assert _list_section(rendered, "omitted").strip() == "0): none"
+
+
+def test_no_floor_render_costs_more_than_the_floor_even_for_a_long_path():
+    """DoD 1: `DIFF_FILE_FLOOR_TOKENS * file_count` must be a real upper bound.
+
+    `_floor_head` used to clamp its body to `max(24, ...)`, so a long path made one floor cost
+    ~200 tokens and the stated arithmetic (`40 * 160`) was only true on average. Every rendered
+    floor is now capped by `estimate_tokens`, and a path too long for any variant is reported as
+    omitted instead of overflowing the floor.
+    """
+    floor = prompt_builder.DIFF_FILE_FLOOR_TOKENS
+    for path_length in (10, 60, 120, 200, 280):
+        path = f"src/{'p' * path_length}.py"
+        chunk = _chunk(path, 400, "cap")
+        rendered, _shown, _total, sliced = prompt_builder._floor_head(chunk, floor, path)
+        assert sliced is True
+        assert estimate_tokens(rendered) <= floor, (path_length, estimate_tokens(rendered))
+        assert any(line.startswith("@@") for line in rendered.splitlines()), path_length
+    # A path whose own header cannot fit inside the floor is not silently given bytes: the
+    # renderer returns "" and the allocator names it omitted with that reason.
+    huge = f"src/{'p' * 400}.py"
+    assert prompt_builder._floor_head(_chunk(huge, 400, "cap"), floor, huge)[0] == ""
+    recorder = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(_chunk(huge, 400, "cap"), 500, recorder)
+    row = next(r.as_dict() for r in recorder.records if r.item == f"diff:{huge}")
+    assert row["bytes_included"] == 0
+    assert "no floor render fits inside the 160-token floor" in row["reason"], row["reason"]
+
+    # Mutation: the pre-fix renderer, whose body budget was only clamped at a floor of 24 tokens,
+    # overflows the floor on the same input. The cap above is what bounds it, not the path text.
+    long_path = f"src/{'p' * 280}.py"
+    legacy = _old_floor_head_for_mutation_check(
+        _chunk(long_path, 400, "cap"), floor, long_path
+    )
+    assert estimate_tokens(legacy) > floor, estimate_tokens(legacy)
+
+
+def _old_floor_head_for_mutation_check(chunk: str, max_tokens: int, path: str) -> str:
+    """The T-36 first implementation, kept verbatim so the mutation above is real."""
+    lines = chunk.splitlines(keepends=True)
+    hunk_starts = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    header = "".join(lines[: hunk_starts[0]])
+    hunks = [
+        "".join(lines[start : (hunk_starts[n + 1] if n + 1 < len(hunk_starts) else len(lines))])
+        for n, start in enumerate(hunk_starts)
+    ]
+    marker = (
+        f"\n... [review diff floor: {path or 'this file'} stopped at its first hunk; "
+        "the remainder did not fit after every file's floor — see the truncation manifest] ...\n"
+    )
+    if path and estimate_tokens(header) + estimate_tokens(marker) + 24 > max_tokens:
+        header = f"diff --git a/{path} b/{path}\n"
+    body_budget = max(24, max_tokens - estimate_tokens(header) - estimate_tokens(marker))
+    return header + truncate_middle(hunks[0], body_budget) + marker
+
+
+def test_floor_only_reason_says_whether_the_budget_ran_out_or_the_cap_held():
+    """DoD 3: 'remainder exhausted' must not be claimed when the group still had tokens.
+
+    Two scenarios, one assertion each, because the two outcomes are the point. In the first the
+    group budget is fully committed before the last floor is funded; in the second every floor is
+    funded and the per-file `cap` (below the floor) is what stops the top-up, so tokens stay
+    unallocated.
+    """
+    exhausted = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(
+        "".join(_chunk(f"src/x{i}.py", 400, "x") for i in range(4)), 1000, exhausted
+    )
+    exhausted_reasons = [
+        r.as_dict()["reason"] for r in exhausted.records if r.as_dict()["kind"] == "budget"
+    ]
+    assert any("floor only, remainder exhausted" in reason for reason in exhausted_reasons)
+    assert not any(
+        "floor only, remainder allocated elsewhere" in reason for reason in exhausted_reasons
+    )
+
+    capped = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(
+        "".join(_chunk(f"src/c{i}.py", 400, "c") for i in range(2)), 300, capped
+    )
+    capped_reasons = [
+        r.as_dict()["reason"] for r in capped.records if r.as_dict()["kind"] == "budget"
+    ]
+    assert any("floor only, remainder allocated elsewhere" in reason for reason in capped_reasons), (
+        capped_reasons
+    )
+    assert not any("floor only, remainder exhausted" in reason for reason in capped_reasons)
+
+
+def test_the_distinct_floor_only_wording_is_what_the_allocation_decides(monkeypatch):
+    """Mutation: force the old single sentence and the capped scenario loses its distinction."""
+    monkeypatch.setattr(
+        prompt_builder,
+        "_floor_only_reason",
+        lambda leftover, per_file, cap: "floor only, remainder exhausted: forced",
+    )
+    forced = prompt_builder.TruncationRecorder()
+    prompt_builder.render_diff_budget(
+        "".join(_chunk(f"src/c{i}.py", 400, "c") for i in range(2)), 300, forced
+    )
+    reasons = [r.as_dict()["reason"] for r in forced.records if r.as_dict()["kind"] == "budget"]
+    assert not any("allocated elsewhere" in reason for reason in reasons), reasons
+    assert any("forced" in reason for reason in reasons), reasons
 
 
 def get_settings_default_max_diff_tokens() -> int:
@@ -383,23 +496,42 @@ def test_the_floor_pass_leaves_the_t16_evidence_reserve_working():
 
 @requires_git
 def test_budget_rendered_diff_has_no_blocking_completeness_issue(tmp_path):
-    """DoD 5(d): the auditor accepts the text the new allocator actually emits."""
+    """DoD 5(d): the auditor accepts the text the new allocator actually emits.
+
+    The fixture must be **bigger than the default budget**, otherwise `render_diff_budget` returns
+    the patch unchanged and `diff_completeness` audits the raw patch: the allocator would never
+    run and this test would pass without exercising it (T-36 review finding 1).
+    """
     files = {
-        "src/app.py": "\n".join(f"old {i}" for i in range(200)),
-        "docs/guide.md": "\n".join(f"old doc {i}" for i in range(120)),
-        "tests/unit/test_app.py": "\n".join(f"old test {i}" for i in range(400)),
+        f"src/module_{i}.py": "\n".join(f"old {i}.{n} with some padding text" for n in range(700))
+        for i in range(5)
     }
+    files["docs/guide.md"] = "\n".join(f"old doc {n} with some padding text" for n in range(700))
+    files["tests/unit/test_app.py"] = "\n".join(
+        f"old test {n} with some padding text" for n in range(700)
+    )
     repo = make_repo(tmp_path / "repo", files)
     run_git(["checkout", "-q", "-b", "task"], repo)
     for name in files:
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
-        (repo / name).write_text("\n".join(f"new {i}" for i in range(400)) + "\n")
+        (repo / name).write_text(
+            "\n".join(f"new {i} with some padding text" for i in range(700)) + "\n"
+        )
     _commit_repo(repo, "change files")
     patch = run_git(["diff", "main...HEAD"], repo).stdout
+    default_budget = get_settings_default_max_diff_tokens()
     recorder = prompt_builder.TruncationRecorder()
-    rendered = prompt_builder.render_diff_budget(
-        patch, get_settings_default_max_diff_tokens(), recorder
-    )
+    rendered = prompt_builder.render_diff_budget(patch, default_budget, recorder)
+    # Proof the allocator ran at all: the patch exceeds the budget, so the as-sent text is a
+    # budgeted render with its preamble, not the raw patch.
+    assert estimate_tokens(patch) > default_budget, estimate_tokens(patch)
+    assert rendered != patch
+    assert "[review diff budget:" in rendered
+    # And it really truncated something, so the auditor is looking at allocator output.
+    assert any(
+        str(record.item).startswith("diff:") and record.bytes_included < record.bytes_available
+        for record in recorder.records
+    ), [record.as_dict() for record in recorder.records]
     issues = review_audit.diff_completeness(repo, "main", patch, rendered=rendered)
     assert [issue for issue in issues if issue.blocks] == [], issues
 

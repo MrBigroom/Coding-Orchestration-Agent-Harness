@@ -282,18 +282,27 @@ COMPENSATION_BUDGET_FRACTION = 1 / 3
 # T-36: the allocator must satisfy the invariant the auditor enforces. Every file named by the
 # diffstat gets a first-hunk floor before any file receives more than its floor. The floor is 160
 # estimated tokens (~640 bytes); a file bigger than that is shown up to its first hunk, a smaller
-# file is shown whole. The floor renderer keeps the diff header and a short marker inside that
-# budget whenever the header is normal-sized, so the arithmetic is direct: at the default
-# max_diff_tokens=12000 the post-header budget is 12000 - 300 = 11700; even when compensation
-# artifacts reserve one third, the source share is 11700 * 2/3 = 7800, and 40 changed files need
-# 40 * 160 = 6400, leaving 1400 for the remainder. Without a compensation reserve the whole
-# 11700 is available. For a pathologically long path, `_floor_head` drops the redundant `---`/`+++`
-# path copies and keeps the one `diff --git` header line the splitter needs, so even a 120-path
-# fixture of 40 files keeps every floor inside that source share; a file that still cannot get
-# its floor is named as omitted. The floor is deliberately not raised to buy a larger first hunk,
-# because the remainder pass below still gives a big source file the lion's share while this
-# floor keeps README/docs/tests from being starved to zero bytes (the R-68 shape: 8 of 30 files
-# at 0).
+# file is shown whole. `_floor_head` is HARD-capped at that number: it returns the longest of a
+# fixed list of (header, marker, body) variants whose rendered cost is `<= DIFF_FILE_FLOOR_TOKENS`
+# by `estimate_tokens`, so a long path or a long marker can never make one floor cost more than
+# another. That is what makes the arithmetic below an upper bound rather than an average.
+#
+# Arithmetic for the DoD 1 guarantee, at the default `max_diff_tokens=12000`:
+#   post-header budget   = 12000 - 300                    = 11700   (header_reserve, max 300)
+#   source share, reserve = 11700 * (1 - 1/3)              =  7800   (T-16 compensation reserve)
+#   floor for N files     = N * 160
+#   40 files             = 40 * 160                        =  6400  <= 7800, leaving 1400
+#   48 files             = 48 * 160                        =  7680  <= 7800, leaving  120
+# The floor holds for **48 changed files** with the compensation reserve in force and for 73
+# (11700 // 160) without it. 40 is the number the DoD asks to be provable, and it is proved by
+# `test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths`, whose fixture
+# contains `verify-evidence/` files so the 7800-token source share (not the full 11700) is the
+# budget actually exercised. A file that still cannot get its floor -- because the group budget
+# ran out, not because the floor render was too big -- is named `omitted entirely`.
+#
+# The floor is deliberately not raised to buy a larger first hunk, because the remainder pass
+# below still gives a big source file the lion's share while this floor keeps README/docs/tests
+# from being starved to zero bytes (the R-68 shape: 8 of 30 files at 0).
 DIFF_FILE_FLOOR_TOKENS = 160
 DIFF_GROUP_MINIMUM_TOKENS = 60  # ~ a file header plus one short hunk
 
@@ -320,13 +329,52 @@ def _record_omitted(
         recorder.record("dynamic_state", f"diff:{path}", chunk, "", budget_text, reason)
 
 
+def _floor_marker(path: str) -> str:
+    """The reviewer-visible note that a file was stopped at its floor."""
+    return (
+        f"\n... [review diff floor: {path or 'this file'} stopped at its first hunk; "
+        "the remainder did not fit after every file's floor — see the truncation manifest] ...\n"
+    )
+
+
+# Used when the full marker does not fit inside the floor next to the diff header. The path and
+# the byte counts are in the preamble and the truncation manifest either way.
+FLOOR_MARKER_SHORT = "\n... [review diff floor: first hunk only; see the truncation manifest] ...\n"
+
+
+def _fit_floor(header: str, marker: str, hunk: str, max_tokens: int) -> str | None:
+    """Header + `@@` line + as much of the first hunk as fits + marker, or None if it cannot fit.
+
+    The `@@` line is never dropped: the auditor asks for one hunk, and a render without it is
+    indistinguishable from an omitted file. `None` means this (header, marker) combination cannot
+    carry a hunk inside the budget, so `_floor_head` tries a shorter variant.
+    """
+    lines = hunk.splitlines(keepends=True)
+    if not lines:
+        return None
+    at_line = lines[0]
+    rest = "".join(lines[1:])
+    room = max_tokens - estimate_tokens(header) - estimate_tokens(at_line) - estimate_tokens(marker)
+    if room < 0:
+        return None
+    body = rest if estimate_tokens(rest) <= room else truncate_middle(rest, room)
+    candidate = header + at_line + body + marker
+    # `estimate_tokens` rounds up, so verify rather than trust the arithmetic above.
+    return candidate if estimate_tokens(candidate) <= max_tokens else None
+
+
 def _floor_head(chunk: str, max_tokens: int, path: str) -> tuple[str, int, int, bool]:
     """Render only the first hunk, keeping the header and a visible floor marker.
 
-    The allocator uses this for a file that gets its floor but no remainder. It always keeps the
-    `@@` line (the auditor asks for one hunk body, not a complete hunk), and it says in the text
-    that the file was stopped at the floor. The marker is shorter than `_chunk_head`'s because a
-    floor render is deliberately small; the manifest still has the byte counts and the reason.
+    The allocator uses this for a file that gets its floor but no remainder. The result is
+    **hard-capped** at `max_tokens` by `estimate_tokens`: variants are tried in preference order
+    (full diff header before the compact one, full marker before the short one, full body before
+    a middle slice) and the first that fits wins. That cap is what makes
+    `DIFF_FILE_FLOOR_TOKENS * file_count` a real upper bound, so a 120-character path plus a
+    160-token floor cannot silently cost 200 tokens and break the arithmetic the docs state.
+
+    Returning `""` means no variant fitted at all (a path too long for even one header line);
+    the caller then names the file as omitted instead of pretending it received a floor.
     """
     lines = chunk.splitlines(keepends=True)
     hunk_starts = [i for i, line in enumerate(lines) if line.startswith("@@")]
@@ -339,20 +387,19 @@ def _floor_head(chunk: str, max_tokens: int, path: str) -> tuple[str, int, int, 
     for n, start in enumerate(hunk_starts):
         end = hunk_starts[n + 1] if n + 1 < len(hunk_starts) else len(lines)
         hunks.append("".join(lines[start:end]))
-    marker = (
-        f"\n... [review diff floor: {path or 'this file'} stopped at its first hunk; "
-        "the remainder did not fit after every file's floor — see the truncation manifest] ...\n"
-    )
-    if path and estimate_tokens(header) + estimate_tokens(marker) + 24 > max_tokens:
-        # A pathologically long path can make the four-line diff header alone exceed the floor.
-        # Keep the one header line `split_diff_files` needs for the path and drop the redundant
-        # ---/+++ copies, so the floor still carries an @@ hunk instead of being omitted for a
-        # header. The manifest and the preamble still name the full path.
-        header = f"diff --git a/{path} b/{path}\n"
-    body_budget = max_tokens - estimate_tokens(header) - estimate_tokens(marker)
-    body_budget = max(24, body_budget)
-    rendered = header + truncate_middle(hunks[0], body_budget) + marker
-    return rendered, 1, len(hunks), True
+    headers = [header]
+    if path:
+        # The splitter needs only the `diff --git a/<path> b/<path>` line to keep the path, so the
+        # redundant ---/+++ copies are droppable when a pathologically long path crowds the floor.
+        compact = f"diff --git a/{path} b/{path}\n"
+        if compact != header:
+            headers.append(compact)
+    for candidate_header in headers:
+        for marker in (_floor_marker(path), FLOOR_MARKER_SHORT, ""):
+            rendered = _fit_floor(candidate_header, marker, hunks[0], max_tokens)
+            if rendered is not None:
+                return rendered, 1, len(hunks), True
+    return "", 1, len(hunks), True
 
 
 def _allocate_diff_group(
@@ -374,7 +421,12 @@ def _allocate_diff_group(
     receive more, so a large first file cannot leave later README/docs/test files at 0 bytes. A
     file whose floor does not fit is named in the manifest as omitted entirely; an evidence file
     that cannot even get its floor keeps the old sub-minimum behaviour so a tiny budget still
-    shows something and says it is below the floor.
+    shows something and says it is below the floor. The floor render itself is capped at
+    `DIFF_FILE_FLOOR_TOKENS` by `estimate_tokens` (`_floor_head`), so the floor pass can never
+    spend more than `DIFF_FILE_FLOOR_TOKENS * len(group)`, which is what the DoD 1 arithmetic
+    relies on. A file that is floored but gets no remainder is recorded with
+    `_floor_only_reason(...)`, which distinguishes an exhausted group budget from one that was
+    allocated elsewhere.
 
     After the floor, the source group keeps its historical cap (one file may use at most half its
     group budget) and is topped up in priority order, so the big source file still gets the
@@ -406,6 +458,10 @@ def _allocate_diff_group(
     allocations = [0] * len(group)
     floor_allocations = [0] * len(group)
     floored = [False] * len(group)
+    # True when `_floor_head` could not render *any* variant inside DIFF_FILE_FLOOR_TOKENS. Such a
+    # file has no affordable floor, so it must be reported as omitted entirely rather than as a
+    # funded floor of 0 tokens.
+    floor_unrenderable = [False] * len(group)
     remaining = budget
     if evidence and share < minimum:
         # The budget cannot fund every file: keep the T-16 behaviour of a minimum slice for as
@@ -431,7 +487,7 @@ def _allocate_diff_group(
         # Floor pass. Render the floor once so the budget accounts for the header and marker it
         # will actually cost; a file smaller than the floor is simply included whole.
         floor_renders: list[str] = []
-        floor_costs: list[int] = []
+        floor_costs: list[int | None] = []
         for (path, chunk), size in zip(group, sizes, strict=True):
             if size <= DIFF_FILE_FLOOR_TOKENS:
                 floor_renders.append(chunk)
@@ -441,8 +497,11 @@ def _allocate_diff_group(
                     chunk, DIFF_FILE_FLOOR_TOKENS, path
                 )
                 floor_renders.append(rendered)
-                floor_costs.append(estimate_tokens(rendered))
+                floor_costs.append(estimate_tokens(rendered) if rendered else None)
         for idx, need in enumerate(floor_costs):
+            if need is None:
+                floor_unrenderable[idx] = True
+                continue
             need = min(need, sizes[idx])
             if remaining >= need:
                 allocations[idx] = need
@@ -496,6 +555,10 @@ def _allocate_diff_group(
                 allocations[idx] += take
                 remaining -= take
 
+    # Snapshot of what the allocation passes left unspent. The render loop below subtracts from
+    # `remaining` again for bookkeeping, so the floor-only wording reads this number instead: a
+    # file must not be told the remainder was exhausted when the group still had tokens to give.
+    leftover = remaining
     used = 0
     for idx, ((path, chunk), size) in enumerate(zip(group, sizes, strict=True)):
         file_budget = allocations[idx]
@@ -507,6 +570,17 @@ def _allocate_diff_group(
         )
         if file_budget <= 0:
             omitted.append(path)
+            if floor_unrenderable[idx]:
+                _record_omitted(
+                    recorder,
+                    path,
+                    chunk,
+                    budget_text,
+                    "omitted entirely: no floor render fits inside the "
+                    f"{DIFF_FILE_FLOOR_TOKENS}-token floor for this path (its diff header alone "
+                    "is larger than the floor), so it received no bytes",
+                )
+                continue
             _record_omitted(
                 recorder,
                 path,
@@ -524,11 +598,7 @@ def _allocate_diff_group(
         elif floored[idx] and file_budget == floor_allocations[idx]:
             rendered = floor_renders[idx]
             partial.append(f"{path} (first hunk only, floor allocation)")
-            reason = (
-                "floor only, remainder exhausted: the first hunk fits inside the "
-                f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor, but this file received no "
-                "share of the remainder because every file's floor was funded first"
-            )
+            reason = _floor_only_reason(leftover, per_file, cap)
         else:
             rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, file_budget, path)
             detail = f"{hunks_shown} of {hunks_total} hunks"
@@ -562,6 +632,30 @@ def _allocate_diff_group(
                 reason,
             )
     return used
+
+
+def _floor_only_reason(leftover: int, per_file: int, cap: int) -> str:
+    """Why a file that received its floor received nothing more (T-36 DoD 3).
+
+    Two outcomes, and the manifest must not blur them: the group budget really was committed
+    elsewhere (`leftover == 0`), or it still had tokens the file did not take because its share
+    did not exceed its floor (`leftover > 0`). The old single sentence claimed the remainder was
+    *exhausted* in both cases, which overclaims when the remainder is handed to other files or
+    stays unspent under the per-file cap (T-36 review finding 4).
+    """
+    if leftover <= 0:
+        return (
+            "floor only, remainder exhausted: the first hunk fits inside the "
+            f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor, but the group budget was fully "
+            "spent by the floor pass and the remainder pass, so this file received no more "
+            "than its floor"
+        )
+    return (
+        "floor only, remainder allocated elsewhere: the first hunk fits inside the "
+        f"{DIFF_FILE_FLOOR_TOKENS}-token per-file floor and this file's share ({per_file} "
+        f"tokens, cap {cap or 'none'}) did not exceed that floor, so the {leftover} tokens the "
+        "allocation passes left unallocated went to other files or stayed unspent under the cap"
+    )
 
 
 def render_diff_budget(

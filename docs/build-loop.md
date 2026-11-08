@@ -564,8 +564,11 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
   sensitive-file strip (`.env`, keys), which used to vanish between `patch.diff` and the prompt.
   A diff row's reason distinguishes the T-36 outcomes in the existing columns: **floor only,
-  remainder exhausted** (the first hunk was supplied but no more budget reached the file) from
-  **omitted entirely** (not even the floor fitted), so zero bytes can never look like a short
+  remainder exhausted** (the first hunk was supplied, the group budget was fully committed and no
+  more reached the file) and **floor only, remainder allocated elsewhere** (the file's share did
+  not exceed its floor, so tokens went to other files or stayed unspent under the cap) from
+  **omitted entirely** (not even the floor fitted, or no floor render fits), so zero bytes can
+  never look like a short
   first hunk.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
@@ -582,11 +585,24 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   supplied patch is a blocking harness finding. The floor renderer keeps the diff header, the
   `@@` line and a short `... [review diff floor: <path> stopped at its first hunk; ...]` marker;
   a file that then receives no remainder is listed as `partially included` and its manifest row
-  says **floor only, remainder exhausted**, while a file whose floor did not fit at all is named
-  **omitted entirely**. The arithmetic for the guarantee: at the default
-  `max_diff_tokens=12000` the post-header budget is `12000 - 300 = 11700`; with the compensation
-  reserve the source share is `11700 * 2/3 = 7800`, and `40 * 160 = 6400`, leaving 1400 tokens
-  for the remainder (without a reserve the whole 11700 is available). Only after all floors are
+  says **floor only, remainder exhausted** when the group budget was fully committed, or
+  **floor only, remainder allocated elsewhere** when the group still had tokens the file's share
+  did not justify (the two are different facts and the manifest does not blur them). A file whose
+  floor the group budget could not fund -- or for which no floor render fits at all -- is named
+  **omitted entirely** with the matching reason.
+- **The floor is a hard cap, not an average.** `_floor_head` tries variants in preference order
+  (full diff header before the compact `diff --git` line, full marker before a short one, full
+  first hunk before a middle slice) and returns the first whose `estimate_tokens` is **at most**
+  `DIFF_FILE_FLOOR_TOKENS`. So `file_count * 160` is an upper bound on the floor pass, and the
+  arithmetic below is true for any path length rather than only for short ones. A path whose own
+  `diff --git` header cannot fit inside 160 tokens (measured: longer than 289 characters) has no
+  floor at all and is named omitted rather than given bytes that break the bound.
+- **Arithmetic for the DoD 1 guarantee.** At the default `max_diff_tokens=12000` the post-header
+  budget is `12000 - 300 = 11700` (`header_reserve`, capped at 300). With the T-16 compensation
+  reserve in force the source share is `11700 * 2/3 = 7800`; `40 * 160 = 6400 <= 7800` leaves 1400
+  tokens for the remainder, and `48 * 160 = 7680 <= 7800` still fits. Without a reserve the whole
+  11700 is available, i.e. `11700 // 160 = 73` files. The 40-file test carries `verify-evidence/`
+  files on purpose so it exercises the 7800 share and not the 11700 one. Only after all floors are
   funded does the remainder pass run, so one large source file still gets the lion's share and the
   T-16 evidence reserve is unchanged. If a file is still omitted at the default budget the auditor
   keeps firing `review_diff_incomplete`; it is never weakened to make the allocator look correct.
