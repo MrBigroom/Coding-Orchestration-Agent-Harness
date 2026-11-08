@@ -1,0 +1,24 @@
+# T-18 mutation checks at HEAD 36c1969
+# throwaway ORCHESTRATOR_HOME=/tmp/t18-mut-_b37swiy
+
+## M1: shown_unacknowledged must map to delivered
+shipped: delivered
+mutant:  failed -> test asserting ('delivered','shown_unacknowledged') would fail: True
+
+## M2: a launched client killed at the timeout is not 'failed'
+shipped: ('delivered', 'shown_unacknowledged')
+mutant:  failed -> test asserting delivered/shown_unacknowledged would fail
+
+## M3: two flushers must not deliver one row twice
+shipped: deliver calls: 1 (expected 1)
+mutant: deliver calls: 2 -> test asserting one delivery would fail: True
+
+## M4: a dead flusher's stale claim is released, not stranded
+shipped: stale-claim row status: delivered
+mutant: stale-claim row status: pending -> test asserting delivered would fail: True
+
+## M5: /tasks/7 resolves to the task view, not the dashboard
+shipped: {'view': 'task', 'arg': '7'}
+mutant:  {} -> test asserting {'view':'task','arg':'7'} would fail
+
+# end of mutation checks
