@@ -100,8 +100,10 @@ def test_project_suggestion_with_an_invented_scope_is_coerced_and_recorded(sessi
     assert not entry.approved
     # The substitution is recorded for the operator, in words that name both halves.
     assert len(out.notes) == 1
-    assert "ai-livestreaming-avatar" in out.notes[0] and "gotchas" in out.notes[0]
-    assert out.moved == out.notes and not out.notes[0].startswith("dropped ")
+    assert "ai-livestreaming-avatar" in out.notes[0]
+    assert "gotchas" in out.notes[0]
+    assert out.moved == out.notes
+    assert not out.notes[0].startswith("dropped ")
     assert m.is_injectable(entry)
     assert "worker" in m.reachable_roles(entry)
 
@@ -142,7 +144,8 @@ def test_coercion_falls_back_and_never_infers_from_the_words_in_the_scope(sessio
         ):
             got, note = m.coerce_scope(category, scope)
             assert got == expected, (category, scope, got)
-            assert note and "deterministic fallback" in note, (category, scope, note)
+            assert note, (category, scope, note)
+            assert "deterministic fallback" in note, (category, scope, note)
     # In-vocabulary scopes are untouched and silent.
     assert m.coerce_scope(MemoryCategory.project, "decisions") == ("decisions", "")
     assert m.coerce_scope(MemoryCategory.global_, "patterns") == ("patterns", "")
@@ -188,7 +191,8 @@ def test_role_suggestion_outside_the_vocabulary_is_dropped_not_stored(session):
         },
     )
     assert out.created == []
-    assert len(out.notes) == 1 and out.notes[0].startswith("dropped ")
+    assert len(out.notes) == 1
+    assert out.notes[0].startswith("dropped ")
     assert out.notes[0] == (
         "dropped suggestion from handoff:R-3: "
         f"{m.vocab_error('role', 'ai-livestreaming-avatar-logbook')}"
@@ -215,7 +219,8 @@ def test_role_alias_suggestion_lands_in_the_shared_role_file(session):
         {"category": "role", "scope": "reviewer", "content": "Fail closed on parsing."},
     )
     entry = out.created[0]
-    assert entry.scope == "architect" and entry.role == "reviewer"
+    assert entry.scope == "architect"
+    assert entry.role == "reviewer"
     assert out.notes == []
     m.approve(session, entry.id)
     root = m.memory_root()
@@ -229,7 +234,8 @@ def test_coerced_suggestion_reaches_a_prompt_once_approved(session):
         {"category": "project", "scope": "ai-livestreaming-avatar", "content": "Reachable host."},
     )
     entry = out.created[0]
-    assert entry.content == "Reachable host." and entry.scope == "gotchas"
+    assert entry.content == "Reachable host."
+    assert entry.scope == "gotchas"
     assert "Reachable host." not in m.for_prompt(session, "worker", "ai-livestreaming-avatar")[
         "project"
     ]
@@ -310,9 +316,11 @@ def test_update_rejects_without_touching_the_row_or_the_rendered_file(session):
     with pytest.raises(m.MemoryError_):
         m.update(session, entry.id, MemoryUpdate(scope="housekeeping", content="Reworded."))
     fresh = session.get(MemoryEntry, entry.id)
-    assert fresh.scope == "gotchas" and fresh.content == "Watch out."
+    assert fresh.scope == "gotchas"
+    assert fresh.content == "Watch out."
     assert home.read_text() == before
-    assert not session.dirty and not session.new  # nothing half-assigned waiting for a commit
+    assert not session.dirty
+    assert not session.new  # nothing half-assigned waiting for a commit
     # The same call with a good scope still works, and a content-only edit still works.
     m.update(session, entry.id, MemoryUpdate(content="Reworded."))
     assert session.get(MemoryEntry, entry.id).content == "Reworded."
@@ -343,13 +351,16 @@ def test_update_of_a_legacy_row_edits_content_without_freezing_on_its_bad_scope(
     bad = legacy(session, category="project", scope="ai-livestreaming-avatar",
                  project_slug="demo", content="Old wording.")
     role = legacy(session, category="role", scope="logbook-writer", content="Who?")
-    assert not m.is_injectable(bad) and not m.is_injectable(role)
+    assert not m.is_injectable(bad)
+    assert not m.is_injectable(role)
     m.update(session, bad.id, MemoryUpdate(content="New wording."))
     m.update(session, role.id, MemoryUpdate(content="New role wording."))
     session.refresh(bad)
     session.refresh(role)
-    assert bad.content == "New wording." and bad.scope == "ai-livestreaming-avatar"
-    assert role.content == "New role wording." and role.scope == "logbook-writer"
+    assert bad.content == "New wording."
+    assert bad.scope == "ai-livestreaming-avatar"
+    assert role.content == "New role wording."
+    assert role.scope == "logbook-writer"
     # A supplied scope is still refused, legacy row or not.
     with pytest.raises(m.MemoryError_):
         m.update(session, bad.id, MemoryUpdate(scope="housekeeping"))
@@ -467,9 +478,11 @@ def test_update_refuses_a_legacy_role_column_that_no_prompt_reads(session):
         m.update(session, dead.id, MemoryUpdate(scope="worker"))
     assert str(exc.value) == role_rejection("logbook-writer")
     session.refresh(dead)
-    assert dead.role == "logbook-writer" and dead.scope == "worker"
+    assert dead.role == "logbook-writer"
+    assert dead.scope == "worker"
     assert home.read_text() == before  # the refused PATCH wrote nothing; no rollback needed
-    assert not session.dirty and not session.new
+    assert not session.dirty
+    assert not session.new
     # A content-only edit stays possible, so the row is not frozen out of the API.
     m.update(session, dead.id, MemoryUpdate(content="Reworded."))
     session.refresh(dead)
@@ -500,7 +513,8 @@ def test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from(sess
         session,
         MemoryCreate(category="role", scope="worker", role="reviewer", content="Gate."),
     )
-    assert entry.role == "reviewer" and entry.scope == "architect"
+    assert entry.role == "reviewer"
+    assert entry.scope == "architect"
     assert m._file_for(entry).name == "architect.md"
     assert m.is_injectable(entry)
     assert m.reachable_roles(entry) == ("architect", "reviewer")
@@ -547,7 +561,8 @@ def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(s
 
     repair = m.fix_scopes(session, gc=False)
     assert repair.moved_ids == [stale.id]
-    assert repair.moved[0]["from"] == slug and repair.moved[0]["to"] == "gotchas"
+    assert repair.moved[0]["from"] == slug
+    assert repair.moved[0]["to"] == "gotchas"
     assert repair.removed_files == []  # gc=False deleted nothing at all
     session.refresh(stale)
     assert stale.scope == "gotchas"
@@ -565,7 +580,8 @@ def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(s
     assert m.is_injectable(stale)
     # Idempotent: a second run moves nothing.
     again = m.fix_scopes(session, gc=False)
-    assert again.moved == [] and again.skipped == []
+    assert again.moved == []
+    assert again.skipped == []
 
 
 def test_fix_scopes_with_gc_on_deletes_the_dead_old_file(session):
@@ -609,9 +625,33 @@ def test_fix_scopes_leaves_rejected_rows_alone(session):
     repair = m.fix_scopes(session)
     assert repair.moved == []
     assert [s["id"] for s in repair.skipped] == [row.id]
-    assert "rejected" in repair.skipped[0]["why"]
+    # Exact value, not a substring: the reason cannot drift to "rejected" wording that means
+    # something else (T-15 DoD 4 removed the old `assert "rejected" in ...` shape).
+    assert repair.skipped[0]["why"] == "rejected rows are left alone"
     session.refresh(row)
-    assert row.scope == "ai-livestreaming-avatar" and row.rejected
+    assert row.scope == "ai-livestreaming-avatar"
+    assert row.rejected
+
+
+def test_the_rejected_reason_assertion_fails_when_the_reason_changes(session, monkeypatch):
+    """Mutation check for the exact-value assertion above (T-15 DoD 5(f)).
+
+    A substring assertion still passes when the reason grows a suffix. The runtime patch below
+    changes only the reason text, then runs the real test function: it must go red, proving the
+    assertion pins the value rather than a word that happens to occur in it.
+    """
+    from tests.unit import test_memory_scopes as subject
+
+    original = m.fix_scopes
+
+    def changed_reason(session):
+        repair = original(session)
+        repair.skipped[0]["why"] = "rejected rows are left alone (changed wording)"
+        return repair
+
+    monkeypatch.setattr(m, "fix_scopes", changed_reason)
+    with pytest.raises(AssertionError):
+        subject.test_fix_scopes_leaves_rejected_rows_alone(session)
 
 
 def test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row(session):
@@ -619,7 +659,12 @@ def test_fix_scopes_refuses_to_guess_a_role_and_to_delete_a_row(session):
     repair = m.fix_scopes(session)
     assert repair.moved == []
     assert [s["id"] for s in repair.skipped] == [row.id]
-    assert "role" in repair.skipped[0]["why"]
+    assert repair.skipped[0]["why"] == (
+        "role memory has no fallback file: an unresolvable role would be invented, so the row "
+        "is reported instead (approve it under a real role or reject it). Note that for_prompt "
+        "selects on the `role` column, so a legacy row with an empty role and a valid scope is a "
+        "shape the boundary can no longer create (_validate fills role from scope)."
+    )
     assert m.list_entries(session, category="role")  # never deleted, just reported
 
 
@@ -628,7 +673,9 @@ def test_fix_scopes_reports_a_canonical_scope_that_is_still_unreachable(session)
     repair = m.fix_scopes(session)
     assert repair.moved == []
     assert [s["id"] for s in repair.skipped] == [row.id]
-    assert "project_slug" in repair.skipped[0]["why"]
+    assert repair.skipped[0]["why"] == (
+        "scope already in vocabulary: project memory requires project_slug"
+    )
 
 
 def test_fix_scopes_dry_run_writes_nothing(session):
@@ -639,7 +686,8 @@ def test_fix_scopes_dry_run_writes_nothing(session):
     orphan = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
     root = m.memory_root()
     repair = m.fix_scopes(session, dry_run=True)
-    assert repair.moved_ids == [row.id] and repair.dry_run
+    assert repair.moved_ids == [row.id]
+    assert repair.dry_run
     session.refresh(row)
     assert row.scope == "ai-livestreaming-avatar"
     assert orphan.exists()
@@ -647,7 +695,8 @@ def test_fix_scopes_dry_run_writes_nothing(session):
     assert repair.moved[0]["old_file"] == str(orphan)
     assert repair.moved[0]["collect_old_file"] is True
     assert repair.moved[0]["new_file"] == str(root / "projects" / "p" / "gotchas.md")
-    assert not repair.removed_files and orphan.exists()
+    assert not repair.removed_files
+    assert orphan.exists()
 
 
 def test_gc_removes_dead_files_and_keeps_the_canonical_layout(session):
@@ -688,8 +737,11 @@ def test_gc_only_deletes_files_render_file_could_have_written(session):
 
     removed = m.gc_orphan_files(session)
     assert removed == [stale, ghost]  # sorted by path, and only the two renderer-shaped files
-    assert hand.exists() and hand_title_only.exists() and header.exists()
-    assert not ghost.exists() and not stale.exists()
+    assert hand.exists()
+    assert hand_title_only.exists()
+    assert header.exists()
+    assert not ghost.exists()
+    assert not stale.exists()
     assert outside.exists()
     assert m.orphan_files(session) == []  # idempotent
 
@@ -703,7 +755,8 @@ def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
     assert ghost.exists()
     repair = m.fix_scopes(session, gc=False)
     assert repair.moved_ids == [row.id]
-    assert repair.removed_files == [] and ghost.exists()
+    assert repair.removed_files == []
+    assert ghost.exists()
     # `--no-gc` still SHOWS the dead file instead of pretending there is none.
     assert [str(p) for p in repair.ghost_files] == [str(ghost)]
     assert f"mem:{row.id}" not in ghost.read_text()  # re-rendered, just not deleted
@@ -721,7 +774,8 @@ def test_import_does_not_duplicate_a_row_that_is_still_awaiting_fix_scopes(sessi
     payload = json.loads(m.dumps_export(session))
     assert m.import_all(session, payload) == 0
     rows = [e for e in m.list_entries(session) if e.content == "Same fact."]
-    assert len(rows) == 1 and rows[0].scope == "logbook"  # untouched, still repairable
+    assert len(rows) == 1
+    assert rows[0].scope == "logbook"  # untouched, still repairable
     m.fix_scopes(session)
     assert m.import_all(session, payload) == 0  # and after the repair, still no duplicate
     with pytest.raises(m.MemoryError_):
@@ -769,14 +823,16 @@ def test_role_rows_still_render_by_the_rule_main_used(session):
     repair = m.fix_scopes(session)
     assert [s["id"] for s in repair.skipped] == [dead_role.id]
     session.refresh(dead_role)
-    assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
+    assert dead_role.role == "logbook-writer"
+    assert dead_role.scope == "worker"
 
     # The counter-examples from the task (#39/#47): role=worker scope=worker.
     good = legacy(
         session, category="role", scope="worker", role="worker", content="Small commits.",
         approved=True,
     )
-    assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
+    assert m._file_for(good).name == "worker.md"
+    assert m.is_injectable(good)
     assert m.reachable_roles(good) == ("worker", "agent")
     assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
     # `scope` is the fallback for the file name exactly as it was on main.
@@ -804,7 +860,8 @@ def test_injectability_marks_only_the_unreachable(session):
     agent = legacy(session, category="role", scope="agent", role="agent", content="Ship one phase.")
     supervisor = legacy(session, category="role", scope="supervisor", content="Recommend only.")
 
-    assert not m.is_injectable(bad) and "environment|preferences|patterns" in m.injectability(bad)[1]
+    assert not m.is_injectable(bad)
+    assert "environment|preferences|patterns" in m.injectability(bad)[1]
     assert not m.is_injectable(bad_project)
     assert m.is_injectable(ok_global)
     assert m.reachable_roles(ok_global) == tuple(r.value for r in Role)

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlmodel import Session
 
+from orchestrator.core.config import get_settings
 from orchestrator.core.models import (
     Project,
     Review,
@@ -26,6 +27,7 @@ from orchestrator.core.models import (
 from orchestrator.core.schemas import Handoff, VerificationCheck, VerificationResult
 from orchestrator.services import (
     artifact_service,
+    evidence_freshness,
     git_service,
     log_service,
     process_service,
@@ -245,6 +247,61 @@ async def verify(
             else "phase does not involve LLM behaviour",
         )
     )
+
+    # 4b. Committed evidence freshness (T-15 DoD 1). A pure comparison of the HEAD stamp in each
+    # committed evidence file against the run's commit_sha, so the reviewer never has to discover
+    # staleness by reading an old copy of the Worker's own tests. `stale` is reported, not `fail`,
+    # unless the operator opts into strict mode: existing projects may carry untracked or unstamped
+    # evidence, and DoD 1 reserves a failing check for a configurable rule. This check never sets
+    # `contradicts` and never by itself flips the verdict.
+    if cwd and project and task.kind in (TaskKind.coding, TaskKind.maintenance):
+        freshness = evidence_freshness.check_freshness(
+            cwd, run.commit_sha, task.short_id, project.base_branch
+        )
+        strict = get_settings().evidence_freshness_strict
+        status = freshness.status
+        if status == evidence_freshness.STATUS_STALE and strict:
+            status = "fail"
+        checks.append(
+            VerificationCheck(
+                name=evidence_freshness.CHECK_NAME,
+                status=status,
+                evidence=freshness.evidence,
+                notes=(
+                    freshness.notes
+                    + (
+                        "\nstrict mode: staleness is a failing check "
+                        "(ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true)"
+                        if status == "fail"
+                        else ""
+                    )
+                ),
+            )
+        )
+        if freshness.status == evidence_freshness.STATUS_STALE:
+            log_service.log_event(
+                session,
+                "evidence_freshness_stale",
+                structured_log.attach(
+                    "committed evidence does not match the commit under verification",
+                    {
+                        "task_id": task.id,
+                        "run_id": run.id,
+                        "commit_sha": run.commit_sha,
+                        "compared_commit": freshness.compared_commit,
+                        "stale_paths": freshness.stale_paths,
+                        "deleted_paths": freshness.deleted_paths,
+                        "unparsed_paths": freshness.unparsed_paths,
+                        "stamped_files": freshness.stamped_files,
+                        "strict": strict,
+                    },
+                ),
+                role="supervisor",
+                task_id=task.id,
+                run_id=run.id,
+                phase=phase,
+                commit_sha=run.commit_sha,
+            )
 
     # 5. Harness-computed findings, not model assertions (T-8 DoD 8 + 9). These run from the
     # Supervisor side on purpose: a Worker or reviewer that merely *claims* a contract change was

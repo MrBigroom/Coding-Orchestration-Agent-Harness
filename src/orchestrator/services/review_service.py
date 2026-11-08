@@ -30,6 +30,7 @@ from orchestrator.core.schemas import ReviewFinding, ReviewResult
 from orchestrator.providers.base import ProviderError
 from orchestrator.services import (
     artifact_service,
+    evidence_freshness,
     git_service,
     log_service,
     project_service,
@@ -334,6 +335,18 @@ async def architect_review(
         cwd, base_branch, patch_text, rendered=rendered_diff
     )
     harness_text = harness_findings_section(session, task, run, project, pre_diff_issues)
+    freshness = evidence_freshness.check_freshness(
+        cwd, run.commit_sha, task.short_id, base_branch
+    )
+    if freshness.status == evidence_freshness.STATUS_STALE:
+        harness_text += (
+            "\nHARNESS FINDING: committed evidence is STALE against the commit under "
+            f"verification. {freshness.evidence}. The paths and the commit each stamp names are "
+            "listed below; the Worker refreshes the bundle with one command "
+            "(`orchestrator task evidence <id>`). Do not infer staleness from an old copy of a "
+            "test by reading it — this row is the harness's own comparison.\n"
+            + freshness.notes
+        )
     if pre_undelivered:
         harness_text += (
             "\nHARNESS FINDING: the reviewer diff budget could not deliver "
@@ -463,6 +476,18 @@ async def architect_review(
             )
             continue
         result.missing_artifacts.append(f"reviewer-asserted: {item}")
+
+    # T-15 DoD 1: report the freshness comparison as a harness-detected finding next to the
+    # T-16 delivery finding. It is not a reviewer assertion and it does not change the verdict by
+    # itself; it reaches both the reviewer payload (above) and the persisted review.json so the
+    # next round sees exactly which files moved out of date.
+    if freshness.status == evidence_freshness.STATUS_STALE:
+        body = evidence_freshness.review_finding(freshness)
+        result.findings.append(ReviewFinding(**body))
+        result.notes.append(
+            "harness-detected: committed evidence freshness: "
+            f"{freshness.evidence}. {freshness.notes.replace(chr(10), ' | ')}"
+        )
 
     # T-16 DoD 7: evidence the diff budget could not carry is a harness-detected delivery
     # failure, named as a finding so no reviewer has to infer it from an absent file.

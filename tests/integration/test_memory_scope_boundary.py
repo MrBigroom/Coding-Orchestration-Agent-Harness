@@ -151,7 +151,8 @@ def test_api_patch_still_edits_the_content_of_a_legacy_row(client):
         row_id = legacy(s, category="project", scope="logbook", project_slug="demo",
                         content="Old wording.").id
     r = client.patch(f"/api/memory/{row_id}", json={"content": "New wording."})
-    assert r.status_code == 200 and r.json()["content"] == "New wording."
+    assert r.status_code == 200
+    assert r.json()["content"] == "New wording."
     assert r.json()["scope"] == "logbook"
     assert client.patch(f"/api/memory/{row_id}",
                         json={"scope": "housekeeping"}).status_code == 400
@@ -264,11 +265,13 @@ def test_api_patch_refuses_a_legacy_role_column_even_with_an_in_vocabulary_scope
     assert r.status_code == 400, r.json()
     assert r.json()["error"] == role_rejection("logbook-writer")
     got = [e for e in client.get("/api/memory").json() if e["id"] == row_id][0]
-    assert got["role"] == "logbook-writer" and got["scope"] == "worker"
+    assert got["role"] == "logbook-writer"
+    assert got["scope"] == "worker"
     assert home.read_text() == before
     # ...and the operator is not locked out of the row: a content edit still goes through.
     ok = client.patch(f"/api/memory/{row_id}", json={"content": "Reworded."})
-    assert ok.status_code == 200 and ok.json()["content"] == "Reworded."
+    assert ok.status_code == 200
+    assert ok.json()["content"] == "Reworded."
 
 
 # ------------------------------------------------------------------ CLI boundary
@@ -285,7 +288,8 @@ def test_cli_add_rejects_and_names_the_allowed_values(initialized):
     ):
         r = runner.invoke(app, args)
         assert r.exit_code == 1, (args, r.output)
-        assert "error:" in r.output and expected in r.output
+        assert "error:" in r.output
+        assert expected in r.output
     from orchestrator.services.bootstrap import DEFAULT_GLOBAL_MEMORY
 
     with session_scope() as s:
@@ -326,7 +330,9 @@ def test_cli_add_refuses_a_role_name_no_prompt_can_read(initialized):
     assert ok.exit_code == 0, ok.output
     with session_scope() as s:
         row = [e for e in m.list_entries(s, category="role") if e.content == "Gate the merge."]
-        assert len(row) == 1 and row[0].scope == "architect" and row[0].role == "reviewer"
+        assert len(row) == 1
+        assert row[0].scope == "architect"
+        assert row[0].role == "reviewer"
         assert m.is_injectable(row[0])
     assert "Gate the merge." not in (
         m.memory_root() / "roles" / "worker.md").read_text()
@@ -351,10 +357,12 @@ def test_cli_list_marks_uninjectable_entries_and_leaves_valid_role_rows_alone(in
     assert "conventions|decisions|gotchas" in r.output
     assert f"uninjectable #{bad_id} project:" in r.output
     filtered = runner.invoke(app, ["memory", "list", "--uninjectable"])
-    assert str(bad_id) in filtered.output and str(worker_id) not in filtered.output
+    assert str(bad_id) in filtered.output
+    assert str(worker_id) not in filtered.output
     assert filtered.output.count("uninjectable #") == 1
     warn = [ln for ln in filtered.output.splitlines() if "fix-scopes" in ln]
-    assert warn and "cannot be injected" in warn[0]
+    assert warn
+    assert "cannot be injected" in warn[0]
 
 
 def test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files(initialized):
@@ -370,7 +378,8 @@ def test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files(initial
         ids = f"{a.id}, {b.id}"
     dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"])
     assert dry.exit_code == 0
-    assert f"would move #{a.id}" in dry.output and f"would move #{b.id}" in dry.output
+    assert f"would move #{a.id}" in dry.output
+    assert f"would move #{b.id}" in dry.output
     assert f"(ids: {ids})" in dry.output
     assert (root / "global" / "global-environment-verifying-orchestrator.md").exists()
 
@@ -384,8 +393,10 @@ def test_cli_fix_scopes_prints_the_ids_it_moved_and_rerenders_both_files(initial
     assert "left #" in run.output  # the rejected row is reported as left alone
     with session_scope() as s:
         rows = {e.id: e for e in m.list_entries(s)}
-        assert rows[a.id].scope == "environment" and rows[b.id].scope == "gotchas"
-        assert rows[b.id].approved and not rows[b.id].rejected
+        assert rows[a.id].scope == "environment"
+        assert rows[b.id].scope == "gotchas"
+        assert rows[b.id].approved
+        assert not rows[b.id].rejected
     assert (root / "global" / "environment.md").read_text().count(
         "Verification is path-independent."
     ) == 1
@@ -422,14 +433,17 @@ def test_cli_fix_scopes_reports_lines_the_operator_can_actually_read(initialized
     ghost = str(root / "global" / "dim-notes.md")  # slugified file name, bracketed scope
     dead = root / "global" / "zz-dead.md"  # already-dead ghost, no owning row at all
     dead.write_text("# zz-dead\n")
-    assert kept.id and moved.id and dead.exists()
+    assert kept.id
+    assert moved.id
+    assert dead.exists()
 
     dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"], env=WIDE)
     assert dry.exit_code == 0, dry.output
     d = flat(dry.output)
     assert "scope '[stale]' alone:" in d  # brackets survive
     assert "rejected rows are left alone" in d  # the reason is not eaten
-    assert "would move" in d and "would re-render" in d
+    assert "would move" in d
+    assert "would re-render" in d
     # the file that only becomes dead AFTER the move is reported once, as a collection;
     # a file that is already dead is reported once, as a removal
     assert "would collect dead scope-file" in d
@@ -439,7 +453,8 @@ def test_cli_fix_scopes_reports_lines_the_operator_can_actually_read(initialized
     for lie in ("moved #", "re-rendered", "removed dead scope-file", " collected "):
         assert lie not in d, lie
     assert "(dry run, nothing written)" in d
-    assert Path(ghost).exists() and dead.exists()
+    assert Path(ghost).exists()
+    assert dead.exists()
 
     run = runner.invoke(app, ["memory", "fix-scopes"], env=WIDE)
     assert run.exit_code == 0, run.output
@@ -450,7 +465,8 @@ def test_cli_fix_scopes_reports_lines_the_operator_can_actually_read(initialized
     assert r.count(f"removed dead scope-file {ghost}") == 1
     assert "collected" not in r
     assert "'[dim]notes' -> 'environment'" in r  # bracketed scope printed literally
-    assert not Path(ghost).exists() and not dead.exists()
+    assert not Path(ghost).exists()
+    assert not dead.exists()
     with session_scope() as s:
         assert [e.scope for e in m.list_entries(s) if e.id == moved.id] == ["environment"]
 
@@ -551,7 +567,8 @@ def test_cli_import_repairs_a_legacy_export_scope(initialized):
     assert "imported 0" in runner.invoke(app, ["memory", "import", str(round2)]).output
     with session_scope() as s:
         same = [e for e in m.list_entries(s) if e.content == "Already stored, badly scoped."]
-        assert len(same) == 1 and same[0].scope == "logbook"  # untouched, awaiting fix-scopes
+        assert len(same) == 1
+        assert same[0].scope == "logbook"  # untouched, awaiting fix-scopes
     # and the same scope is still refused at the create boundary
     refused = runner.invoke(app, ["memory", "add", "x", "--category", "project",
                                   "--scope", "logbook", "--project", "demo"])

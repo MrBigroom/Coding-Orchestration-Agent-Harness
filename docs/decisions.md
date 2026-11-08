@@ -401,3 +401,19 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   The operator-facing rule is recorded in `docs/build-loop.md`: a machine verdict is only as
   trustworthy as its resolver, so read the row's resolution evidence before believing a
   `confirmed`.
+- **2026-11-08 — T-15: committed evidence freshness is a deterministic stamp comparison, and the
+  bundle has one committed generator.** The gate adds an additive verification check
+  (`committed evidence freshness`) with status `pass | stale | not_applicable`; `stale` is a
+  report, and a failing check is reserved for `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`.
+  The parser accepts all legacy stamp shapes and prefix-resolves short SHAs against the run's
+  `commit_sha`; a stamp that differs only by an `Orchestrator-Recovery:` commit, an
+  `Operator-Hand-Fix:` commit or an evidence-only commit is fresh with that explanation, while a
+  code commit after the stamp is stale. An unparsable stamp is stale. Deleted evidence is stale
+  with the paths and deleting commit, never `not_applicable`. One command
+  (`orchestrator task evidence <id>`) runs the committed `verify-evidence/<task>/capture.sh`,
+  canonicalises every stamp to `# HEAD=<full sha>` and writes `manifest.json` (HEAD, timestamp,
+  command line, tool versions, produced files); a second run is a byte-for-byte no-op, and files
+  whose content did not change are not rewritten. The `stale` status is an additive value on a new
+  check record, not a change to any existing check name or artifact name; the task DoD explicitly
+  grants the new check, so no contract-change request is needed. The limitation is recorded in the
+  README: the check reports staleness, it does not force a re-run.

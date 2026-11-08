@@ -614,6 +614,38 @@ def task_show(task: str, as_json: bool = typer.Option(False, "--json")) -> None:
     console.print(table)
 
 
+@task_app.command("evidence")
+@handled
+def task_evidence(
+    task: str,
+    root: str = typer.Option(None, help="Worktree root (default: current directory)."),
+    command: str = typer.Option(
+        None, help="Generator command; default verify-evidence/<id>/capture.sh."
+    ),
+    no_capture: bool = typer.Option(
+        False, help="Only re-stamp the existing bundle and write its manifest."
+    ),
+) -> None:
+    """Regenerate one task's committed evidence bundle in a single invocation.
+
+    No database or network: the command maps a task id/short id to
+    ``verify-evidence/<id>/`` in this worktree, runs the committed ``capture.sh``, rewrites every
+    stamp it finds to the canonical ``# HEAD=<sha>`` form, and writes ``manifest.json``. Files
+    whose bytes did not change are left untouched, so a second run leaves the diff clean.
+    """
+    from orchestrator.services import evidence_freshness
+
+    repo = Path(root).expanduser().resolve() if root else Path.cwd().resolve()
+    result = evidence_freshness.regenerate_bundle(
+        repo, task, command=command, capture=not no_capture
+    )
+    _print_json(result.as_dict())
+    console.print(
+        f"[green]evidence[/green] {result.label}: {len(result.files)} file(s), "
+        f"{len(result.rewritten)} rewritten at {result.head_short} ({result.manifest})"
+    )
+
+
 @task_app.command("run")
 @handled
 def task_run(

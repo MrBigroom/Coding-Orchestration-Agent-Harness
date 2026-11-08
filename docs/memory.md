@@ -239,6 +239,19 @@ orchestrator memory import backup.json        # skips exact duplicates
 API: `GET /api/memory/export`, `POST /api/memory/import`. The export format is
 `{"version": 1, "entries": [...]}`.
 
+## Committed artifacts are only trustworthy while they match the commit under review
+
+This is the companion convention to the evidence-freshness check (`docs/build-loop.md`,
+"Evidence freshness"). A `verify-evidence/<task>/` file is a measurement, not a permanent truth:
+its HEAD stamp names the commit it was taken at. The deterministic Supervisor check compares that
+stamp with the run's `commit_sha` and reports `stale` when code moved after the capture; a deleted
+file is reported with the commit that deleted it, not treated as absent evidence. Refresh the whole
+bundle with one command (`orchestrator task evidence <id>`), which runs the committed
+`capture.sh`, canonicalises every stamp and writes `manifest.json`. Keep memory entries about
+verification results phrased relative to that stamp — "at `<sha>` the suite was green", not "the
+suite is green" — because a remembered green outlives the code it described. The check reports
+staleness; it does not force a re-run.
+
 ## Relationship to prompt caching
 
 Memory sits inside the static, cached prefix (sections 2–4). Any approval or edit changes

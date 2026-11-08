@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     auto_merge_enabled: bool = False
     supervisor_microfixes_enabled: bool = False
 
+    # T-15: committed evidence that does not match the run's commit_sha is always reported as
+    # status `stale`, but it does not fail the gate by default (existing projects may have
+    # untracked or unstamped evidence). Set this to true to make staleness a failing check.
+    evidence_freshness_strict: bool = False
+
     max_prompt_context_tokens: int = 60_000
     # Measured on T-20: a normal handoff block was middle-truncated in every round at 4000
     # tokens, and because the diff budget omits docs/evidence the handoff is the only channel

@@ -81,7 +81,10 @@ class ReviewResult(BaseModel):
 
 class VerificationCheck(BaseModel):
     name: str
-    status: Literal["pass", "fail", "skipped", "not_applicable"]
+    # `stale` is an additive status used by the T-15 evidence-freshness check. It is reported but
+    # does not fail the gate unless ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true; the existing
+    # check records and their statuses are unchanged.
+    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
     command: str = ""
     evidence: str = ""
     notes: str = ""
