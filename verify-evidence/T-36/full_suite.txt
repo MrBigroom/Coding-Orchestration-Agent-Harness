@@ -1,4 +1,4 @@
-# HEAD=b4b1a597fe30a5dc492662e2466714175c2f12ec entries-outside-verify-evidence/T-36=0
+# HEAD=83b99e94fbcccebd457d558a6e6c9fc604119e9c entries-outside-verify-evidence/T-36=0
 # command: ./scripts/orch_verify.sh test
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-751 passed, 10 skipped in 124.96s (0:02:04)
+751 passed, 10 skipped in 127.85s (0:02:07)

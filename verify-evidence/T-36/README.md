@@ -1,15 +1,16 @@
 # T-36 verification evidence
 
-Each file starts with `# HEAD=<sha> entries-outside-verify-evidence/T-36=N`.
-The stamp excludes `verify-evidence/T-36/` itself, so `N=0` means the suite ran against a tree whose
-only difference from the commit is this evidence directory.
+Each file starts with `# HEAD=<sha> entries-outside-verify-evidence/T-36=N`. The stamp excludes
+`verify-evidence/T-36/` itself, so `N=0` means the suite ran against a tree with no uncommitted work
+outside this directory. `HEAD` is the commit the suite ran at; the commit that adds these bytes
+touches `verify-evidence/T-36/` only, so the code it certifies is that `HEAD`, not the later sha.
 
 | file | proves |
 | --- | --- |
 | `full_suite.txt` | `./scripts/orch_verify.sh test` -> `751 passed, 10 skipped`, with the `ORCH_VERIFY|...` line showing `orchestrator.__file__` resolved inside this worktree |
 | `lint.txt` | `./scripts/orch_verify.sh lint` -> `All checks passed!` |
 | `targeted_tests.txt` | the eleven targeted nodes in `tests/unit/test_review_budget.py`, `-vv`, each named `PASSED` (11 passed, 13 deselected) |
-| `own_branch_diff_supply.txt` | `render_diff_budget` run over **this branch's own** `git diff <merge-base>...HEAD` at the default budget: 13 files, `BUDGET_files_with_zero_supplied_bytes=0`, `BUDGET_files_without_a_hunk=0` |
+| `own_branch_diff_supply.txt` | `render_diff_budget` run over **this branch's own** `git diff <merge-base>...HEAD` at the default budget: 12 files, `BUDGET_files_with_zero_supplied_bytes=0`, `BUDGET_files_without_a_hunk=0` |
 
 To regenerate: `./scripts/orch_verify.sh test` and `./scripts/orch_verify.sh lint`, plus (for the
 supply file) `env -u VIRTUAL_ENV PYTHONPATH=src <main>/.venv/bin/python -c` calling
