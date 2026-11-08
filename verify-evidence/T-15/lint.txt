@@ -1,4 +1,4 @@
-# HEAD=f0c7bea75b242285a004c250e7f8fdb978e90c2d mode=fast
+# HEAD=d9588f1cd325d0d6bba206cce14dfeda9d37975a mode=full
 # command: ./scripts/orch_verify.sh lint
 ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 All checks passed!

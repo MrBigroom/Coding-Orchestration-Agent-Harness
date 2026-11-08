@@ -1,9 +1,13 @@
-# HEAD=f0c7bea75b242285a004c250e7f8fdb978e90c2d mode=fast
+# HEAD=d9588f1cd325d0d6bba206cce14dfeda9d37975a mode=full
 # command: python3 scripts/t15_assertion_shape.py (AST, no pinned counts)
-tests/unit/test_memory_scopes.py: conjoined_asserts=4 undocumented=0
-tests/unit/test_memory_scopes.py: reason_substring_asserts=0
-tests/unit/test_memory_scopes.py: reason_equality_asserts=3
-tests/integration/test_memory_scope_boundary.py: conjoined_asserts=2 undocumented=0
-tests/integration/test_memory_scope_boundary.py: reason_substring_asserts=0
-tests/integration/test_memory_scope_boundary.py: reason_equality_asserts=0
+tests/unit/test_memory_scopes.py: conjoined_asserts=4 (all must be justified, none counted)
+  l.333: one outcome -> one outcome: nothing was half-assigned, so there is no dirty row and no new row to commit
+  l.495: one outcome -> one outcome: the refused PATCH left no pending row, neither modified nor newly added
+  l.708: one outcome -> one outcome: a dry run wrote nothing, so nothing was removed and the file is still there
+  l.768: one outcome -> one outcome: gc=False deleted nothing, so there is no removal and the dead file survives
+tests/unit/test_memory_scopes.py: reason_equality_asserts=3 at [640, 671, 685]
+tests/integration/test_memory_scope_boundary.py: conjoined_asserts=2 (all must be justified, none counted)
+  l.462: one outcome -> one outcome: the dry run wrote nothing, so both pre-existing ghost files are still there
+  l.474: one outcome -> one outcome: the real run removed both ghost files, the one it collected and the one already dead
+tests/integration/test_memory_scope_boundary.py: reason_equality_asserts=0 at []
 assertion_shape=PASS

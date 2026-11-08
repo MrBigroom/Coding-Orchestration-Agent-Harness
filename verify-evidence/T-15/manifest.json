@@ -2,56 +2,49 @@
   "command": "verify-evidence/T-15/capture.sh",
   "files": [
     {
-      "path": "README.md",
-      "sha256": "df344043df3c68cf6a52b4c848952048325d1f5af207756cfa6cbb7531f7ade2"
-    },
-    {
       "path": "assertion_shape.txt",
-      "sha256": "bffb4b840c930c94ad19c1a9ba5528f1d0c5fdb9034294b1236ee382abbebc67"
+      "sha256": "237d2d1b5555538e7d8ea48dc78dea761d10490a297f3c5c82b37a59fbe6754f"
     },
     {
       "path": "capture.sh",
-      "sha256": "6260cdee369505ef4d7ef420cf18c13a98660fcdf2b7d45d80eef97ef32d576b"
+      "sha256": "aaacb1b02983216a509dc21706bdf3042b446cc601bcd5af584cfc3e3e36ae5b"
     },
     {
       "path": "dod_map.txt",
-      "sha256": "d5b89b64fe6f2eb8d7749f1dd6d3118adb70294f5cc078c8aed1432b9d4c0534"
-    },
-    {
-      "path": "freshness_at_tip.txt",
-      "sha256": "d94ad70cbf767ffdb5da4e08e23e254a957204e99889e8ed0177a2cd4d22eb92"
+      "sha256": "44cda27ad91388bbe94135192ce849821b7d1361d7724b0af03addf33f64c41a"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "feb498af23fae0cfd3d0246d2082d7e713d6fec28358bfd563e7573ab33c8df9"
+      "sha256": "069f7856d3d7cb5f2a50d2d5df47e0706297265a78ddc4a166dcbdbe9e4cc219"
     },
     {
       "path": "freshness_tests.txt",
-      "sha256": "9048416d926f38eb86719b4d4a98a0b74c2e98a24efa91eb45c34ccbb8b61180"
+      "sha256": "ff6eb1b65daaa8f300de93b538ac3acbbdc38d2609b7414907d444709b6b7591"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "41a342106f770cedde4724d8e41cbabf4038feb9a5f1994549f971e0435c4059"
+      "sha256": "030693da3ec83f16870068b38598ae1994bc04a7daf4671a79c34cb6d9469777"
     },
     {
       "path": "lint.txt",
-      "sha256": "a47a4cc5d86fa6d53196dc9803c9245456f0ac055972a98f5b1795fbb3f027df"
+      "sha256": "90a49bbb76149850141832f3f25faadccccae8a82c9b1c0af7521dba7bb0a7c5"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "78d9eb06de0d1481510c29ea48759853912e1db4f707bf4c2dbf7a16998dce25"
+      "sha256": "b822cb20ad1ed3fb3ebc96cf9b37c25e76a7822916d432aef77768e1be1cdf8d"
     },
     {
       "path": "timing.txt",
-      "sha256": "fe879b1232b14d24c41705462c9dc2cd7c569bac3ab3d9d0639e745029468c38"
+      "sha256": "ed636f87bdb99baeea0b9f58d936e27fb601dfc5abb849ddb8ce73f3115e13bc"
     }
   ],
-  "generated_at": "2026-11-08T16:48:03Z",
-  "head": "f0c7bea75b242285a004c250e7f8fdb978e90c2d",
-  "head_short": "f0c7bea",
+  "generated_at": "2026-11-08T17:24:16Z",
+  "head": "d9588f1cd325d0d6bba206cce14dfeda9d37975a",
+  "head_short": "d9588f1",
   "label": "T-15",
-  "mode": "fast",
-  "stamp": "# HEAD=f0c7bea75b242285a004c250e7f8fdb978e90c2d mode=fast",
+  "mode": "full",
+  "only": [],
+  "stamp": "# HEAD=d9588f1cd325d0d6bba206cce14dfeda9d37975a mode=full",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",

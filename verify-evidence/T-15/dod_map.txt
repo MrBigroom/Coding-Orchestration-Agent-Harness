@@ -1,4 +1,4 @@
-# HEAD=f0c7bea75b242285a004c250e7f8fdb978e90c2d mode=fast
+# HEAD=d9588f1cd325d0d6bba206cce14dfeda9d37975a mode=full
 # command: static DoD map; the -v run above supplies each node's PASSED line
 5a older HEAD -> stale with the right paths/count:
    unit::test_an_older_stamp_is_stale_with_the_paths_and_the_count
@@ -24,7 +24,18 @@
 generator integrity and mode:
    unit::test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir
    unit::test_a_generator_that_is_not_committed_is_refused
+   unit::test_no_arbitrary_command_is_accepted_because_only_the_committed_generator_runs
+   unit::test_an_untracked_source_file_is_refused_because_the_stamp_would_certify_it
+   unit::test_only_refreshes_the_named_output_and_refuses_an_unknown_name
    unit::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest
+   unit::test_timing_txt_holds_both_pass_modes_with_wall_time_and_rewrites
+   unit::test_the_at_tip_report_names_the_commit_it_compared
+status vocabulary (CCR-T15-01) and scope:
+   unit::test_the_check_status_uses_the_approved_stale_value
+   unit::test_the_stale_row_renders_into_verification_md
+   integration::test_an_agent_kind_task_gets_neither_the_row_nor_the_finding
+assertion shape (DoD 4):
+   unit::test_the_memory_scope_tests_keep_their_assertion_shape
 trailer honesty / security:
    unit::test_a_recovery_trailer_is_explained_not_certified
    unit::test_an_operator_hand_fix_trailer_is_explained_not_certified
