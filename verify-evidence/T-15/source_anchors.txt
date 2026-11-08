@@ -1,4 +1,4 @@
-# HEAD=aa7699f29fd30aa921ab49d5720a1cfa119ba6da
+# HEAD=6e3d64f2682286693eb08c7a5d5f15ff0412c45b
 # command: grep -n for the T-15 implementation anchors (source line numbers)
 40:CHECK_NAME = "committed evidence freshness"
 163:def parse_stamps(text: str) -> tuple[list[EvidenceStamp], list[str]]:
