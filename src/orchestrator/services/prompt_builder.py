@@ -426,6 +426,12 @@ def _allocate_diff_group(
     `zz_review_index.txt` needs; the earlier greedy rule
     (`max(per_file, remaining - minimum * left)`) let it do exactly that (T-16 review round 1,
     finding 1).
+
+    Allocation is by **delivered** tokens, not by the token target: `_chunk_head` stops on whole
+    hunk boundaries, so a 3900-token target can emit a 2175-token render. The difference is
+    returned to the group and offered to later files (and to the same file on a later pass), which
+    is what stops README/docs sitting at their floor while tokens no one could spend are reported
+    as exhausted (T-36 review round 6, finding 1/2).
     """
     if not group:
         return 0
@@ -445,14 +451,84 @@ def _allocate_diff_group(
         return 0
 
     share = max(0, budget // max(1, len(group)))
-    allocations = [0] * len(group)
-    floor_allocations = [0] * len(group)
-    floored = [False] * len(group)
+    count = len(group)
+    # Render-aware allocation state. `targets` is the token budget handed to `_chunk_head`,
+    # `renders` is the text it produced and `costs` is what that text actually costs. The three
+    # differ because `_chunk_head` stops on whole hunk boundaries: asking a 160-token floor file
+    # for 700 tokens can produce a 500-token render, and the 200 undelivered tokens belong to the
+    # group, not to that file (T-36 review round 6, finding 1). The old code allocated token
+    # targets and rendered afterwards, so that 200 was silently lost while later files stayed at
+    # their floor.
+    targets = [0] * count
+    renders: list[str] = [""] * count
+    costs = [0] * count
+    floored = [False] * count
     # True when `_floor_head` could not render *any* variant inside DIFF_FILE_FLOOR_TOKENS. Such a
     # file has no affordable floor, so it must be reported as omitted entirely rather than as a
     # funded floor of 0 tokens.
-    floor_unrenderable = [False] * len(group)
+    floor_unrenderable = [False] * count
+    floor_renders: list[str | None] = [None] * count
+    floor_costs: list[int | None] = [None] * count
     remaining = budget
+
+    def _render_target(idx: int, target: int) -> tuple[str, int]:
+        """Render file `idx` with a token target and return `(text, delivered tokens)`."""
+        path, chunk = group[idx]
+        size = sizes[idx]
+        if target >= size:
+            return chunk, size
+        if target <= 0:
+            return "", 0
+        rendered, _shown, _total, _sliced = _chunk_head(chunk, target, path)
+        cost = estimate_tokens(rendered)
+        if cost > target:
+            # `_chunk_head` keeps a minimum body slice for very small targets, which can exceed
+            # the target itself. `_floor_head` is hard-capped by `estimate_tokens`, so use it when
+            # a sub-minimum target has to stay a real bound (the tiny-budget evidence branch).
+            capped, _shown, _total, _sliced = _floor_head(chunk, target, path)
+            if capped:
+                return capped, estimate_tokens(capped)
+        return rendered, cost
+
+    def _raise(idx: int, limit: int) -> int:
+        """Give file `idx` as much of `limit` as the group can still afford.
+
+        Returns the tokens actually gained. A hunk is all-or-nothing, so asking for exactly
+        `current + remaining` can stall below the next boundary; the largest affordable target is
+        found instead. A target that buys no bytes is still remembered, so the caller does not
+        retry the same request forever while another file could use the tokens.
+        """
+        nonlocal remaining
+        limit = min(limit, sizes[idx])
+        if remaining <= 0 or targets[idx] >= limit:
+            return 0
+        affordable = costs[idx] + remaining
+        rendered, cost = _render_target(idx, limit)
+        chosen: tuple[int, str, int] | None = None
+        if cost <= affordable:
+            chosen = (limit, rendered, cost)
+        else:
+            low, high = targets[idx], limit
+            while low <= high:
+                mid = (low + high) // 2
+                mid_rendered, mid_cost = _render_target(idx, mid)
+                if mid_cost <= affordable:
+                    chosen = (mid, mid_rendered, mid_cost)
+                    low = mid + 1
+                else:
+                    high = mid - 1
+        if chosen is None:
+            return 0
+        chosen_target, chosen_rendered, chosen_cost = chosen
+        targets[idx] = chosen_target
+        gained = chosen_cost - costs[idx]
+        if gained <= 0:
+            return 0
+        renders[idx] = chosen_rendered
+        costs[idx] = chosen_cost
+        remaining -= gained
+        return gained
+
     if evidence and share < minimum:
         # The budget cannot fund every file: keep the T-16 behaviour of a minimum slice for as
         # many files as fit, in priority order, rather than confirming every file at a useless
@@ -461,41 +537,42 @@ def _allocate_diff_group(
         for idx, size in enumerate(sizes):
             if remaining < minimum:
                 break
-            take = min(size, minimum)
-            allocations[idx] = take
-            remaining -= take
-        for idx, size in enumerate(sizes):
-            if remaining <= 0:
+            _raise(idx, min(size, minimum))
+        # Only now may an included file take what the others did not need, again by delivered
+        # cost so an under-delivered hunk does not strand the rest of the group's budget.
+        while remaining > 0:
+            gained = 0
+            for idx, size in enumerate(sizes):
+                if remaining <= 0:
+                    break
+                if not costs[idx] or costs[idx] >= size:
+                    continue
+                gained += _raise(idx, size)
+            if gained <= 0:
                 break
-            if not allocations[idx]:
-                continue
-            take = min(size - allocations[idx], remaining)
-            allocations[idx] += take
-            remaining -= take
         per_file, cap = share, 0
     else:
         # Floor pass. Render the floor once so the budget accounts for the header and marker it
         # will actually cost; a file smaller than the floor is simply included whole.
-        floor_renders: list[str] = []
-        floor_costs: list[int | None] = []
-        for (path, chunk), size in zip(group, sizes, strict=True):
+        for idx, ((path, chunk), size) in enumerate(zip(group, sizes, strict=True)):
             if size <= DIFF_FILE_FLOOR_TOKENS:
-                floor_renders.append(chunk)
-                floor_costs.append(size)
+                floor_renders[idx] = chunk
+                floor_costs[idx] = size
             else:
                 rendered, _shown, _total, _sliced = _floor_head(
                     chunk, DIFF_FILE_FLOOR_TOKENS, path
                 )
-                floor_renders.append(rendered)
-                floor_costs.append(estimate_tokens(rendered) if rendered else None)
+                floor_renders[idx] = rendered or None
+                floor_costs[idx] = estimate_tokens(rendered) if rendered else None
         for idx, need in enumerate(floor_costs):
             if need is None:
                 floor_unrenderable[idx] = True
                 continue
             need = min(need, sizes[idx])
             if remaining >= need:
-                allocations[idx] = need
-                floor_allocations[idx] = need
+                targets[idx] = need
+                renders[idx] = floor_renders[idx] or ""
+                costs[idx] = need
                 floored[idx] = True
                 remaining -= need
 
@@ -503,62 +580,60 @@ def _allocate_diff_group(
         # for as many as fit, so a tiny budget is not silently blank.
         if evidence and remaining >= minimum:
             for idx, size in enumerate(sizes):
-                if floored[idx] or allocations[idx]:
+                if floored[idx] or costs[idx]:
                     continue
-                need = min(size, minimum)
-                if remaining < need:
-                    continue
-                allocations[idx] = need
-                remaining -= need
+                _raise(idx, min(size, minimum))
 
         if evidence:
-            # Pass 1: bring every included file up to its fair share.
+            # Pass 1: bring every included file up to its fair share, by delivered cost.
             for idx, size in enumerate(sizes):
-                if not allocations[idx]:
+                if not costs[idx]:
                     continue
-                target = min(size, share)
-                take = min(max(0, target - allocations[idx]), remaining)
-                allocations[idx] += take
-                remaining -= take
-            # Pass 2: only now may a file take leftover the others did not need.
-            for idx, size in enumerate(sizes):
-                if remaining <= 0:
+                _raise(idx, min(size, share))
+            # Pass 2: only now may a file take leftover the others did not need. The loop repeats
+            # because a file can stop at a hunk boundary: the tokens it did not take become
+            # available to the files after it (or to it again on the next pass).
+            while remaining > 0:
+                gained = 0
+                for idx, size in enumerate(sizes):
+                    if remaining <= 0:
+                        break
+                    if not costs[idx] or costs[idx] >= size:
+                        continue
+                    gained += _raise(idx, size)
+                if gained <= 0:
                     break
-                if not allocations[idx]:
-                    continue
-                take = min(size - allocations[idx], remaining)
-                allocations[idx] += take
-                remaining -= take
             per_file, cap = share, 0
         else:
             per_file = max(120, budget // max(1, len(group)))
             cap = max(per_file, budget // 2)
             # Top up in priority order, capped. Files that could not get a floor are not
             # resurrected here: their floor was unaffordable, and the manifest names them omitted.
-            for idx, size in enumerate(sizes):
-                if remaining <= 0:
+            while remaining > 0:
+                gained = 0
+                for idx, size in enumerate(sizes):
+                    if remaining <= 0:
+                        break
+                    if not costs[idx] or costs[idx] >= size:
+                        continue
+                    gained += _raise(idx, min(size, cap))
+                if gained <= 0:
                     break
-                if not allocations[idx]:
-                    continue
-                target = min(size, max(cap, allocations[idx]))
-                take = min(max(0, target - allocations[idx]), remaining)
-                allocations[idx] += take
-                remaining -= take
 
-    # Snapshot of what the allocation passes left unspent. The render loop below subtracts from
-    # `remaining` again for bookkeeping, so the floor-only wording reads this number instead: a
-    # file must not be told the remainder was exhausted when the group still had tokens to give.
+    # What the allocation passes could not spend, counted on **delivered** tokens rather than on
+    # token targets (T-36 review finding 2): a floor-only row must not claim the remainder was
+    # exhausted while the group still had tokens no hunk could absorb.
     leftover = remaining
     used = 0
     for idx, ((path, chunk), size) in enumerate(zip(group, sizes, strict=True)):
-        file_budget = allocations[idx]
+        cost = costs[idx]
         budget_text = (
             f"max_diff_tokens={max_tokens} tokens; evidence fair share={per_file} "
             "tokens; compensation reserve in force"
             if evidence
             else f"max_diff_tokens={max_tokens} tokens; per-file={per_file} tokens; cap={cap}"
         )
-        if file_budget <= 0:
+        if cost <= 0:
             omitted.append(path)
             if floor_unrenderable[idx]:
                 _record_omitted(
@@ -580,21 +655,22 @@ def _allocate_diff_group(
                 f"{DIFF_FILE_FLOOR_TOKENS}-token floor after higher-priority files",
             )
             continue
-        if size <= file_budget:
+        if cost >= size:
             rendered = chunk
             hunks_shown, hunks_total, sliced = 1, 1, False
             full.append(path)
             reason = "included in full"
-        elif floored[idx] and file_budget == floor_allocations[idx]:
-            rendered = floor_renders[idx]
+        elif floored[idx] and cost == floor_costs[idx]:
+            rendered = renders[idx]
             partial.append(f"{path} (first hunk only, floor allocation)")
             reason = _floor_only_reason(leftover, per_file, cap)
         else:
-            rendered, hunks_shown, hunks_total, sliced = _chunk_head(chunk, file_budget, path)
+            rendered = renders[idx]
+            _same, hunks_shown, hunks_total, sliced = _chunk_head(chunk, targets[idx], path)
             detail = f"{hunks_shown} of {hunks_total} hunks"
             if sliced:
                 detail += ", body cut inside the shown hunk"
-            if floored[idx]:
+            if floored[idx] or cost >= DIFF_FILE_FLOOR_TOKENS:
                 partial.append(f"{path} ({detail})")
                 reason = (
                     f"per-file diff budget: {detail} shown; omitted hunk headers are named inline "
@@ -609,8 +685,6 @@ def _allocate_diff_group(
                     "instead"
                 )
         rendered_parts.append(rendered)
-        cost = estimate_tokens(rendered)
-        remaining -= cost
         used += cost
         if recorder is not None:
             recorder.record(

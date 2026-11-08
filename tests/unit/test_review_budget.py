@@ -263,6 +263,19 @@ def _r68_patch() -> str:
     return "".join(_chunk(path, lines, "r68-generated-body-line") for path, lines in R68_FILES)
 
 
+def _multi_hunk_chunk(path: str, hunk_lines: tuple[int, ...], tag: str = "line") -> str:
+    """A file with several hunks, so a token target can land between hunk boundaries."""
+    parts = [f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"]
+    start = 1
+    for n, lines in enumerate(hunk_lines):
+        body = "\n".join(
+            f"+{tag} {n}.{i} for a generated diff body" for i in range(lines)
+        )
+        parts.append(f"@@ -{start},0 +{start},{lines} @@\n{body}\n")
+        start += lines
+    return "".join(parts)
+
+
 def _list_section(rendered: str, name: str) -> str:
     return rendered.split(f"{name} (", 1)[1].split("]", 1)[0]
 
@@ -298,6 +311,39 @@ def test_r68_fixture_gets_a_hunk_for_every_file_at_the_default_budget():
     zero_rows = [item for item, row in rows.items() if row["bytes_included"] == 0]
     assert zero_rows == [], zero_rows
     assert _list_section(rendered, "omitted").strip() == "0): none"
+
+
+def test_remainder_moves_past_a_hunk_boundary_instead_of_being_stranded():
+    """DoD 2/3: a target that renders short hands the difference to later files.
+
+    `src/a.py`'s first hunk is tiny and its second hunk is far larger than its allocation, so
+    `_chunk_head` delivers far less than the token target it was given. The undelivered target
+    must go back to the group: before T-36 review finding 1 the allocator kept it reserved for
+    `a.py`, and `src/c.py` was left at its floor even though the group still had tokens. This
+    fails on that allocator (c.py got only its floor) and passes once allocation is by delivered
+    cost.
+    """
+    patch = (
+        _multi_hunk_chunk("src/a.py", (5, 1000), "a")
+        + _chunk("src/b.py", 100, "b")
+        + _chunk("src/c.py", 1000, "c")
+    )
+    recorder = prompt_builder.TruncationRecorder()
+    rendered = prompt_builder.render_diff_budget(patch, 1200, recorder)
+    chunks = dict(prompt_builder.split_diff_files(rendered))
+    floor = prompt_builder.DIFF_FILE_FLOOR_TOKENS
+    # a.py's allocated target could not buy its second hunk; it received only its first.
+    assert estimate_tokens(chunks["src/a.py"]) < floor
+    # The tokens a.py could not take were not stranded: the last file gets well past its floor.
+    assert estimate_tokens(chunks["src/c.py"]) > 2 * floor
+    # And the group is not reported as exhausted while it still had tokens that could be spent.
+    rows = [record.as_dict() for record in recorder.records]
+    stranded = [
+        row
+        for row in rows
+        if "floor only, remainder exhausted" in row["reason"]
+    ]
+    assert stranded == [], stranded
 
 
 def test_forty_files_keep_their_floor_at_the_default_budget_even_with_long_paths():
