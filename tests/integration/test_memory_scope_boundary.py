@@ -1,6 +1,11 @@
 """T-4 DoD 2/3/4 at the real boundaries: the API rejects, the CLI rejects, repairs and marks.
 
 Offline: in-process TestClient and CliRunner against an isolated ORCHESTRATOR_HOME.
+
+T-15 DoD 4: each assertion pins ONE outcome. The sites that could fail in two unrelated ways are
+split; the `a and b` forms that remain are one outcome over two fields (a row's two columns, two
+files that must both survive), so a reviewer does not have to re-litigate the same file. The
+inventory is pinned in tests/unit/test_evidence_freshness.py.
 """
 
 from __future__ import annotations
