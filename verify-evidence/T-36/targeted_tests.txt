@@ -1,4 +1,4 @@
-HEAD: 7d1b9c5384e9db6bb5fcbc02348dd3f8a6e1da4d
+HEAD: 1002c0d9ce2aa5aa4a423fa9174c09ea792e6dd8
 dirty_entries: 1
 command: ./scripts/orch_verify.sh test tests/unit/test_review_budget.py tests/integration/test_review_payload.py -vv
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
@@ -46,5 +46,5 @@ tests/integration/test_review_payload.py::test_manifest_names_the_files_a_diff_b
 tests/integration/test_review_payload.py::test_archived_payload_carries_the_resolution_evidence_for_each_verdict PASSED [ 96%]
 tests/integration/test_review_payload.py::test_a_file_the_budget_withheld_is_archived_as_the_budget_state_not_as_absent PASSED [100%]
 
-============================== 28 passed in 6.07s ==============================
+============================== 28 passed in 5.70s ==============================
 targeted_exit=0
