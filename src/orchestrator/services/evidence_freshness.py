@@ -456,9 +456,19 @@ def check_freshness(
             STATE_NOT_APPLICABLE, evidence=reason, compared_commit=target, stamped_files=0
         )
 
+    # Say which sense of "fresh" applies: an exact match, or fresh only through exempt commits.
+    # The earlier round's self-check said "match <sha>" while its notes named a different commit.
+    exempt_note = (
+        f"; {len(fresh_with_explanation)} fresh only via exempt commit(s)"
+        if fresh_with_explanation
+        else ""
+    )
     return FreshnessResult(
         STATE_PASS,
-        evidence=f"{stamped_files} stamped evidence file(s) match {target_short} ({target})",
+        evidence=(
+            f"{stamped_files} stamped evidence file(s) fresh at {target_short} ({target})"
+            f"{exempt_note}"
+        ),
         notes="\n".join(f"{path}: {reason}" for path, reason in fresh_with_explanation.items()),
         compared_commit=target,
         stamped_files=stamped_files,
