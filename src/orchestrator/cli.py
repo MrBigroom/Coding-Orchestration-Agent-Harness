@@ -625,14 +625,19 @@ def task_evidence(
     check: bool = typer.Option(
         False, "--check", help="Only report freshness (no writes); exit 1 when stale."
     ),
+    full: bool = typer.Option(
+        False, "--full", help="Also run the expensive full-suite capture (minutes, not seconds)."
+    ),
 ) -> None:
     """Regenerate (or check) one task's committed evidence bundle.
 
     No database and no network: the command maps a task id to ``verify-evidence/<id>/`` in this
     worktree, runs the committed ``capture.sh``, canonicalises only the files that pass rewrote,
-    and writes ``manifest.json``. There is deliberately no stamp-only mode: re-stamping content
-    that was not regenerated is the staleness this check exists to catch. Files the pass did not
-    rewrite are left untouched, so a second run at the same HEAD leaves the diff clean.
+    and writes ``manifest.json``. The default pass skips the expensive full-suite capture; pass
+    ``--full`` to run it too, and the manifest plus every rewritten stamp records which mode ran.
+    There is deliberately no stamp-only mode: re-stamping content that was not regenerated is the
+    staleness this check exists to catch. Files the pass did not rewrite are left untouched, so a
+    second run at the same HEAD leaves the diff clean.
     """
     from orchestrator.services import evidence_freshness
 
@@ -661,12 +666,12 @@ def task_evidence(
         if freshness.state == evidence_freshness.STATE_STALE:
             raise typer.Exit(code=1)
         return
-    result = evidence_freshness.regenerate_bundle(repo, task, command=command)
+    result = evidence_freshness.regenerate_bundle(repo, task, command=command, full=full)
     _print_json(result.as_dict())
     console.print(
         f"[green]evidence[/green] {result.label}: {len(result.files)} file(s), "
         f"{len(result.rewritten)} rewritten at {result.head_short} ({result.manifest}) "
-        f"in {result.duration_seconds:.1f}s"
+        f"in {result.duration_seconds:.1f}s ({result.mode} pass)"
     )
 
 

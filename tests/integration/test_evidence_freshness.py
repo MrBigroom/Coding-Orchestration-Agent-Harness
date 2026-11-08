@@ -178,3 +178,41 @@ def test_strict_mode_is_the_only_way_staleness_fails_the_gate(session, project, 
         config_mod.reset_settings_cache()
     assert checks[evidence_freshness.CHECK_NAME].status == "fail"
     assert result.final_result == "fail"
+
+
+def test_deleted_evidence_is_reported_with_the_deleting_commit(session, project):
+    """Deleting evidence to fit a review budget must not read as `not_applicable`.
+
+    Distinct from a task that never committed evidence: this bundle existed on the branch, and the
+    row must name both the path and the commit that removed it.
+    """
+    task = _task(session, project, phase=5)
+    repo = Path(project.path)
+    first = _commit(
+        repo,
+        "evidence",
+        {
+            f"verify-evidence/{task.short_id}/README.md": "# evidence\n",
+            f"verify-evidence/{task.short_id}/full_suite.txt": "# HEAD=PARENT\n3 passed\n",
+        },
+    )
+    _commit(repo, "evidence re-stamped", _stamped(task.short_id, first))
+    (repo / f"verify-evidence/{task.short_id}/README.md").unlink()
+    deleted = _commit(repo, "test(phase-5): delete README evidence", {})
+
+    _run, checks, result = _verify(session, task, project, deleted)
+    fresh = checks[evidence_freshness.CHECK_NAME]
+    assert fresh.status == "skipped"
+    assert f"verify-evidence/{task.short_id}/README.md: deleted by {deleted}" in fresh.notes
+    assert "1 deleted evidence file(s)" in fresh.evidence
+    assert result.contradicts_worker is False
+
+
+def test_never_committed_evidence_is_not_applicable_not_a_deletion(session, project):
+    task = _task(session, project, phase=6)
+    head = _commit(Path(project.path), "code with no evidence ever", {"src/app.py": "x = 1\n"})
+    _run, checks, _result = _verify(session, task, project, head)
+    fresh = checks[evidence_freshness.CHECK_NAME]
+    assert fresh.status == "not_applicable"
+    assert "deleted" not in fresh.evidence
+    assert fresh.notes == ""

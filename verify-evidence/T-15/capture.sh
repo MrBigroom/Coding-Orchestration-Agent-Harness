@@ -6,13 +6,18 @@
 #   ./verify-evidence/T-15/capture.sh                 # fast pass: lint + focused tests, a few seconds
 #   T15_FULL=1 ./verify-evidence/T-15/capture.sh      # fast pass plus the full suite (~2 minutes)
 #
+# `orchestrator task evidence T-15 --full` sets T15_FULL=1 for you. The mode is written into every
+# stamp and into manifest.json, so a reader can tell a cheap refresh from a complete one.
+#
 # Wall-clock suffixes are stripped so a re-run at the same HEAD is byte-identical, which is what
 # makes the second regeneration a no-op (DoD 3/5d). Offline: no network, no API keys.
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 OUT="$ROOT/verify-evidence/T-15"
-STAMP="# HEAD=$(git rev-parse HEAD)"
+MODE=fast
+if [ "${T15_FULL:-0}" = "1" ]; then MODE=full; fi
+STAMP="# HEAD=$(git rev-parse HEAD) mode=$MODE"
 SHORT="$(git rev-parse --short HEAD)"
 KEEP='ORCH_VERIFY\||[0-9]+ (passed|failed)|All checks passed|^# (HEAD|command)'
 # Drop " in 12.34s (0:00:12)" and pytest's "[ 42%]" so evidence bytes depend only on the code.
@@ -62,16 +67,24 @@ else
 fi
 
 { echo "$STAMP"
+  echo "# command: python3 scripts/t15_assertion_shape.py (AST, no pinned counts)"
+  python3 scripts/t15_assertion_shape.py
+} > "$OUT/assertion_shape.txt"
+
+{ echo "$STAMP"
   echo "# command: grep -nF for the T-15 anchors (source line numbers at this HEAD)"
   for pair in \
     "src/orchestrator/services/evidence_freshness.py:CHECK_NAME =" \
     "src/orchestrator/services/evidence_freshness.py:def parse_stamps" \
+    "src/orchestrator/services/evidence_freshness.py:def _commit_class" \
     "src/orchestrator/services/evidence_freshness.py:def check_freshness" \
     "src/orchestrator/services/evidence_freshness.py:def check_status" \
+    "src/orchestrator/services/evidence_freshness.py:def _dirty_tracked" \
     "src/orchestrator/services/evidence_freshness.py:def regenerate_bundle" \
     "src/orchestrator/services/supervisor_service.py:evidence_freshness.check_freshness" \
     "src/orchestrator/services/review_service.py:evidence_freshness.check_freshness" \
-    "src/orchestrator/cli.py:def task_evidence"; do
+    "src/orchestrator/cli.py:def task_evidence" \
+    "scripts/t15_assertion_shape.py:def main"; do
     file="${pair%%:*}"; needle="${pair#*:}"
     grep -nF "$needle" "$file"
   done
@@ -89,6 +102,10 @@ fi
 5c unstamped or absent evidence -> not_applicable (never a false failure):
    unit::test_absent_evidence_is_not_applicable, unit::test_unstamped_evidence_is_not_applicable
    integration::test_an_absent_bundle_is_not_applicable
+   integration::test_never_committed_evidence_is_not_applicable_not_a_deletion
+   deleted evidence -> stale naming the deleting commit, never not_applicable:
+   unit::test_deleted_evidence_names_the_paths_and_the_deleting_commit
+   integration::test_deleted_evidence_is_reported_with_the_deleting_commit
 5d regeneration is idempotent; the second run rewrites nothing:
    unit::test_regeneration_is_one_command_and_a_second_run_rewrites_nothing
 5e existing verification checks and frozen artifact names unchanged:
@@ -96,7 +113,15 @@ fi
 5f split assertions pass; the reason-shaped one fails when the reason changes:
    unit_memory::test_fix_scopes_leaves_rejected_rows_alone
    unit_memory::test_the_rejected_reason_assertion_fails_when_the_reason_changes
-   unit::test_the_memory_scope_tests_keep_their_assertion_shape (AST inventory)
+   scripts/t15_assertion_shape.py output in assertion_shape.txt (AST, comments at every site)
+generator integrity and mode:
+   unit::test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir
+   unit::test_a_generator_that_is_not_committed_is_refused
+   unit::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest
+trailer honesty / security:
+   unit::test_a_recovery_trailer_is_explained_not_certified
+   unit::test_an_operator_hand_fix_trailer_is_explained_not_certified
+   unit::test_a_worker_can_fake_the_hand_fix_trailer_and_still_reads_stale
 also: integration::test_strict_mode_is_the_only_way_staleness_fails_the_gate
 MAP
 } > "$OUT/dod_map.txt"

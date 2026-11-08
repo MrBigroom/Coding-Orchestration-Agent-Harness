@@ -418,3 +418,14 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   that pass rewrote and writes `manifest.json` + a self-check; a second run is byte-identical, and
   a file the pass did not rewrite keeps its old stamp so it reads stale. There is deliberately no
   stamp-only mode. The README keeps the limitation: the check reports, it does not force a re-run.
+- **2026-11-09 — T-15 round 4: a trailer is explained, not certified; the default bundle pass is
+  fast.** Review R-65 found the exemption path still certified a commit whose only qualification
+  was trailer text, so a Worker could write `Operator-Hand-Fix:` into its own code commit and turn a
+  stale bundle into `pass`. The rule is now: only an evidence-only commit (nothing outside
+  `verify-evidence/`, and not `capture.sh`) certifies content; a parsed recovery or hand-fix
+  trailer names the commit in the reason but the bundle still reads stale. The generator also
+  refuses an edited or uncommitted `capture.sh`, not just dirt outside the evidence directory.
+  `orchestrator task evidence <id>` defaults to a fast pass (lint + focused tests, seconds) that
+  leaves the expensive full-suite capture alone; `--full` runs it, and the mode is recorded in
+  `manifest.json` and in every canonical stamp. Deleting evidence earlier on the branch is a stale
+  finding naming the path and the deleting commit, distinct from evidence that never existed.

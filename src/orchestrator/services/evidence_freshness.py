@@ -10,22 +10,27 @@ tip). Four rules, each a measured defect in an earlier round:
 * A stamp is header metadata: only the first :data:`STAMP_WINDOW` lines are scanned and a bare
   `HEAD <sha>` counts only at a line start or inside a leading `#` comment, so captured output that
   *mentions* a stamp can neither stale a bundle nor be rewritten.
-* A different SHA is not automatically stale. Recovery and hand-fix commits are identified by their
-  git **trailers** (`%(trailers)`, never a substring of the body), and an evidence-only commit is
-  one that touches only `verify-evidence/` and not the `capture.sh` generator.
+* A different SHA is not automatically stale. An **evidence-only** commit touches nothing outside
+  `verify-evidence/` except that it may not touch the `capture.sh` generator, so it cannot change
+  what was measured. Recovery and hand-fix commits are identified by their git **trailers**
+  (`%(trailers)`, never a substring of the body); they are *explained, not certified*: the reason
+  names the commit and the trailer, and the bundle still has to be refreshed.
 * Deletion is its own state: a file committed earlier on the branch and gone at the reviewed commit
   is a finding naming the paths and the deleting commit, never `not_applicable`.
 
-The generator cannot lie by construction: it refuses a dirty tracked worktree, runs the committed
-`capture.sh` and nothing else, canonicalises **only the files that pass rewrote**, and writes
-`manifest.json`. A file the pass did not rewrite keeps its old stamp and reads stale — there is no
-stamp-only mode, because re-stamping content that was not regenerated is this module's whole point.
+The generator cannot lie by construction: it refuses a dirty tracked worktree (including a modified
+`capture.sh`), requires the generator to be committed at `HEAD`, runs that committed script and
+nothing else, canonicalises **only the files that pass rewrote**, and writes `manifest.json` with
+the pass mode (`fast` or `full`). A file the pass did not rewrite keeps its old stamp and reads
+stale — there is no stamp-only mode, because re-stamping content that was not regenerated is this
+module's whole point.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import shlex
@@ -39,11 +44,13 @@ from orchestrator.utils.git import head_sha, run_git
 
 EVIDENCE_ROOT = "verify-evidence"
 CHECK_NAME = "committed evidence freshness"
-CANONICAL_STAMP = "# HEAD={sha}"
+CANONICAL_STAMP = "# HEAD={sha} mode={mode}"
 MANIFEST_NAME = "manifest.json"
 CAPTURE_NAME = "capture.sh"
 SELF_CHECK_NAME = "freshness_selfcheck.txt"
 STAMP_WINDOW = 20  # stamps are header metadata; a transcript body may mention one harmlessly
+MODE_FAST = "fast"
+MODE_FULL = "full"
 RECOVERY_TRAILER = "Orchestrator-Recovery"
 HAND_FIX_TRAILER = "Operator-Hand-Fix"
 
@@ -110,6 +117,7 @@ class BundleResult:
     rewritten: list[str]
     manifest: str
     duration_seconds: float = 0.0
+    mode: str = MODE_FAST
 
     def as_dict(self) -> dict:
         return {
@@ -124,6 +132,7 @@ class BundleResult:
             "rewritten_count": len(self.rewritten),
             "manifest": self.manifest,
             "duration_seconds": round(self.duration_seconds, 2),
+            "mode": self.mode,
         }
 
 
@@ -177,7 +186,9 @@ def parse_stamps(text: str, window: int = STAMP_WINDOW) -> tuple[list[EvidenceSt
             (m.group("sha") for p in _STAMP_PATTERNS if (m := p.search(line)) is not None), None
         )
         if found:
-            canonical = bool(re.fullmatch(rf"\s*#\s*HEAD={_HEX}\s*", line))
+            canonical = bool(
+                re.fullmatch(rf"\s*#\s*HEAD={_HEX}(\s+mode=(fast|full))?\s*", line)
+            )
             stamps.append(EvidenceStamp(found, line, number, canonical=canonical))
         elif _LOOKS_LIKE_STAMP.match(line):
             unparsed.append(line)
@@ -219,13 +230,15 @@ def _trailers(repo: Path, sha: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
-def _commit_is_exempt(repo: Path, sha: str) -> str | None:
-    """Why this commit may move HEAD without making evidence stale, or None."""
+def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
+    """(certifies, reason).
+
+    ``certifies`` is True only for a commit that cannot change measured content (evidence-only or
+    empty). A parsed trailer is a reason, but **not** a certificate: a Worker can write any trailer
+    into its own code commit, so a trailer-only commit is explained and the bundle still reads
+    stale. That is the T-8 boundary: detection is the trailer, certification is the file list.
+    """
     keys = {line.split(":", 1)[0].strip() for line in _trailers(repo, sha)}
-    if RECOVERY_TRAILER in keys:
-        return "harness recovery commit"
-    if HAND_FIX_TRAILER in keys:
-        return "operator hand-fix commit"
     files = [
         line.strip()
         for line in _git_text(
@@ -233,15 +246,18 @@ def _commit_is_exempt(repo: Path, sha: str) -> str | None:
         ).splitlines()
         if line.strip()
     ]
-    if not files:
-        return "empty commit"
-    # The generator is code: editing capture.sh changes what every number means, so a commit that
-    # touches it is not an evidence-only commit.
-    if all(p.startswith(f"{EVIDENCE_ROOT}/") for p in files) and (
+    evidence_only = bool(files) and all(p.startswith(f"{EVIDENCE_ROOT}/") for p in files) and (
         not any(Path(p).name == CAPTURE_NAME for p in files)
-    ):
-        return "evidence-only commit"
-    return None
+    )
+    if evidence_only:
+        return True, "evidence-only commit"
+    if not files:
+        return True, "empty commit"
+    if RECOVERY_TRAILER in keys:
+        return False, "harness recovery commit (explained, not certified)"
+    if HAND_FIX_TRAILER in keys:
+        return False, "operator hand-fix commit (explained, not certified)"
+    return False, None
 
 
 def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool, str]:
@@ -260,14 +276,29 @@ def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool,
         for line in _git_text(repo, ["rev-list", "--reverse", f"{full}..{target}"]).splitlines()
         if line.strip()
     ]
-    exempt = [(sha, _commit_is_exempt(repo, sha)) for sha in commits]
-    if all(reason for _sha, reason in exempt):
-        labels = ", ".join(f"{_short(repo, sha)} ({reason})" for sha, reason in exempt)
-        return True, f"differs only by exempt commit(s): {labels}"
-    blocking = ", ".join(_short(repo, sha) for sha, reason in exempt if not reason)
+    classes = [(sha, *_commit_class(repo, sha)) for sha in commits]
+    if all(reason and certifies for _sha, certifies, reason in classes):
+        labels = ", ".join(f"{_short(repo, sha)} ({reason})" for sha, _ok, reason in classes)
+        return True, f"differs only by evidence-only commit(s): {labels}"
+    explained = [
+        f"{_short(repo, sha)} ({reason})"
+        for sha, certifies, reason in classes
+        if reason and not certifies
+    ]
+    blocking = [
+        _short(repo, sha) for sha, certifies, reason in classes if not reason and not certifies
+    ]
+    if explained and not blocking:
+        return False, (
+            f"stamp {_short(repo, full)} differs only by commit(s) with an exemption trailer: "
+            + ", ".join(explained)
+            + f"; the trailer explains the move but does not certify the content, so it is stale "
+            f"against {_short(repo, target)}"
+        )
     return False, (
-        f"stamp {_short(repo, full)} predates non-evidence commit(s) {blocking} on the way to "
-        f"{_short(repo, target)}"
+        f"stamp {_short(repo, full)} predates non-evidence commit(s) "
+        + ", ".join(blocking or [_short(repo, sha) for sha, _ok, _why in classes if not _ok])
+        + f" on the way to {_short(repo, target)}"
     )
 
 
@@ -452,7 +483,7 @@ def review_finding(result: FreshnessResult) -> dict[str, str]:
     }
 
 
-def canonicalize_stamps(path: Path, head: str) -> bool:
+def canonicalize_stamps(path: Path, head: str, mode: str = MODE_FAST) -> bool:
     """Rewrite the header stamps in one file to the canonical line. True if bytes changed."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -466,7 +497,10 @@ def canonicalize_stamps(path: Path, head: str) -> bool:
     for number, line in enumerate(text.splitlines(keepends=True), 1):
         if number <= STAMP_WINDOW and _is_stamp_line(line):
             if not inserted:
-                out.append(CANONICAL_STAMP.format(sha=head) + ("\n" if line.endswith("\n") else ""))
+                out.append(
+                    CANONICAL_STAMP.format(sha=head, mode=mode)
+                    + ("\n" if line.endswith("\n") else "")
+                )
                 inserted = True
             continue
         out.append(line)
@@ -500,7 +534,13 @@ def _tool_versions(root: Path) -> dict[str, str]:
 
 
 def _manifest_payload(
-    root: Path, directory: Path, label: str, head: str, command: str, previous: dict | None
+    root: Path,
+    directory: Path,
+    label: str,
+    head: str,
+    command: str,
+    previous: dict | None,
+    mode: str = MODE_FAST,
 ) -> dict:
     produced = [
         {"path": path, "sha256": digest}
@@ -511,8 +551,9 @@ def _manifest_payload(
         "label": label,
         "head": head,
         "head_short": _short(root, head),
-        "stamp": CANONICAL_STAMP.format(sha=head),
+        "stamp": CANONICAL_STAMP.format(sha=head, mode=mode),
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "mode": mode,
         "command": command,
         "tool_versions": _tool_versions(root),
         "files": produced,
@@ -527,7 +568,9 @@ def _manifest_payload(
     return payload
 
 
-def _write_self_check(root: Path, directory: Path, label: str, head: str) -> None:
+def _write_self_check(
+    root: Path, directory: Path, label: str, head: str, mode: str = MODE_FAST
+) -> None:
     """Record the pass's own worktree-basis check. Unstamped: it certifies the files around it."""
     # The manifest and this file are generator bookkeeping (one written after, one by this pass), so
     # counting either would make a no-op run rewrite itself. The gate still checks the manifest.
@@ -544,7 +587,9 @@ def _write_self_check(root: Path, directory: Path, label: str, head: str) -> Non
             [
                 "# Evidence self-check written by the one bundle pass (not hand-edited, no HEAD",
                 "# stamp: it certifies the files around it; the gate reports the committed view).",
-                f"# command: orchestrator task evidence {label}",
+                f"# command: orchestrator task evidence {label}"
+                + (" --full" if mode == MODE_FULL else ""),
+                f"mode={mode}",
                 "# rewrites and wall time are reported by that command; this file records only",
                 "# what the check saw, so a no-op second run is byte-identical.",
                 "basis=worktree",
@@ -567,11 +612,14 @@ def _write_self_check(root: Path, directory: Path, label: str, head: str) -> Non
     )
 
 
-def _dirty_tracked(root: Path, rel_dir: str) -> list[str]:
+def _dirty_tracked(root: Path, rel_dir: str, protected: frozenset[str] = frozenset()) -> list[str]:
+    """Uncommitted tracked paths, excluding generated evidence but never the generator itself."""
     dirty = []
     for line in _git_text(root, ["status", "--porcelain", "-uno"]).splitlines():
         path = line[3:].strip()
-        if path and not path.startswith(f"{rel_dir}/"):
+        if not path:
+            continue
+        if path in protected or not path.startswith(f"{rel_dir}/"):
             dirty.append(path)
     return dirty
 
@@ -583,12 +631,15 @@ def regenerate_bundle(
     command: str | None = None,
     directory: str | None = None,
     timeout: int = 900,
+    full: bool = False,
 ) -> BundleResult:
     """Regenerate one evidence directory in a single invocation.
 
     Runs the committed ``capture.sh`` (or ``command``), canonicalises **only the files that pass
-    rewrote**, then writes ``manifest.json`` and ``freshness_selfcheck.txt``. There is no stamp-only
-    mode: a file the generator did not rewrite keeps its old stamp and is reported stale.
+    rewrote**, then writes ``manifest.json`` and ``freshness_selfcheck.txt``. ``full=True`` sets
+    ``T15_FULL=1`` for the generator and records ``mode=full``; the default fast pass is the one
+    that has to finish in well under a minute. There is no stamp-only mode: a file the generator
+    did not rewrite keeps its old stamp and is reported stale.
     """
     root = Path(root)
     if not (root / ".git").exists():
@@ -598,30 +649,40 @@ def regenerate_bundle(
         raise EvidenceBundleError(f"evidence directory {directory} is outside {root}")
     rel_dir = directory.relative_to(root).as_posix()
     label = normalize_label(label)
-    dirty = _dirty_tracked(root, rel_dir)
-    if dirty:
-        raise EvidenceBundleError(
-            "worktree has uncommitted tracked changes outside "
-            f"{rel_dir} (e.g. {dirty[0]}); a stamp would name a HEAD whose tree was never "
-            "measured. Commit the code this bundle certifies, then regenerate."
-        )
     head = head_sha(root)
     if not head:
         raise EvidenceBundleError("cannot resolve HEAD in the worktree")
-    before = _hash_tree(directory)
-    started = time.monotonic()
     if command:
         argv, invoked = shlex.split(command), command
     else:
         script = directory / CAPTURE_NAME
+        script_rel = f"{rel_dir}/{CAPTURE_NAME}"
         if not script.is_file():
             raise EvidenceBundleError(
-                f"no committed generator at {rel_dir}/{CAPTURE_NAME}; commit one or pass --command"
+                f"no committed generator at {script_rel}; commit one or pass --command"
             )
-        argv, invoked = [str(script)], f"{rel_dir}/{CAPTURE_NAME}"
+        committed = _git_text(root, ["ls-tree", "-r", "--name-only", head, "--", script_rel])
+        if script_rel not in committed.splitlines():
+            raise EvidenceBundleError(
+                f"{script_rel} is not committed at {head[:7]}; a stamp must be reproducible from "
+                "the branch, so commit the generator before regenerating"
+            )
+        argv, invoked = [str(script)], script_rel
+    protected = frozenset() if command else frozenset({f"{rel_dir}/{CAPTURE_NAME}"})
+    dirty = _dirty_tracked(root, rel_dir, protected)
+    if dirty:
+        raise EvidenceBundleError(
+            "worktree has uncommitted tracked changes outside the generated evidence, or an "
+            f"edited generator (e.g. {dirty[0]}); a stamp would name a HEAD whose tree was never "
+            "measured. Commit the code this bundle certifies, then regenerate."
+        )
+    before = _hash_tree(directory)
+    started = time.monotonic()
+    mode = MODE_FULL if full else MODE_FAST
+    env = {**os.environ, "T15_FULL": "1"} if full else os.environ.copy()
     try:
         proc = subprocess.run(
-            argv, cwd=root, capture_output=True, text=True, timeout=timeout, check=False
+            argv, cwd=root, capture_output=True, text=True, timeout=timeout, check=False, env=env
         )
     except subprocess.TimeoutExpired as exc:
         raise EvidenceBundleError(f"evidence generator timed out after {timeout}s") from exc
@@ -635,9 +696,9 @@ def regenerate_bundle(
     captured = _hash_tree(directory)
     for rel in sorted(captured):
         if Path(rel).name != MANIFEST_NAME and before.get(rel) != captured[rel]:
-            canonicalize_stamps(directory / rel, head)
+            canonicalize_stamps(directory / rel, head, mode)
     duration = time.monotonic() - started
-    _write_self_check(root, directory, label, head)
+    _write_self_check(root, directory, label, head, mode)
 
     manifest_path = directory / MANIFEST_NAME
     previous = None
@@ -646,7 +707,7 @@ def regenerate_bundle(
             previous = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             previous = None
-    payload = _manifest_payload(root, directory, label, head, invoked, previous)
+    payload = _manifest_payload(root, directory, label, head, invoked, previous, mode)
     new_text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if not manifest_path.is_file() or manifest_path.read_text(encoding="utf-8") != new_text:
         manifest_path.write_text(new_text, encoding="utf-8")
@@ -665,6 +726,7 @@ def regenerate_bundle(
         rewritten=rewritten,
         manifest=f"{rel_dir}/{MANIFEST_NAME}",
         duration_seconds=duration,
+        mode=mode,
     )
 
 
@@ -673,6 +735,8 @@ __all__ = [
     "CHECK_NAME",
     "EVIDENCE_ROOT",
     "MANIFEST_NAME",
+    "MODE_FAST",
+    "MODE_FULL",
     "SELF_CHECK_NAME",
     "STAMP_WINDOW",
     "BundleResult",

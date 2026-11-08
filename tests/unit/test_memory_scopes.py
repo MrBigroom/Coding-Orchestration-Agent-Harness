@@ -244,7 +244,8 @@ def test_coerced_suggestion_reaches_a_prompt_once_approved(session):
         {"category": "project", "scope": "ai-livestreaming-avatar", "content": "Reachable host."},
     )
     entry = out.created[0]
-    assert entry.content == "Reachable host." and entry.scope == "gotchas"
+    assert entry.content == "Reachable host."
+    assert entry.scope == "gotchas"
     assert "Reachable host." not in m.for_prompt(session, "worker", "ai-livestreaming-avatar")[
         "project"
     ]
@@ -328,7 +329,8 @@ def test_update_rejects_without_touching_the_row_or_the_rendered_file(session):
     assert fresh.scope == "gotchas"
     assert fresh.content == "Watch out."
     assert home.read_text() == before
-    assert not session.dirty and not session.new  # nothing half-assigned waiting for a commit
+    # one outcome: nothing was half-assigned, so there is no dirty row and no new row to commit
+    assert not session.dirty and not session.new
     # The same call with a good scope still works, and a content-only edit still works.
     m.update(session, entry.id, MemoryUpdate(content="Reworded."))
     assert session.get(MemoryEntry, entry.id).content == "Reworded."
@@ -359,13 +361,16 @@ def test_update_of_a_legacy_row_edits_content_without_freezing_on_its_bad_scope(
     bad = legacy(session, category="project", scope="ai-livestreaming-avatar",
                  project_slug="demo", content="Old wording.")
     role = legacy(session, category="role", scope="logbook-writer", content="Who?")
-    assert not m.is_injectable(bad) and not m.is_injectable(role)
+    assert not m.is_injectable(bad)
+    assert not m.is_injectable(role)
     m.update(session, bad.id, MemoryUpdate(content="New wording."))
     m.update(session, role.id, MemoryUpdate(content="New role wording."))
     session.refresh(bad)
     session.refresh(role)
-    assert bad.content == "New wording." and bad.scope == "ai-livestreaming-avatar"
-    assert role.content == "New role wording." and role.scope == "logbook-writer"
+    assert bad.content == "New wording."
+    assert bad.scope == "ai-livestreaming-avatar"
+    assert role.content == "New role wording."
+    assert role.scope == "logbook-writer"
     # A supplied scope is still refused, legacy row or not.
     with pytest.raises(m.MemoryError_):
         m.update(session, bad.id, MemoryUpdate(scope="housekeeping"))
@@ -486,6 +491,7 @@ def test_update_refuses_a_legacy_role_column_that_no_prompt_reads(session):
     assert dead.role == "logbook-writer"
     assert dead.scope == "worker"
     assert home.read_text() == before  # the refused PATCH wrote nothing; no rollback needed
+    # one outcome: the refused PATCH left no pending row, neither modified nor newly added
     assert not session.dirty and not session.new
     # A content-only edit stays possible, so the row is not frozen out of the API.
     m.update(session, dead.id, MemoryUpdate(content="Reworded."))
@@ -517,7 +523,8 @@ def test_role_and_scope_disagreements_land_on_the_file_the_row_is_read_from(sess
         session,
         MemoryCreate(category="role", scope="worker", role="reviewer", content="Gate."),
     )
-    assert entry.role == "reviewer" and entry.scope == "architect"
+    assert entry.role == "reviewer"
+    assert entry.scope == "architect"
     assert m._file_for(entry).name == "architect.md"
     assert m.is_injectable(entry)
     assert m.reachable_roles(entry) == ("architect", "reviewer")
@@ -564,7 +571,8 @@ def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(s
 
     repair = m.fix_scopes(session, gc=False)
     assert repair.moved_ids == [stale.id]
-    assert repair.moved[0]["from"] == slug and repair.moved[0]["to"] == "gotchas"
+    assert repair.moved[0]["from"] == slug
+    assert repair.moved[0]["to"] == "gotchas"
     assert repair.removed_files == []  # gc=False deleted nothing at all
     session.refresh(stale)
     assert stale.scope == "gotchas"
@@ -582,7 +590,8 @@ def test_fix_scopes_moves_legacy_rows_and_leaves_no_stale_line_in_the_old_file(s
     assert m.is_injectable(stale)
     # Idempotent: a second run moves nothing.
     again = m.fix_scopes(session, gc=False)
-    assert again.moved == [] and again.skipped == []
+    assert again.moved == []
+    assert again.skipped == []
 
 
 def test_fix_scopes_with_gc_on_deletes_the_dead_old_file(session):
@@ -686,7 +695,8 @@ def test_fix_scopes_dry_run_writes_nothing(session):
     orphan = m.memory_root() / "projects" / "p" / "ai-livestreaming-avatar.md"
     root = m.memory_root()
     repair = m.fix_scopes(session, dry_run=True)
-    assert repair.moved_ids == [row.id] and repair.dry_run
+    assert repair.moved_ids == [row.id]
+    assert repair.dry_run
     session.refresh(row)
     assert row.scope == "ai-livestreaming-avatar"
     assert orphan.exists()
@@ -694,6 +704,7 @@ def test_fix_scopes_dry_run_writes_nothing(session):
     assert repair.moved[0]["old_file"] == str(orphan)
     assert repair.moved[0]["collect_old_file"] is True
     assert repair.moved[0]["new_file"] == str(root / "projects" / "p" / "gotchas.md")
+    # one outcome: a dry run wrote nothing, so nothing was removed and the file is still there
     assert not repair.removed_files and orphan.exists()
 
 
@@ -753,6 +764,7 @@ def test_fix_scopes_can_move_rows_without_deleting_a_single_file(session):
     assert ghost.exists()
     repair = m.fix_scopes(session, gc=False)
     assert repair.moved_ids == [row.id]
+    # one outcome: gc=False deleted nothing, so there is no removal and the dead file survives
     assert repair.removed_files == [] and ghost.exists()
     # `--no-gc` still SHOWS the dead file instead of pretending there is none.
     assert [str(p) for p in repair.ghost_files] == [str(ghost)]
@@ -820,14 +832,16 @@ def test_role_rows_still_render_by_the_rule_main_used(session):
     repair = m.fix_scopes(session)
     assert [s["id"] for s in repair.skipped] == [dead_role.id]
     session.refresh(dead_role)
-    assert dead_role.role == "logbook-writer" and dead_role.scope == "worker"
+    assert dead_role.role == "logbook-writer"
+    assert dead_role.scope == "worker"
 
     # The counter-examples from the task (#39/#47): role=worker scope=worker.
     good = legacy(
         session, category="role", scope="worker", role="worker", content="Small commits.",
         approved=True,
     )
-    assert m._file_for(good).name == "worker.md" and m.is_injectable(good)
+    assert m._file_for(good).name == "worker.md"
+    assert m.is_injectable(good)
     assert m.reachable_roles(good) == ("worker", "agent")
     assert "Small commits." in m.for_prompt(session, "agent", None)["role"]
     # `scope` is the fallback for the file name exactly as it was on main.

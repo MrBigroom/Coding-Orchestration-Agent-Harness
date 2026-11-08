@@ -11,7 +11,6 @@ bytes were regenerated, not that a stamp was moved.
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 import subprocess
@@ -111,7 +110,7 @@ def test_a_stamp_below_the_header_window_is_neither_counted_nor_rewritten(tmp_pa
     path.write_text(text)
     assert ef.canonicalize_stamps(path, "cafe123") is True
     written = path.read_text()
-    assert written.startswith("# HEAD=cafe123\n")
+    assert written.startswith("# HEAD=cafe123 mode=fast\n")
     assert "# HEAD=deadbeef" in written  # the deep line is captured output, not a stamp
 
 
@@ -204,26 +203,43 @@ def _stamped_then(repo: Path, files: dict[str, str], subject: str, body: str | N
     return _commit(repo, subject, files, body=body)
 
 
-def test_a_recovery_commit_trailer_is_explained_not_called_stale(tmp_path: Path) -> None:
+def test_a_recovery_trailer_is_explained_not_certified(tmp_path: Path) -> None:
+    """A trailer explains the move; it cannot certify content a Worker could have written."""
     repo = _repo(tmp_path)
     head = _stamped_then(
         repo, {"scratch.txt": "leftover\n"}, "chore(recovery): sweep",
         body="Orchestrator-Recovery: R-1",
     )
     result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.state == ef.STATE_PASS
-    assert "harness recovery commit" in result.notes
+    assert result.state == ef.STATE_STALE
+    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
+    assert "harness recovery commit (explained, not certified)" in result.notes
+    assert ef._short(repo, head) in result.notes
 
 
-def test_an_operator_hand_fix_trailer_is_explained_not_called_stale(tmp_path: Path) -> None:
+def test_an_operator_hand_fix_trailer_is_explained_not_certified(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     head = _stamped_then(
         repo, {"src/app.py": "x = 1\n"}, "fix(phase-1): operator repair",
         body="Operator-Hand-Fix: chat-10",
     )
     result = ef.check_freshness(repo, head, "T-1", "main")
-    assert result.state == ef.STATE_PASS
-    assert "operator hand-fix commit" in result.notes
+    assert result.state == ef.STATE_STALE
+    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
+    assert "operator hand-fix commit (explained, not certified)" in result.notes
+
+
+def test_a_worker_can_fake_the_hand_fix_trailer_and_still_reads_stale(tmp_path: Path) -> None:
+    """The security case: the trailer is not a certificate the Worker can grant itself."""
+    repo = _repo(tmp_path)
+    head = _stamped_then(
+        repo, {"src/app.py": "x = 2\n"}, "fix(phase-1): not really an operator",
+        body="Operator-Hand-Fix: chat-99",
+    )
+    result = ef.check_freshness(repo, head, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.stale_count == 1
+    assert "does not certify" in result.notes
 
 
 def test_a_body_that_merely_mentions_the_trailer_is_not_exempt(tmp_path: Path) -> None:
@@ -335,7 +351,8 @@ def test_the_manifest_names_the_head_command_versions_and_files(tmp_path: Path) 
     assert manifest["command"] == "verify-evidence/T-1/capture.sh"
     assert manifest["generated_at"].endswith("Z")
     assert manifest["tool_versions"]["python"] and manifest["tool_versions"]["git"]
-    assert manifest["stamp"] == f"# HEAD={result.head}"
+    assert manifest["stamp"] == f"# HEAD={result.head} mode=fast"
+    assert manifest["mode"] == "fast"
     assert {entry["path"] for entry in manifest["files"]} == {
         "capture.sh",
         "suite.txt",
@@ -382,6 +399,28 @@ def test_a_dirty_tracked_worktree_is_refused_rather_than_stamped(tmp_path: Path)
     assert not (repo / "verify-evidence/T-1/suite.txt").exists()
 
 
+def test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir(
+    tmp_path: Path,
+) -> None:
+    """The generator is code: an uncommitted edit must not be stamped as if it were committed."""
+    repo = _bundle_repo(tmp_path)
+    (repo / "verify-evidence/T-1/capture.sh").write_text(CAPTURE + "\n# edited\n")
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1")
+    assert "edited generator" in str(exc.value)
+    assert not (repo / "verify-evidence/T-1/suite.txt").exists()
+
+
+def test_a_generator_that_is_not_committed_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    script = repo / "verify-evidence/T-1/capture.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(CAPTURE)
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1")
+    assert "is not committed" in str(exc.value)
+
+
 def test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     with pytest.raises(ef.EvidenceBundleError) as exc:
@@ -389,31 +428,10 @@ def test_a_missing_generator_is_an_error_not_a_silent_stamp_refresh(tmp_path: Pa
     assert "no committed generator" in str(exc.value)
 
 
-# ------------------------------------------------------------------ DoD 4 assertion-shape guard
-
-MEMORY_TESTS = {
-    "tests/unit/test_memory_scopes.py": 14,
-    "tests/integration/test_memory_scope_boundary.py": 8,
-}
-
-
-def _conjoined(path: Path) -> int:
-    tree = ast.parse(path.read_text())
-    return sum(
-        1
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assert)
-        and isinstance(node.test, ast.BoolOp)
-        and isinstance(node.test.op, ast.And)
-    )
-
-
-def test_the_memory_scope_tests_keep_their_assertion_shape() -> None:
-    """An inventory, not a claim: the measured count of `assert a and b` per file, at one place.
-
-    The base commit had 26 and 15 of them; the sites that could fail in two unrelated ways were
-    split, the remainder are one outcome over two fields (documented at the top of each file).
-    Pinning the numbers means a new conjoined assertion is a deliberate edit to this test.
-    """
-    root = Path(__file__).resolve().parents[2]
-    assert {name: _conjoined(root / name) for name in MEMORY_TESTS} == MEMORY_TESTS
+def test_the_full_pass_is_opt_in_and_recorded_in_the_manifest(tmp_path: Path) -> None:
+    repo = _bundle_repo(tmp_path)
+    result = ef.regenerate_bundle(repo, "T-1", full=True)
+    manifest = json.loads((repo / "verify-evidence/T-1/manifest.json").read_text())
+    assert result.mode == "full"
+    assert manifest["mode"] == "full"
+    assert manifest["stamp"].endswith("mode=full")

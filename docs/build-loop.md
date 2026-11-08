@@ -724,12 +724,14 @@ transcript that mentions a stamp is neither counted nor rewritten. A short unpar
 stamp is stale, never fresh.
 
 A different SHA is not automatically stale, because HEAD moves for reasons the Worker does not
-control. Exemptions are read from git **trailers** (`%(trailers)`, never a substring search of the
-body): commits carrying `Orchestrator-Recovery:` or `Operator-Hand-Fix:`, and commits that touch
-nothing but `verify-evidence/` — but not `capture.sh`, which is code. Such a stamp is reported
-fresh **with that explanation**; a code commit after the stamp is stale. Evidence committed
-earlier on the branch and gone at the reviewed commit is stale with the paths and the deleting
-commit, never `not_applicable`: deleting evidence must not be rewarded with a silent pass.
+control. The only commit that **certifies** content is an **evidence-only** commit: nothing outside
+`verify-evidence/`, and not `capture.sh`, which is code. A commit carrying an
+`Orchestrator-Recovery:` or `Operator-Hand-Fix:` **trailer** is *explained, not certified*: git's
+`%(trailers)` parser identifies it (never a substring search of the body), the reason names the
+commit and the trailer, and the bundle still reads stale because a Worker can write any trailer
+into its own code commit. Evidence committed earlier on the branch and gone at the reviewed commit
+is stale with the paths and the deleting commit, never `not_applicable`: deleting evidence must not
+be rewarded with a silent pass, and it is distinct from a task that never committed evidence.
 
 One command refreshes the whole bundle:
 
@@ -740,12 +742,19 @@ orchestrator task evidence T-15 --check    # read-only: exit 1 when stale
 
 It runs the committed `verify-evidence/<task>/capture.sh` and nothing else — there is no
 stamp-only mode, because re-stamping content that was not regenerated is the failure the check
-exists to catch. It refuses a worktree with uncommitted tracked changes (a stamp would name a HEAD
-whose tree was never measured), canonicalises **only the files that pass rewrote**, and writes
-`manifest.json` (HEAD, timestamp, command line, tool versions, produced files) plus a self-check.
-A file the pass did not rewrite keeps its old stamp and is reported stale. It needs no network or
-API key, reports how many files it rewrote, and a second run at the same HEAD is byte-identical so
-the diff stays reviewable. The generator is committed, so a result is reproducible from the branch.
+exists to catch. It refuses a worktree with uncommitted tracked changes, **including an edited
+`capture.sh`**, and it refuses a generator that is not committed at `HEAD`: a stamp names a tree
+that was actually measured and a command reproducible from the branch. It canonicalises **only the
+files that pass rewrote**, and writes `manifest.json` (HEAD, timestamp, command line, mode, tool
+versions, produced files) plus a self-check. A file the pass did not rewrite keeps its old stamp
+and is reported stale.
+
+The default pass is cheap by design: it regenerates everything except the expensive full-suite
+capture, so it finishes in seconds and reports its elapsed time and rewrite count. `--full` sets
+`T15_FULL=1` for the generator and runs the suite too; the mode is recorded in `manifest.json` and
+in every canonical stamp (`# HEAD=<sha> mode=fast|full`), so a reader can tell a cheap refresh from
+a complete one. It needs no network or API key, and a second run at the same HEAD is byte-identical
+so the diff stays reviewable.
 
 ## Build log
 
