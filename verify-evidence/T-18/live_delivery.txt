@@ -1,14 +1,15 @@
-# live acceptance for T-18 at HEAD 36c1969; tracked+untracked entries outside this home=0
-# throwaway ORCHESTRATOR_HOME=/tmp/t18-live-dms9foc7
+# live acceptance for T-18 at HEAD 46bb10b
+# throwaway ORCHESTRATOR_HOME=/tmp/t18-live5-9691c1b1
 probe: probed=True source='GetCapabilities' caps=actions,body,body-hyperlinks,body-images,body-markup,icon-static,persistence
 direct delivery: status=delivered reason='shown_unacknowledged' channel=notify-send shape=markup-escaped note=''
 pending before flush: [(1, 1, 'run_completed', 'pending'), (2, 2, 'run_completed', 'pending')]
 row: (1, 1, 'run_completed', 'delivered', 'shown_unacknowledged', 'notify-send', 'shown_unacknowledged')
 row: (2, 2, 'run_completed', 'coalesced', 'coalesced_into:1', 'notify-send', 'coalesced')
-deliver_calls: 1 titles: ["Coding Orchestrator \u2014 2 updates"]
+deliver_calls: 1 titles: ['Coding Orchestrator — 2 updates']
 distinct_run_ids: [1, 2]
 failed_rows: []
 delivered_rows: [1]
 coalesced_rows: [2]
 pending_rows: []
-wall: 2026-11-08T22:46:56
+wall: 2026-11-08T23:04:23
+# exit=0

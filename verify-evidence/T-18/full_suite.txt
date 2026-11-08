@@ -1,3 +1,5 @@
+# T-18 full suite at HEAD 46bb10b
+# command: ./scripts/orch_verify.sh test
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
 orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
@@ -13,8 +15,9 @@ orch-verify: pytest target /home/mrbigroom/.local/share/coding-orchestrator/work
 ........................................................................ [ 48%]
 ........................................................................ [ 57%]
 ........................................................................ [ 67%]
-........................................................................ [ 77%]
+........................................................................ [ 76%]
 ........................................................................ [ 86%]
 ........................................................................ [ 96%]
-.........................                                                [100%]
-735 passed, 10 skipped in 130.39s (0:02:10)
+..............................                                           [100%]
+740 passed, 10 skipped in 132.60s (0:02:12)
+# exit=0

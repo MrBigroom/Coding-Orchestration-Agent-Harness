@@ -1,4 +1,4 @@
-# T-18 lint at HEAD 36c1969
+# T-18 lint at HEAD 46bb10b
 # command: ./scripts/orch_verify.sh lint
 orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
 orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
@@ -9,3 +9,4 @@ orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchest
 ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18
 orch-verify: lint target  ruff check src tests
 All checks passed!
+# exit=0
