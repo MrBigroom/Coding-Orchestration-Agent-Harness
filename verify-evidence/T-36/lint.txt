@@ -1,13 +1,4 @@
-HEAD: 0afb70bedba44ecc8aaf835cdfe88d967273c366
-dirty_entries: 2
-command: ./scripts/orch_verify.sh lint
-orch-verify: worktree root /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-orch-verify: main repo     /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness
-orch-verify: venv python   /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python
-orch-verify: PYTHONPATH    /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src
-orch-verify: test root     /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/tests
-orch-verify: orchestrator.__file__ = /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py
+# HEAD=f49416ed3f12fa6000c691fb2d2970f7e2e56fb9 entries-outside-verify-evidence/T-36=0
+# command: ./scripts/orch_verify.sh lint
 ORCH_VERIFY|mode=lint|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36
-orch-verify: lint target  ruff check src tests
 All checks passed!
-lint_exit=0
