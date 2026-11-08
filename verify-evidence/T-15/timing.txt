@@ -1,7 +1,7 @@
-# HEAD=3ba76ac15a51ed522b90a272acc962a46709766d
+# HEAD=4e8d1889d1b8e11f714a4ecf6b4a0cba0ceedcae
 # command: date +%s%N around each step inside capture.sh (milliseconds)
-lint_ms=45
-focused_tests_ms=2592
-full_suite_ms=143740
-pass_total_ms=146382
+lint_ms=44
+focused_tests_ms=2575
+full_suite_ms=144137
+pass_total_ms=146762
 # 'orchestrator task evidence T-15' reports its own wall time and rewrite count.
