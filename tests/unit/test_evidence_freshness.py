@@ -435,3 +435,17 @@ def test_the_full_pass_is_opt_in_and_recorded_in_the_manifest(tmp_path: Path) ->
     assert result.mode == "full"
     assert manifest["mode"] == "full"
     assert manifest["stamp"].endswith("mode=full")
+
+
+def test_a_merge_commit_never_certifies_a_stamp(tmp_path: Path) -> None:
+    """`diff-tree` on a merge shows no files; it must not read as an empty, certifying commit."""
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "side")
+    _commit(repo, "side code", {"src/side.py": "x = 1\n"})
+    _git(repo, "checkout", "-q", "main")
+    _commit(repo, "main code", {"src/main.py": "y = 1\n"})
+    _git(repo, "merge", "-q", "--no-ff", "side", "-m", "merge side")
+    merge = _git(repo, "rev-parse", "HEAD").strip()
+    certifies, reason = ef._commit_class(repo, merge)
+    assert certifies is False
+    assert reason == "merge commit (explained, not certified)"

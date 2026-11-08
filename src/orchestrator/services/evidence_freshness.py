@@ -239,6 +239,11 @@ def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
     stale. That is the T-8 boundary: detection is the trailer, certification is the file list.
     """
     keys = {line.split(":", 1)[0].strip() for line in _trailers(repo, sha)}
+    parents = _git_text(repo, ["rev-list", "--parents", "-n", "1", sha]).split()[1:]
+    if len(parents) > 1:
+        # A merge can bring in any content; `diff-tree` on a merge shows nothing by default, so it
+        # must never be mistaken for the "empty commit" that certifies a stamp.
+        return False, "merge commit (explained, not certified)"
     files = [
         line.strip()
         for line in _git_text(
