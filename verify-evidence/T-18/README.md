@@ -3,8 +3,18 @@
 Code HEAD `46bb10b` (`fix(phase-18): make the pending-row claim unique, full-path-long and
 compare-and-set`). The full suite, focused `-vv` run, lint and both live scripts ran at this SHA;
 the later evidence commit changes only `verify-evidence/`, and `.orchestrator/` is gitignored.
-At capture time `git status --porcelain -uall` outside this directory was empty
-(`tracked+untracked entries outside this home=0` is also stamped inside every scripted capture).
+At capture time `git status --porcelain -uall` outside this directory was empty, so every count
+below belongs to the committed source at `46bb10b`.
+
+## Known limitations
+
+- The React-router half of DoD 5 is route-table inspection of `web/src/App.tsx` only. This repo has
+  no JS test runner, so the router is not mounted in a test; adding one is T-31's scope (operator
+  ruling, 2026-11-08). The fallback-UI half is a real `GET /tasks/7` request.
+- Only the `notify-send` transport was live-tested. The `gdbus` transport, its `Notify` id parsing
+  and the `<a href>` branch are covered against a fake transport, never a live daemon click.
+- The capture scripts live in `/tmp` and are deliberately not committed: they are throwaway
+  harnesses, and their outputs above are the evidence. They wrote no file inside the worktree.
 
 ## Raw captures (all re-run, nothing compressed)
 
