@@ -64,6 +64,11 @@ INDEX_NAME = "README.md"
 #: Bundle bookkeeping the driver writes after the capture: listed as a file, but never a reason for
 #: a "rewrite" count or a false manifest hash.
 NOT_MEASURED = (MANIFEST_NAME, AT_TIP_NAME, INDEX_NAME)
+#: Suffixes that make a path under the evidence root CODE no manifest can declare away. An output
+#: is a measurement; a script is executable and can change what gets measured, so a bundle that
+#: lists its own helper as an "output" must not thereby make a helper edit walkable
+#: (operator ruling 2026-11-10 (f), item 1).
+SCRIPT_SUFFIXES = frozenset({".sh", ".bash", ".py", ".js", ".ts", ".rb", ".pl"})
 #: The check is a property of code-writing tasks; an `agent`/`review` task writes no code and has no
 #: evidence bundle. Both call sites (supervisor verification and the Architect review) use this one
 #: predicate so a finding can never appear without a matching verification row.
@@ -271,6 +276,18 @@ def _author(repo: Path, sha: str) -> str:
     return _git_text(repo, ["show", "-s", "--format=%an <%ae>", sha]).strip() or "unknown"
 
 
+def _manifest_data(repo: Path, sha: str, rel_dir: str) -> dict | None:
+    """The bundle manifest committed at ``sha`` for ``rel_dir``, or None when there is none."""
+    text = _git_text(repo, ["show", f"{sha}:{rel_dir}/{MANIFEST_NAME}"])
+    if not text.strip():
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _manifest_declared_inputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
     """Paths the manifest at ``sha`` declares as a generator/input, relative to ``rel_dir``.
 
@@ -280,14 +297,8 @@ def _manifest_declared_inputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
     still has its ``capture.sh`` treated as a generator.
     """
     declared: set[str] = {CAPTURE_NAME}
-    text = _git_text(repo, ["show", f"{sha}:{rel_dir}/{MANIFEST_NAME}"])
-    if not text.strip():
-        return declared
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return declared
-    if not isinstance(data, dict):
+    data = _manifest_data(repo, sha, rel_dir)
+    if data is None:
         return declared
     generator = data.get("generator")
     if isinstance(generator, str) and generator.strip():
@@ -298,24 +309,64 @@ def _manifest_declared_inputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
     return declared
 
 
-def _generator_paths(repo: Path, shas: list[str], files: list[str]) -> set[str]:
-    """Repo-relative generator/input paths declared at ANY of ``shas`` for dirs in ``files``.
+def _manifest_declared_outputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
+    """Names the manifest at ``sha`` lists as bundle OUTPUTS (its ``files`` entries).
 
-    The union of the commit and its parent(s) matters: reading only the manifest at the commit
-    under classification lets a single commit edit a helper generator **and** drop it from
-    ``inputs`` in the same commit, so the commit would look evidence-only and be walked past. A
-    generator change would then certify itself. Declarations are unioned, never intersected; a
-    manifest cannot un-declare its way out of being code.
+    The whitelist half of the walkability rule (operator ruling 2026-11-10 (f), item 1). A
+    generator blacklist cannot hold: split the attack over two commits -- A drops `helper.sh` from
+    `inputs`, B edits `helper.sh` -- and by the time B is classified no manifest declares it, so B
+    looks evidence-only, the walk skips both, and a generator change certifies itself as fresh.
+    Declared outputs are the only paths a bundle pass writes, so anything else under the evidence
+    root is treated as code and stops the walk.
     """
-    directories = {
-        Path(path).parent.as_posix() for path in files if path.startswith(f"{EVIDENCE_ROOT}/")
-    }
+    data = _manifest_data(repo, sha, rel_dir)
+    if data is None:
+        return set()
+    entries = data.get("files")
+    if not isinstance(entries, list):
+        return set()
+    names: set[str] = set()
+    for entry in entries:
+        path = entry.get("path") if isinstance(entry, dict) else entry
+        if path and str(path).strip():
+            names.add(Path(str(path)).name)
+    return names
+
+
+def _evidence_dirs(files: list[str]) -> set[str]:
+    """Evidence directories named by a commit's file list, as posix relative paths."""
+    return {Path(path).parent.as_posix() for path in files if path.startswith(f"{EVIDENCE_ROOT}/")}
+
+
+def _declared_paths(
+    repo: Path, shas: list[str], files: list[str]
+) -> tuple[set[str], set[str], bool]:
+    """(generator paths, output paths, any-manifest-found) declared at ANY of ``shas``.
+
+    Declarations are unioned across the commit and its parents and never intersected: a manifest
+    cannot un-declare its way out of being code. The third value distinguishes a manifest-bearing
+    bundle from a legacy one, because the pre-manifest bundles in this repository have no `files`
+    list to whitelist against and must keep being judged by the generator blacklist alone.
+    """
     generators: set[str] = set()
+    outputs: set[str] = set()
+    found = False
     for sha in shas:
-        for directory in directories:
-            for name in _manifest_declared_inputs(repo, sha, directory):
-                generators.add(f"{directory}/{name}")
-    return generators
+        for directory in _evidence_dirs(files):
+            if _manifest_data(repo, sha, directory) is not None:
+                found = True
+            generators.update(
+                f"{directory}/{name}" for name in _manifest_declared_inputs(repo, sha, directory)
+            )
+            outputs.update(
+                f"{directory}/{name}" for name in _manifest_declared_outputs(repo, sha, directory)
+            )
+    return generators, outputs, found
+
+
+def _generator_paths(repo: Path, shas: list[str], files: list[str]) -> set[str]:
+    """Repo-relative generator/input paths declared at ANY of ``shas`` for dirs in ``files``."""
+    return _declared_paths(repo, shas, files)[0]
 
 
 def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
@@ -342,11 +393,24 @@ def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
     ]
     # Parent declarations count too (ruling 2026-11-10 (e), item 4): dropping a `inputs` entry in
     # the same commit that edits the helper must not hide the change from this classifier.
-    generators = _generator_paths(repo, [sha, *parents], files)
+    generators, outputs, has_manifest = _declared_paths(repo, [sha, *parents], files)
+    touched = set(files)
+    directories = _evidence_dirs(files)
+    # Bookkeeping the bundle writes about itself: the manifest cannot hash itself, the index is
+    # hand-maintained prose, and the at-tip report is written after the capture (NOT_MEASURED).
+    bookkeeping = {f"{directory}/{name}" for directory in directories for name in NOT_MEASURED}
+    scripts = {path for path in touched if Path(path).suffix in SCRIPT_SUFFIXES}
     evidence_only = (
         bool(files)
         and all(path.startswith(f"{EVIDENCE_ROOT}/") for path in files)
-        and not (set(files) & generators)
+        # A declared generator/input is code, whatever else the manifest says about it.
+        and not (touched & generators)
+        # No declaration can turn a script into a measurement (ruling (f), item 1).
+        and not scripts
+        # WHITELIST, not blacklist: with a manifest present, only the outputs it declares plus the
+        # bundle's own bookkeeping may be walked past. A legacy bundle with no manifest anywhere in
+        # the walk keeps the generator-blacklist rule, so pre-manifest bundles still certify.
+        and (not has_manifest or touched <= (outputs | bookkeeping))
     )
     if evidence_only:
         return True, "evidence-only commit"
@@ -953,8 +1017,15 @@ def regenerate_bundle(
     # unresolved made this a lexical check for exactly the case that matters.
     directory = Path(directory) if directory else evidence_dir(root, label)
     directory = directory.resolve()
-    if not directory.is_relative_to(root):
-        raise EvidenceBundleError(f"evidence directory {directory} is outside {root}")
+    # Containment is checked against the EVIDENCE ROOT, not the worktree root (ruling (f), item 2):
+    # a label like `../src` resolves inside the worktree, so a worktree-root check passes it and
+    # `src` then becomes the exempt rel_dir for the dirty guard and for canonicalisation -- the
+    # bundle would stamp, and excuse uncommitted dirt in, the very source tree it certifies.
+    evidence_root = (root / EVIDENCE_ROOT).resolve()
+    if not directory.is_relative_to(evidence_root):
+        raise EvidenceBundleError(
+            f"evidence directory {directory} is outside the evidence root {evidence_root}"
+        )
     rel_dir = directory.relative_to(root).as_posix()
     label = normalize_label(label)
     raw_head = head_sha(root)

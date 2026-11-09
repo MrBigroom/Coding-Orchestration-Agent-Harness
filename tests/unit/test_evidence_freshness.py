@@ -694,11 +694,14 @@ def test_an_evidence_only_commit_is_walkable_when_the_parent_declares_a_generato
 ) -> None:
     """(iii) The parent union does not block a genuine evidence-only commit."""
     repo = _repo(tmp_path)
+    # A real manifest lists what the pass produced (NOT_MEASURED excepted), so the fixture must
+    # too: under the ruling (f) whitelist a path under the evidence root that no manifest declares
+    # as an output is treated as code.
     manifest = json.dumps(
         {
             "generator": "verify-evidence/T-1/capture.sh",
             "inputs": ["capture.sh", "helper.py"],
-            "files": [],
+            "files": [{"path": "notes.txt", "sha256": "0" * 64}],
         }
     )
     _commit(
@@ -720,7 +723,7 @@ def test_dropping_an_untouched_generator_declaration_stays_evidence_only(tmp_pat
         {
             "generator": "verify-evidence/T-1/capture.sh",
             "inputs": ["capture.sh", "helper.py"],
-            "files": [],
+            "files": [{"path": "notes.txt", "sha256": "0" * 64}],
         }
     )
     _commit(
@@ -735,7 +738,7 @@ def test_dropping_an_untouched_generator_declaration_stays_evidence_only(tmp_pat
         {
             "generator": "verify-evidence/T-1/capture.sh",
             "inputs": ["capture.sh"],
-            "files": [],
+            "files": [{"path": "notes.txt", "sha256": "0" * 64}],
         }
     )
     commit = _commit(
@@ -950,3 +953,136 @@ def test_the_memory_scope_tests_keep_their_assertion_shape(tmp_path: Path) -> No
     failures = shape.shape_failures(root)
     assert len(failures) == 1
     assert failures[0].endswith('reason asserted by substring: "rejected" in row["why"]')
+
+
+# ------------------------------------------------- ruling (f): whitelist outputs, not generators
+def test_a_two_commit_split_cannot_make_a_generator_change_walkable(tmp_path: Path) -> None:
+    """R-75 finding 1 / ruling (f) item 1: the parent+child declaration union is not enough.
+
+    Commit A is manifest-only and drops `helper.py` from `inputs`; commit B then edits
+    `helper.py`. Under the union rule both looked evidence-only -- A because a manifest is bundle
+    bookkeeping, B because by then no manifest declared the helper -- so `_comparison_target`
+    walked past both and a generator change certified itself as fresh. `helper.py` is a script and
+    no manifest declares it as an OUTPUT, so B stops the walk and the bundle reads stale.
+    """
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    declared = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh", "helper.py"],
+            "files": [{"path": "full_suite.txt", "sha256": "0" * 64}],
+        }
+    )
+    _commit(
+        repo,
+        "bundle",
+        {
+            **_stamp_file(code),
+            "verify-evidence/T-1/manifest.json": declared,
+            "verify-evidence/T-1/helper.py": "print(0)\n",
+        },
+    )
+    undeclared = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh"],
+            "files": [{"path": "full_suite.txt", "sha256": "0" * 64}],
+        }
+    )
+    split = _commit(
+        repo,
+        "A: manifest only, drop the helper declaration",
+        {"verify-evidence/T-1/manifest.json": undeclared},
+    )
+    edited = _commit(
+        repo, "B: edit the helper", {"verify-evidence/T-1/helper.py": "print(1)\n"}
+    )
+
+    assert ef._commit_class(repo, split) == (True, "evidence-only commit")  # A alone is bookkeeping
+    assert ef._commit_class(repo, edited) == (False, None)  # B is code
+    result = ef.check_freshness(repo, edited, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.compared_commit == edited
+    assert result.stale_paths == ["verify-evidence/T-1/full_suite.txt"]
+    # The reason names both the stamp's commit and the comparison target it was measured against.
+    joined = result.evidence + result.notes + " ".join(result.stale_reasons.values())
+    assert ef._short(repo, code) in joined
+    assert ef._short(repo, edited) in joined
+
+
+def test_a_script_is_code_even_when_the_manifest_declares_it_as_an_output(tmp_path: Path) -> None:
+    """Ruling (f) item 1: no declaration can turn an executable into a measurement.
+
+    Without the suffix rule, declaring the helper under `files` would whitelist it and re-open the
+    self-certification hole through the other door.
+    """
+    repo = _repo(tmp_path)
+    manifest = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh"],
+            "files": [{"path": "helper.py", "sha256": "0" * 64}],
+        }
+    )
+    _commit(
+        repo,
+        "bundle declares the helper as an output",
+        {
+            "verify-evidence/T-1/manifest.json": manifest,
+            "verify-evidence/T-1/helper.py": "print(0)\n",
+        },
+    )
+    commit = _commit(
+        repo, "edit the declared helper", {"verify-evidence/T-1/helper.py": "print(1)\n"}
+    )
+    assert ef._commit_class(repo, commit) == (False, None)
+
+
+def test_a_bundle_commit_touching_outputs_manifest_and_index_is_walkable(tmp_path: Path) -> None:
+    """The whitelist must not break the ordinary case it exists for.
+
+    A real bundle commit writes the declared outputs plus the three NOT_MEASURED bookkeeping files
+    (the manifest cannot hash itself, the index is prose, the at-tip report is written last). If
+    those were not allowed, every bundle would report stale on the commit that ships it.
+    """
+    repo = _repo(tmp_path)
+    _commit(repo, "generator", {"verify-evidence/T-1/capture.sh": CAPTURE})
+    manifest = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh"],
+            "files": [
+                {"path": "full_suite.txt", "sha256": "0" * 64},
+                {"path": "lint.txt", "sha256": "1" * 64},
+            ],
+        }
+    )
+    commit = _commit(
+        repo,
+        "bundle",
+        {
+            "verify-evidence/T-1/manifest.json": manifest,
+            "verify-evidence/T-1/full_suite.txt": "# HEAD=x\nsuite: 3 passed\n",
+            "verify-evidence/T-1/lint.txt": "# HEAD=x\nAll checks passed!\n",
+            "verify-evidence/T-1/README.md": "# index\n",
+            "verify-evidence/T-1/freshness_at_tip.txt": "delivered_tip=x\ncompared=x\n",
+        },
+    )
+    assert ef._commit_class(repo, commit) == (True, "evidence-only commit")
+
+
+def test_regenerate_bundle_refuses_a_label_that_escapes_the_evidence_root(tmp_path: Path) -> None:
+    """Ruling (f) item 2: containment is the EVIDENCE root, not the worktree root.
+
+    `../src` resolves inside the worktree, so the old `is_relative_to(root)` check waved it through
+    and `src` became the exempt `rel_dir` for the dirty guard and for canonicalisation -- the
+    bundle would have stamped, and excused uncommitted dirt in, the very source tree it certifies.
+    """
+    repo = _bundle_repo(tmp_path)
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "app.py").write_text("x = 1\n")
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "../src")
+    assert "evidence root" in str(exc.value)
+    assert not (repo / "src" / "suite.txt").exists()
