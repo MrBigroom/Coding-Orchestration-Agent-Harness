@@ -1,4 +1,4 @@
-# HEAD=332b1687febd0d8469e5a39ebf1b0fb6ed2ac5a1 mode=full
+# HEAD=c793502948b7ded066d5fde56c4c2f5a34bc5f3b mode=full
 # command: python3 scripts/t15_assertion_shape.py (AST, no pinned counts)
 tests/unit/test_memory_scopes.py: conjoined_asserts=4 (all must be justified, none counted)
   l.333: one outcome -> one outcome: nothing was half-assigned, so there is no dirty row and no new row to commit

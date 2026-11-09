@@ -1,4 +1,4 @@
-# HEAD=332b1687febd0d8469e5a39ebf1b0fb6ed2ac5a1 mode=full
+# HEAD=c793502948b7ded066d5fde56c4c2f5a34bc5f3b mode=full
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_evidence_freshness.py tests/integration/test_evidence_freshness.py plus the two DoD-4 memory nodes
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15
 tests/unit/test_evidence_freshness.py::test_every_legacy_stamp_shape_is_parsed[# HEAD=0123456789abcdef0123456789abcdef01234567-0123456789abcdef0123456789abcdef01234567] PASSED
@@ -61,6 +61,10 @@ tests/unit/test_evidence_freshness.py::test_a_fast_pass_leaves_timing_txt_untouc
 tests/unit/test_evidence_freshness.py::test_the_at_tip_report_names_the_commit_it_compared PASSED
 tests/unit/test_evidence_freshness.py::test_the_at_tip_report_refuses_to_claim_pass_on_a_stale_bundle PASSED
 tests/unit/test_evidence_freshness.py::test_the_memory_scope_tests_keep_their_assertion_shape PASSED
+tests/unit/test_evidence_freshness.py::test_a_two_commit_split_cannot_make_a_generator_change_walkable PASSED
+tests/unit/test_evidence_freshness.py::test_a_script_is_code_even_when_the_manifest_declares_it_as_an_output PASSED
+tests/unit/test_evidence_freshness.py::test_a_bundle_commit_touching_outputs_manifest_and_index_is_walkable PASSED
+tests/unit/test_evidence_freshness.py::test_regenerate_bundle_refuses_a_label_that_escapes_the_evidence_root PASSED
 tests/integration/test_evidence_freshness.py::test_stale_evidence_is_reported_without_flipping_the_verdict PASSED
 tests/integration/test_evidence_freshness.py::test_the_existing_checks_and_frozen_artifact_names_are_unchanged PASSED
 tests/integration/test_evidence_freshness.py::test_an_absent_bundle_is_not_applicable PASSED
@@ -70,4 +74,4 @@ tests/integration/test_evidence_freshness.py::test_never_committed_evidence_is_n
 tests/integration/test_evidence_freshness.py::test_an_agent_kind_task_gets_neither_the_row_nor_the_finding PASSED
 tests/unit/test_memory_scopes.py::test_fix_scopes_leaves_rejected_rows_alone PASSED
 tests/unit/test_memory_scopes.py::test_the_rejected_reason_assertion_fails_when_the_reason_changes PASSED
-============================== 69 passed ==============================
+============================== 73 passed ==============================

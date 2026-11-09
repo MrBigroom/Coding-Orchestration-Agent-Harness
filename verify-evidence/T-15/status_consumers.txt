@@ -1,4 +1,4 @@
-# HEAD=332b1687febd0d8469e5a39ebf1b0fb6ed2ac5a1 mode=full
+# HEAD=c793502948b7ded066d5fde56c4c2f5a34bc5f3b mode=full
 # Commands actually run, with their UNEDITED output FIRST, then per-area excerpts
 # (ruling 2026-11-10 (e) items 1-2). The repo-wide greps cover all of src/ and web/src,
 # so completeness is shown rather than asserted; the two negative results the operator
@@ -46,11 +46,11 @@ src/orchestrator/services/supervisor_service.py:754:        task.merge_status = 
 src/orchestrator/services/sync_service.py:389:        return "skipped"
 src/orchestrator/services/sync_service.py:410:    result = {"applied": 0, "adopted": 0, "skipped": 0, "conflicts": 0, "errors": 0}
 src/orchestrator/services/sync_transport.py:117:        totals = {"applied": 0, "adopted": 0, "skipped": 0, "conflicts": 0, "errors": 0}
-src/orchestrator/services/evidence_freshness.py:79:STATE_PASS = "pass"  # noqa: S105 - a check state, not a credential
-src/orchestrator/services/evidence_freshness.py:81:STATE_NOT_APPLICABLE = "not_applicable"
-src/orchestrator/services/evidence_freshness.py:180:        return "pass"  # noqa: S105 - frozen status value
-src/orchestrator/services/evidence_freshness.py:182:        return "fail" if strict else "stale"
-src/orchestrator/services/evidence_freshness.py:183:    return "not_applicable"
+src/orchestrator/services/evidence_freshness.py:84:STATE_PASS = "pass"  # noqa: S105 - a check state, not a credential
+src/orchestrator/services/evidence_freshness.py:86:STATE_NOT_APPLICABLE = "not_applicable"
+src/orchestrator/services/evidence_freshness.py:185:        return "pass"  # noqa: S105 - frozen status value
+src/orchestrator/services/evidence_freshness.py:187:        return "fail" if strict else "stale"
+src/orchestrator/services/evidence_freshness.py:188:    return "not_applicable"
 src/orchestrator/utils/truncate.py:39:    counts = {"passed": 0, "failed": 0, "skipped": 0}
 src/orchestrator/utils/truncate.py:55:            elif kind.startswith("fail"):
 src/orchestrator/utils/truncate.py:57:            elif kind == "skipped":
