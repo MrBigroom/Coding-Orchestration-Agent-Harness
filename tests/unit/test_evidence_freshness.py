@@ -622,6 +622,133 @@ def test_an_evidence_directory_that_lexically_escapes_is_refused(tmp_path: Path)
     assert "outside" in str(exc.value)
 
 
+def test_the_default_evidence_path_is_resolved_too(tmp_path: Path) -> None:
+    """Ruling (e) item 3: the CLI uses the default path, so a `..` label must be refused there.
+
+    The explicit `directory` argument was the only side resolved, so the containment check stayed
+    lexical for exactly the path operators use.
+    """
+    repo = _bundle_repo(tmp_path)
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "../../escape")
+    assert "outside" in str(exc.value)
+
+
+def test_a_generator_edit_cannot_certify_itself_by_dropping_its_declaration(
+    tmp_path: Path,
+) -> None:
+    """Ruling (e) item 4: declared inputs are unioned with the parent(s).
+
+    Without the union, one commit could edit a helper generator AND remove it from `inputs`, so
+    the manifest at that commit no longer declares it, the commit classifies as evidence-only, the
+    walk-back skips it, and the bundle reports pass on a generator change.
+    """
+    repo = _repo(tmp_path)
+    declares_helper = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh", "helper.py"],
+            "files": [],
+        }
+    )
+    code = _commit(
+        repo,
+        "code plus a bundle that declares its helper",
+        {
+            "src/app.py": "x = 1\n",
+            "verify-evidence/T-1/manifest.json": declares_helper,
+            "verify-evidence/T-1/helper.py": "print(0)\n",
+        },
+    )
+    # A genuine bundle commit on top is evidence-only and walked past, so the target is `code`.
+    _commit(
+        repo,
+        "bundle stamped at the code HEAD",
+        {"verify-evidence/T-1/full_suite.txt": f"# HEAD={code}\n3 passed\n"},
+    )
+    drops_helper = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh"],
+            "files": [],
+        }
+    )
+    commit = _commit(
+        repo,
+        "change the helper and drop the declaration in the same commit",
+        {
+            "verify-evidence/T-1/helper.py": "print(1)\n",
+            "verify-evidence/T-1/manifest.json": drops_helper,
+        },
+    )
+    walkable, reason = ef._commit_class(repo, commit)
+    assert walkable is False
+    assert reason is None
+    result = ef.check_freshness(repo, commit, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.compared_commit == commit
+
+
+def test_an_evidence_only_commit_is_walkable_when_the_parent_declares_a_generator(
+    tmp_path: Path,
+) -> None:
+    """(iii) The parent union does not block a genuine evidence-only commit."""
+    repo = _repo(tmp_path)
+    manifest = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh", "helper.py"],
+            "files": [],
+        }
+    )
+    _commit(
+        repo,
+        "bundle declares a helper",
+        {
+            "verify-evidence/T-1/manifest.json": manifest,
+            "verify-evidence/T-1/helper.py": "print(0)\n",
+        },
+    )
+    commit = _commit(repo, "add notes only", {"verify-evidence/T-1/notes.txt": "done\n"})
+    assert ef._commit_class(repo, commit) == (True, "evidence-only commit")
+
+
+def test_dropping_an_untouched_generator_declaration_stays_evidence_only(tmp_path: Path) -> None:
+    """(iv) A child that never touches the helper is not blocked by the parent's declaration."""
+    repo = _repo(tmp_path)
+    manifest = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh", "helper.py"],
+            "files": [],
+        }
+    )
+    _commit(
+        repo,
+        "bundle declares a helper",
+        {
+            "verify-evidence/T-1/manifest.json": manifest,
+            "verify-evidence/T-1/helper.py": "print(0)\n",
+        },
+    )
+    rewritten = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh"],
+            "files": [],
+        }
+    )
+    commit = _commit(
+        repo,
+        "add notes and re-declare inputs without touching the helper",
+        {
+            "verify-evidence/T-1/notes.txt": "done\n",
+            "verify-evidence/T-1/manifest.json": rewritten,
+        },
+    )
+    assert ef._commit_class(repo, commit) == (True, "evidence-only commit")
+
+
 def test_a_merge_commit_never_certifies_a_stamp(tmp_path: Path) -> None:
     """`diff-tree` on a merge shows no files; it must not read as an empty, certifying commit."""
     repo = _repo(tmp_path)

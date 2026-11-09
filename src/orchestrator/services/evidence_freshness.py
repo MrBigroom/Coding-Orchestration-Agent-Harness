@@ -298,15 +298,23 @@ def _manifest_declared_inputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
     return declared
 
 
-def _generator_paths(repo: Path, sha: str, files: list[str]) -> set[str]:
-    """Repo-relative generator/input paths at ``sha`` for every evidence dir in ``files``."""
+def _generator_paths(repo: Path, shas: list[str], files: list[str]) -> set[str]:
+    """Repo-relative generator/input paths declared at ANY of ``shas`` for dirs in ``files``.
+
+    The union of the commit and its parent(s) matters: reading only the manifest at the commit
+    under classification lets a single commit edit a helper generator **and** drop it from
+    ``inputs`` in the same commit, so the commit would look evidence-only and be walked past. A
+    generator change would then certify itself. Declarations are unioned, never intersected; a
+    manifest cannot un-declare its way out of being code.
+    """
     directories = {
         Path(path).parent.as_posix() for path in files if path.startswith(f"{EVIDENCE_ROOT}/")
     }
     generators: set[str] = set()
-    for directory in directories:
-        for name in _manifest_declared_inputs(repo, sha, directory):
-            generators.add(f"{directory}/{name}")
+    for sha in shas:
+        for directory in directories:
+            for name in _manifest_declared_inputs(repo, sha, directory):
+                generators.add(f"{directory}/{name}")
     return generators
 
 
@@ -332,7 +340,9 @@ def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
         ).splitlines()
         if line.strip()
     ]
-    generators = _generator_paths(repo, sha, files)
+    # Parent declarations count too (ruling 2026-11-10 (e), item 4): dropping a `inputs` entry in
+    # the same commit that edits the helper must not hide the change from this classifier.
+    generators = _generator_paths(repo, [sha, *parents], files)
     evidence_only = (
         bool(files)
         and all(path.startswith(f"{EVIDENCE_ROOT}/") for path in files)
@@ -937,9 +947,12 @@ def regenerate_bundle(
     root = Path(root).resolve()
     if not (root / ".git").exists():
         raise EvidenceBundleError(f"{root} is not a git worktree")
-    # Resolve BOTH sides: `is_relative_to` without `resolve()` is a lexical check, so a path with
-    # `..` could pass it while pointing outside the worktree.
-    directory = Path(directory).resolve() if directory else evidence_dir(root, label)
+    # Resolve BOTH sides — the explicit argument AND the default path built from the label —
+    # because `is_relative_to` without `resolve()` is a lexical check, so a path with `..` could
+    # pass it while pointing outside the worktree. The CLI uses the default path, so leaving it
+    # unresolved made this a lexical check for exactly the case that matters.
+    directory = Path(directory) if directory else evidence_dir(root, label)
+    directory = directory.resolve()
     if not directory.is_relative_to(root):
         raise EvidenceBundleError(f"evidence directory {directory} is outside {root}")
     rel_dir = directory.relative_to(root).as_posix()

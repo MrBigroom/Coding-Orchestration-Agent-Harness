@@ -114,12 +114,45 @@ fi
 if want status_consumers.txt; then
   T0=$(now)
   { echo "$STAMP"
-    echo "# Every consumer of VerificationCheck.status, quoted raw (CCR-T15-01): the Literal"
-    echo "# itself, the Supervisor row (the line the reviewer found missing), the verification.md"
-    echo "# renderer, the GUI status-to-tone map, the review call site, and every verification_status"
-    echo "# filter. No edits."
+    echo "# Commands actually run, with their UNEDITED output FIRST, then per-area excerpts"
+    echo "# (ruling 2026-11-10 (e) items 1-2). The repo-wide greps cover all of src/ and web/src,"
+    echo "# so completeness is shown rather than asserted; the two negative results the operator"
+    echo "# named are visible in that raw output: web/src has no union of the four check values,"
+    echo "# and web/src/api/types.ts types verification_status as string | null."
     echo
-    echo "## (1) the frozen Literal + the additive stale value"
+    echo "## COMMAND 1 -- every quoted check-status value in src/ and web/src"
+    echo '$ grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules -E '\''"(pass|fail|skipped|not_applicable)"'\'' src web/src'
+    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules -E '"(pass|fail|skipped|not_applicable)"' src web/src
+    echo
+    echo "## COMMAND 2 -- every verification_status reference in src/ and web/src"
+    echo '$ grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules '\''verification_status'\'' src web/src'
+    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules 'verification_status' src web/src
+    echo
+    echo "## COMMAND 3 -- the frozen Literal(s)"
+    echo '$ grep -rn --exclude-dir=__pycache__ '\''status: Literal'\'' src'
+    grep -rn --exclude-dir=__pycache__ 'status: Literal' src
+    echo
+    echo "## COMMAND 4 -- the GUI status-to-tone map (including the additive stale value)"
+    echo '$ grep -n -E '\''(^|[ {])(pass|fail|not_applicable|skipped|stale):'\'' web/src/components/ui.tsx'
+    grep -n -E '(^|[ {])(pass|fail|not_applicable|skipped|stale):' web/src/components/ui.tsx
+    echo
+    echo "## COMMAND 5 -- the verification.md renderer emits c.status unchanged"
+    echo '$ grep -n '\''c.status'\'' src/orchestrator/services/artifact_service.py'
+    grep -n 'c.status' src/orchestrator/services/artifact_service.py
+    echo
+    echo "## COMMAND 6 -- the Supervisor verification row (the line a reviewer found missing)"
+    echo '$ grep -n -E '\''evidence_freshness\.(CHECK_NAME|check_status|check_freshness)|status=status'\'' src/orchestrator/services/supervisor_service.py'
+    grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness)|status=status' \
+      src/orchestrator/services/supervisor_service.py
+    echo
+    echo "## COMMAND 7 -- the Architect review call site"
+    echo '$ grep -n -E '\''evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE_STALE)'\'' src/orchestrator/services/review_service.py'
+    grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE_STALE)' \
+      src/orchestrator/services/review_service.py
+    echo
+    echo "## RAW OUTPUT ENDS HERE; per-line excerpts with file prefixes follow"
+    echo
+    echo "## (1) the frozen five-value Literal"
     grep -n 'status: Literal' src/orchestrator/core/schemas.py
     echo
     echo "## (2) Supervisor verification builds the row (supervisor_service.py)"
@@ -135,9 +168,6 @@ if want status_consumers.txt; then
     echo
     echo "## (5) GUI status-to-tone map (web/src/components/ui.tsx)"
     grep -n -E '(^|[ {])(pass|fail|not_applicable|skipped|stale):' web/src/components/ui.tsx
-    echo
-    echo "## (6) every verification_status consumer"
-    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules 'verification_status' src web/src
   } > "$OUT/status_consumers.txt"
   emit status_consumers "$(ms "$T0" "$(now)")"
 fi

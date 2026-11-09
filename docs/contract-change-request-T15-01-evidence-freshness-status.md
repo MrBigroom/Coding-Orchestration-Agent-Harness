@@ -35,8 +35,15 @@ strict rule). A run written before this change simply never uses the new value.
    `tests/unit/test_evidence_freshness.py::test_the_stale_row_renders_into_verification_md`.
 6. `docs/frozen-contracts.md`: the verification.json entry lists the fifth value and this request.
 
-`grep -rn "not_applicable\|verification_status"` over `src/`, `web/` and `tests/` is quoted in the
-handoff to show the consumer list is complete.
+The consumer list was verified rather than asserted: `verify-evidence/T-15/status_consumers.txt`
+records the commands actually run and their unedited output over all of `src/` and `web/src/`
+(including the two expected negative results), followed by the per-line excerpts. Two files that
+look like consumers need no change, and the raw output shows why: `web/src/api/types.ts:36` types
+`verification_status` as `string | null`, not a union of the four values, and
+`web/src/pages/Projects.tsx:66` renders the project-doctor shape `c.ok ? "pass" : "fail"`, a
+different structure. The four-value union appears only in `core/schemas.py:88`; `stale` is added
+there, handled in `services/supervisor_service.py`, mapped to `warn` in
+`web/src/components/ui.tsx`, and rendered unchanged by `artifact_service.render_verification_md`.
 
 The check still never flips the final verdict by itself: `stale` is a reported status, `fail` is
 only the operator's configurable strict rule, and a stale bundle never sets `contradicts_worker`.
