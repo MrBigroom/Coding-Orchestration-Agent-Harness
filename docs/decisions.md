@@ -401,6 +401,36 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   The operator-facing rule is recorded in `docs/build-loop.md`: a machine verdict is only as
   trustworthy as its resolver, so read the row's resolution evidence before believing a
   `confirmed`.
+
+- **2026-11-08 — T-36: the allocator must satisfy the invariant the auditor enforces.**
+  `render_diff_budget` allocated first-come-first-served until the group budget ran out, so on a
+  large branch the tail of the file list got exactly 0 bytes and `review_audit.diff_completeness`
+  then filed a blocking finding for each one (measured on R-68: 8 of 30 files at zero bytes, and 9
+  of that round's 17 findings were budget artifacts). Raising `max_diff_tokens` did not help:
+  doubling it to 24000 moved the per-file share only 709 -> 929, because the share is
+  `budget // file_count` and the file count had grown. So every diffstat file now gets a
+  **160-token first-hunk floor before any file receives more**, and the floor render is hard-capped
+  at that number by `estimate_tokens`, making `file_count * 160` a bound rather than an average.
+  At the default `max_diff_tokens=12000`: post-header 11700, source share 7800 with the T-16
+  compensation reserve, `40 * 160 = 6400` leaves 1400 for the remainder (48 files still fit; 73
+  without a reserve). The remainder is allocated by **delivered** bytes rather than by the token
+  target: `_chunk_head` stops on whole hunk boundaries, so a share that renders short is offered
+  back to the group and later files instead of being counted as spent while README/docs sit at
+  their floor (T-36 review round 6). The evidence reserve and the auditor are unchanged; a file
+  still omitted at the default budget still raises `review_diff_incomplete`. The manifest keeps
+  its columns and splits the floor-only reason: *remainder exhausted* only when the group budget
+  was fully committed by delivered bytes, *share under the floor* only when the file's effective
+  ceiling is at or below `DIFF_FILE_FLOOR_TOKENS` -- `max(per_file, cap)` for the source group,
+  since the top-up pass may spend up to `cap` even when the fair share is smaller, and the evidence
+  group is uncapped after its fair-share pass so it never gets this claim -- and *next hunk did not
+  fit* when that ceiling was larger than the floor and hunk granularity left the group's leftover
+  tokens unspent. No branch claims the unallocated tokens went to other files. (T-36 round 7
+  corrected a string that asserted the share was under the floor without comparing it, on a branch
+  whose measured `per_file` was 1114 with 1769 tokens unspent. Round 8 corrected the comparison
+  again: `per_file` alone is not the ceiling, because at the default budget 49 files give
+  `per_file=159` while `cap=3900`.) A path
+  whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor and is
+  named omitted rather than given bytes that would break the bound.
 - **2026-11-08 — T-15: committed evidence freshness is a deterministic stamp comparison, and the
   bundle has one committed generator.** The gate adds one additive verification check
   (`committed evidence freshness`) next to "claimed files exist on disk". Its status stays in the

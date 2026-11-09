@@ -6,6 +6,9 @@
 # usage: scripts/harness-bench/bench.sh [harness ...]
 #   harnesses: qwen_code qwen_code_tuned claude_code opencode codex crush pi pi_cache
 #              dsh aider mini   (default: all)
+#   opt-in:    qoder qoder_cache — need a logged-in Qoder account whose plan allows custom
+#              model providers (BYOK). They run with your real HOME so the login is used;
+#              the mock provider is added only via --settings for that run.
 # needs: node >= 22, npm, uv, git; `claude` on PATH for claude_code.
 set -euo pipefail
 B="$(cd "$(dirname "$0")" && pwd)"
@@ -106,6 +109,43 @@ run() { # run <name> <cmd...>: fresh HOME + scrubbed env, logs moved to .work/lo
   printf '%-16s exit=%s\n' "$name" "$status"
 }
 
+run_logged_in() { # like run, but keeps the real HOME and the D-Bus session (Qoder keeps its
+  # login in the desktop keyring via keytar), so the harness's own login is used
+  local name="$1"
+  shift
+  rm -rf "$W/logs/_" "$W/logs/$name" "$W/runs/$name"
+  mkdir -p "$W/logs/_" "$W/runs"
+  cp -r "$W/proj" "$W/runs/$name"
+  local status=0
+  (cd "$W/runs/$name" && env -i PATH="$PATH" TERM=dumb LANG=C.UTF-8 HOME="$HOME" \
+    ${XDG_CONFIG_HOME:+XDG_CONFIG_HOME="$XDG_CONFIG_HOME"} \
+    ${XDG_RUNTIME_DIR:+XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"} \
+    ${DBUS_SESSION_BUS_ADDRESS:+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"} \
+    ${QODER_PERSONAL_ACCESS_TOKEN:+QODER_PERSONAL_ACCESS_TOKEN="$QODER_PERSONAL_ACCESS_TOKEN"} \
+    NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" \
+    HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
+    NODE_EXTRA_CA_CERTS="${NODE_EXTRA_CA_CERTS:-}" SSL_CERT_FILE="${SSL_CERT_FILE:-}" \
+    timeout 180 "$@" </dev/null >"$W/logs/$name.out" 2>&1) || status=$?
+  sleep 1
+  mv "$W/logs/_" "$W/logs/$name"
+  printf '%-16s exit=%s\n' "$name" "$status"
+  [ "$status" = 0 ] || tail -5 "$W/logs/$name.out" | sed 's/^/    /'
+}
+
+qoder_settings() { # qoder_settings <cacheControl true|false>: custom provider -> mock
+  cat >"$W/qoder-settings-$1.json" <<EOF
+{"providers":{"benchmock":{"type":"openai-compatible","protocol":"openai","authType":"bearer",
+  "baseUrl":"$U/v1","apiKey":"x","displayName":"Bench Mock","model":"qwen3.8-flash",
+  "models":[{"model":"qwen3.8-flash","contextWindow":128000,
+             "capabilities":{"tools":true,"cacheControl":$1}}]}}}
+EOF
+  echo "$W/qoder-settings-$1.json"
+}
+
+if printf '%s\n' "$@" | grep -qx 'qoder\|qoder_cache' && [ ! -x "$P/qodercli" ]; then
+  (cd "$W" && npm install --no-fund --no-audit @qoder-ai/qodercli)
+fi
+
 ALL=(qwen_code qwen_code_tuned claude_code opencode codex crush pi pi_cache dsh aider mini)
 for h in "${@:-${ALL[@]}}"; do
   case "$h" in
@@ -132,6 +172,10 @@ for h in "${@:-${ALL[@]}}"; do
   mini) run "$h" env OPENAI_API_KEY=x OPENAI_API_BASE="$U/v1" MSWEA_COST_TRACKING=ignore_errors \
     MSWEA_CONFIGURED=true "$W/py/bin/mini" -m openai/qwen3.8-flash -y --exit-immediately \
     --agent-class default -t "$Q" ;;
+  qoder | qoder_cache)
+    [ "$h" = qoder_cache ] && cc=true || cc=false
+    run_logged_in "$h" "$P/qodercli" --settings "$(qoder_settings $cc)" -m benchmock/qwen3.8-flash \
+      --permission-mode accept_edits --no-session-persistence -p "$Q" ;;
   *) echo "unknown harness: $h" >&2 ;;
   esac
 done

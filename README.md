@@ -283,7 +283,15 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
 - Token counts are estimates (~4 characters per token), not tokenizer-exact.
 - **Review-input completeness is not code correctness.** Diff completeness proves only that a
   changed file has at least one hunk in the text the reviewer was actually sent (T-16); it cannot
-  prove the hunk is complete or that a claim is true. Sensitive files are deliberately withheld
+  prove the hunk is complete, that the file compiles, or that a claim is true. T-36 funds a
+  160-token first-hunk floor per changed file out of `ORCHESTRATOR_MAX_DIFF_TOKENS` before any
+  file gets more (48 files fit in the default 7800-token source share with the evidence reserve,
+  73 without it), and caps each floor render at that number so the arithmetic is a bound and not
+  an average. A floor-sized hunk can therefore be the first hunk only, a middle slice of it, or --
+  for a path longer than 289 characters, whose `diff --git` header alone exceeds the floor --
+  nothing at all, with the manifest saying which. It proves the file was represented, never that
+  the reviewer saw the rest of it. Files beyond the floor budget are still omitted, and the auditor
+  still raises its blocking finding for them. Sensitive files are deliberately withheld
   (`# [sensitive file omitted]`), and the archived `patch.diff` remains the full record. Redaction
   rows in `review_payload.md` name the pattern class and count, never the secret or the
   substituted value. The compensation-artifact reserve can still be too small for an oversized

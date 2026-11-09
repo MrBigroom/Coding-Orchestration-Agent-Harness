@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from sqlmodel import col, select
@@ -11,6 +12,7 @@ from orchestrator.core.config import get_settings
 from orchestrator.core.models import BuildLogEntry, Review
 from orchestrator.core.schemas import ProjectCreate, TaskCreate
 from orchestrator.services import artifact_service, project_service, run_service, task_service
+from orchestrator.utils.git import run_git
 from tests.conftest import make_repo, requires_git
 
 pytestmark = requires_git
@@ -131,6 +133,49 @@ def test_visibility_claim_is_refuted_by_the_supplied_patch_not_by_the_file_exist
     assert any(
         line.startswith("mechanical absence checks: 0 confirmed, 1 refuted, 0 unchecked")
         for line in review_json.get("notes", [])
+    )
+
+
+def test_an_over_budget_diff_still_fires_review_diff_incomplete(session, project, monkeypatch):
+    """T-36 DoD 5(e): a floor is a guarantee, not an excuse to stop auditing omissions."""
+    repo = Path(project.path)
+    run_git(["checkout", "-q", "-b", "t36-heavy-diff"], repo)
+    for i in range(12):
+        path = repo / "src" / f"heavy_{i}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(f"value = {n}" for n in range(400)) + "\n")
+    run_git(["-c", "user.name=w", "-c", "user.email=w@w", "add", "-A"], repo)
+    run_git(
+        ["-c", "user.name=w", "-c", "user.email=w@w", "commit", "-q", "-m", "heavy diff"],
+        repo,
+    )
+    run_git(["checkout", "-q", "main"], repo)
+    task = task_service.create(
+        session,
+        TaskCreate(
+            title="over budget diff",
+            project_id=project.id,
+            tags=["mock"],
+            phase_number=1,
+            phase_slug="over-budget",
+            definition_of_done=["MOCK_CHANGE.md updated"],
+        ),
+    )
+    task.branch_name = "t36-heavy-diff"
+    session.add(task)
+    session.commit()
+    monkeypatch.setattr(get_settings(), "max_diff_tokens", 300)
+    asyncio.run(run_service.run_task_now(session, task))
+    events = _events(session, task, "review_diff_incomplete")
+    assert len(events) == 1, [e.details for e in events]
+    assert "heavy_" in events[0].details
+    # The auditor still reports the omitted files as blocking; nothing was waived.
+    review = session.exec(select(Review).order_by(col(Review.id).desc())).first()
+    assert review is not None
+    assert any(
+        finding["file_or_area"].endswith(".py")
+        and "harness-detected diff completeness" in finding["issue"]
+        for finding in review.findings
     )
 
 
