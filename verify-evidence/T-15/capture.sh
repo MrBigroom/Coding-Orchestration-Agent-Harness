@@ -150,6 +150,13 @@ if want status_consumers.txt; then
     grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE_STALE)' \
       src/orchestrator/services/review_service.py
     echo
+    echo "## COMMAND 8 -- the dependency-free fallback UI's tone map (a presentational table)"
+    echo '$ grep -n -E '\''^(const TONE|  in_progress|  rejected)|TONE\[v\]'\'' src/orchestrator/api/static_fallback/index.html'
+    grep -n -E '^(const TONE|  in_progress|  rejected)|TONE\[v\]' src/orchestrator/api/static_fallback/index.html
+    echo "# NEGATIVE RESULT: the fallback tone table lists neither skipped nor not_applicable either,"
+    echo "# and an unknown value falls through TONE[v] || \"\": it is a presentation map, not a"
+    echo "# filter, so no verification status is dropped and no entry is required for stale."
+    echo
     echo "## RAW OUTPUT ENDS HERE; per-line excerpts with file prefixes follow"
     echo
     echo "## (1) the frozen five-value Literal"

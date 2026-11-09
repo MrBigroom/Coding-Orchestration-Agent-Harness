@@ -1,10 +1,107 @@
-# HEAD=e1bb380c4672116eacffbe2e73c912aa1092c177 mode=full
-# Every consumer of VerificationCheck.status, quoted raw (CCR-T15-01): the Literal
-# itself, the Supervisor row (the line the reviewer found missing), the verification.md
-# renderer, the GUI status-to-tone map, the review call site, and every verification_status
-# filter. No edits.
+# HEAD=d658cd2097c1f11b0a9ef7c91ce0689e9223f29b mode=full
+# Commands actually run, with their UNEDITED output FIRST, then per-area excerpts
+# (ruling 2026-11-10 (e) items 1-2). The repo-wide greps cover all of src/ and web/src,
+# so completeness is shown rather than asserted; the two negative results the operator
+# named are visible in that raw output: web/src has no union of the four check values,
+# and web/src/api/types.ts types verification_status as string | null.
 
-## (1) the frozen Literal + the additive stale value
+## COMMAND 1 -- every quoted check-status value in src/ and web/src
+$ grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules -E '"(pass|fail|skipped|not_applicable)"' src web/src
+src/orchestrator/adapters/mock_harness.py:145:        "tests": {"command": "", "passed": 0, "failed": 0, "skipped": 0, "log_path": ""},
+src/orchestrator/api/static_fallback/index.html:147:      ${a.map((x) => `<tr><td>${esc(x.name)} ${x.experimental ? '<span class="b warn">experimental</span>' : ""}</td><td>${x.enabled ? "yes" : "no"}</td><td>${badge(x.detected ? "pass" : "fail")}</td><td><code>${esc(x.command)}</code></td><td><code>${esc(JSON.stringify(x.args_template))}</code></td></tr>`).join("")}</table>
+src/orchestrator/api/static_fallback/index.html:184:      ${ns.map((n) => `<tr><td class="muted">${esc(n.created_at)}</td><td>${badge(n.status)}</td><td class="mono">${esc(n.trigger)}</td><td>${n.task_id ? `<a href="#task/${n.task_id}">T-${n.task_id}</a>` : "—"}</td><td>${esc(n.title)}<div class="muted" style="white-space:pre-wrap">${esc(n.body)}</div>${n.error ? `<div class="err">${esc(n.error)}</div>` : ""}</td><td class="muted">${esc(n.channel || (n.status === "skipped" ? "not attempted" : "—"))}</td></tr>`).join("")}</table></div>`);
+src/orchestrator/cli.py:108:        "pass": "green",
+src/orchestrator/core/models.py:97:    skipped = "skipped"
+src/orchestrator/core/schemas.py:88:    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
+src/orchestrator/core/schemas.py:98:    final_result: Literal["pass", "fail", "needs_human"]
+src/orchestrator/migrations/script.py.mako:22:    ${upgrades if upgrades else "pass"}
+src/orchestrator/migrations/script.py.mako:26:    ${downgrades if downgrades else "pass"}
+src/orchestrator/providers/mock_provider.py:83:                        "skipped": 0,
+src/orchestrator/services/notification_service.py:39:    "pending", "delivered", "failed", "skipped", "coalesced",
+src/orchestrator/services/notification_service.py:43:OUTCOME_CLASSES = ("delivered", "shown_unacknowledged", "failed", "skipped", "coalesced")
+src/orchestrator/services/supervisor_service.py:63:            name=label, status="not_applicable", notes=f"no {label} command configured for project"
+src/orchestrator/services/supervisor_service.py:68:        return VerificationCheck(name=label, status="fail", command=command, notes=str(e)), ""
+src/orchestrator/services/supervisor_service.py:70:    status = "pass" if code == 0 and not timed_out else "fail"
+src/orchestrator/services/supervisor_service.py:94:                status="fail",
+src/orchestrator/services/supervisor_service.py:101:                name="handoff present", status="pass", evidence=f"status {handoff.status}"
+src/orchestrator/services/supervisor_service.py:115:                status="pass",
+src/orchestrator/services/supervisor_service.py:148:                status="fail" if missing else "pass",
+src/orchestrator/services/supervisor_service.py:168:                status="skipped",
+src/orchestrator/services/supervisor_service.py:200:                        if status == "fail"
+src/orchestrator/services/supervisor_service.py:238:            out, 1500, None if not out else (0 if test_check.status == "pass" else 1)
+src/orchestrator/services/supervisor_service.py:244:            if claimed_green and test_check.status == "fail":
+src/orchestrator/services/supervisor_service.py:256:            if test_check.status == "pass":
+src/orchestrator/services/supervisor_service.py:277:                name="tests", status="not_applicable", notes="task has no project worktree"
+src/orchestrator/services/supervisor_service.py:286:            status="skipped" if "migrations" in tags else "not_applicable",
+src/orchestrator/services/supervisor_service.py:295:            status="not_applicable",
+src/orchestrator/services/supervisor_service.py:304:            status="pass" if task.kind == TaskKind.agent and handoff else "not_applicable",
+src/orchestrator/services/supervisor_service.py:325:                    status="fail",
+src/orchestrator/services/supervisor_service.py:367:                    status="pass",
+src/orchestrator/services/supervisor_service.py:383:                status="pass",
+src/orchestrator/services/supervisor_service.py:397:    failed = [c for c in checks if c.status == "fail"]
+src/orchestrator/services/supervisor_service.py:398:    final = "fail" if failed or contradicts else "pass"
+src/orchestrator/services/supervisor_service.py:637:    tests_green = all(c.status != "fail" for c in verification.checks if c.name == "tests")
+src/orchestrator/services/supervisor_service.py:680:    if verification.final_result != "pass":
+src/orchestrator/services/supervisor_service.py:754:        task.merge_status = "not_applicable"
+src/orchestrator/services/sync_service.py:389:        return "skipped"
+src/orchestrator/services/sync_service.py:410:    result = {"applied": 0, "adopted": 0, "skipped": 0, "conflicts": 0, "errors": 0}
+src/orchestrator/services/sync_transport.py:117:        totals = {"applied": 0, "adopted": 0, "skipped": 0, "conflicts": 0, "errors": 0}
+src/orchestrator/services/evidence_freshness.py:79:STATE_PASS = "pass"  # noqa: S105 - a check state, not a credential
+src/orchestrator/services/evidence_freshness.py:81:STATE_NOT_APPLICABLE = "not_applicable"
+src/orchestrator/services/evidence_freshness.py:180:        return "pass"  # noqa: S105 - frozen status value
+src/orchestrator/services/evidence_freshness.py:182:        return "fail" if strict else "stale"
+src/orchestrator/services/evidence_freshness.py:183:    return "not_applicable"
+src/orchestrator/utils/truncate.py:39:    counts = {"passed": 0, "failed": 0, "skipped": 0}
+src/orchestrator/utils/truncate.py:55:            elif kind.startswith("fail"):
+src/orchestrator/utils/truncate.py:57:            elif kind == "skipped":
+src/orchestrator/utils/truncate.py:58:                counts["skipped"] += int(n)
+web/src/api/types.ts:211:  status: "pending" | "delivered" | "failed" | "skipped" | "coalesced";
+web/src/pages/Projects.tsx:66:                    <li key={c.name} className="flex gap-2"><Badge value={c.ok ? "pass" : "fail"} /> {c.name}{c.detail && <span className="text-muted">— {c.detail}</span>}</li>
+
+## COMMAND 2 -- every verification_status reference in src/ and web/src
+$ grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules 'verification_status' src web/src
+src/orchestrator/api/static_fallback/index.html:109:      <div class="card row"><span>handoff ${badge(t.handoff_status)}</span><span>review ${badge(t.review_status)}</span><span>verification ${badge(t.verification_status)}</span><span>merge ${badge(t.merge_status)}</span>
+src/orchestrator/cli.py:594:        "verification_status",
+src/orchestrator/core/models.py:171:    verification_status: str | None = None
+src/orchestrator/migrations/versions/0001_baseline.py:184:        sa.Column("verification_status", sa.String(), nullable=True),
+src/orchestrator/services/supervisor_service.py:418:    task.verification_status = final
+src/orchestrator/services/task_service.py:140:    "verification_status",
+web/src/api/types.ts:36:  verification_status: string | null;
+web/src/pages/TaskDetail.tsx:138:              <dt className="text-muted">Verification</dt><dd><Badge value={task.verification_status} /></dd>
+
+## COMMAND 3 -- the frozen Literal(s)
+$ grep -rn --exclude-dir=__pycache__ 'status: Literal' src
+src/orchestrator/core/schemas.py:56:    status: Literal["READY_FOR_REVIEW", "CHANGES_APPLIED", "BLOCKED"]
+src/orchestrator/core/schemas.py:88:    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
+
+## COMMAND 4 -- the GUI status-to-tone map (including the additive stale value)
+$ grep -n -E '(^|[ {])(pass|fail|not_applicable|skipped|stale):' web/src/components/ui.tsx
+6:  accepted: "ok", completed: "ok", pass: "ok", APPROVED: "ok", approved: "ok", merged: "ok", ready: "ok",
+9:  blocked: "bad", failed: "bad", rejected: "bad", timeout: "bad", cancelled: "muted", fail: "bad",
+10:  CHANGES_REQUESTED: "warn", NEEDS_HUMAN: "bad", not_applicable: "muted", skipped: "muted",
+11:  stale: "warn",
+
+## COMMAND 5 -- the verification.md renderer emits c.status unchanged
+$ grep -n 'c.status' src/orchestrator/services/artifact_service.py
+324:        f"| {c.name} | {c.status} | `{c.command or '-'}` | {c.evidence or '-'} | {c.notes or ''} |"
+
+## COMMAND 6 -- the Supervisor verification row (the line a reviewer found missing)
+$ grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness)|status=status' src/orchestrator/services/supervisor_service.py
+72:    return VerificationCheck(name=label, status=status, command=command, evidence=evidence), output
+184:        freshness = evidence_freshness.check_freshness(
+188:        status = evidence_freshness.check_status(freshness, strict)
+192:                name=evidence_freshness.CHECK_NAME,
+193:                status=status,
+
+## COMMAND 7 -- the Architect review call site
+$ grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE_STALE)' src/orchestrator/services/review_service.py
+322:    return evidence_freshness.check_freshness(cwd, run.commit_sha, task.short_id, base_branch)
+357:    if freshness.state == evidence_freshness.STATE_STALE:
+500:    if freshness.state == evidence_freshness.STATE_STALE:
+
+## RAW OUTPUT ENDS HERE; per-line excerpts with file prefixes follow
+
+## (1) the frozen five-value Literal
 56:    status: Literal["READY_FOR_REVIEW", "CHANGES_APPLIED", "BLOCKED"]
 88:    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
 
@@ -28,13 +125,3 @@
 9:  blocked: "bad", failed: "bad", rejected: "bad", timeout: "bad", cancelled: "muted", fail: "bad",
 10:  CHANGES_REQUESTED: "warn", NEEDS_HUMAN: "bad", not_applicable: "muted", skipped: "muted",
 11:  stale: "warn",
-
-## (6) every verification_status consumer
-src/orchestrator/api/static_fallback/index.html:109:      <div class="card row"><span>handoff ${badge(t.handoff_status)}</span><span>review ${badge(t.review_status)}</span><span>verification ${badge(t.verification_status)}</span><span>merge ${badge(t.merge_status)}</span>
-src/orchestrator/cli.py:594:        "verification_status",
-src/orchestrator/core/models.py:171:    verification_status: str | None = None
-src/orchestrator/migrations/versions/0001_baseline.py:184:        sa.Column("verification_status", sa.String(), nullable=True),
-src/orchestrator/services/supervisor_service.py:418:    task.verification_status = final
-src/orchestrator/services/task_service.py:140:    "verification_status",
-web/src/api/types.ts:36:  verification_status: string | null;
-web/src/pages/TaskDetail.tsx:138:              <dt className="text-muted">Verification</dt><dd><Badge value={task.verification_status} /></dd>

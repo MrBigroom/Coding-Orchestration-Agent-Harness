@@ -1,4 +1,4 @@
-# HEAD=e1bb380c4672116eacffbe2e73c912aa1092c177 mode=full
+# HEAD=d658cd2097c1f11b0a9ef7c91ce0689e9223f29b mode=full
 # Both pass modes in one file. Only a --full pass writes it, so the default fast pass
 # stays byte-identical on a re-run (DoD 5d); the next --full pass refreshes both.
 # Every row carries the HEAD ITS OWN pass measured: a fast row may name an older code
@@ -6,5 +6,5 @@
 # wall_seconds is this driver pass; files/rewritten count what the GENERATOR saw and
 # rewrote in that pass (manifest.json, the self-check and this file are written after the
 # capture and are not counted). Quote these numbers, never a scratch or /tmp log.
-mode=fast head=e1bb380c4672116eacffbe2e73c912aa1092c177 wall_seconds=5.18 files=12 rewritten=6 assertion_shape_ms=175 dod_map_ms=1 focused_tests_ms=4922 lint_ms=39 source_anchors_ms=14 status_consumers_ms=8
-mode=full head=e1bb380c4672116eacffbe2e73c912aa1092c177 wall_seconds=143.12 files=12 rewritten=7 assertion_shape_ms=177 dod_map_ms=1 focused_tests_ms=4887 full_suite_ms=137971 lint_ms=42 source_anchors_ms=16 status_consumers_ms=7
+mode=fast head=d658cd2097c1f11b0a9ef7c91ce0689e9223f29b wall_seconds=5.06 files=12 rewritten=6 assertion_shape_ms=174 dod_map_ms=1 focused_tests_ms=4794 lint_ms=41 source_anchors_ms=13 status_consumers_ms=17
+mode=full head=d658cd2097c1f11b0a9ef7c91ce0689e9223f29b wall_seconds=140.63 files=12 rewritten=7 assertion_shape_ms=181 dod_map_ms=1 focused_tests_ms=4803 full_suite_ms=135554 lint_ms=42 source_anchors_ms=14 status_consumers_ms=17
