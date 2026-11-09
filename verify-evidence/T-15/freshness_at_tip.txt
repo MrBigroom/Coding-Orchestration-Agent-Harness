@@ -2,14 +2,14 @@
 # this is a report about the commits it names, not evidence measured at it).
 # command: orchestrator task evidence T-15 --at-tip
 basis=committed
-delivered_tip=20bc2fc3596b32f0a1c472503775485336042d18
-delivered_tip_short=20bc2fc
+delivered_tip=1e8213bd3b6c5fa5e8d1103ed5e572a670b17e2a
+delivered_tip_short=1e8213b
 compared_commit=e1bb380c4672116eacffbe2e73c912aa1092c177
 compared_short=e1bb380
 status=pass
 stamped_files=9
 stale_count=0
 deleted_count=0
-evidence=9 stamped evidence file(s) fresh at e1bb380 (e1bb380c4672116eacffbe2e73c912aa1092c177); commit under verification 20bc2fc (20bc2fc3596b32f0a1c472503775485336042d18) is evidence-only/empty on top of that target
+evidence=9 stamped evidence file(s) fresh at e1bb380 (e1bb380c4672116eacffbe2e73c912aa1092c177); commit under verification 1e8213b (1e8213bd3b6c5fa5e8d1103ed5e572a670b17e2a) is evidence-only/empty on top of that target
 notes=none
 delivery=the comparison target is the nearest ancestor of the delivered tip that is not an evidence-only or empty commit; the commit adding this report touches only verify-evidence/, so the same check at the final tip reports pass naming that code HEAD (e1bb380).
