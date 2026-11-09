@@ -1,0 +1,43 @@
+# HEAD=c793502948b7ded066d5fde56c4c2f5a34bc5f3b mode=full
+# command: static DoD map; the -v run above supplies each node's PASSED line
+5a older HEAD -> stale with the right paths/count:
+   unit::test_an_older_stamp_is_stale_with_the_paths_and_the_count
+   integration::test_stale_evidence_is_reported_without_flipping_the_verdict
+5b a freshly regenerated bundle -> pass:
+   unit::test_the_generated_bundle_is_fresh_once_committed
+   integration::test_the_existing_checks_and_frozen_artifact_names_are_unchanged
+5c unstamped or absent evidence -> not_applicable (never a false failure):
+   unit::test_absent_evidence_is_not_applicable, unit::test_unstamped_evidence_is_not_applicable
+   integration::test_an_absent_bundle_is_not_applicable
+   integration::test_never_committed_evidence_is_not_applicable_not_a_deletion
+   deleted evidence -> stale naming the deleting commit, never not_applicable:
+   unit::test_deleted_evidence_names_the_paths_and_the_deleting_commit
+   integration::test_deleted_evidence_is_reported_with_the_deleting_commit
+5d regeneration is idempotent; the second run rewrites nothing:
+   unit::test_regeneration_is_one_command_and_a_second_run_rewrites_nothing
+5e existing verification checks and frozen artifact names unchanged:
+   integration::test_the_existing_checks_and_frozen_artifact_names_are_unchanged
+5f split assertions pass; the reason-shaped one fails when the reason changes:
+   unit_memory::test_fix_scopes_leaves_rejected_rows_alone
+   unit_memory::test_the_rejected_reason_assertion_fails_when_the_reason_changes
+   scripts/t15_assertion_shape.py output in assertion_shape.txt (AST, comments at every site)
+generator integrity and mode:
+   unit::test_an_edited_generator_is_refused_even_though_it_lives_in_the_evidence_dir
+   unit::test_a_generator_that_is_not_committed_is_refused
+   unit::test_no_arbitrary_command_is_accepted_because_only_the_committed_generator_runs
+   unit::test_an_untracked_source_file_is_refused_because_the_stamp_would_certify_it
+   unit::test_only_refreshes_the_named_output_and_refuses_an_unknown_name
+   unit::test_the_full_pass_is_opt_in_and_recorded_in_the_manifest
+   unit::test_timing_txt_holds_both_pass_modes_with_wall_time_and_rewrites
+   unit::test_the_at_tip_report_names_the_commit_it_compared
+status vocabulary (CCR-T15-01) and scope:
+   unit::test_the_check_status_uses_the_approved_stale_value
+   unit::test_the_stale_row_renders_into_verification_md
+   integration::test_an_agent_kind_task_gets_neither_the_row_nor_the_finding
+assertion shape (DoD 4):
+   unit::test_the_memory_scope_tests_keep_their_assertion_shape
+trailer honesty / security:
+   unit::test_a_recovery_trailer_is_explained_not_certified
+   unit::test_an_operator_hand_fix_trailer_is_explained_not_certified
+   unit::test_a_worker_can_fake_the_hand_fix_trailer_and_still_reads_stale
+also: integration::test_strict_mode_is_the_only_way_staleness_fails_the_gate

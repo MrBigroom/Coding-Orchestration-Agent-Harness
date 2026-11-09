@@ -305,6 +305,19 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
   a normal handoff every round), and a handoff cut is named in the manifest. The expensive
   environment-parity tests are opt-in
   (`ORCH_ENV_PARITY_TESTS=1`; nested-suite cases also need `ORCH_ENV_SPAWN_TESTS=1`).
+- **Evidence freshness is reported, not enforced.** The deterministic Supervisor check compares
+  each committed `verify-evidence/<task>/` HEAD stamp with the run's `commit_sha` and reports the
+  fifth check status `stale` (CCR-T15-01, approved 2026-11-08) with the paths and the commit it
+  compared; deleted evidence names the deleting commit, and a recovery or hand-fix trailer is
+  explained but never certifies. It does not fail the gate unless
+  `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`, and it applies only to code-writing task kinds,
+  the same scope as the Architect review. It does not force a re-run: the Worker still runs
+  `orchestrator task evidence <id>` (default fast; `--full` for the suite; `--only <name>` for one
+  declared output), which runs the committed `capture.sh` and nothing else — never an arbitrary
+  command — and refuses a worktree with any uncommitted input (tracked or untracked, including an
+  edited generator). A tree without a committed `capture.sh` cannot be refreshed by the generic
+  command, and a file the generator does not rewrite keeps its old stamp rather than being
+  silently re-stamped: a stamp is only written by a pass that re-ran that file's command.
 - **A gate green is a green in a clean environment, not in your checkout.** Gated runs execute in
   a tracked-files-only worktree: no `.env`, no `node_modules`, no `.venv`. The suite itself is
   hermetic against a repo-level `.env`, and `verification.json` records which world the gate used;

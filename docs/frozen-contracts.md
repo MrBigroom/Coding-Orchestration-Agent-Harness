@@ -51,7 +51,10 @@ change in its Definition of Done.
 - **review.json schema**:
   `{"verdict": "APPROVED | CHANGES_REQUESTED | NEEDS_HUMAN", "findings": [{"file_or_area", "issue", "violates"}], "missing_artifacts": [], "notes": []}`
 - **verification.json schema**:
-  `{"phase", "checks": [{"name", "status": "pass | fail | skipped | not_applicable", "command", "evidence", "notes"}], "contradicts_worker": bool, "final_result": "pass | fail | needs_human"}`
+  `{"phase", "checks": [{"name", "status": "pass | fail | skipped | not_applicable | stale", "command", "evidence", "notes"}], "contradicts_worker": bool, "final_result": "pass | fail | needs_human"}`.
+  `stale` is an additive fifth check status (a compared-and-out-of-date result), approved from
+  CCR-T15-01 by the operator, 2026-11-08. No key, check name or existing status changes meaning,
+  and a file written before the change simply never uses the new value.
 - **Memory entry schema**: `memory_entries` table + `MemoryCreate`/`MemorySuggestion`.
 - **Artifact directory layout**: `runs/<run_id>/{prompt.md, stdout.log, stderr.log,
   patch.diff, diffstat.txt, test.log, test_summary.txt, handoff.md, handoff.json,

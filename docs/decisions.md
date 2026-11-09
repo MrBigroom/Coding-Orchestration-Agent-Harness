@@ -431,3 +431,66 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `per_file=159` while `cap=3900`.) A path
   whose own `diff --git` header exceeds the floor (measured: >289 characters) has no floor and is
   named omitted rather than given bytes that would break the bound.
+- **2026-11-08 — T-15: committed evidence freshness is a deterministic stamp comparison, and the
+  bundle has one committed generator.** The gate adds one additive verification check
+  (`committed evidence freshness`) next to "claimed files exist on disk". Its status stays in the
+  frozen vocabulary — `pass` fresh, `not_applicable` absent/unstamped, `skipped` + `stale:` in the
+  evidence string for a stale bundle, `fail` only under
+  `ORCHESTRATOR_EVIDENCE_FRESHNESS_STRICT=true`; a first-class `stale` status is requested in
+  `docs/contract-change-request-T15-01-evidence-freshness-status.md` instead of being added here,
+  because a fifth value changes `verification.json`'s frozen schema. Exemptions are read from git
+  *trailers* (never a substring of the body) for `Orchestrator-Recovery:`/`Operator-Hand-Fix:`,
+  plus commits touching only `verify-evidence/` **excluding** `capture.sh`, which is code. Stamps
+  are header metadata (first 20 lines), short SHAs are prefix-resolved, and an unparsable `HEAD=`
+  line is stale rather than fresh. Deleted evidence is stale with the deleting commit, never
+  `not_applicable`. One command (`orchestrator task evidence <id>`, or `--check` to only report)
+  runs the committed `capture.sh`, refuses a dirty tracked worktree, canonicalises only the files
+  that pass rewrote and writes `manifest.json` + a self-check; a second run is byte-identical, and
+  a file the pass did not rewrite keeps its old stamp so it reads stale. There is deliberately no
+  stamp-only mode. The README keeps the limitation: the check reports, it does not force a re-run.
+- **2026-11-09 — T-15 round 4: a trailer is explained, not certified; the default bundle pass is
+  fast.** Review R-65 found the exemption path still certified a commit whose only qualification
+  was trailer text, so a Worker could write `Operator-Hand-Fix:` into its own code commit and turn a
+  stale bundle into `pass`. The rule is now: only an evidence-only commit (nothing outside
+  `verify-evidence/`, and not `capture.sh`) certifies content; a parsed recovery or hand-fix
+  trailer names the commit in the reason but the bundle still reads stale. The generator also
+  refuses an edited or uncommitted `capture.sh`, not just dirt outside the evidence directory.
+  `orchestrator task evidence <id>` defaults to a fast pass (lint + focused tests, seconds) that
+  leaves the expensive full-suite capture alone; `--full` runs it, and the mode is recorded in
+  `manifest.json` and in every canonical stamp. Deleting evidence earlier on the branch is a stale
+  finding naming the path and the deleting commit, distinct from evidence that never existed.
+- **2026-11-09 — T-15 round 5: CCR-T15-01 approved (`stale`), no arbitrary command, untracked
+  inputs count, one timing file.** The operator approved the additive fifth check status `stale`
+  (2026-11-08), so `VerificationCheck.status` gains it, `check_status` returns it for a
+  compared-and-out-of-date bundle, `docs/frozen-contracts.md` records it with the CCR name and
+  date, `web/src/components/ui.tsx` maps it to `warn`, and `render_verification_md` renders it
+  unchanged. `fail` remains the operator's opt-in strict rule and the check never flips a verdict.
+  The generator's arbitrary-command mode is deleted: only the committed in-repo `capture.sh` may
+  run, because a command the branch does not contain can re-stamp content it never measured; a
+  subset refresh is `--only <name>` against the outputs the committed manifest declares, and an
+  unknown name is refused. The dirty guard now covers **untracked** source and test files as well
+  as tracked ones (`capture.sh` measures the tree on disk while the stamp names a commit), and the
+  generator is never exempt. `timing.txt` holds both pass modes' wall time, file count and rewrite
+  count and is written only by a `--full` pass, so the fast pass stays byte-identical on a re-run;
+  it is the single source for every timing quoted in a README or handoff. A committed-view
+  `freshness_at_tip.txt` (`--at-tip`, refusing to write unless fresh) proves the check at the
+  delivered tip, because a file cannot contain the SHA of the commit that adds it. One scope
+  predicate (`applies_to_kind`) is used by the Supervisor and the Architect review, so a freshness
+  finding can never arrive without a verification row.
+- **2026-11-09 — T-15 round 6: the comparison target is the nearest non-evidence-only ancestor.**
+  Rulings (b) and (c) said an evidence-only commit may explain staleness but never turn `stale` into
+  `pass`, while the task's own bundle must report `pass` — impossible together, because a bundle
+  file is committed by an evidence-only commit and cannot name its own SHA. The operator settled it
+  (ruling (d)): freshness compares stamps with the **nearest ancestor of the commit under
+  verification that is not evidence-only and not empty**. An evidence-only commit changes no code,
+  so a stamp naming its parent is truthful; every code commit after the bundle — recovery sweep or
+  operator hand-fix included — is the target and makes it stale, with the trailer named only as the
+  explanation. Empty commits are walked past like evidence-only ones. The generator stamps that
+  comparison target, so a refresh on top of a bundle commit never writes a stamp the walk-back
+  cannot certify; the reason string names the target it used. `freshness_at_tip.txt` is written
+  LAST and prints both the delivered tip and the resolved target. Generator/input classification
+  reads every path `manifest.json` declares (`generator` + `inputs`), not the one filename
+  `capture.sh`, and `files` lists outputs only so `--only capture.sh` is refused by name.
+  `timing.txt` rows each carry the HEAD their own pass measured. Paths are resolved before
+  `is_relative_to`, so a lexical escape is refused. The shared clock-out rule: an instruction the
+  Worker cannot satisfy without violating another is not tightness, it is a timeout.

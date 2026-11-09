@@ -8,6 +8,7 @@ const TONE: Record<string, string> = {
   in_progress: "warn", running: "warn", preparing: "warn", testing: "warn", review: "info",
   blocked: "bad", failed: "bad", rejected: "bad", timeout: "bad", cancelled: "muted", fail: "bad",
   CHANGES_REQUESTED: "warn", NEEDS_HUMAN: "bad", not_applicable: "muted", skipped: "muted",
+  stale: "warn",
   high: "bad", medium: "warn", low: "muted",
 };
 const TONE_CLASS: Record<string, string> = {

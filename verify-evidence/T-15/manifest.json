@@ -1,0 +1,57 @@
+{
+  "command": "verify-evidence/T-15/capture.sh",
+  "files": [
+    {
+      "path": "assertion_shape.txt",
+      "sha256": "4e2cfe57f6bb45e80a75cbb377a74a64276917000ce39b040b76ea8ed68f79b7"
+    },
+    {
+      "path": "dod_map.txt",
+      "sha256": "0e34c45f2d74f4c23b602fc5f5f916279d213c65a894a96c78051b806986637d"
+    },
+    {
+      "path": "freshness_selfcheck.txt",
+      "sha256": "f6d3da88d2e2a2852422c5e48373bb1fe412e55bcdebe94c8d3b241ee311f9f5"
+    },
+    {
+      "path": "freshness_tests.txt",
+      "sha256": "00f87115eba242873ec8f295e1e613e50f44d8cd9ecf43f9c1f5cd49a87921b6"
+    },
+    {
+      "path": "full_suite.txt",
+      "sha256": "162a15958e47dbeb230b53aef584fff0d49129d003297496eaa8a82413dd917c"
+    },
+    {
+      "path": "lint.txt",
+      "sha256": "5e2bc97dabdabe0531e3f821666c374235e746543dab64ae653637fa21ceea7e"
+    },
+    {
+      "path": "source_anchors.txt",
+      "sha256": "fac6af9eeecf87c0f7c925596ecde0646fe369733f99af18b2e626521f469852"
+    },
+    {
+      "path": "status_consumers.txt",
+      "sha256": "e13521f4650f9bf68fdbd4c4837c7dbf7c92477d6a185ec35c52c51d2f3acb45"
+    },
+    {
+      "path": "timing.txt",
+      "sha256": "23e3a9147037bfbff222b5b6fb8ca59c43b7f198304b2afabe6f61aa25259a6f"
+    }
+  ],
+  "generated_at": "2026-11-09T18:27:35Z",
+  "generator": "verify-evidence/T-15/capture.sh",
+  "head": "c793502948b7ded066d5fde56c4c2f5a34bc5f3b",
+  "head_short": "c793502",
+  "inputs": [
+    "capture.sh"
+  ],
+  "label": "T-15",
+  "mode": "full",
+  "only": [],
+  "stamp": "# HEAD=c793502948b7ded066d5fde56c4c2f5a34bc5f3b mode=full",
+  "tool_versions": {
+    "git": "git version 2.56.0",
+    "pytest": "9.1.1",
+    "python": "3.13.15"
+  }
+}

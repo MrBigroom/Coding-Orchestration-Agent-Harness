@@ -30,6 +30,7 @@ from orchestrator.core.schemas import ReviewFinding, ReviewResult
 from orchestrator.providers.base import ProviderError
 from orchestrator.services import (
     artifact_service,
+    evidence_freshness,
     git_service,
     log_service,
     project_service,
@@ -303,6 +304,24 @@ Audited against the budgeted text the prompt builder actually emitted, not the a
 """
 
 
+def review_freshness(
+    task: Task, cwd: Path | None, run: Run, base_branch: str | None
+) -> evidence_freshness.FreshnessResult:
+    """The one freshness comparison used for BOTH the reviewer prompt and review.json.
+
+    Scoped to code-writing kinds through the same predicate `supervisor_service.verify` uses, so a
+    harness freshness finding can never arrive in review.json without a matching verification row:
+    an `agent`/`review` task writes no code and gets neither.
+    """
+    if not evidence_freshness.applies_to_kind(task.kind):
+        kind = str(getattr(task.kind, "value", task.kind))
+        return evidence_freshness.FreshnessResult(
+            evidence_freshness.STATE_NOT_APPLICABLE,
+            f"{kind} task writes no code, so it has no evidence bundle to compare",
+        )
+    return evidence_freshness.check_freshness(cwd, run.commit_sha, task.short_id, base_branch)
+
+
 async def architect_review(
     session: Session,
     task: Task,
@@ -334,6 +353,16 @@ async def architect_review(
         cwd, base_branch, patch_text, rendered=rendered_diff
     )
     harness_text = harness_findings_section(session, task, run, project, pre_diff_issues)
+    freshness = review_freshness(task, cwd, run, base_branch)
+    if freshness.state == evidence_freshness.STATE_STALE:
+        harness_text += (
+            "\nHARNESS FINDING: committed evidence is STALE against the commit under "
+            f"verification. {freshness.evidence}. The paths and the commit each stamp names are "
+            "listed below; the Worker refreshes the bundle with one command "
+            "(`orchestrator task evidence <id>`). Do not infer staleness from an old copy of a "
+            "test by reading it — this row is the harness's own comparison.\n"
+            + freshness.notes
+        )
     if pre_undelivered:
         harness_text += (
             "\nHARNESS FINDING: the reviewer diff budget could not deliver "
@@ -463,6 +492,18 @@ async def architect_review(
             )
             continue
         result.missing_artifacts.append(f"reviewer-asserted: {item}")
+
+    # T-15 DoD 1: report the freshness comparison as a harness-detected finding next to the
+    # T-16 delivery finding. It is not a reviewer assertion and it does not change the verdict by
+    # itself; it reaches both the reviewer payload (above) and the persisted review.json so the
+    # next round sees exactly which files moved out of date.
+    if freshness.state == evidence_freshness.STATE_STALE:
+        body = evidence_freshness.review_finding(freshness)
+        result.findings.append(ReviewFinding(**body))
+        result.notes.append(
+            "harness-detected: committed evidence freshness: "
+            f"{freshness.evidence}. {freshness.notes.replace(chr(10), ' | ')}"
+        )
 
     # T-16 DoD 7: evidence the diff budget could not carry is a harness-detected delivery
     # failure, named as a finding so no reviewer has to infer it from an absent file.

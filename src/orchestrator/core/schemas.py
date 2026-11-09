@@ -81,7 +81,11 @@ class ReviewResult(BaseModel):
 
 class VerificationCheck(BaseModel):
     name: str
-    status: Literal["pass", "fail", "skipped", "not_applicable"]
+    # The frozen vocabulary (docs/frozen-contracts.md). `stale` is the fifth, additive value,
+    # approved by the operator as CCR-T15-01 (2026-11-08): T-15's evidence-freshness check uses it
+    # for a bundle that was compared and is out of date, so a machine consumer never has to parse
+    # prose to tell "not certified" from "compared and stale". Existing values keep their meaning.
+    status: Literal["pass", "fail", "skipped", "not_applicable", "stale"]
     command: str = ""
     evidence: str = ""
     notes: str = ""
