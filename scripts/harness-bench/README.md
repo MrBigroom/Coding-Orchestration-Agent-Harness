@@ -22,6 +22,30 @@ orchestrator's usage parsers are tested against exactly that output
 
 Run it again after harness upgrades. Overhead changes between versions, and so do flags.
 
+## Qoder (opt-in)
+
+```bash
+scripts/harness-bench/bench.sh qoder qoder_cache
+```
+
+Qoder CLI (`@qoder-ai/qodercli`) won't start without a logged-in Qoder account. It sends
+requests to a custom endpoint only when the account's plan allows custom model providers
+(BYOK). The CLI checks a server-side `allow_byok` feature switch for this.
+
+So these two targets differ from the rest:
+- They run with your **real `HOME`**, so your existing login is used.
+  `QODER_PERSONAL_ACCESS_TOKEN` is passed through if it's set.
+- The mock is added as a custom provider through `--settings` for that run only, so your
+  `~/.qoder` is never edited.
+- `qoder_cache` turns on the model's `capabilities.cacheControl`, so you can see whether
+  Qoder sends explicit cache markers over the OpenAI protocol.
+
+If a run fails with "Not logged in", run `qodercli` once and `/login`. If it reaches
+Qoder but the mock logs no requests, your plan probably doesn't include custom providers.
+Custom models are selected as `<provider>/<model>` (here `benchmock/qwen3.8-flash`). The
+Qoder CLI keeps its own login, separate from the desktop app's: sign in once with
+`.work/node_modules/.bin/qodercli` → `/login`.
+
 ## Results — 2026-10-26
 
 One trivial prompt, first agent request, Qwen tokens:
