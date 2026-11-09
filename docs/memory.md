@@ -243,11 +243,14 @@ API: `GET /api/memory/export`, `POST /api/memory/import`. The export format is
 
 This is the companion convention to the evidence-freshness check (`docs/build-loop.md`, "Evidence
 freshness"). A `verify-evidence/<task>/` file is a measurement, not a permanent truth: its HEAD
-stamp names the commit it was taken at, and the deterministic Supervisor check compares that stamp
-with the run's `commit_sha`. A stale bundle is reported with the offending paths, a deleted file
-with the commit that deleted it — never as absent evidence. A recovery or hand-fix **trailer** is
-explained, not certified: it names the intervening commit but the bundle still reads stale, because
-a Worker can write a trailer too. The row's status is `stale` (the fifth check value, CCR-T15-01),
+stamp names the code commit it was taken at, and the deterministic Supervisor check compares that
+stamp with the **nearest ancestor of the run's `commit_sha` that is not evidence-only and not
+empty** — an evidence-only commit cannot change what was measured, so the bundle it delivers still
+reads fresh. A code commit after the bundle, a recovery sweep or an operator hand-fix makes it
+stale. A stale bundle is reported with the offending paths and the comparison target, a deleted
+file with the commit that deleted it — never as absent evidence. A recovery or hand-fix **trailer**
+is explained, not certified: it names the intervening commit but the bundle still reads stale,
+because a Worker can write a trailer too. The row's status is `stale` (the fifth check value, CCR-T15-01),
 `pass` when fresh and `not_applicable` when a task committed no evidence. Refresh the whole bundle
 with one command (`orchestrator task evidence <id>`, `--full` for the suite, `--only <name>` for one
 declared output), which runs the committed `capture.sh` and nothing else, rewrites only what it

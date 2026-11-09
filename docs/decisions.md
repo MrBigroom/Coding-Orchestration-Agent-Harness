@@ -447,3 +447,20 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   delivered tip, because a file cannot contain the SHA of the commit that adds it. One scope
   predicate (`applies_to_kind`) is used by the Supervisor and the Architect review, so a freshness
   finding can never arrive without a verification row.
+- **2026-11-09 — T-15 round 6: the comparison target is the nearest non-evidence-only ancestor.**
+  Rulings (b) and (c) said an evidence-only commit may explain staleness but never turn `stale` into
+  `pass`, while the task's own bundle must report `pass` — impossible together, because a bundle
+  file is committed by an evidence-only commit and cannot name its own SHA. The operator settled it
+  (ruling (d)): freshness compares stamps with the **nearest ancestor of the commit under
+  verification that is not evidence-only and not empty**. An evidence-only commit changes no code,
+  so a stamp naming its parent is truthful; every code commit after the bundle — recovery sweep or
+  operator hand-fix included — is the target and makes it stale, with the trailer named only as the
+  explanation. Empty commits are walked past like evidence-only ones. The generator stamps that
+  comparison target, so a refresh on top of a bundle commit never writes a stamp the walk-back
+  cannot certify; the reason string names the target it used. `freshness_at_tip.txt` is written
+  LAST and prints both the delivered tip and the resolved target. Generator/input classification
+  reads every path `manifest.json` declares (`generator` + `inputs`), not the one filename
+  `capture.sh`, and `files` lists outputs only so `--only capture.sh` is refused by name.
+  `timing.txt` rows each carry the HEAD their own pass measured. Paths are resolved before
+  `is_relative_to`, so a lexical escape is refused. The shared clock-out rule: an instruction the
+  Worker cannot satisfy without violating another is not tightness, it is a timeout.

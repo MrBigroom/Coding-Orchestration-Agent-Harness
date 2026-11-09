@@ -3,7 +3,7 @@
 - **Status:** APPROVED by the operator, 2026-11-08, and applied to `docs/frozen-contracts.md` in the
   same round (the additive fifth value plus a line naming this request and its approval date). The
   file name is `contract-change-request-T15-01-evidence-freshness-status.md`, settled by use in the
-  operator ruling of 2026-11-08 (b): the earlier review objection was to the status marker, not the
+  operator ruling of 2026-11-08 (c): the earlier review objection was to the status marker, not the
   name. House style follows CCR-T9-01 and CCR-T11-01.
 - **Why a request:** `verification.json` / `VerificationCheck.status` is a frozen Literal
   (`pass | fail | skipped | not_applicable`, `docs/frozen-contracts.md`), and T-15's DoD 1 asks for a

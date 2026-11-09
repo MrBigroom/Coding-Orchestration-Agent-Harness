@@ -10,11 +10,15 @@ tip). Four rules, each a measured defect in an earlier round:
 * A stamp is header metadata: only the first :data:`STAMP_WINDOW` lines are scanned and a bare
   `HEAD <sha>` counts only at a line start or inside a leading `#` comment, so captured output that
   *mentions* a stamp can neither stale a bundle nor be rewritten.
-* A different SHA is not automatically stale. An **evidence-only** commit touches nothing outside
-  `verify-evidence/` except that it may not touch the `capture.sh` generator, so it cannot change
-  what was measured. Recovery and hand-fix commits are identified by their git **trailers**
-  (`%(trailers)`, never a substring of the body); they are *explained, not certified*: the reason
-  names the commit and the trailer, and the bundle still has to be refreshed.
+* The comparison target is the nearest ancestor of the commit under verification that is not
+  **evidence-only** (touches nothing outside `verify-evidence/`) and not empty. An evidence-only
+  commit changes no code, so a bundle delivered by one is honestly stamped at the code HEAD it was
+  measured at; that is what lets a bundle report `pass` on the commit that ships it. Every commit
+  that changes code — including a recovery commit that swept uncommitted source and an operator
+  hand-fix — becomes the target and makes an older stamp stale. Recovery and hand-fix commits are
+  identified by their git **trailers** (`%(trailers)`, never a substring of the body); they are
+  *explained, not certified*: the reason names the commit and the trailer, and the bundle still
+  has to be refreshed. Empty commits are walked past like evidence-only ones.
 * Deletion is its own state: a file committed earlier on the branch and gone at the reviewed commit
   is a finding naming the paths and the deleting commit, never `not_applicable`.
 * The status vocabulary is frozen and `stale` is the fifth value, approved as CCR-T15-01
@@ -107,7 +111,11 @@ class FreshnessResult:
     state: str
     evidence: str = ""
     notes: str = ""
+    #: The commit the stamps were compared against: the nearest non-evidence-only, non-empty
+    #: ancestor of the commit under verification. Named in every reason string.
     compared_commit: str | None = None
+    #: The commit under verification itself, which may be an evidence-only commit on top of it.
+    commit_under_verification: str | None = None
     stamped_files: int = 0
     stale_paths: list[str] = field(default_factory=list)
     stale_reasons: dict[str, str] = field(default_factory=dict)
@@ -263,19 +271,59 @@ def _author(repo: Path, sha: str) -> str:
     return _git_text(repo, ["show", "-s", "--format=%an <%ae>", sha]).strip() or "unknown"
 
 
-def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
-    """(certifies, reason).
+def _manifest_declared_inputs(repo: Path, sha: str, rel_dir: str) -> set[str]:
+    """Paths the manifest at ``sha`` declares as a generator/input, relative to ``rel_dir``.
 
-    ``certifies`` is True only for a commit that cannot change measured content (evidence-only or
-    empty). A parsed trailer is a reason, but **not** a certificate: a Worker can write any trailer
-    into its own code commit, so a trailer-only commit is explained and the bundle still reads
+    An evidence-only commit is certified only by its file list, so a generator that happens to live
+    under ``verify-evidence/`` must be declared by the manifest instead of being hardcoded by name.
+    Otherwise any helper generator would be mistaken for evidence. A legacy bundle with no manifest
+    still has its ``capture.sh`` treated as a generator.
+    """
+    declared: set[str] = {CAPTURE_NAME}
+    text = _git_text(repo, ["show", f"{sha}:{rel_dir}/{MANIFEST_NAME}"])
+    if not text.strip():
+        return declared
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return declared
+    if not isinstance(data, dict):
+        return declared
+    generator = data.get("generator")
+    if isinstance(generator, str) and generator.strip():
+        declared.add(Path(generator.strip()).name)
+    inputs = data.get("inputs")
+    if isinstance(inputs, list):
+        declared.update(Path(str(path)).name for path in inputs if str(path).strip())
+    return declared
+
+
+def _generator_paths(repo: Path, sha: str, files: list[str]) -> set[str]:
+    """Repo-relative generator/input paths at ``sha`` for every evidence dir in ``files``."""
+    directories = {
+        Path(path).parent.as_posix() for path in files if path.startswith(f"{EVIDENCE_ROOT}/")
+    }
+    generators: set[str] = set()
+    for directory in directories:
+        for name in _manifest_declared_inputs(repo, sha, directory):
+            generators.add(f"{directory}/{name}")
+    return generators
+
+
+def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
+    """(walkable, reason).
+
+    ``walkable`` is True only for a commit that cannot change measured content (evidence-only or
+    empty): :func:`_comparison_target` walks past those to find the code HEAD a stamp may name. A
+    parsed trailer is a reason, but **not** a walkable class: a Worker can write any trailer into
+    its own code commit, so a recovery/hand-fix commit is explained and the bundle still reads
     stale. That is the T-8 boundary: detection is the trailer, certification is the file list.
     """
     keys = {line.split(":", 1)[0].strip() for line in _trailers(repo, sha)}
     parents = _git_text(repo, ["rev-list", "--parents", "-n", "1", sha]).split()[1:]
     if len(parents) > 1:
         # A merge can bring in any content; `diff-tree` on a merge shows nothing by default, so it
-        # must never be mistaken for the "empty commit" that certifies a stamp.
+        # must never be mistaken for the "empty commit" that a walk-back skips.
         return False, "merge commit (explained, not certified)"
     files = [
         line.strip()
@@ -284,8 +332,11 @@ def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
         ).splitlines()
         if line.strip()
     ]
-    evidence_only = bool(files) and all(p.startswith(f"{EVIDENCE_ROOT}/") for p in files) and (
-        not any(Path(p).name == CAPTURE_NAME for p in files)
+    generators = _generator_paths(repo, sha, files)
+    evidence_only = (
+        bool(files)
+        and all(path.startswith(f"{EVIDENCE_ROOT}/") for path in files)
+        and not (set(files) & generators)
     )
     if evidence_only:
         return True, "evidence-only commit"
@@ -298,16 +349,43 @@ def _commit_class(repo: Path, sha: str) -> tuple[bool, str | None]:
     return False, None
 
 
+def _parents(repo: Path, sha: str) -> list[str]:
+    return _git_text(repo, ["rev-list", "--parents", "-n", "1", sha]).split()[1:]
+
+
+def _comparison_target(repo: Path, commit: str) -> str:
+    """Nearest ancestor (including ``commit``) that is not evidence-only and not empty.
+
+    An evidence-only commit changes no code, so a stamp naming its parent code HEAD is truthful
+    about what it measured; an empty commit changes nothing at all. Both are walked past. Every
+    commit that changes code — a recovery sweep or an operator hand-fix included — stops the walk
+    and becomes the target a stamp must match. ``commit`` is returned unchanged when it already is
+    a code commit.
+    """
+    current = commit
+    for _ in range(10000):
+        walkable, _reason = _commit_class(repo, current)
+        if not walkable:
+            return current
+        parents = _parents(repo, current)
+        if not parents:
+            return current  # a root commit has no older target to walk to
+        current = parents[0]
+    return current
+
+
 def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool, str]:
+    """Compare one stamp with the comparison target, naming that target in every reason."""
     full = _resolve_commit(repo, stamp.sha)
     if full is None:
         return False, f"stamp {stamp.sha} does not resolve to a commit"
     if full == target:
         return True, "matches the commit under verification"
+    target_name = f"{_short(repo, target)} ({target})"
     if run_git(["merge-base", "--is-ancestor", full, target], repo, check=False).code != 0:
         return False, (
-            f"stamp {_short(repo, full)} is not an ancestor of the commit under verification "
-            f"{_short(repo, target)}"
+            f"stamp {_short(repo, full)} is not an ancestor of the comparison target "
+            f"{target_name}"
         )
     commits = [
         line.strip()
@@ -315,30 +393,29 @@ def _stamp_verdict(repo: Path, stamp: EvidenceStamp, target: str) -> tuple[bool,
         if line.strip()
     ]
     classes = [(sha, *_commit_class(repo, sha)) for sha in commits]
-    if all(reason and certifies for _sha, certifies, reason in classes):
-        labels = ", ".join(f"{_short(repo, sha)} ({reason})" for sha, _ok, reason in classes)
-        return True, f"differs only by evidence-only commit(s): {labels}"
     explained = [
         f"{_short(repo, sha)} ({reason}; author {_author(repo, sha)})"
-        for sha, certifies, reason in classes
-        if reason and not certifies
+        for sha, walkable, reason in classes
+        if reason and not walkable
     ]
     blocking = [
-        _short(repo, sha) for sha, certifies, reason in classes if not reason and not certifies
+        _short(repo, sha) for sha, walkable, reason in classes if not reason and not walkable
     ]
+    skipped = [_short(repo, sha) for sha, walkable, _reason in classes if walkable]
     if explained and not blocking:
-        return False, (
-            f"stamp {_short(repo, full)} differs only by commit(s) with an exemption trailer: "
+        detail = (
+            "differs only by commit(s) with an exemption trailer: "
             + ", ".join(explained)
             + "; the trailer only explains the move, it does not certify the content (it is "
-            f"forgeable prose, so forging one changes the explanation and never the status), so it "
-            f"is stale against {_short(repo, target)}"
+            "forgeable prose, so forging one changes the explanation and never the status)"
         )
-    return False, (
-        f"stamp {_short(repo, full)} predates non-evidence commit(s) "
-        + ", ".join(blocking or [_short(repo, sha) for sha, _ok, _why in classes if not _ok])
-        + f" on the way to {_short(repo, target)}"
-    )
+    else:
+        detail = "predates non-evidence commit(s) " + ", ".join(
+            blocking or [_short(repo, sha) for sha, walkable, _why in classes if not walkable]
+        )
+    if skipped:
+        detail += "; walked past evidence-only/empty commit(s) " + ", ".join(skipped)
+    return False, f"stamp {_short(repo, full)} {detail}, so it is stale against {target_name}"
 
 
 def _committed_files(repo: Path, commit: str, directory: str) -> list[str]:
@@ -401,23 +478,29 @@ def check_freshness(
 ) -> FreshnessResult:
     """Compare every committed evidence stamp against ``commit`` (the run's ``commit_sha``).
 
-    ``from_worktree=True`` reads the files on disk; the generator uses it to certify the bundle it
-    just wrote, before that bundle is committed.
+    Stamps are compared with the **comparison target**: the nearest ancestor of ``commit`` that is
+    not evidence-only and not empty (see :func:`_comparison_target`). An evidence-only commit
+    changes no code, so a bundle delivered by one is honestly stamped at the code HEAD it measured;
+    every code commit after that bundle — recovery sweep or operator hand-fix included — becomes
+    the target and makes it stale. ``from_worktree=True`` reads the files on disk; the generator
+    uses it to certify the bundle it just wrote, before that bundle is committed.
     """
     if repo is None:
         return FreshnessResult(STATE_NOT_APPLICABLE, "no worktree to inspect")
     root = Path(repo)
-    target = _resolve_commit(root, commit)
-    if target is None:
+    under = _resolve_commit(root, commit)
+    if under is None:
         return FreshnessResult(
             STATE_NOT_APPLICABLE, f"no resolvable commit under verification ({commit or 'none'})"
         )
+    target = _comparison_target(root, under)
     rel_dir = directory or f"{EVIDENCE_ROOT}/{normalize_label(label)}"
     target_short = _short(root, target)
+    under_short = _short(root, under)
     paths = (
         _worktree_files(root, rel_dir)
         if from_worktree
-        else _committed_files(root, target, rel_dir)
+        else _committed_files(root, under, rel_dir)
     )
     stale_paths: list[str] = []
     stale_reasons: dict[str, str] = {}
@@ -428,7 +511,7 @@ def check_freshness(
     for path in paths:
         if ignore and Path(path).name in ignore:
             continue
-        text = _read_evidence(root, target, path, from_worktree)
+        text = _read_evidence(root, under, path, from_worktree)
         if text is None:
             continue
         stamps, unparsed = _stamps_for_file(path, text)
@@ -453,9 +536,10 @@ def check_freshness(
         stale_paths.append(path)
         stale_reasons[path] = "; ".join(why for _ok, why in verdicts)
 
-    deleted_paths, deleted_by = _deleted_evidence(root, target, rel_dir, base_branch, set(paths))
+    deleted_paths, deleted_by = _deleted_evidence(root, under, rel_dir, base_branch, set(paths))
     common = {
         "compared_commit": target,
+        "commit_under_verification": under,
         "stamped_files": stamped_files,
         "stale_paths": sorted(stale_paths),
         "stale_reasons": stale_reasons,
@@ -469,6 +553,11 @@ def check_freshness(
             f"{len(stale_paths)} stale of {stamped_files} stamped evidence file(s) against "
             f"{target_short} ({target})"
         ]
+        if under != target:
+            parts.append(
+                f"commit under verification {under_short} ({under}) is evidence-only/empty on top "
+                "of that target"
+            )
         if deleted_paths:
             parts.append(f"{len(deleted_paths)} deleted evidence file(s)")
         notes = [f"{path}: {reason}" for path, reason in stale_reasons.items()]
@@ -481,9 +570,9 @@ def check_freshness(
 
     if stamped_files == 0:
         reason = (
-            f"no stamped evidence under {rel_dir} at {target_short}"
+            f"no stamped evidence under {rel_dir} at {under_short}"
             if paths
-            else f"no committed evidence under {rel_dir} at {target_short}"
+            else f"no committed evidence under {rel_dir} at {under_short}"
         )
         return FreshnessResult(
             STATE_NOT_APPLICABLE, evidence=reason, compared_commit=target, stamped_files=0
@@ -494,11 +583,15 @@ def check_freshness(
         if fresh_by_exemption
         else ""
     )
+    where = f"{stamped_files} stamped evidence file(s) fresh at {target_short} ({target})"
+    if under != target:
+        where += (
+            f"; commit under verification {under_short} ({under}) is evidence-only/empty on top "
+            "of that target"
+        )
     return FreshnessResult(
         STATE_PASS,
-        evidence=(
-            f"{stamped_files} stamped evidence file(s) fresh at {target_short} ({target}){tail}"
-        ),
+        evidence=where + tail,
         notes="\n".join(f"{path}: {reason}" for path, reason in fresh_by_exemption.items()),
         **common,
     )
@@ -582,10 +675,14 @@ def _manifest_payload(
     mode: str = MODE_FAST,
     only: tuple[str, ...] = (),
 ) -> dict:
+    generator = f"{directory.relative_to(root).as_posix()}/{CAPTURE_NAME}"
+    # `files` lists what the pass PRODUCED; the generator is an input and is declared separately,
+    # so `--only capture.sh` can never be accepted as a declared output.
+    inputs = [CAPTURE_NAME]
     produced = [
         {"path": path, "sha256": digest}
         for path, digest in _hash_tree(directory).items()
-        if path not in NOT_MEASURED
+        if path not in NOT_MEASURED and path not in inputs
     ]
     payload = {
         "label": label,
@@ -596,6 +693,8 @@ def _manifest_payload(
         "mode": mode,
         "only": sorted(only),
         "command": command,
+        "generator": generator,
+        "inputs": inputs,
         "tool_versions": _tool_versions(root),
         "files": produced,
     }
@@ -646,6 +745,7 @@ def _write_self_check(
                 "# what the check saw, so a no-op second run is byte-identical.",
                 "basis=worktree",
                 "scope=every evidence file except manifest.json and this file",
+                f"commit_under_verification={result.commit_under_verification}",
                 f"compared_commit={result.compared_commit}",
                 f"status={result.state}",
                 f"stamped_files={result.stamped_files}",
@@ -665,14 +765,42 @@ def _write_self_check(
     )
 
 
-def _uncommitted_inputs(root: Path, rel_dir: str) -> list[str]:
-    """Uncommitted inputs the generator would measure, plus the generator itself.
+def _worktree_generator_paths(root: Path, rel_dir: str) -> set[str]:
+    """Repo-relative paths the worktree manifest declares as a generator/input.
 
-    Untracked paths count. ``capture.sh`` runs against the tree on disk, so an untracked source or
+    Any declared generator or helper input counts, not one hardcoded filename: an edited helper
+    would run while the bundle claims the committed one.
+    """
+    declared: set[str] = {f"{rel_dir}/{CAPTURE_NAME}"}
+    manifest = root / rel_dir / MANIFEST_NAME
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return declared
+    if not isinstance(data, dict):
+        return declared
+    names: list[str] = []
+    generator = data.get("generator")
+    if isinstance(generator, str) and generator.strip():
+        names.append(generator.strip())
+    inputs = data.get("inputs")
+    if isinstance(inputs, list):
+        names.extend(str(path).strip() for path in inputs if str(path).strip())
+    for name in names:
+        declared.add(name if name.startswith(f"{rel_dir}/") else f"{rel_dir}/{Path(name).name}")
+    return declared
+
+
+def _uncommitted_inputs(root: Path, rel_dir: str) -> list[str]:
+    """Uncommitted inputs the generator would measure, plus every declared generator/input.
+
+    Untracked paths count. The generator runs against the tree on disk, so an untracked source or
     test file would be measured while the stamp names a commit that does not contain it — a stamp
     certifying code the commit does not have. Paths under the evidence directory are exempt because
-    the pass writes them, except ``capture.sh``, which is code and must be committed to be trusted.
+    the pass writes them, except every path the manifest declares as a generator or input, which is
+    code and must be committed to be trusted.
     """
+    inputs = _worktree_generator_paths(root, rel_dir)
     out: list[str] = []
     for line in _git_text(root, ["status", "--porcelain", "-uall"]).splitlines():
         if not line.strip():
@@ -680,7 +808,7 @@ def _uncommitted_inputs(root: Path, rel_dir: str) -> list[str]:
         code, path = line[:2].strip(), line[3:].strip()
         if " -> " in path:  # a rename: the destination is the path that exists now
             path = path.split(" -> ", 1)[1].strip()
-        if path.startswith(f"{rel_dir}/") and Path(path).name != CAPTURE_NAME:
+        if path.startswith(f"{rel_dir}/") and path not in inputs:
             continue
         out.append(f"{path} [{code or '??'}]")
     return out
@@ -735,12 +863,16 @@ def _write_timing_txt(
     Only a ``--full`` pass writes it. A file that changes on every run would dirty the bundle the
     default pass just certified, so the fast pass records its numbers in the scratch state only and
     the next ``--full`` pass commits both. Every number quoted in the bundle's README or a handoff
-    must come from this file.
+    must come from this file. Each row carries the HEAD its own pass measured, so a `mode=fast` row
+    left over from an earlier tip never inherits the `--full` pass's stamp (one measured source per
+    row).
     """
     lines = [
         CANONICAL_STAMP.format(sha=head, mode=mode),
         "# Both pass modes in one file. Only a --full pass writes it, so the default fast pass",
         "# stays byte-identical on a re-run (DoD 5d); the next --full pass refreshes both.",
+        "# Every row carries the HEAD ITS OWN pass measured: a fast row may name an older code",
+        "# HEAD than the header stamp, and it is not a restamp of the full pass's commit.",
         "# wall_seconds is this driver pass; files/rewritten count what the GENERATOR saw and",
         "# rewrote in that pass (manifest.json, the self-check and this file are written after the",
         "# capture and are not counted). Quote these numbers, never a scratch or /tmp log.",
@@ -748,13 +880,14 @@ def _write_timing_txt(
     for name in (MODE_FAST, MODE_FULL):
         record = data.get(name)
         if not isinstance(record, dict):
-            lines.append(f"mode={name} wall_seconds=not-recorded files=- rewritten=-")
+            lines.append(f"mode={name} head=- wall_seconds=not-recorded files=- rewritten=-")
             continue
         steps = " ".join(
             f"{key}_ms={value}" for key, value in sorted((record.get("steps") or {}).items())
         )
         lines.append(
-            f"mode={name} wall_seconds={float(record.get('wall_seconds', 0.0)):.2f} "
+            f"mode={name} head={record.get('head', '-')} "
+            f"wall_seconds={float(record.get('wall_seconds', 0.0)):.2f} "
             f"files={record.get('files', '-')} rewritten={record.get('rewritten', '-')}"
             + (f" {steps}" if steps else "")
         )
@@ -801,42 +934,56 @@ def regenerate_bundle(
     minute. ``only`` refreshes named outputs the committed manifest declares, and an unrecognised
     name is refused.
     """
-    root = Path(root)
+    root = Path(root).resolve()
     if not (root / ".git").exists():
         raise EvidenceBundleError(f"{root} is not a git worktree")
-    directory = Path(directory) if directory else evidence_dir(root, label)
+    # Resolve BOTH sides: `is_relative_to` without `resolve()` is a lexical check, so a path with
+    # `..` could pass it while pointing outside the worktree.
+    directory = Path(directory).resolve() if directory else evidence_dir(root, label)
     if not directory.is_relative_to(root):
         raise EvidenceBundleError(f"evidence directory {directory} is outside {root}")
     rel_dir = directory.relative_to(root).as_posix()
     label = normalize_label(label)
-    head = head_sha(root)
-    if not head:
+    raw_head = head_sha(root)
+    if not raw_head:
         raise EvidenceBundleError("cannot resolve HEAD in the worktree")
+    # Stamp the code HEAD this pass certifies, which is the nearest non-evidence-only ancestor when
+    # the worktree sits on a bundle commit: an evidence-only commit changes no code, so its parent
+    # is the HEAD the measurements really describe. That is what lets a bundle report pass on the
+    # commit that ships it (operator ruling 2026-11-09 (d), finding 1).
+    head = _comparison_target(root, raw_head)
     script_rel = f"{rel_dir}/{CAPTURE_NAME}"
     if not (directory / CAPTURE_NAME).is_file():
         raise EvidenceBundleError(
             f"no committed generator at {script_rel}; a bundle is refreshed by a command the "
             "branch contains, so commit one"
         )
-    committed = _git_text(root, ["ls-tree", "-r", "--name-only", head, "--", script_rel])
+    committed = _git_text(root, ["ls-tree", "-r", "--name-only", raw_head, "--", script_rel])
     if script_rel not in committed.splitlines():
         raise EvidenceBundleError(
-            f"{script_rel} is not committed at {head[:7]}; a stamp must be reproducible from the "
+            f"{script_rel} is not committed at {raw_head[:7]}; a stamp must be reproducible from "
             "branch, so commit the generator before regenerating"
         )
     selected = tuple(dict.fromkeys(str(n).strip() for n in (only or ()) if str(n).strip()))
     if selected:
-        declared = _committed_outputs(root, head, rel_dir)
+        declared = _committed_outputs(root, raw_head, rel_dir)
         if declared is None:
             raise EvidenceBundleError(
-                f"--only needs a committed {rel_dir}/{MANIFEST_NAME} at {head[:7]} to know which "
-                "files the generator produces; run a full pass and commit it first"
+                f"--only needs a committed {rel_dir}/{MANIFEST_NAME} at {raw_head[:7]} to know "
+                "which files the generator produces; run a full pass and commit it first"
+            )
+        declared_inputs = _manifest_declared_inputs(root, raw_head, rel_dir)
+        inputs_named = [name for name in selected if name in declared_inputs]
+        if inputs_named:
+            raise EvidenceBundleError(
+                f"--only names {', '.join(inputs_named)}, which the manifest declares as a "
+                "generator/input, not an output; inputs are run, never selected"
             )
         unknown = [name for name in selected if name not in declared]
         if unknown:
             raise EvidenceBundleError(
                 f"--only names {', '.join(unknown)}, which the committed generator does not "
-                f"declare as an output; recognised names at {head[:7]}: "
+                f"declare as an output; recognised names at {raw_head[:7]}: "
                 + ", ".join(sorted(declared))
             )
     dirty = _uncommitted_inputs(root, rel_dir)
@@ -886,6 +1033,7 @@ def regenerate_bundle(
             canonicalize_stamps(directory / rel, head, mode)
     duration = time.monotonic() - started
     record = {
+        "head": head,
         "wall_seconds": round(duration, 2),
         "files": len([p for p in captured if p != MANIFEST_NAME]),
         "rewritten": len(
@@ -939,12 +1087,13 @@ def write_at_tip_report(
 ) -> tuple[FreshnessResult, Path]:
     """Record the COMMITTED-VIEW check at the delivered tip, into an unstamped report file.
 
-    Run after the commit that adds the bundle: it names the commit it compared, so a later commit
-    that only touches ``verify-evidence/`` is explained rather than suspected. It refuses to write
-    unless the check passes — a report that says `pass` when it does not would be the same lie as a
-    stamp on unmeasured content.
+    Run LAST, after the commit that adds the bundle: it prints BOTH the delivered tip it was run at
+    and the comparison target it resolved to (the nearest non-evidence-only ancestor), so a reader
+    can see which code HEAD the stamps were measured at. It refuses to write unless the check
+    passes — a report that says `pass` when it does not would be the same lie as a stamp on
+    unmeasured content.
     """
-    root = Path(root)
+    root = Path(root).resolve()
     label = normalize_label(label)
     result = check_freshness(root, commit, label)
     path = evidence_dir(root, label) / AT_TIP_NAME
@@ -954,13 +1103,16 @@ def write_at_tip_report(
             f"{result.compared_commit or commit} ({result.evidence})"
         )
     short = _short(root, result.compared_commit or "")
+    delivered = result.commit_under_verification or ""
     path.write_text(
         "\n".join(
             [
                 "# Committed-view freshness at the delivered tip (not hand-edited, no HEAD stamp:",
-                "# this is a report about the commit it names, not evidence measured at it).",
+                "# this is a report about the commits it names, not evidence measured at it).",
                 f"# command: orchestrator task evidence {label} --at-tip",
                 "basis=committed",
+                f"delivered_tip={delivered}",
+                f"delivered_tip_short={_short(root, delivered) if delivered else ''}",
                 f"compared_commit={result.compared_commit}",
                 f"compared_short={short}",
                 f"status={result.state}",
@@ -969,8 +1121,10 @@ def write_at_tip_report(
                 f"deleted_count={len(result.deleted_paths)}",
                 f"evidence={result.evidence}",
                 f"notes={result.notes or 'none'}",
-                "delivery=the commit adding this file touches only verify-evidence/, so the same "
-                "check at the final tip reports pass naming that evidence-only commit.",
+                "delivery=the comparison target is the nearest ancestor of the delivered tip that "
+                "is not an evidence-only or empty commit; the commit adding this report touches "
+                "only verify-evidence/, so the same check at the final tip reports pass naming "
+                f"that code HEAD ({short}).",
             ]
         )
         + "\n",

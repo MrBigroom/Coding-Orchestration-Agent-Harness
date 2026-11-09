@@ -161,12 +161,15 @@ def test_an_older_stamp_is_stale_with_the_paths_and_the_count(tmp_path: Path) ->
 
 
 def test_a_stamp_that_differs_only_by_an_evidence_only_commit_passes(tmp_path: Path) -> None:
+    """A bundle delivered by an evidence-only commit passes: the code HEAD is unchanged."""
     repo = _repo(tmp_path)
     first = _commit(repo, "code", {"src/app.py": "x = 1\n"})
     head = _commit(repo, "evidence", _stamp_file(first))
     result = ef.check_freshness(repo, head, "T-1", "main")
     assert result.state == ef.STATE_PASS
-    assert "evidence-only commit" in result.notes
+    assert result.compared_commit == first  # the code HEAD the stamp names
+    assert result.commit_under_verification == head  # the evidence-only tip
+    assert ef._short(repo, first) in result.evidence  # the reason names the target
 
 
 def test_absent_evidence_is_not_applicable(tmp_path: Path) -> None:
@@ -311,6 +314,88 @@ def test_a_code_commit_after_the_stamp_is_stale(tmp_path: Path) -> None:
     assert ef._short(repo, head) in result.notes
 
 
+# ------------------------------------------------------------------ ruling (d): the walk-back target
+
+
+def test_a_bundle_on_top_of_code_passes_and_names_the_code_head(tmp_path: Path) -> None:
+    """(i) Bundle on code X, tip = evidence-only commit(s): pass, and the reason names X."""
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    _commit(repo, "evidence", _stamp_file(code))
+    tip = _commit(repo, "more evidence", {"verify-evidence/T-1/notes.txt": "done\n"})
+    result = ef.check_freshness(repo, tip, "T-1", "main")
+    assert result.state == ef.STATE_PASS
+    assert result.compared_commit == code
+    assert result.commit_under_verification == tip
+    assert ef._short(repo, code) in result.evidence
+
+
+def test_a_code_commit_after_the_bundle_is_stale_and_names_both_heads(tmp_path: Path) -> None:
+    """(ii) A code commit after the bundle is stale, naming the stamp and the newer code commit."""
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    _commit(repo, "evidence", _stamp_file(code))
+    newer = _commit(repo, "fix(phase-1): code moves on", {"src/app.py": "x = 2\n"})
+    result = ef.check_freshness(repo, newer, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.compared_commit == newer
+    assert ef._short(repo, code) in result.notes
+    assert ef._short(repo, newer) in result.notes
+
+
+def test_a_recovery_commit_after_the_bundle_is_stale_with_the_trailer_explanation(
+    tmp_path: Path,
+) -> None:
+    """(iii) A recovery commit that swept SOURCE changes code: target, stale, trailer explained."""
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    _commit(repo, "evidence", _stamp_file(code))
+    recovery = _commit(
+        repo,
+        "chore(orchestrator-recovery): sweep",
+        {"src/app.py": "x = 2\n"},
+        body="Orchestrator-Recovery: R-1",
+    )
+    result = ef.check_freshness(repo, recovery, "T-1", "main")
+    assert result.state == ef.STATE_STALE
+    assert result.compared_commit == recovery
+    assert "harness recovery commit (explained, not certified)" in result.notes
+
+
+def test_an_evidence_only_commit_after_a_stale_bundle_does_not_certify_it(tmp_path: Path) -> None:
+    """(iv) Evidence-only commits are walked past; they never turn stale into pass."""
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    _commit(repo, "evidence", _stamp_file(code))
+    newer = _commit(repo, "fix(phase-1): code moves", {"src/app.py": "x = 2\n"})
+    tip = _commit(
+        repo, "evidence on top of the stale bundle", {"verify-evidence/T-1/notes.txt": "more\n"}
+    )
+    for commit in (newer, tip):
+        result = ef.check_freshness(repo, commit, "T-1", "main")
+        assert result.state == ef.STATE_STALE
+        assert result.compared_commit == newer
+
+
+def test_an_empty_commit_neither_certifies_nor_explains(tmp_path: Path) -> None:
+    """(v) An empty commit is walked past: it changes nothing, so it changes no verdict."""
+    repo = _repo(tmp_path)
+    code = _commit(repo, "code", {"src/app.py": "x = 1\n"})
+    _commit(repo, "evidence", _stamp_file(code))
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "chore: empty")
+    empty = _git(repo, "rev-parse", "HEAD").strip()
+    fresh = ef.check_freshness(repo, empty, "T-1", "main")
+    assert fresh.state == ef.STATE_PASS
+    assert fresh.compared_commit == code
+
+    newer = _commit(repo, "fix", {"src/app.py": "x = 2\n"})
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "chore: empty again")
+    tip = _git(repo, "rev-parse", "HEAD").strip()
+    stale = ef.check_freshness(repo, tip, "T-1", "main")
+    assert stale.state == ef.STATE_STALE
+    assert stale.compared_commit == newer
+
+
 # ------------------------------------------------------------------ deletion is its own finding
 
 
@@ -386,12 +471,15 @@ def test_the_manifest_names_the_head_command_versions_and_files(tmp_path: Path) 
     assert manifest["tool_versions"]["python"] and manifest["tool_versions"]["git"]
     assert manifest["stamp"] == f"# HEAD={result.head} mode=fast"
     assert manifest["mode"] == "fast"
+    # `files` is the list of files PRODUCED; the generator is an input and is declared separately,
+    # so `--only capture.sh` can never be accepted as a declared output.
     assert {entry["path"] for entry in manifest["files"]} == {
-        "capture.sh",
         "suite.txt",
         "slow.txt",
         ef.SELF_CHECK_NAME,
     }
+    assert manifest["generator"] == "verify-evidence/T-1/capture.sh"
+    assert manifest["inputs"] == ["capture.sh"]
     assert "# HEAD=" not in (repo / "verify-evidence/T-1/suite.txt").read_text().split("\n", 1)[1]
 
 
@@ -494,6 +582,44 @@ def test_the_full_pass_is_opt_in_and_recorded_in_the_manifest(tmp_path: Path) ->
     assert result.mode == "full"
     assert manifest["mode"] == "full"
     assert manifest["stamp"].endswith("mode=full")
+
+
+def test_a_manifest_declared_generator_helper_is_not_evidence_only(tmp_path: Path) -> None:
+    """Ruling (d) finding 4: every declared generator/input counts, not one hardcoded filename."""
+    repo = _repo(tmp_path)
+    manifest = json.dumps(
+        {
+            "generator": "verify-evidence/T-1/capture.sh",
+            "inputs": ["capture.sh", "helper.py"],
+            "files": [],
+        }
+    )
+    _commit(repo, "bundle manifest", {"verify-evidence/T-1/manifest.json": manifest})
+    helper = _commit(
+        repo, "change the helper generator", {"verify-evidence/T-1/helper.py": "print(1)\n"}
+    )
+    walkable, reason = ef._commit_class(repo, helper)
+    assert walkable is False
+    assert reason is None
+
+
+def test_only_refuses_a_generator_input_by_name(tmp_path: Path) -> None:
+    """Ruling (d) finding 7: `files` lists outputs only; an input is refused, never selected."""
+    repo = _selective_bundle_repo(tmp_path)
+    ef.regenerate_bundle(repo, "T-1")
+    _commit_all(repo, "test(phase-1): evidence at the code HEAD")
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1", only=["capture.sh"])
+    assert "generator/input, not an output" in str(exc.value)
+
+
+def test_an_evidence_directory_that_lexically_escapes_is_refused(tmp_path: Path) -> None:
+    """Ruling (d) finding 8: resolve both sides before `is_relative_to`."""
+    repo = _bundle_repo(tmp_path)
+    escape = repo / "verify-evidence" / ".." / ".." / "escape"
+    with pytest.raises(ef.EvidenceBundleError) as exc:
+        ef.regenerate_bundle(repo, "T-1", directory=str(escape))
+    assert "outside" in str(exc.value)
 
 
 def test_a_merge_commit_never_certifies_a_stamp(tmp_path: Path) -> None:
@@ -601,8 +727,15 @@ def test_timing_txt_holds_both_pass_modes_with_wall_time_and_rewrites(tmp_path: 
     assert text.startswith(
         f"# HEAD={full.head} mode=full"
     )  # a canonical stamp, so the gate can read it
-    assert f"mode=fast wall_seconds={round(fast.duration_seconds, 2):.2f} files=3 rewritten=2" in text
-    assert f"mode=full wall_seconds={round(full.duration_seconds, 2):.2f} files=4 rewritten=2" in text
+    # One measured source per row: each mode carries the HEAD its own pass measured.
+    assert (
+        f"mode=fast head={fast.head} wall_seconds={round(fast.duration_seconds, 2):.2f} "
+        "files=3 rewritten=2"
+    ) in text
+    assert (
+        f"mode=full head={full.head} wall_seconds={round(full.duration_seconds, 2):.2f} "
+        "files=4 rewritten=2"
+    ) in text
     assert "suite_ms=7" in text
     assert "slow_ms=11" in text
 
@@ -622,22 +755,26 @@ def test_a_fast_pass_leaves_timing_txt_untouched_so_a_second_run_is_a_no_op(
 def test_the_at_tip_report_names_the_commit_it_compared(tmp_path: Path) -> None:
     """The committed-view proof at the delivered tip: names the commit, and is not a stamp."""
     repo = _selective_bundle_repo(tmp_path)
+    code = _git(repo, "rev-parse", "HEAD").strip()
     ef.regenerate_bundle(repo, "T-1")
     head = _commit_all(repo, "test(phase-1): evidence at the code HEAD")
     result, path = ef.write_at_tip_report(repo, "T-1")
     text = path.read_text()
     assert result.state == ef.STATE_PASS
-    assert f"compared_commit={head}" in text
+    # It prints BOTH: the delivered tip it ran at and the code HEAD it compared the stamps to.
+    assert f"delivered_tip={head}" in text
+    assert f"compared_commit={code}" in text
     assert "status=pass" in text
     # A report, not evidence measured at that commit: the parser reads no stamp in it.
     stamps, unparsed = ef.parse_stamps(text)
     assert stamps == []
     assert unparsed == []
-    # And an evidence-only commit on top still reads fresh, with the explanation.
+    # An evidence-only commit adding the report is walked back to the same code HEAD: still fresh.
     _commit(repo, "test(phase-1): add the tip report", {str(path.relative_to(repo)): text})
     at_tip = ef.check_freshness(repo, "HEAD", "T-1", "main")
     assert at_tip.state == ef.STATE_PASS
-    assert "evidence-only commit" in at_tip.notes  # the explanation lives in the per-file notes
+    assert at_tip.compared_commit == code  # names the code HEAD, not the report commit
+    assert ef._short(repo, code) in at_tip.evidence
 
 
 def test_the_at_tip_report_refuses_to_claim_pass_on_a_stale_bundle(tmp_path: Path) -> None:

@@ -42,24 +42,31 @@ this prose never puts a false sha256 into the bundle it describes.
 | `freshness_tests.txt` | the `-v` run naming every T-15 test plus the two DoD-4 memory nodes |
 | `assertion_shape.txt` | `scripts/t15_assertion_shape.py`: every remaining conjoined assert with its line and one-line justification, and zero reason-substring assertions |
 | `dod_map.txt` | DoD 5(a)-(f) and the extra guards mapped to node ids whose `PASSED` lines are in `freshness_tests.txt` |
-| `source_anchors.txt` | `grep -nF` anchors for the check, parser, generator, trailer classifier, scope predicate and both call sites |
-| `timing.txt` | both pass modes: wall time, file count, rewrite count, per-step ms (DoD 3 evidence) |
-| `freshness_selfcheck.txt` | the worktree-basis check written LAST by the pass that produced this bundle; it names the commit it compared |
-| `freshness_at_tip.txt` | the committed-view `--at-tip` check, written after the commit that delivered this bundle; it names the commit it compared and is not a stamp |
-| `manifest.json` | generated manifest: HEAD, generated_at, mode, `--only`, command, tool versions, file hashes |
+| `source_anchors.txt` | `grep -nF` anchors for the check, parser, walk-back target, generator/input classifier, generator, trailer classifier, scope predicate and both call sites |
+| `status_consumers.txt` | raw `grep -rn` for the four frozen check values plus `stale` and `verification_status` over the Literal, the Supervisor row, the renderer and the GUI tone map (CCR-T15-01 consumer list) |
+| `timing.txt` | both pass modes, each row carrying the HEAD its own pass measured: wall time, file count, rewrite count, per-step ms (DoD 3 evidence) |
+| `freshness_selfcheck.txt` | the worktree-basis check written LAST by the pass that produced this bundle; it names the commit under verification and the comparison target it compared |
+| `freshness_at_tip.txt` | the committed-view `--at-tip` check, written LAST after the commit that delivered this bundle; it prints the delivered tip and the comparison target, and is not a stamp |
+| `manifest.json` | generated manifest: HEAD, generated_at, mode, `--only`, command, generator/inputs, tool versions, produced files (outputs only) |
 
 ## Freshness at the delivered tip
 
-A committed file cannot contain the SHA of the commit that adds it. So the proof has two parts, in
+The comparison target is the nearest ancestor of the commit under verification that is **not
+evidence-only and not empty** (`docs/build-loop.md`, "Evidence freshness"). An evidence-only commit
+changes no code, so a bundle it delivers is honestly stamped at the code HEAD that was measured.
+
+A committed file cannot contain the SHA of the commit that adds it, so the proof has two parts, in
 this order:
 
-1. the `--full` pass stamps every file it rewrote at the code HEAD and writes
-   `freshness_selfcheck.txt` **last** (`basis=worktree`, `compared_commit=<code HEAD>`);
-2. the commit that adds this bundle touches only `verify-evidence/` and not `capture.sh`, so it is
-   **evidence-only**: `orchestrator task evidence T-15 --at-tip` at that commit writes
-   `freshness_at_tip.txt` with `basis=committed`, `status=pass` and `compared_commit=<that commit>`.
-   The commit that adds the report is also evidence-only, so a read-only `--check` at the final tip
-   reports `pass` with the "differs only by evidence-only commit(s)" explanation.
+1. the `--full` pass stamps every file it rewrote at the code HEAD it certifies — the comparison
+   target of the worktree HEAD, which is why a refresh on top of a bundle commit still names the
+   code HEAD — and writes `freshness_selfcheck.txt` **last** (`basis=worktree`,
+   `commit_under_verification=<worktree HEAD>`, `compared_commit=<code HEAD>`);
+2. `orchestrator task evidence T-15 --at-tip`, run **LAST** after the commit that delivers this
+   bundle, writes `freshness_at_tip.txt` with `basis=committed`, `delivered_tip=<the tip it ran
+   at>`, `compared_commit=<the code HEAD it resolved>` and `status=pass`. The commit that adds the
+   report is also evidence-only, so a read-only `--check` at the final tip reports `pass` naming
+   that code HEAD.
 
 The Supervisor gate runs the row itself. The live Supervisor process imports the **main** checkout's
 code, so the `stale` row first appears in `verification.md` after this branch merges and the server
@@ -98,13 +105,16 @@ Two further `fix_scopes` reasons moved from substring to exact values in the sam
 
 ## HEAD moves for reasons the Worker does not control
 
-An **evidence-only** commit (nothing outside `verify-evidence/`, and not `capture.sh` or the
-generator) cannot change measured content, so a stamp that differs only by such commits is fresh
-with that explanation. A commit carrying an `Orchestrator-Recovery:` or `Operator-Hand-Fix:`
-**trailer** is *explained, never certified*: git's `%(trailers)` parser identifies it (never a
-substring search of the body), the reason names the commit, its trailer and its author, and the
-bundle still reads `stale`, because a Worker can write any trailer into its own code commit.
-Forging a trailer changes the prose of the reason and nothing else.
+An **evidence-only** commit (nothing outside `verify-evidence/`, and no path `manifest.json`
+declares as `generator`/`inputs`) changes no code, so it is walked past: a stamp naming its parent
+code HEAD is truthful, and that is why this bundle can pass on the commit that ships it. Every
+commit that changes code after the bundle is the comparison target and makes it `stale` —
+including a harness recovery commit that swept uncommitted source and an operator hand-fix. A
+commit carrying an `Orchestrator-Recovery:` or `Operator-Hand-Fix:` **trailer** is *explained,
+never certified*: git's `%(trailers)` parser identifies it (never a substring search of the body),
+the reason names the commit, its trailer and its author, and the bundle still reads `stale`,
+because a Worker can write any trailer into its own code commit. Forging a trailer changes the
+prose of the reason and nothing else. An empty commit is walked past like an evidence-only one.
 
 ## Deleted evidence
 

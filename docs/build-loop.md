@@ -726,15 +726,22 @@ verification. Only the first 20 lines are scanned: a stamp is header metadata, s
 transcript that mentions a stamp is neither counted nor rewritten. A short unparsable `HEAD=`
 stamp is stale, never fresh.
 
-A different SHA is not automatically stale, because HEAD moves for reasons the Worker does not
-control. The only commit that **certifies** content is an **evidence-only** commit: nothing outside
-`verify-evidence/`, and not `capture.sh`, which is code. A commit carrying an
-`Orchestrator-Recovery:` or `Operator-Hand-Fix:` **trailer** is *explained, not certified*: git's
-`%(trailers)` parser identifies it (never a substring search of the body), the reason names the
-commit and the trailer, and the bundle still reads stale because a Worker can write any trailer
-into its own code commit. Evidence committed earlier on the branch and gone at the reviewed commit
-is stale with the paths and the deleting commit, never `not_applicable`: deleting evidence must not
-be rewarded with a silent pass, and it is distinct from a task that never committed evidence.
+HEAD moves for reasons the Worker does not control, so a bare SHA equality is not the rule. The
+comparison target is the **nearest ancestor of the commit under verification that is not
+evidence-only and not empty**. An evidence-only commit touches nothing outside `verify-evidence/`
+(and no declared generator — every path `manifest.json` lists as `generator`/`inputs`, not one
+hardcoded filename) and an empty commit changes nothing at all, so both are walked past: a bundle
+delivered by an evidence-only commit is honestly stamped at the code HEAD it measured, which is
+what lets the bundle report `pass` on the commit that ships it. Any commit that changes code after
+the bundle becomes the target and makes it `stale` — including a recovery commit that swept
+uncommitted source. A commit carrying an `Orchestrator-Recovery:` or `Operator-Hand-Fix:`
+**trailer** is *explained, not certified*: git's `%(trailers)` parser identifies it (never a
+substring search of the body), the reason names the commit, its trailer and its author, and the
+bundle still reads stale because a Worker can write any trailer into its own code commit. The
+reason string always names the comparison target it used. Evidence committed earlier on the branch
+and gone at the reviewed commit is stale with the paths and the deleting commit, never
+`not_applicable`: deleting evidence must not be rewarded with a silent pass, and it is distinct
+from a task that never committed evidence.
 
 One command refreshes the whole bundle:
 
@@ -752,26 +759,30 @@ worktree with **any** uncommitted input — tracked modifications *and* untracke
 files, because `capture.sh` measures the tree on disk while the stamp names a commit — **including
 an edited `capture.sh`**. It also refuses a generator that is not committed at `HEAD`. It
 canonicalises **only the files that pass rewrote**, and writes `manifest.json` (HEAD, timestamp,
-command line, mode, `--only` selection, tool versions, produced files) plus a self-check. A file
-the pass did not rewrite keeps its old stamp and is reported stale.
+command line, mode, `--only` selection, tool versions, the generator/inputs it declares, and the
+files it produced — outputs only, so `--only capture.sh` is refused by name). A file the pass did
+not rewrite keeps its old stamp and is reported stale. The pass stamps the code HEAD it certifies:
+when the worktree sits on an evidence-only commit, that is the nearest non-evidence-only ancestor,
+so refreshing a bundle never writes a stamp the walk-back cannot certify.
 
 The default pass is cheap by design: it regenerates everything except the expensive full-suite
 capture, so it finishes in seconds and reports its elapsed time and rewrite count. `--full` sets
 `T15_FULL=1` for the generator and runs the suite too; the mode is recorded in `manifest.json` and
 in every canonical stamp (`# HEAD=<sha> mode=fast|full`), so a reader can tell a cheap refresh from
-a complete one. `timing.txt` holds **both** modes' wall time, file count and rewrite count — written
-only by a `--full` pass so the fast pass stays byte-identical on a re-run — and any number quoted in
-a bundle README or a handoff must come from that file, never from a scratch or `/tmp` log. It needs
-no network or API key, and a second fast run at the same HEAD is byte-identical so the diff stays
-reviewable.
+a complete one. `timing.txt` holds **both** modes' wall time, file count and rewrite count, and each
+row carries the HEAD its own pass measured — written only by a `--full` pass so the fast pass stays
+byte-identical on a re-run — and any number quoted in a bundle README or a handoff must come from
+that file, never from a scratch or `/tmp` log. It needs no network or API key, and a second fast run
+at the same HEAD is byte-identical so the diff stays reviewable.
 
 A file cannot contain the SHA of the commit that adds it. The bundle's own `freshness_selfcheck.txt`
 is therefore the worktree-basis check of the pass that wrote it (generated LAST, naming the commit
-it compared), and `orchestrator task evidence <id> --at-tip`, run after the commit that delivers the
-bundle, writes `freshness_at_tip.txt`: the committed-view check, naming the commit it compared and
-refusing to write at all unless the bundle is fresh. That report is unstamped — it is a statement
-about a commit, not a measurement taken at one — and the commit that adds it touches only
-`verify-evidence/`, so the gate reports `pass` with that explanation at the delivered tip.
+it compared), and `orchestrator task evidence <id> --at-tip`, run **last**, after the commit that
+delivers the bundle, writes `freshness_at_tip.txt`: the committed-view check, printing both the
+delivered tip it ran at and the comparison target it resolved to, and refusing to write at all
+unless the bundle is fresh. That report is unstamped — it is a statement about a commit, not a
+measurement taken at one — and the commit that adds it touches only `verify-evidence/`, so it is
+walked past and the gate reports `pass` naming the code HEAD the stamps were measured at.
 
 ## Build log
 

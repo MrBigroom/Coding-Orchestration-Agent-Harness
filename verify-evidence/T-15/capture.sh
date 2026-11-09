@@ -91,6 +91,8 @@ if want source_anchors.txt; then
       "src/orchestrator/services/evidence_freshness.py:CHECK_NAME =" \
       "src/orchestrator/services/evidence_freshness.py:def parse_stamps" \
       "src/orchestrator/services/evidence_freshness.py:def _commit_class" \
+      "src/orchestrator/services/evidence_freshness.py:def _comparison_target" \
+      "src/orchestrator/services/evidence_freshness.py:def _manifest_declared_inputs" \
       "src/orchestrator/services/evidence_freshness.py:def check_freshness" \
       "src/orchestrator/services/evidence_freshness.py:def check_status" \
       "src/orchestrator/services/evidence_freshness.py:def applies_to_kind" \
@@ -107,6 +109,24 @@ if want source_anchors.txt; then
     done
   } > "$OUT/source_anchors.txt"
   emit source_anchors "$(ms "$T0" "$(now)")"
+fi
+
+if want status_consumers.txt; then
+  T0=$(now)
+  { echo "$STAMP"
+    echo "# command: grep -rn for the four frozen verification check values plus the additive"
+    echo "# stale value and verification_status, across every consumer of the check record."
+    echo "# schemas.py owns the Literal; supervisor_service.py builds the row (and is the line"
+    echo "# the reviewer found missing); artifact_service.py renders verification.md; ui.tsx maps"
+    echo "# a status to a badge tone. Raw output follows, no edits."
+    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules \
+      -E '"pass"|"fail"|"skipped"|"not_applicable"|stale|verification_status' \
+      src/orchestrator/core/schemas.py \
+      src/orchestrator/services/supervisor_service.py \
+      src/orchestrator/services/artifact_service.py \
+      web/src/components/ui.tsx
+  } > "$OUT/status_consumers.txt"
+  emit status_consumers "$(ms "$T0" "$(now)")"
 fi
 
 if want dod_map.txt; then
