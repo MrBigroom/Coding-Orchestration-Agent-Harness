@@ -109,7 +109,8 @@ run() { # run <name> <cmd...>: fresh HOME + scrubbed env, logs moved to .work/lo
   printf '%-16s exit=%s\n' "$name" "$status"
 }
 
-run_logged_in() { # like run, but keeps the real HOME so the harness's own login is used
+run_logged_in() { # like run, but keeps the real HOME and the D-Bus session (Qoder keeps its
+  # login in the desktop keyring via keytar), so the harness's own login is used
   local name="$1"
   shift
   rm -rf "$W/logs/_" "$W/logs/$name" "$W/runs/$name"
@@ -118,6 +119,8 @@ run_logged_in() { # like run, but keeps the real HOME so the harness's own login
   local status=0
   (cd "$W/runs/$name" && env -i PATH="$PATH" TERM=dumb LANG=C.UTF-8 HOME="$HOME" \
     ${XDG_CONFIG_HOME:+XDG_CONFIG_HOME="$XDG_CONFIG_HOME"} \
+    ${XDG_RUNTIME_DIR:+XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"} \
+    ${DBUS_SESSION_BUS_ADDRESS:+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"} \
     ${QODER_PERSONAL_ACCESS_TOKEN:+QODER_PERSONAL_ACCESS_TOKEN="$QODER_PERSONAL_ACCESS_TOKEN"} \
     NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" \
     HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
