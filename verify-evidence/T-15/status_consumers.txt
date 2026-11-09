@@ -1,4 +1,4 @@
-# HEAD=d658cd2097c1f11b0a9ef7c91ce0689e9223f29b mode=full
+# HEAD=332b1687febd0d8469e5a39ebf1b0fb6ed2ac5a1 mode=full
 # Commands actually run, with their UNEDITED output FIRST, then per-area excerpts
 # (ruling 2026-11-10 (e) items 1-2). The repo-wide greps cover all of src/ and web/src,
 # so completeness is shown rather than asserted; the two negative results the operator
@@ -98,6 +98,16 @@ $ grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE
 322:    return evidence_freshness.check_freshness(cwd, run.commit_sha, task.short_id, base_branch)
 357:    if freshness.state == evidence_freshness.STATE_STALE:
 500:    if freshness.state == evidence_freshness.STATE_STALE:
+
+## COMMAND 8 -- the dependency-free fallback UI's tone map (a presentational table)
+$ grep -n -E '^(const TONE|  in_progress|  rejected)|TONE\[v\]' src/orchestrator/api/static_fallback/index.html
+46:const TONE = { accepted:"ok", completed:"ok", pass:"ok", APPROVED:"ok", approved:"ok", ready:"ok", queued:"info", review:"info",
+47:  in_progress:"warn", running:"warn", testing:"warn", pending:"warn", CHANGES_REQUESTED:"warn", blocked:"bad", failed:"bad",
+48:  rejected:"bad", timeout:"bad", fail:"bad", NEEDS_HUMAN:"bad" };
+52:const badge = (v) => v ? `<span class="b ${TONE[v] || ""}">${esc(v)}</span>` : '<span class="muted">—</span>';
+# NEGATIVE RESULT: the fallback tone table lists neither skipped nor not_applicable either,
+# and an unknown value falls through TONE[v] || "": it is a presentation map, not a
+# filter, so no verification status is dropped and no entry is required for stale.
 
 ## RAW OUTPUT ENDS HERE; per-line excerpts with file prefixes follow
 
