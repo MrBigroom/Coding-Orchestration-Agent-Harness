@@ -563,6 +563,17 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   included, the budget that caused the cut, and the reason. The recorder sits in the same code
   that performs the cut (`prompt_builder`), so a cut cannot happen without a row — including the
   sensitive-file strip (`.env`, keys), which used to vanish between `patch.diff` and the prompt.
+  A diff row's reason distinguishes the T-36 outcomes in the existing columns: **floor only,
+  remainder exhausted** (the first hunk was supplied and the group budget was fully committed by
+  delivered bytes), **floor only, share under the floor** (the group still had tokens but this
+  file's **effective ceiling** -- `max(per_file, cap)` for the source group, which is what the
+  top-up pass may spend -- did not exceed the 160-token floor, so those tokens stayed unspent
+  rather than being allocated to this file; the evidence group is uncapped after its fair-share
+  pass and never receives this claim), and **floor only, next hunk did not fit** (the effective
+  ceiling was larger than the floor, but rendering is hunk-granular: the next hunk did not fit
+  inside what remained of that allowance, so the group's leftover tokens stayed unallocated
+  because no hunk could absorb them) from **omitted entirely** (not even the floor fitted, or no
+  floor render fits), so zero bytes can never look like a short first hunk.
 - **Per-file diff budget.** A large diff is split by file and ordered source-first (code is
   funded before the evidence that describes it). Files are included **whole** whenever they fit
   in what is left — a reviewer verifying wiring needs one complete file far more than the first
@@ -572,6 +583,41 @@ the input itself is archived so "the reviewer was shown X" is answerable from di
   marker, then the rest are named as omitted. In the source group one file may consume at most
   half the group's budget so a single generated artifact cannot starve the rest, and the whole
   thing stays inside `max_diff_tokens`: the budget is never widened.
+- **First-hunk floor (T-36).** Before any file receives more than its floor, every file named by
+  the diffstat is given a **160-token first-hunk floor** (or its whole content when smaller). This
+  is the invariant `review_audit.diff_completeness` enforces: a diffstat file with no hunk in the
+  supplied patch is a blocking harness finding. The floor renderer keeps the diff header, the
+  `@@` line and a short `... [review diff floor: <path> stopped at its first hunk; ...]` marker;
+  a file that then receives no remainder is listed as `partially included` and its manifest row
+  says **floor only, remainder exhausted** when the group budget was fully committed, **floor
+  only, share under the floor** when the group still had tokens but the file's effective ceiling
+  (`max(per_file, cap)` for the source group; the evidence group is uncapped) did not exceed its
+  floor, or **floor only, next hunk did not fit** when that ceiling was larger than the floor and
+  hunk granularity left the group's leftover tokens unspent (these are different facts and the
+  manifest does not blur them). A file whose floor the group budget could not fund -- or for which
+  no floor render fits at all -- is named **omitted entirely** with the matching reason.
+- **The floor is a hard cap, not an average.** `_floor_head` tries variants in preference order
+  (full diff header before the compact `diff --git` line, full marker before a short one, full
+  first hunk before a middle slice) and returns the first whose `estimate_tokens` is **at most**
+  `DIFF_FILE_FLOOR_TOKENS`. So `file_count * 160` is an upper bound on the floor pass, and the
+  arithmetic below is true for any path length rather than only for short ones. A path whose own
+  `diff --git` header cannot fit inside 160 tokens (measured: longer than 289 characters) has no
+  floor at all and is named omitted rather than given bytes that break the bound.
+- **Arithmetic for the DoD 1 guarantee.** At the default `max_diff_tokens=12000` the post-header
+  budget is `12000 - 300 = 11700` (`header_reserve`, capped at 300). With the T-16 compensation
+  reserve in force the source share is `11700 * 2/3 = 7800`; `40 * 160 = 6400 <= 7800` leaves 1400
+  tokens for the remainder, and `48 * 160 = 7680 <= 7800` still fits. Without a reserve the whole
+  11700 is available, i.e. `11700 // 160 = 73` files. Floor capacity is therefore
+  `(max_diff_tokens - header_reserve) // 160`, two-thirds of it when the evidence reserve is in
+  force; raising the budget raises that capacity as well as the remainder, and the tests pin the
+  default rather than a raised number. The 40-file test carries `verify-evidence/` files on purpose
+  so it exercises the 7800 share and not the 11700 one. Only after all floors are funded does the
+  remainder pass run, so one large source file still gets the lion's share and the T-16 evidence
+  reserve is unchanged. The remainder is allocated and accounted by **delivered** bytes, not by the
+  token target: `_chunk_head` stops on whole hunk boundaries, so a share that renders short is
+  offered back to the group instead of being counted as spent (T-36 review round 6, findings 1/2).
+  If a file is still omitted at the default budget the auditor keeps firing `review_diff_incomplete`;
+  it is never weakened to make the allocator look correct.
 - **Two labelled absence sections.** Harness-detected missing artifacts (computed from the run
   directory) and reviewer-asserted missing artifacts (the model's own claims) are separate in the
   payload. The mechanical checks table marks every concrete file/test/line claim `confirmed`,
