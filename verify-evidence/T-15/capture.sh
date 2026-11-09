@@ -114,17 +114,30 @@ fi
 if want status_consumers.txt; then
   T0=$(now)
   { echo "$STAMP"
-    echo "# command: grep -rn for the four frozen verification check values plus the additive"
-    echo "# stale value and verification_status, across every consumer of the check record."
-    echo "# schemas.py owns the Literal; supervisor_service.py builds the row (and is the line"
-    echo "# the reviewer found missing); artifact_service.py renders verification.md; ui.tsx maps"
-    echo "# a status to a badge tone. Raw output follows, no edits."
-    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules \
-      -E '"pass"|"fail"|"skipped"|"not_applicable"|stale|verification_status' \
-      src/orchestrator/core/schemas.py \
-      src/orchestrator/services/supervisor_service.py \
-      src/orchestrator/services/artifact_service.py \
-      web/src/components/ui.tsx
+    echo "# Every consumer of VerificationCheck.status, quoted raw (CCR-T15-01): the Literal"
+    echo "# itself, the Supervisor row (the line the reviewer found missing), the verification.md"
+    echo "# renderer, the GUI status-to-tone map, the review call site, and every verification_status"
+    echo "# filter. No edits."
+    echo
+    echo "## (1) the frozen Literal + the additive stale value"
+    grep -n 'status: Literal' src/orchestrator/core/schemas.py
+    echo
+    echo "## (2) Supervisor verification builds the row (supervisor_service.py)"
+    grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness)|status=status' \
+      src/orchestrator/services/supervisor_service.py
+    echo
+    echo "## (3) Architect review calls the same comparison (review_service.py)"
+    grep -n -E 'evidence_freshness\.(CHECK_NAME|check_status|check_freshness|STATE_STALE)' \
+      src/orchestrator/services/review_service.py
+    echo
+    echo "## (4) verification.md renderer emits c.status unchanged (artifact_service.py)"
+    grep -n 'c.status' src/orchestrator/services/artifact_service.py
+    echo
+    echo "## (5) GUI status-to-tone map (web/src/components/ui.tsx)"
+    grep -n -E '(^|[ {])(pass|fail|not_applicable|skipped|stale):' web/src/components/ui.tsx
+    echo
+    echo "## (6) every verification_status consumer"
+    grep -rn --exclude-dir=__pycache__ --exclude-dir=node_modules 'verification_status' src web/src
   } > "$OUT/status_consumers.txt"
   emit status_consumers "$(ms "$T0" "$(now)")"
 fi
