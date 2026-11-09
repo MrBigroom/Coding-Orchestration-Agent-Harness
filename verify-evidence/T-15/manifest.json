@@ -3,48 +3,52 @@
   "files": [
     {
       "path": "assertion_shape.txt",
-      "sha256": "e95a0b4e528102be984cfc2c69218ebab7606c262fce7f5519c356751e4879d6"
-    },
-    {
-      "path": "capture.sh",
-      "sha256": "aaacb1b02983216a509dc21706bdf3042b446cc601bcd5af584cfc3e3e36ae5b"
+      "sha256": "f5a94b43c7a5a7133ddbe7ccb8e9091ab156319e7a56f918b58ca3a717fdafac"
     },
     {
       "path": "dod_map.txt",
-      "sha256": "3da58d85ce9ba3aa0acafa08ff033da607657203a402838f98ebcdb998723b4d"
+      "sha256": "857d93af6d7543f18a55b06e08d1d87fad19b219eacda4b32a0fd396eeff2611"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "8537060e14898e86881488fbf7e0e7d546624df4ce64b54e9aab0e059c24d1e9"
+      "sha256": "aba0817339e80ed517afb4b4185be772b4b333d59e1363a72f627283fa559a86"
     },
     {
       "path": "freshness_tests.txt",
-      "sha256": "999b89515aaf230d8953aaf0f3a837e0705dc816cc1f8abfc1cda6ae7307ce0f"
+      "sha256": "d587812f5e6a24dfeb10d0b99d7bfd9b789774e110b85653834003f2b06928da"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "65b1f26a38a0f8030e9bd787a5defc79c6394f60f30bef9910029a2ad3cd297d"
+      "sha256": "098d943eaf03e20300cbd8c055cd13721649f34f9ac41447feb3317f7184033c"
     },
     {
       "path": "lint.txt",
-      "sha256": "874130562f68878705df8921227f6b930e5e57a1f144c1e2a510baf7abe589b5"
+      "sha256": "3703b8ac74796ccff3747edb311fa00776c3a5da0293f9fab00fda41d24f0e02"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "6c9a7b92ecb211be01caceb469262f16c65beb0a6bb6345a6eae5766b1e3448b"
+      "sha256": "cff2775c1395eff840e424461d561962a37ab0e41adb094be2ec2f92437aaabd"
+    },
+    {
+      "path": "status_consumers.txt",
+      "sha256": "bb422fd90c8810fad0201917b77f1cdb71c05ee53fa249272fd1870b73c3bb65"
     },
     {
       "path": "timing.txt",
-      "sha256": "3bece6ce4b3aab2d0cbf643a80b835f48841a72e109b4fa377ff4c53ed3df80e"
+      "sha256": "717e28415f8e0233a95767576b6006168a92e79449b88bbf5703494533a48972"
     }
   ],
-  "generated_at": "2026-11-08T17:27:29Z",
-  "head": "fe6c4c2b1c96b1085b3802101de573b600420f82",
-  "head_short": "fe6c4c2",
+  "generated_at": "2026-11-09T16:12:56Z",
+  "generator": "verify-evidence/T-15/capture.sh",
+  "head": "e1bb380c4672116eacffbe2e73c912aa1092c177",
+  "head_short": "e1bb380",
+  "inputs": [
+    "capture.sh"
+  ],
   "label": "T-15",
   "mode": "full",
   "only": [],
-  "stamp": "# HEAD=fe6c4c2b1c96b1085b3802101de573b600420f82 mode=full",
+  "stamp": "# HEAD=e1bb380c4672116eacffbe2e73c912aa1092c177 mode=full",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",
