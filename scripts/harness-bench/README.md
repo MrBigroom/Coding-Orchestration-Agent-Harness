@@ -42,8 +42,9 @@ So these two targets differ from the rest:
 
 If a run fails with "Not logged in", run `qodercli` once and `/login`. If it reaches
 Qoder but the mock logs no requests, your plan probably doesn't include custom providers.
-Not yet checked against a logged-in account: the selection `-m qwen3.8-flash` assumes
-custom models are picked by model ID, as `qodercli --help` says.
+Custom models are selected as `<provider>/<model>` (here `benchmock/qwen3.8-flash`). The
+Qoder CLI keeps its own login, separate from the desktop app's: sign in once with
+`.work/node_modules/.bin/qodercli` → `/login`.
 
 ## Results — 2026-10-26
 

@@ -174,7 +174,7 @@ for h in "${@:-${ALL[@]}}"; do
     --agent-class default -t "$Q" ;;
   qoder | qoder_cache)
     [ "$h" = qoder_cache ] && cc=true || cc=false
-    run_logged_in "$h" "$P/qodercli" --settings "$(qoder_settings $cc)" -m qwen3.8-flash \
+    run_logged_in "$h" "$P/qodercli" --settings "$(qoder_settings $cc)" -m benchmock/qwen3.8-flash \
       --permission-mode accept_edits --no-session-persistence -p "$Q" ;;
   *) echo "unknown harness: $h" >&2 ;;
   esac
