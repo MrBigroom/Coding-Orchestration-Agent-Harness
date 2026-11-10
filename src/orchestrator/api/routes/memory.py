@@ -42,12 +42,16 @@ def list_memory(
 
 
 @router.post("/memory", status_code=201)
-def create_memory(body: MemoryCreate, session: Session = SessionDep) -> dict[str, Any]:
+def create_memory(
+    body: MemoryCreate, override: bool = False, session: Session = SessionDep
+) -> dict[str, Any]:
     # Out-of-vocabulary scopes are refused here for EVERY category (T-4 DoD 2); the message
     # names the allowed values. The entry shape stays exactly as frozen — the marker for an
     # unreachable scope is shown by `orchestrator memory list`, not by a new response field.
+    # `approved=true` is an approval, so it goes through the same eviction refusal as
+    # `POST /memory/{id}/approve`; `override=true` is the explicit opt-in.
     try:
-        return dump(memory_service.create(session, body))
+        return dump(memory_service.create(session, body, override=override))
     except memory_service.MemoryError_ as e:
         raise HTTPException(400, str(e)) from e
 
@@ -86,13 +90,15 @@ def export_memory(session: Session = SessionDep) -> dict[str, Any]:
 
 
 @router.post("/memory/import")
-async def import_memory(request: Request, session: Session = SessionDep) -> dict[str, Any]:
+async def import_memory(
+    request: Request, override: bool = False, session: Session = SessionDep
+) -> dict[str, Any]:
     try:
         payload = await request.json()
     except ValueError as e:
         raise HTTPException(400, "body must be a JSON memory export") from e
     try:
-        return {"imported": memory_service.import_all(session, payload)}
+        return {"imported": memory_service.import_all(session, payload, override=override)}
     except memory_service.MemoryError_ as e:
         raise HTTPException(400, str(e)) from e
 

@@ -14,6 +14,14 @@ from orchestrator.core.models import MemoryEntry
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
 from orchestrator.services import memory_service as m
 from orchestrator.services import memory_triage as mt
+from orchestrator.utils.memory_text import (
+    build_df,
+    build_term_df,
+    duplicate_detail,
+    duplicate_reason,
+    is_duplicate_pair,
+    is_subject_pair,
+)
 from orchestrator.utils.redaction import REDACTED, redact
 from orchestrator.utils.truncate import estimate_tokens
 
@@ -87,9 +95,13 @@ REVIEW_PAYLOAD = (
 )
 
 
-def test_a_reworded_restatement_is_linked_not_stored(session):
+def test_a_reworded_restatement_is_recorded_as_a_linked_row(session):
     approved = add(session, ANCHOR_RULE)
-    before = len(m.list_entries(session))
+    # The corpus the service will use: every stored row plus the incoming suggestion.
+    df = build_df([e.content for e in m.list_entries(session)] + [ANCHOR_RESTATED])
+    is_dup, ratio, threshold = duplicate_detail(ANCHOR_RESTATED, ANCHOR_RULE, df)
+    assert is_dup is True
+
     out = m.suggest_from_handoff(
         session,
         [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
@@ -98,9 +110,21 @@ def test_a_reworded_restatement_is_linked_not_stored(session):
         report=True,
     )
     assert out.created == []
-    assert len(m.list_entries(session)) == before
-    assert out.linked[0]["existing_id"] == approved.id
-    assert "rare-token containment" in out.linked[0]["reason"]
+    assert len(out.linked) == 1
+    record = out.linked[0]
+    assert record["existing_id"] == approved.id
+    # The restatement is a REAL pending row: its content is persisted, not only logged.
+    linked = session.get(MemoryEntry, record["entry_id"])
+    assert linked is not None
+    assert linked.approved is False
+    assert linked.rejected is False
+    assert linked.content == ANCHOR_RESTATED
+    # ... recorded as linked to the approved entry it restates, in the existing tags column.
+    assert m.duplicate_of(linked) == approved.id
+    # The reason names the matcher's own numbers, so a threshold change cannot leave prose behind.
+    assert record["reason"] == duplicate_reason(ratio, threshold)
+    assert f"#{approved.id}" in out.notes[0]
+    assert f"#{linked.id}" in out.notes[0]
 
 
 def test_a_byte_identical_suggestion_still_creates_no_row(session):
@@ -135,6 +159,75 @@ def test_same_domain_but_unrelated_facts_are_not_linked(session):
     assert second.linked == []
 
 
+SUBJECT_ANCHOR = (
+    "aardvark basilisk capybara dingo emu flamingo gecko `prompt_builder._floor_only_reason` "
+    "must compare `max(per_file, cap)`, never per_file alone, or the reason contradicts itself "
+    "and the reviewer calls the allocator unverifiable."
+)
+SUBJECT_RESTATED = (
+    "heron ibis jacamar kestrel lemur meerkat narwhal `prompt_builder._floor_only_reason` "
+    "compares `max(per_file, cap)`; a per_file-only check prints numbers the reader cannot trust."
+)
+
+
+def test_a_reworded_restatement_shared_only_by_subject_is_linked(session):
+    """Rare-word containment alone misses the operator-cited topical restatements.
+
+    Measured on the live pending pile: the evidence-freshness cluster and the diff-floor
+    cluster share their subject (code symbols, flags) but not enough rare prose words. The
+    second ingest signal must still record the link -- and still never a whole-text ratio.
+    """
+    approved = m.create(
+        session,
+        MemoryCreate(
+            category="project",
+            scope="gotchas",
+            project_slug="demo",
+            content=SUBJECT_ANCHOR,
+            approved=True,
+        ),
+    )
+    df = build_df([e.content for e in m.list_entries(session)] + [SUBJECT_RESTATED])
+    tdf = build_term_df([e.content for e in m.list_entries(session)] + [SUBJECT_RESTATED])
+    assert is_duplicate_pair(SUBJECT_RESTATED, SUBJECT_ANCHOR, df)[0] is False
+    same_subject, shared = is_subject_pair(SUBJECT_RESTATED, SUBJECT_ANCHOR, tdf)
+    assert same_subject is True
+    assert len(shared) >= 2
+
+    out = m.suggest_from_handoff_report(
+        session,
+        [MemorySuggestion(category="project", scope="gotchas", content=SUBJECT_RESTATED)],
+        source="handoff:R-13",
+        project_slug="demo",
+    )
+    assert out.created == []
+    assert out.linked[0]["existing_id"] == approved.id
+    assert "rare identifier" in out.linked[0]["reason"]
+
+
+def test_a_repeated_restatement_does_not_add_a_second_linked_row(session):
+    add(session, ANCHOR_RULE)
+    first = m.suggest_from_handoff_report(
+        session,
+        [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
+        source="handoff:R-14",
+        project_slug="demo",
+    )
+    assert len(first.linked) == 1
+    before = len(m.list_entries(session))
+    second = m.suggest_from_handoff_report(
+        session,
+        [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
+        source="handoff:R-15",
+        project_slug="demo",
+    )
+    # The second copy is byte-identical to the already-recorded restatement: no second row,
+    # and no second link either (the no-row rule is what the DoD pins).
+    assert second.created == []
+    assert second.linked == []
+    assert len(m.list_entries(session)) == before
+
+
 # ------------------------------------------------------- value-ordered demotion (DoD 2)
 
 
@@ -162,6 +255,18 @@ def test_untagged_entries_keep_the_pre_t17_demotion_order(session, budgets):
     assert stale.id in excluded
     assert "rot-prone" in excluded[stale.id]["reason"]
     assert older.id not in excluded
+
+
+def test_untagged_durable_entries_are_still_demoted_oldest_first(session, budgets):
+    older = add(session, "Older durable rule " + "alpha " * 8)
+    newer = add(session, "Newer durable rule " + "beta " * 8)
+    budgets(max_memory_tokens_project=tokens(newer))
+
+    sel = m.select_for_prompt(session, "worker", "demo")
+    excluded = {x["id"]: x for x in sel.excluded}
+    assert set(excluded) == {older.id}
+    assert newer.content[:20] in sel.sections["project"]
+    assert "id #" + str(older.id) + " is only the last tiebreak" in excluded[older.id]["reason"]
 
 
 def test_two_selections_are_byte_identical_and_exclude_the_same_ids(session, budgets):
@@ -236,6 +341,55 @@ def test_condense_rendered_markdown_matches_the_surviving_approved_rows(session)
         assert path.read_text() == expected
 
 
+def test_a_subject_cluster_proposal_keeps_every_distinct_fact(session):
+    a = add(
+        session,
+        "prompt_builder.render_diff_budget must allocate by the DELIVERED token count: "
+        "rendering stops on whole-hunk boundaries, so the token target is not what a "
+        "`per_file` share receives.",
+    )
+    b = add(
+        session,
+        "prompt_builder._floor_only_reason must compare `max(per_file, cap)`, not `per_file`: "
+        "a per-file-only check prints a reason whose numbers contradict the budget.",
+    )
+    assert is_duplicate_pair(a.content, b.content, build_df([a.content, b.content]))[0] is False
+    proposal = next(p for p in m.condense(session, "demo")["proposals"] if b.id in p["ids"])
+    assert proposal["distinct_facts"] is True
+    assert a.content in proposal["content"]
+    assert b.content in proposal["content"]
+
+    m.condense(session, "demo", apply_ids=proposal["ids"])
+    session.expire_all()
+    survivor = session.get(MemoryEntry, proposal["survivor"])
+    assert survivor.approved is True
+    assert a.content in survivor.content
+    assert b.content in survivor.content
+    absorbed = next(i for i in proposal["ids"] if i != proposal["survivor"])
+    assert session.get(MemoryEntry, absorbed).rejected is True
+
+
+def test_condense_requires_a_project_and_never_groups_global_or_role_rows(session, budgets):
+    # Global and role rows share generic identifiers (`handoff.json`); the old optional
+    # --project grouped them into one proposal. Per-project condense must ignore them.
+    add(
+        session,
+        "Write handoff.json early and keep improving it; handoff.md is the human-readable copy.",
+        category="global",
+        scope="patterns",
+        slug=None,
+    )
+    add(
+        session,
+        "When writing a handoff.json brief, do not require the artifact the brief forbids.",
+        category="global",
+        scope="patterns",
+        slug=None,
+    )
+    with pytest.raises(TypeError):
+        m.condense(session)  # type: ignore[call-arg]
+
+
 # ------------------------------------------------ lifecycle behind a contract change (DoD 4)
 
 
@@ -305,6 +459,80 @@ def test_log_redaction_is_still_a_security_control():
 
 
 # ------------------------------------------- approval eviction is refused (DoD 7)
+
+
+def test_creating_an_already_approved_row_is_refused_when_it_would_evict(session, budgets):
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    at_risk = add(session, "At-risk rule " + "beta " * 10)
+    budgets(max_memory_tokens_project=tokens(keep) + tokens(at_risk))
+    before = len(m.list_entries(session))
+
+    with pytest.raises(m.MemoryError_) as exc:
+        add(session, "New rule " + "gamma " * 10)
+    assert "creating" in str(exc.value)
+    # Oldest-first among equal-class untagged rows: the OLDER approved row is the casualty.
+    assert f"#{keep.id} (" in str(exc.value)
+    assert len(m.list_entries(session)) == before
+    # The explicit opt-in is the only way through; the evicted row stays approved, not deleted.
+    created = m.create(
+        session,
+        MemoryCreate(
+            category="project",
+            scope="gotchas",
+            project_slug="demo",
+            content="New rule " + "gamma " * 10,
+            approved=True,
+        ),
+        override=True,
+    )
+    assert created.approved is True
+    session.expire_all()
+    assert session.get(MemoryEntry, keep.id).approved is True
+    assert keep.content not in m.for_prompt(session, "worker", "demo")["project"]
+    assert at_risk.content in m.for_prompt(session, "worker", "demo")["project"]
+
+
+def test_importing_an_approved_row_is_refused_when_it_would_evict(session, budgets):
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    at_risk = add(session, "At-risk rule " + "beta " * 10)
+    budgets(max_memory_tokens_project=tokens(keep) + tokens(at_risk))
+    payload = {
+        "version": 1,
+        "entries": [
+            {
+                "category": "project",
+                "scope": "gotchas",
+                "project_slug": "demo",
+                "content": "Imported rule " + "gamma " * 10,
+                "approved": True,
+            }
+        ],
+    }
+    before = len(m.list_entries(session))
+    with pytest.raises(m.MemoryError_) as exc:
+        m.import_all(session, payload)
+    assert "importing approved entry" in str(exc.value)
+    assert f"#{keep.id} (" in str(exc.value)
+    assert len(m.list_entries(session)) == before
+
+    assert m.import_all(session, payload, override=True) == 1
+
+
+def test_triage_flags_a_linked_restatement_as_a_merge_candidate(session):
+    add(session, ANCHOR_RULE)
+    out = m.suggest_from_handoff_report(
+        session,
+        [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
+        source="handoff:R-16",
+        project_slug="demo",
+    )
+    row = next(
+        r for r in mt.triage(session, status="pending", project_slug="demo")["rows"]
+        if r["id"] == out.linked[0]["entry_id"]
+    )
+    assert row["duplicate_of"] == out.linked[0]["existing_id"]
+    assert "linked-duplicate" in {f["code"] for f in row["flags"]}
+    assert row["suggested_action"] == "merge"
 
 
 def test_approval_that_would_evict_names_the_casualty_and_needs_override(session, budgets):

@@ -124,12 +124,23 @@ const views = {
   async memory() {
     const [m, budget] = await Promise.all([api("/memory"), api("/memory/budget")]);
     const demoted = Object.entries(budget.roles).map(([role, p]) => `<div class="row"><b>${esc(role)}</b><span class="muted">${p.excluded_now.length ? "not injected: " + p.excluded_now.map((id) => "#" + id).join(", ") : "not injected: none"}</span></div>`).join("");
-    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"}</div>${demoted}</div>
+    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"} · approving over a cap is refused with the casualties named and offers an explicit override</div>${demoted}</div>
       <div class="card"><table><tr><th>#</th><th>Category / scope</th><th>Content</th><th>Status</th><th></th></tr>
       ${m.map((e) => `<tr><td>${e.id}</td><td>${esc(e.category)}/${esc(e.scope)}<div class="muted">${esc(e.project_slug || e.role || "")}</div></td><td>${esc(e.content)}</td>
       <td>${badge(e.approved ? "approved" : e.rejected ? "rejected" : "pending")}</td><td class="row"><button data-m="approve" data-id="${e.id}" class="primary">Approve</button><button data-m="reject" data-id="${e.id}" class="danger">Reject</button></td></tr>`).join("")}</table></div>
       <div class="card row"><button id="m-export">Export JSON</button></div><pre id="m-out" hidden></pre>`);
-    $main.querySelectorAll("button[data-m]").forEach((b) => b.onclick = () => guard(async () => { await post(`/memory/${b.dataset.id}/${b.dataset.m}`); views.memory(); }));
+    $main.querySelectorAll("button[data-m]").forEach((b) => b.onclick = () => guard(async () => {
+      const id = b.dataset.id, action = b.dataset.m;
+      if (action === "approve") {
+        try { await post(`/memory/${id}/approve`); }
+        catch (e) {
+          if (!String(e.message).includes("would evict")) throw e;
+          if (!confirm(`${e.message}\n\nOverride and approve anyway? The evicted entries stay approved but are not injected.`)) return;
+          await post(`/memory/${id}/approve?override=true`);
+        }
+      } else { await post(`/memory/${id}/${action}`); }
+      views.memory();
+    }));
     document.getElementById("m-export").onclick = () => guard(async () => { const o = document.getElementById("m-out"); o.hidden = false; o.textContent = JSON.stringify(await api("/memory/export"), null, 2); });
   },
   async prompt() {

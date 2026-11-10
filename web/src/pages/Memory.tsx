@@ -53,6 +53,21 @@ export default function Memory() {
     setForm({ ...form, content: "" });
     await reload();
   });
+  // An approval that would evict an approved entry is refused (400) with the casualties named.
+  // Show that message and offer the explicit override; never approve silently over the cap.
+  const approve = (id: number) => act.run(async () => {
+    const call = (override: boolean) => post(`/memory/${id}/approve${override ? "?override=true" : ""}`);
+    try {
+      await call(false);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (!message.includes("would evict")) throw e;
+      if (!window.confirm(`${message}\n\nOverride and approve anyway? The evicted entries stay approved but are not injected.`)) return;
+      await call(true);
+    }
+    await reload();
+    await budget.reload();
+  });
 
   return (
     <>
@@ -92,7 +107,7 @@ export default function Memory() {
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1">
                   <Badge value={m.approved ? "approved" : m.rejected ? "rejected" : "pending"} />
-                  {!m.approved && <button className="btn btn-primary" onClick={() => act.run(async () => { await post(`/memory/${m.id}/approve`); await reload(); })}>Approve</button>}
+                  {!m.approved && <button className="btn btn-primary" onClick={() => approve(m.id)}>Approve</button>}
                   {!m.rejected && <button className="btn btn-danger" onClick={() => act.run(async () => { await post(`/memory/${m.id}/reject`); await reload(); })}>Reject</button>}
                   <button className="btn" onClick={() => setEdit({ id: m.id, content: m.content })}>Edit</button>
                 </div>
@@ -103,7 +118,7 @@ export default function Memory() {
         </div>
         <div className="space-y-4">
           <Card title="Injection caps">
-            <p className="mb-3 text-xs text-muted">A section over its cap demotes entries; the casualties are named here so a favourite cannot silently stop being injected. Tags <code>pinned</code>/<code>durable</code> and <code>tier:1</code>..<code>tier:3</code> order the demotion.</p>
+            <p className="mb-3 text-xs text-muted">A section over its cap demotes entries; the casualties are named here so a favourite cannot silently stop being injected. Tags <code>pinned</code>/<code>durable</code> and <code>tier:1</code>..<code>tier:3</code> order the demotion. Approving over a cap is refused with the casualties named, and offers an explicit override.</p>
             {budget.data && Object.entries(budget.data.roles).map(([role, p]) => (
               <div key={role} className="mb-3 text-sm">
                 <div className="flex justify-between gap-2"><b>{role}</b><span className="text-xs text-muted">{Object.entries(p.sections_now).map(([k, v]) => `${k} ${v}/${budget.data?.budgets[k] ?? 0}`).join(" · ")}</span></div>

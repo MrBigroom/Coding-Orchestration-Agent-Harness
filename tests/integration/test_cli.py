@@ -155,6 +155,34 @@ def test_memory_triage_and_budget_commands(home, tmp_path):
     assert b.exit_code == 0 and "caps" in b.output
 
 
+def test_memory_add_approve_over_the_cap_is_refused_unless_override(home, monkeypatch):
+    from orchestrator.core import config as config_mod
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    common = ["--category", "project", "--scope", "gotchas", "--project", "demo"]
+    assert runner.invoke(app, ["memory", "add", "Keep rule " + "alpha " * 10, *common, "--approve"]).exit_code == 0
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", "20")
+    config_mod.reset_settings_cache()
+
+    refused = runner.invoke(
+        app, ["memory", "add", "New approved rule " + "gamma " * 10, *common, "--approve"]
+    )
+    assert refused.exit_code == 1, refused.output
+    assert "nothing was written" in refused.output
+    assert "override" in refused.output
+    accepted = runner.invoke(
+        app,
+        ["memory", "add", "New approved rule " + "gamma " * 10, *common, "--approve", "--override"],
+    )
+    assert accepted.exit_code == 0, accepted.output
+
+
+def test_memory_condense_requires_a_project(home):
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    missing = runner.invoke(app, ["memory", "condense"])
+    assert missing.exit_code == 2
+
+
 def test_memory_condense_is_a_dry_run_until_apply_names_the_ids(home):
     import json
 

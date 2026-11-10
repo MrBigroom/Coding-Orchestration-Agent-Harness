@@ -1151,6 +1151,11 @@ def memory_add(
     role: str = typer.Option(None),
     tag: list[str] = typer.Option([], "--tag"),
     approve: bool = typer.Option(False, help="Approve immediately."),
+    override: bool = typer.Option(
+        False,
+        "--override",
+        help="With --approve: approve even if it evicts another approved entry.",
+    ),
 ) -> None:
     from orchestrator.core.schemas import MemoryCreate
     from orchestrator.services import memory_service
@@ -1176,6 +1181,7 @@ def memory_add(
                 approved=approve,
                 source="cli",
             ),
+            override=override,
         )
         console.print(f"added memory #{e.id} ({'approved' if e.approved else 'pending'})")
 
@@ -1464,7 +1470,7 @@ def memory_budget(
 @memory_app.command("condense")
 @handled
 def memory_condense(
-    project: str = typer.Option(None, help="Project slug whose approved rows to condense."),
+    project: str = typer.Option(..., help="Project slug whose approved rows to condense."),
     apply: list[int] = typer.Option(
         [], "--apply", help="Apply one proposal by naming ALL of its ids (repeatable)."
     ),
@@ -1501,11 +1507,17 @@ def memory_condense(
         ids = ", ".join(f"#{i}" for i in p["ids"])
         console.print(
             f"proposal keep #{p['survivor']} <- {', '.join(f'#{i}' for i in p['absorbed'])} "
-            f"(touch {ids})  tokens {p['tokens_before']} -> {p['tokens_after']} "
+            f"(touch {ids}) scope {','.join(p['scopes'])}  "
+            f"tokens {p['tokens_before']} -> {p['tokens_after']} "
             f"({p['token_delta']:+d})"
         )
         console.print(f"  why: {escape(p['reason'])}")
-        console.print(f"  survivor content: {escape(p['content'])}")
+        if p.get("distinct_facts"):
+            console.print(
+                "  note: these rows state different facts; applying without --content "
+                "writes their union, never the survivor alone"
+            )
+        console.print(f"  proposed content: {escape(p['content'])}")
     if result["applied"]:
         for a in result["applied"]:
             console.print(
@@ -1544,6 +1556,11 @@ def memory_import(
     markdown: bool = typer.Option(
         False, "--markdown", help="Index hand-edited memory/*.md instead."
     ),
+    override: bool = typer.Option(
+        False,
+        "--override",
+        help="Import approved rows even if they evict an already-approved entry.",
+    ),
 ) -> None:
     from orchestrator.services import memory_service
 
@@ -1554,7 +1571,9 @@ def memory_import(
         elif file is None:
             raise ValueError("pass a JSON export file, or --markdown")
         else:
-            n = memory_service.import_all(s, json.loads(file.read_text()))
+            n = memory_service.import_all(
+                s, json.loads(file.read_text()), override=override
+            )
     console.print(f"imported {n} entr{'y' if n == 1 else 'ies'}")
 
 

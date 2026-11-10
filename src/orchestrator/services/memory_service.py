@@ -53,7 +53,16 @@ from orchestrator.core.memory_vocab import (
 )
 from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, Setting, utcnow
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
-from orchestrator.utils.memory_text import build_df, is_duplicate_pair, is_rot_prone
+from orchestrator.utils.memory_text import (
+    build_df,
+    build_term_df,
+    duplicate_detail,
+    duplicate_reason,
+    is_duplicate_pair,
+    is_rot_prone,
+    is_subject_pair,
+    subject_reason,
+)
 from orchestrator.utils.paths import safe_join
 from orchestrator.utils.redaction import REDACTED, redact_with_report
 from orchestrator.utils.slug import slugify
@@ -72,8 +81,9 @@ class SuggestionOutcome:
 
     created: list[MemoryEntry] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
-    #: Near-duplicates are not rows (the memory_entries shape is frozen). Each record says
-    #: which existing entry a suggestion was linked to and why; it is mirrored in `notes`.
+    #: Restatements recorded as pending rows. Each record names the existing entry, the new row
+    #: that carries the fact (so its content is persisted, not only logged) and the matcher
+    #: numbers behind the link. Nothing is auto-rejected; the operator decides in triage.
     linked: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -83,6 +93,11 @@ class SuggestionOutcome:
 
 
 REDACTION_TAG_PREFIX = "redaction-substitution:"
+#: Ingest duplicate marker. The memory_entries shape is frozen, so a linked restatement is a
+#: normal pending row whose existing tags_json column names the entry it restates; triage
+#: reads the tag and reports it as `linked-duplicate`. It is never auto-rejected: dropping it
+#: without an operator command would be the silent ingest decision T-17 DoD 1 forbids.
+DUPLICATE_TAG_PREFIX = "duplicate-of:"
 #: Tag-driven value order. Higher value is kept longer; an untagged entry behaves exactly as
 #: it did before T-13's remainder (content class, then id as the last tiebreak only).
 PINNED_TAGS = frozenset({"pinned", "durable"})
@@ -148,6 +163,17 @@ def is_garbled(entry: MemoryEntry) -> bool:
     return REDACTED in (entry.content or "") or any(
         t.startswith(REDACTION_TAG_PREFIX) for t in (entry.tags_json or [])
     )
+
+
+def duplicate_of(entry: MemoryEntry) -> int | None:
+    """The entry id this row was recorded as restating at ingest, or None."""
+    for tag in entry.tags_json or []:
+        if isinstance(tag, str) and tag.startswith(DUPLICATE_TAG_PREFIX):
+            try:
+                return int(tag[len(DUPLICATE_TAG_PREFIX) :])
+            except ValueError:
+                return None
+    return None
 
 
 # Injection buckets -> (setting name for the cap).
@@ -389,7 +415,15 @@ def render_file(session: Session, path: Path) -> None:
     path.write_text(f"# {title}\n\n{body}\n" if body else f"# {title}\n")
 
 
-def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+def create(
+    session: Session, data: MemoryCreate, *, override: bool = False
+) -> MemoryEntry:
+    """Create a row. `approved=True` is an APPROVAL and is refused if it would evict.
+
+    The approval gate lives in `approve()`; a creation path that could write an approved row
+    directly would otherwise be the silent-eviction hole T-17 review round 1 found (CLI
+    `memory add --approve`, `POST /api/memory {approved:true}`, `memory import`).
+    """
     content, redaction_tags = _redact_memory_content(data.content.strip())
     entry = MemoryEntry(
         category=data.category.value,
@@ -406,6 +440,13 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
         approved=data.approved,
     )
     _validate(entry)
+    if entry.approved:
+        _refuse_eviction(
+            session,
+            entry,
+            override=override,
+            action=f"creating approved entry {entry.content[:60]!r}",
+        )
     session.add(entry)
     session.commit()
     session.refresh(entry)
@@ -454,13 +495,19 @@ def suggest_from_handoff_report(
     outcome = SuggestionOutcome()
     all_entries = list_entries(session)
     existing = {(e.category, e.scope, e.project_slug, e.content.strip()) for e in all_entries}
-    # The duplicate index is the same rare-token containment triage uses. Build document
-    # frequency over every stored entry plus this batch, so the domain's common words are not
-    # "rare" merely because a bucket is small (a whole-text ratio would fuse unrelated facts).
+    # The duplicate index is the same rare-token containment triage uses, plus the
+    # identifier-subject matcher (rare words alone miss the topical clusters the operator
+    # measured). Build both document frequencies over every stored entry plus this batch, so
+    # the domain's common words/identifiers are not "rare" merely because a bucket is small
+    # (a whole-text ratio would fuse unrelated facts).
     suggestion_texts = [s.content for s in suggestions]
-    df = build_df([e.content for e in all_entries] + suggestion_texts)
+    corpus = [e.content for e in all_entries] + suggestion_texts
+    df = build_df(corpus)
+    tdf = build_term_df(corpus)
     by_domain: dict[tuple[str, str | None, str | None], list[MemoryEntry]] = {}
     for e in all_entries:
+        if not e.approved:
+            continue  # only an existing APPROVED fact is a link target
         domain = (
             e.category,
             e.project_slug if e.category == MemoryCategory.project else None,
@@ -506,22 +553,63 @@ def suggest_from_handoff_report(
                 proj,
                 scope if category == MemoryCategory.role else None,
             )
-            match = _linked_duplicate(redacted_content, by_domain.get(domain, []), df)
+            match = _linked_duplicate(
+                redacted_content, by_domain.get(domain, []), df, tdf
+            )
             if match is not None:
-                existing_id, ratio = match
+                existing_id, reason = match
+                already = next(
+                    (
+                        e
+                        for e in all_entries
+                        if duplicate_of(e) == existing_id
+                        and not e.rejected
+                        and (
+                            is_duplicate_pair(e.content, redacted_content, df)[0]
+                            or is_subject_pair(e.content, redacted_content, tdf)[0]
+                        )
+                    ),
+                    None,
+                )
+                if already is not None:
+                    record = {
+                        "existing_id": existing_id,
+                        "entry_id": already.id,
+                        "content": redacted_content,
+                        "reason": f"already recorded as linked to #{existing_id}",
+                    }
+                    outcome.linked.append(record)
+                    outcome.notes.append(
+                        f"linked suggestion from {source} to existing memory #{existing_id} "
+                        f"(already recorded as pending row #{already.id})"
+                    )
+                    continue
+                linked_entry = create(
+                    session,
+                    MemoryCreate(
+                        category=category,
+                        scope=scope,
+                        content=s.content,
+                        project_slug=project_slug if category == MemoryCategory.project else None,
+                        role=create_role,
+                        tags=list(s.tags or []) + [f"{DUPLICATE_TAG_PREFIX}{existing_id}"],
+                        source=source,
+                        approved=False,
+                    ),
+                )
                 record = {
                     "existing_id": existing_id,
+                    "entry_id": linked_entry.id,
                     "content": redacted_content,
-                    "reason": (
-                        "rare-token containment "
-                        f"{ratio:.3f} >= 0.5 identifies the same fact in new words"
-                    ),
+                    "reason": reason,
                 }
                 outcome.linked.append(record)
+                existing.add((category, scope, proj, redacted_content))
                 outcome.notes.append(
-                    f"linked suggestion from {source} to existing memory #{existing_id}: "
-                    f"{record['reason']}"
+                    f"linked suggestion from {source} to existing memory #{existing_id} as "
+                    f"pending row #{linked_entry.id}: {reason}"
                 )
+                all_entries.append(linked_entry)
                 continue
             existing.add(key)
             outcome.created.append(
@@ -547,17 +635,25 @@ def suggest_from_handoff_report(
 
 
 def _linked_duplicate(
-    content: str, candidates: list[MemoryEntry], df: dict[str, int]
-) -> tuple[int, float] | None:
-    """The first existing entry that states `content` in different words (or None).
+    content: str,
+    candidates: list[MemoryEntry],
+    df: dict[str, int],
+    tdf: dict[str, int],
+) -> tuple[int, str] | None:
+    """The first existing entry that states `content` (or the same subject), with its reason.
 
-    Deliberately `memory_text.is_duplicate_pair` (rare-token containment), never a
-    whole-text similarity ratio. Deterministic: candidates are already in id order.
+    Rare-token containment is tried first (`memory_text.is_duplicate_pair`), then the
+    identifier-subject matcher. Both are containment-style predicates on extracted terms;
+    neither is a whole-text similarity ratio, which on this corpus fuses unrelated entries.
+    Deterministic: candidates are in id order.
     """
     for candidate in candidates:
-        is_dup, ratio = is_duplicate_pair(content, candidate.content, df)
+        is_dup, ratio, threshold = duplicate_detail(content, candidate.content, df)
         if is_dup and candidate.id is not None:
-            return candidate.id, ratio
+            return candidate.id, duplicate_reason(ratio, threshold)
+        same_subject, shared = is_subject_pair(content, candidate.content, tdf)
+        if same_subject and candidate.id is not None:
+            return candidate.id, subject_reason(shared)
     return None
 
 
@@ -600,27 +696,44 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     return entry
 
 
-def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
-    """Which approved entries a pending approval would demote, and in which section.
+def _eviction_impact(
+    session: Session, entry: MemoryEntry, *, treat_as_new: bool
+) -> dict[str, Any]:
+    """Which approved rows `entry` would demote, from the same selection the prompt uses.
 
-    Memory is a zero-sum static section: approving over a cap evicts another approved row.
-    The comparison is the same deterministic selection the prompt will use, so the answer
-    cannot drift from the render.
+    `treat_as_new` is for a row that is not committed yet (create/import): the entry is
+    priced through `also_approved`, and an already-approved row is not double-counted.
     """
-    entry = _get(session, entry_id)
-    if entry.approved:
+    if entry.approved and not treat_as_new:
         return {"entry_id": entry.id, "evicted": []}
+    # An uncommitted row has id None, and `_keep_priority` treats None as the OLDEST id, so
+    # pricing it directly would demote the new row itself and report "no eviction". Price a
+    # detached copy with a synthetic newest id instead, without touching the row that will be
+    # inserted (assigning an id on a session-bound object would insert that primary key).
+    priced = entry
+    if entry.id is None:
+        newest = max((e.id or 0 for e in list_entries(session)), default=0)
+        priced = MemoryEntry(
+            category=entry.category,
+            scope=entry.scope,
+            project_slug=entry.project_slug,
+            role=entry.role,
+            content=entry.content,
+            tags_json=list(entry.tags_json or []),
+            approved=True,
+        )
+        priced.id = newest + 1
     projects: tuple[str | None, ...] = (
-        (entry.project_slug,) if entry.category == MemoryCategory.project else (None,)
+        (priced.project_slug,) if priced.category == MemoryCategory.project else (None,)
     )
     evicted: dict[int, dict[str, Any]] = {}
     for role in (Role.architect.value, Role.worker.value, Role.supervisor.value):
         for project_slug in projects:
             before = select_for_prompt(session, role, project_slug)
-            after = select_for_prompt(session, role, project_slug, also_approved=[entry])
+            after = select_for_prompt(session, role, project_slug, also_approved=[priced])
             already = {x["id"] for x in before.excluded}
             for row in after.excluded:
-                if row["id"] == entry.id or row["id"] in already:
+                if row["id"] == priced.id or row["id"] in already:
                     continue
                 record = evicted.setdefault(
                     row["id"],
@@ -636,6 +749,45 @@ def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
     return {"entry_id": entry.id, "evicted": sorted(evicted.values(), key=lambda r: r["id"])}
 
 
+def _refuse_eviction(
+    session: Session, entry: MemoryEntry, *, override: bool, action: str
+) -> None:
+    """Refuse an approval-shaped write that would evict an already-approved row.
+
+    Shared by `create(approved=True)`, `import_all`, and `approve()`. `override=True` is the
+    explicit operator opt-in; even then nothing is deleted, the evicted rows are reported by
+    budget/triage as not injected. `action` names the write in the message, so a caller can
+    tell an import refusal from a CLI add.
+    """
+    impact = _eviction_impact(session, entry, treat_as_new=True)
+    if not impact["evicted"] or override:
+        return
+    casualties = ", ".join(
+        f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
+        f"{','.join(row['roles'])})"
+        for row in impact["evicted"]
+    )
+    raise MemoryError_(
+        f"{action} would evict already-approved entr"
+        f"{'y' if len(impact['evicted']) == 1 else 'ies'} {casualties} from the injected "
+        "section; nothing was written. Condense/reword first, or repeat with override=true "
+        "(the evicted rows stay approved but are not injected)"
+    )
+
+
+def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+    """Which approved entries a pending approval would demote, and in which section.
+
+    Memory is a zero-sum static section: approving over a cap evicts another approved row.
+    The comparison is the same deterministic selection the prompt will use, so the answer
+    cannot drift from the render.
+    """
+    entry = _get(session, entry_id)
+    if entry.approved:
+        return {"entry_id": entry.id, "evicted": []}
+    return _eviction_impact(session, entry, treat_as_new=True)
+
+
 def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
     """Approve a row. Over-cap eviction is refused by default and explained.
 
@@ -649,19 +801,7 @@ def approve(session: Session, entry_id: int, *, override: bool = False) -> Memor
             "it (PATCH content) before approving: the pipeline would otherwise render the "
             "garbled text into every future prompt"
         )
-    impact = approval_impact(session, entry_id)
-    if impact["evicted"] and not override:
-        casualties = ", ".join(
-            f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
-            f"{','.join(row['roles'])})"
-            for row in impact["evicted"]
-        )
-        raise MemoryError_(
-            f"approving #{entry.id} would evict already-approved entr"
-            f"{'y' if len(impact['evicted']) == 1 else 'ies'} {casualties} from the injected "
-            "section; nothing was approved. Condense/reword first, or re-run with "
-            "override=true (the evicted rows stay approved but are not injected)"
-        )
+    _refuse_eviction(session, entry, override=override, action=f"approving #{entry.id}")
     entry.approved, entry.rejected, entry.updated_at = True, False, utcnow()
     session.add(entry)
     session.commit()
@@ -1140,7 +1280,7 @@ def _budget_warnings(selection: MemorySelection, session: Session | None = None)
 
 def condense(
     session: Session,
-    project_slug: str | None = None,
+    project_slug: str,
     *,
     apply_ids: list[int] | None = None,
     rewrite_content: str | None = None,
@@ -1151,8 +1291,13 @@ def condense(
     complete id set of one or more proposals (survivor + every absorbed row); a partial or
     unknown set is refused before anything is written. Applying means `update()` on the
     survivor and `reject()` on the absorbed rows, both through this module, so redaction and
-    markdown re-rendering stay on the one sanctioned path. `rewrite_content` is the explicit
-    way to strip task framing while keeping the rule; it is only allowed for one proposal.
+    markdown re-rendering stay on the one sanctioned path.
+
+    `project_slug` is required: condense is a per-project operation, and the old optional form
+    grouped global and role rows with project rows into one "proposal". `rewrite_content` is
+    the explicit way to strip task framing while keeping the rule; it is only allowed for one
+    proposal. Without it the proposal's own `content` is written -- for a subject cluster that
+    is the union of every member's text, so no absorbed fact is dropped.
     """
     from orchestrator.services import memory_triage as mt  # local: avoids an import cycle
 
@@ -1204,6 +1349,7 @@ def condense(
                 "survivor": survivor_id,
                 "rejected": proposal["absorbed"],
                 "ids": proposal["ids"],
+                "distinct_facts": proposal["distinct_facts"],
                 "tokens_saved": proposal["tokens_saved"],
             }
         )
@@ -1254,7 +1400,7 @@ def _import_keys(
     return keys
 
 
-def import_all(session: Session, payload: dict[str, Any]) -> int:
+def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
     """Import entries; skips duplicates (same category/scope/project/role/content).
 
     T-4: an export written before scope validation existed carries free-form scopes, so the
@@ -1262,6 +1408,9 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
     importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
     nor re-adds anything on a second pass.
+
+    An imported APPROVED row is an approval and is refused by default when it would evict an
+    already-approved row (`override=True` restores the old restore-the-backup behaviour).
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
@@ -1297,6 +1446,13 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             _validate(entry)
         except MemoryError_:
             continue
+        if entry.approved:
+            _refuse_eviction(
+                session,
+                entry,
+                override=override,
+                action=f"importing approved entry {content[:60]!r}",
+            )
         key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
         existing |= raw_keys | {key}
         session.add(entry)

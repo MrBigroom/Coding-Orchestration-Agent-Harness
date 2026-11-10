@@ -60,11 +60,15 @@ def repo_project(session, tmp_path):
 
 
 def add(session, content, *, category="project", scope="gotchas", slug="demo", approved=True):
+    # A fixture that deliberately builds an OVER-CAP approved set (the budget tests) is a
+    # scenario, not an approval decision: `override=True` keeps the pre-T-17 fixture shape
+    # after T-17 made every approval-shaped write refuse an eviction by default.
     return memory_service.create(
         session,
         MemoryCreate(
             category=category, scope=scope, content=content, project_slug=slug, approved=approved
         ),
+        override=approved,
     )
 
 

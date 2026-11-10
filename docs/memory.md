@@ -193,9 +193,15 @@ of the render. Every exclusion names its casualty and reason in prompt preview
 Memory page's Injection caps panel.
 
 Approve is **refused by default** when it would evict an already-approved row: the response
-names every entry at risk and the section it would leave. `orchestrator memory approve ID
---override` / `POST /api/memory/{id}/approve?override=true` is the explicit opt-in; even then
-the evicted rows stay approved and are reported, never deleted. Condense or reword first.
+names every entry at risk and the section it would leave. The same gate covers every other
+approval-shaped write — `orchestrator memory add --approve`, `POST /api/memory
+{"approved": true}`, and `memory import` — because a creation path that could write an
+approved row directly would be a silent eviction hole. `orchestrator memory approve ID
+--override` / `POST /api/memory/{id}/approve?override=true` (and `--override` on `memory
+add`/`memory import`, `POST /api/memory?override=true`) is the explicit opt-in; even then the
+evicted rows stay approved and are reported, never deleted. Condense or reword first. Both
+GUIs show the casualty list on refusal and ask before sending the override, so an approval
+over the cap is never impossible and never silent.
 
 Selection depends on entry content, tags and ids only — no clock, no file access — so a
 rendered section stays byte-identical between calls and does not churn the prompt cache.
@@ -225,11 +231,24 @@ Flags per entry:
 | `contradicts-live-config` | claims, e.g., no test command while `projects.test_command` is set |
 | `unknown-project` | `project_slug` matches no registered project |
 
-Groupings: a **duplicate group** is two pending rows whose rare content words overlap by
-≥50%; **amend candidates** are approved rows sharing ≥2 code entities. Duplication is
-measured with rare-token containment, never a whole-text ratio — on a single-project corpus
-every pair shares the domain vocabulary (measured: 461 of 595 pending pairs above 0.72 while
-the true duplicate count was zero), so ratio dedup collapses unrelated entries.
+Groupings: a **duplicate group** is two rows that state the same fact. Two signals are used,
+neither of them a whole-text similarity ratio:
+
+- **rare-token containment** — the smaller entry's rare content-word set is at least half
+  contained in the other's;
+- **rare-identifier subject** — both rows share at least two rare identifier terms (a code
+  symbol such as `prompt_builder._floor_head`, a path, a filename, or a CLI flag such as
+  `--at-tip`). Rare means the term appears in at most `SUBJECT_MAX_DF` (6) of the compared
+  rows, so domain furniture such as `verify-evidence` or `handoff.md` cannot link two facts.
+
+Subject clusters are **star-shaped**: a member has to match the group's anchor directly, so
+A–B and B–C does not merge A into C. Transitive entity unions are deliberately not used —
+they once grouped two unrelated facts that merely shared `handoff.json`. The subject pass
+exists because the operator measured that the pending pile restates the same subject in
+different words without the rare-word sets lining up (three entries restating the evidence
+freshness rule, four restating the diff-floor arithmetic), while a bag-of-words ratio flagged
+461 of 595 pending pairs at 0.72 when the true duplicate count was zero. **Amend candidates**
+are still approved rows sharing ≥2 code entities.
 
 Suggested actions (advisory, one per entry): `fix-stale`, `rewrite-durable`, `merge`,
 `amend`, `split`, `verify-claims`, `approve`. Triage never writes: approving and rejecting
@@ -249,10 +268,19 @@ orchestrator memory condense --project myapp --apply 12 --apply 13
 orchestrator memory condense --project myapp --apply 12 --apply 13 --content "the durable rule"
 ```
 
-`condense` groups **approved** rows by duplicate group (rare-token containment, the same
-grouping triage shows) and by shared code entities (`memory_triage.related_approved`). It
-chooses the survivor with the injection value order above, and prints the survivor, every
-absorbed id, the proposed content and the token delta (`tokens_after - tokens_before`).
+`condense` groups **approved rows of one project** by the same duplicate group triage shows
+(rare-token containment plus the star-shaped rare-identifier subject clusters) and chooses
+the survivor with the injection value order above. `--project` is required: an earlier,
+optional form could group global and role rows with project rows. It prints the survivor,
+every absorbed id, the proposed content and the token delta
+(`tokens_after - tokens_before`).
+
+A rare-token duplicate group can keep the survivor's text, because the absorbed rows restate
+it. A subject cluster may group rows that state **different facts**, so its proposed content is
+the union of every member's text (`distinct_facts=true`) and applying without `--content`
+writes that union: an `--apply` can never silently drop an absorbed rule. Use `--content` to
+rewrite the cluster into one tighter durable statement (the way to strip task framing while
+keeping the rule).
 
 The default is non-destructive: a dry run changes no row, no approval state and no markdown.
 `--apply` writes only when it names the **complete** id set of a proposal (survivor plus every
@@ -266,12 +294,17 @@ rewrites the surviving row in the same call (use it to strip task framing and ke
 1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
    (`{category, scope, content, tags}`).
 2. The orchestrator stores them as **pending**. A byte-identical suggestion creates no row.
-   A reworded restatement of an existing entry in the same domain (category, project or role
-   file) is **linked**, not stored again: ingest uses the same rare-token containment as
-   triage, never a whole-text similarity ratio, so a same-domain but unrelated fact still
-   gets its own row. The link records the existing entry id and the containment reason in
-   `SuggestionOutcome.linked`, the chat notice, and the build log event
-   `memory_suggestion_linked`.
+   A restatement of an existing **approved** entry in the same domain (category, project or
+   role file) is **recorded as linked**: it is stored as a normal pending row whose
+   `tags_json` carries `duplicate-of:<existing id>`, and `SuggestionOutcome.linked` records
+   the existing id, the new row id, the content and the reason. It is never auto-rejected —
+   discarding a suggestion without an operator command would be a silent ingest decision —
+   and triage flags it `linked-duplicate` with a `merge` suggestion. Ingest tries rare-token
+   containment first, then the rare-identifier subject matcher (the same two signals triage
+   uses); neither is a whole-text ratio, and the `duplicate_reason`/`subject_reason` text is
+   built from the matcher's actual numbers and shared terms. A repeat restatement already
+   recorded against the same entry adds no new row. The chat notice and the build log event
+   `memory_suggestion_linked` name the anchor and the new row.
 3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →
    memory tab, `orchestrator memory approve|reject ID`, or `POST /api/memory/{id}/approve`.
    An entry whose scope was substituted is still pending, and the build log says which

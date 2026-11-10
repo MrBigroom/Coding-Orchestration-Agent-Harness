@@ -191,6 +191,47 @@ def test_approval_eviction_is_refused_and_override_is_explicit(client, monkeypat
     assert approved.status_code == 200 and approved.json()["approved"] is True
 
 
+def test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit(
+    client, monkeypatch
+):
+    """DoD 7c also covers `POST /api/memory {approved: true}`, not only the approve route."""
+    from orchestrator.core import config as config_mod
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.schemas import MemoryCreate
+    from orchestrator.services import memory_service
+    from orchestrator.utils.truncate import estimate_tokens
+
+    def tokens(content):
+        return estimate_tokens(f"- {content}")
+
+    with session_scope() as s:
+        keep = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Keep rule " + "alpha " * 10, approved=True,
+            ),
+        )
+        keep_id = keep.id
+        cap = tokens(keep.content)
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", str(cap))
+    config_mod.reset_settings_cache()
+
+    body = {
+        "category": "project",
+        "scope": "gotchas",
+        "project_slug": "demo",
+        "content": "New approved rule " + "gamma " * 10 + " that is far too long for the cap.",
+        "approved": True,
+    }
+    refused = client.post("/api/memory", json=body)
+    assert refused.status_code == 400
+    assert f"#{keep_id} (" in refused.json()["error"]
+
+    accepted = client.post("/api/memory", params={"override": "true"}, json=body)
+    assert accepted.status_code == 201 and accepted.json()["approved"] is True
+
+
 def test_triage_flags_an_unregistered_project(client):
     client.post(
         "/api/memory",

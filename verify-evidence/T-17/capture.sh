@@ -17,6 +17,8 @@ MODE=fast
 if [ "${T15_FULL:-0}" = "1" ]; then MODE=full; fi
 STAMP="# HEAD=$(git rev-parse HEAD) mode=$MODE"
 SHORT="$(git rev-parse --short HEAD)"
+COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
+PY="${COMMON%/.git}/.venv/bin/python"
 KEEP='ORCH_VERIFY\||[0-9]+ (passed|failed)|All checks passed|^# (HEAD|command)|assertion_shape=|^  l\.'
 stable() { sed -E -e 's/ in [0-9.]+s( \([0-9:]+\))?//' -e 's/ \[ *[0-9]+%\]//'; }
 now() { date +%s%N; }
@@ -48,6 +50,7 @@ if want focused_tests.txt; then
       tests/unit/test_memory.py \
       tests/unit/test_memory_triage.py \
       tests/unit/test_memory_scopes.py \
+      tests/unit/test_redaction.py \
       tests/integration/test_memory_scope_boundary.py \
       tests/integration/test_migrations.py
   } 2>&1 | grep -E "PASSED|FAILED|ERROR|passed|failed|ORCH_VERIFY\||^# (HEAD|command)" | stable \
@@ -81,19 +84,31 @@ if want source_anchors.txt; then
       "src/orchestrator/services/memory_service.py:def _keep_priority" \
       "src/orchestrator/services/memory_service.py:def _tag_rank" \
       "src/orchestrator/services/memory_service.py:def _linked_duplicate" \
+      "src/orchestrator/services/memory_service.py:def duplicate_of" \
       "src/orchestrator/services/memory_service.py:def is_garbled" \
       "src/orchestrator/services/memory_service.py:def _redact_memory_content" \
+      "src/orchestrator/services/memory_service.py:def _eviction_impact" \
+      "src/orchestrator/services/memory_service.py:def _refuse_eviction" \
       "src/orchestrator/services/memory_service.py:def approval_impact" \
+      "src/orchestrator/services/memory_service.py:def create" \
       "src/orchestrator/services/memory_service.py:def approve" \
       "src/orchestrator/services/memory_service.py:def condense" \
+      "src/orchestrator/services/memory_service.py:def import_all" \
+      "src/orchestrator/services/memory_triage.py:def duplicate_groups" \
       "src/orchestrator/services/memory_triage.py:def condense_proposals" \
       "src/orchestrator/services/memory_triage.py:redaction-marker" \
+      "src/orchestrator/services/memory_triage.py:linked-duplicate" \
+      "src/orchestrator/utils/memory_text.py:SUBJECT_MAX_DF" \
+      "src/orchestrator/utils/memory_text.py:def is_subject_pair" \
+      "src/orchestrator/utils/memory_text.py:def subject_clusters" \
       "src/orchestrator/services/run_service.py:memory_suggestion_linked" \
       "src/orchestrator/cli.py:def memory_condense" \
       "src/orchestrator/cli.py:def memory_approve" \
       "src/orchestrator/api/routes/memory.py:def approve_memory" \
       "web/src/pages/Memory.tsx:Injection caps" \
-      "src/orchestrator/api/static_fallback/index.html:Injection caps"; do
+      "web/src/pages/Memory.tsx:would evict" \
+      "src/orchestrator/api/static_fallback/index.html:Injection caps" \
+      "src/orchestrator/api/static_fallback/index.html:would evict"; do
       file="${pair%%:*}"; needle="${pair#*:}"
       grep -nF "$needle" "$file"
     done
@@ -122,44 +137,175 @@ if want migrations_untouched.txt; then
   emit migrations_untouched "$(ms "$T0" "$(now)")"
 fi
 
+if want live_condense.txt; then
+  LIVE_DB="${T17_LIVE_DB:-$HOME/.local/share/coding-orchestrator/orchestrator.db}"
+  if [ -f "$LIVE_DB" ]; then
+    T0=$(now)
+    TMPHOME="$(mktemp -d)"
+    mkdir -p "$TMPHOME/home"
+    sqlite3 "$LIVE_DB" ".backup '$TMPHOME/home/orchestrator.db'"
+    if [ -d "$(dirname "$LIVE_DB")/memory" ]; then
+      cp -r "$(dirname "$LIVE_DB")/memory" "$TMPHOME/home/memory"
+    fi
+    {
+      echo "$STAMP"
+      echo "# command: sqlite3 .backup of the live memory DB -> a throwaway ORCHESTRATOR_HOME;"
+      echo "#          condense/budget/triage then run on the COPY at the operator's own caps."
+      echo "#          The live home is opened read-only and never written. Copy is removed after."
+      echo "# source_db=$LIVE_DB"
+      echo "# source_sha256=$(sha256sum "$LIVE_DB" | cut -d' ' -f1)"
+      echo "# source_bytes=$(stat -c%s "$LIVE_DB")"
+      ORCHESTRATOR_HOME="$TMPHOME/home" PYTHONPATH="$ROOT/src" "$PY" - <<'PYCODE'
+import hashlib
+import json
+from orchestrator.core.db import session_scope
+from orchestrator.services import memory_service as m
+from orchestrator.services import memory_triage as mt
+from orchestrator.utils.memory_text import build_df, is_duplicate_pair
+
+def digest(session):
+    rows = [
+        (e.id, e.category, e.scope, e.project_slug, e.role, e.approved, e.rejected,
+         e.content, tuple(e.tags_json or []))
+        for e in m.list_entries(session)
+    ]
+    h = hashlib.sha256()
+    for row in sorted(rows, key=lambda r: r[0] or 0):
+        h.update(json.dumps(row, default=str, sort_keys=True).encode())
+    return h.hexdigest()[:16]
+
+status = "pass"
+with session_scope() as s:
+    allent = [e for e in m.list_entries(s) if e.approved or not e.rejected]
+    by = {e.id: e for e in allent}
+    ids = [e.id for e in allent]
+    df = build_df([e.content for e in allent])
+    rare_pairs = [
+        (i, j) for i in ids for j in ids
+        if j > i and is_duplicate_pair(by[i].content, by[j].content, df)[0]
+    ]
+    groups = mt.duplicate_groups(allent)
+    print(f"corpus_rows={len(allent)} rare_token_pairs={len(rare_pairs)} "
+          f"subject_plus_rare_groups={len(groups)}")
+    cited = {
+        "evidence_freshness 152/156/164": [152, 156, 164],
+        "diff_floor 157/159/161/163": [157, 159, 161, 163],
+        "bundle_ordering 154/165": [154, 165],
+        "notify_send 135/140/143": [135, 140, 143],
+    }
+    for label, members in cited.items():
+        hits = [g for g in groups if set(members) & set(g)]
+        print(f"cited|{label}|members={members}|groups={hits}")
+    caps = m.memory_budgets(s)
+    print(f"caps={caps} enabled={m.memory_budgets_enabled(s)}")
+    for role in ("architect", "worker", "supervisor"):
+        sel = m.select_for_prompt(s, role, "coding-orchestrator")
+        print(f"budget_before|{role}|used={sel.used}|excluded={[x['id'] for x in sel.excluded]}")
+
+    before = digest(s)
+    proposals = mt.condense_proposals(s, "coding-orchestrator")
+    print(f"condense_project=coding-orchestrator proposals={len(proposals)}")
+    for proposal in proposals:
+        print(f"  proposal|ids={proposal['ids']}|survivor={proposal['survivor']}|"
+              f"distinct_facts={proposal['distinct_facts']}|"
+              f"tokens={proposal['tokens_before']}->{proposal['tokens_after']}|"
+              f"delta={proposal['token_delta']}")
+    dry = m.condense(s, "coding-orchestrator")
+    same = digest(s) == before
+    print(f"dry_run={dry['dry_run']} rows_unchanged={same}")
+    status = "pass" if same and dry["dry_run"] else "fail"
+
+    if proposals:
+        # Demonstrate the path on the proposal that saves the most tokens: a real merge,
+        # not a token-neutral union, so the budget effect is visible.
+        chosen = max(proposals, key=lambda p: (p["tokens_saved"], -len(p["ids"]), p["ids"]))
+        result = m.condense(s, "coding-orchestrator", apply_ids=chosen["ids"])
+        print(f"applied|ids={chosen['ids']}|survivor={chosen['survivor']}|"
+              f"rejected={chosen['absorbed']}|distinct_facts={chosen['distinct_facts']}|"
+              f"tokens_saved={result['applied'][0]['tokens_saved']}")
+        triage = mt.triage(s, status="approved", project_slug="coding-orchestrator")
+        after_groups = triage["totals"]["merge_groups"]
+        co_grouped = [g for g in after_groups if set(chosen["ids"]).issubset(set(g))]
+        print(f"triage_after|groups={len(after_groups)}|"
+              f"merged_ids_still_grouped_together={co_grouped}")
+        if co_grouped:
+            status = "fail"
+        again = mt.condense_proposals(s, "coding-orchestrator")
+        same_proposal = [p for p in again if set(p["ids"]) == set(chosen["ids"])]
+        print(f"condense_after_same_ids_proposed={len(same_proposal)}")
+        report = mt.budget_report(s, "coding-orchestrator")
+        for role, value in report["roles"].items():
+            print(f"budget_after|{role}|used={value['sections_now']}|"
+                  f"excluded={value['excluded_now']}")
+print(f"status={status}")
+PYCODE
+    } > "$OUT/live_condense.txt"
+    rm -rf "$TMPHOME"
+    emit live_condense "$(ms "$T0" "$(now)")"
+  else
+    echo "live DB not found at $LIVE_DB; committed live_condense.txt left untouched"
+  fi
+fi
+
 if want dod_map.txt; then
   T0=$(now)
   { echo "$STAMP"
     echo "# static DoD map; focused_tests.txt supplies each node's PASSED line"
     cat <<'MAP'
-1 ingest dedup:
-   test_a_reworded_restatement_is_linked_not_stored
+1 ingest dedup: a reworded restatement is a REAL pending row linked to the approved
+  entry it restates (`duplicate-of:<id>` in the existing tags column), a byte-identical
+  suggestion still creates no row, and same-domain unrelated facts are not linked:
+   test_a_reworded_restatement_is_recorded_as_a_linked_row
    test_a_byte_identical_suggestion_still_creates_no_row
    test_same_domain_but_unrelated_facts_are_not_linked
-2 value-ordered demotion:
+   test_a_reworded_restatement_shared_only_by_subject_is_linked
+   test_a_repeated_restatement_does_not_add_a_second_linked_row
+   test_triage_flags_a_linked_restatement_as_a_merge_candidate
+   source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of;
+   memory_text.SUBJECT_MAX_DF / def is_subject_pair (rare identifiers, never a text ratio)
+2 value-ordered demotion from tags_json only, id only the last tiebreak; untagged rows keep
+  the pre-T-17 rot-prone-then-oldest order; two calls are byte-identical:
    test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
    test_untagged_entries_keep_the_pre_t17_demotion_order
+   test_untagged_durable_entries_are_still_demoted_oldest_first
    test_two_selections_are_byte_identical_and_exclude_the_same_ids
-3 condense non-destructive default + apply:
+   source_anchors.txt: memory_service.def _keep_priority / _tag_rank; migrations_untouched.txt
+3 condense non-destructive default + explicit apply + project scoping + distinct-fact union:
    test_condense_dry_run_changes_no_row
    test_condense_apply_updates_the_survivor_and_rejects_the_absorbed
    test_condense_partial_apply_is_refused_without_writing
    test_condense_rendered_markdown_matches_the_surviving_approved_rows
+   test_a_subject_cluster_proposal_keeps_every_distinct_fact
+   test_condense_requires_a_project_and_never_groups_global_or_role_rows
    integration::test_memory_condense_is_a_dry_run_until_apply_names_the_ids
+   integration::test_memory_condense_requires_a_project
 4 lifecycle behind a contract change, no migration:
    test_lifecycle_fields_stay_behind_a_contract_change_request
    test_the_frozen_memory_table_has_no_lifecycle_columns_yet
    migrations_untouched.txt (empty migration diff; model fields False False)
-   integration::test_models_and_migrations_do_not_drift (test_migrations.py)
-5 docs/memory.md: ingest dedup, tag demotion, non-destructive condense
-   (source_anchors.txt grep names the implementation the doc describes)
-6 redaction record, garbled triage, unchanged log redaction:
+   integration::test_models_match_migration / test_upgrade_downgrade_populated_db
+5 docs/memory.md documents ingest dedup (linked pending row), tag-driven demotion order
+  replacing oldest-first, and condense usage including its non-destructive default
+6 redaction is recorded, garbled rows are not rendered, logs unchanged:
    test_adding_a_key_value_phrase_records_the_substitution
    test_updating_a_key_value_phrase_records_the_substitution
    test_a_marked_entry_is_garbled_not_rendered_and_not_approvable
    test_a_marked_approved_entry_is_not_injected_or_rendered
    test_log_redaction_is_still_a_security_control
-   plus the unchanged tests/unit/test_redaction.py in focused_tests.txt
-7 eviction is value-ordered and never silent:
+   plus tests/unit/test_redaction.py in focused_tests.txt (it IS in the focused invocation)
+7 eviction is value-ordered, visible and refused on EVERY approval-shaped write:
    test_approval_that_would_evict_names_the_casualty_and_needs_override
    test_budget_and_triage_name_the_current_demotions
+   test_creating_an_already_approved_row_is_refused_when_it_would_evict
+   test_importing_an_approved_row_is_refused_when_it_would_evict
    integration::test_approval_eviction_is_refused_and_override_is_explicit
-   source_anchors.txt shows the GUI Injection caps panel (React + fallback)
+   integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
+   integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
+   source_anchors.txt: _refuse_eviction / _eviction_impact; GUI "would evict" in
+   web/src/pages/Memory.tsx and api/static_fallback/index.html (casualties + override)
+acceptance: live_condense.txt is the live DB snapshot run on a COPY at the operator's caps:
+   rare-token pairs vs subject groups, the operator-cited topical clusters, condense dry
+   run (rows unchanged), one explicit apply, and budget/triage afterwards.
 MAP
   } > "$OUT/dod_map.txt"
   emit dod_map "$(ms "$T0" "$(now)")"
