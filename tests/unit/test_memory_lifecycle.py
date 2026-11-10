@@ -90,11 +90,12 @@ REVIEW_PAYLOAD = (
 def test_a_reworded_restatement_is_linked_not_stored(session):
     approved = add(session, ANCHOR_RULE)
     before = len(m.list_entries(session))
-    out = m.suggest_from_handoff_report(
+    out = m.suggest_from_handoff(
         session,
         [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
         source="handoff:R-9",
         project_slug="demo",
+        report=True,
     )
     assert out.created == []
     assert len(m.list_entries(session)) == before

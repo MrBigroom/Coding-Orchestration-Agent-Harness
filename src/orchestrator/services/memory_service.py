@@ -420,11 +420,19 @@ def suggest_from_handoff(
     source: str,
     project_slug: str | None,
     role: str = "worker",
-) -> list[MemoryEntry]:
-    """The created entries only. Kept for callers that do not read the notes."""
-    return suggest_from_handoff_report(
+    *,
+    report: bool = False,
+) -> list[MemoryEntry] | SuggestionOutcome:
+    """The created entries only, or the full outcome with `report=True`.
+
+    The list-returning default is kept for every existing caller. `report=True` is how a test
+    (or a new caller) sees the duplicate links and substitution notes without changing the
+    shape those callers already use.
+    """
+    outcome = suggest_from_handoff_report(
         session, suggestions, source, project_slug, role=role
-    ).created
+    )
+    return outcome if report else outcome.created
 
 
 def suggest_from_handoff_report(
