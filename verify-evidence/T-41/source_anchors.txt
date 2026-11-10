@@ -1,4 +1,4 @@
-# HEAD=f52a32f4b3b031ed92ca8031887c59840d51f790 mode=fast
+# HEAD=19ceb4cbd4432bbc2edf3802a27dfc97ad5c8a26 mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>'
 
 ## src/orchestrator/services/sync_transport.py
@@ -62,8 +62,9 @@
 ## docs/cloud-sync.md
 42:## Version protocol and rejected transitions (T-41)
 62:A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
-78:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
-83:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
-84:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
-110:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
-113:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+67:fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
+80:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+85:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
+86:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
+112:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
+115:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`

@@ -18,8 +18,9 @@ certifies is that stamped HEAD.
 1. **Protocol recorded with measured evidence.** `docs/cloud-sync.md:42` (`## Version protocol
    and rejected transitions (T-41)`) states that the version is remote per-entity compare-and-swap
    state, that `sync_state` has no version row by design, and that `0 -> 3` means the local dirty
-   revision was sent instead of `synced_version + 1`; `:62` quotes the measured 7,373 log
-   occurrences / 1,426 `sync_entities` rows / `device_id`-only `sync_state`.
+   revision was sent instead of `synced_version + 1`; `:62` states the rejection meaning and
+   `:67` quotes the re-measured 7,000 `0 -> 3` lines (7,388 version-transition lines in total) /
+   1,426 `sync_entities` rows / `device_id`-only `sync_state`.
    `src/orchestrator/services/sync_transport.py:217` shows the RPC-derived `next_version`, sent at
    `:225`.
 2. **Recoverable or explicitly terminal.** `sync_transport.py:217`/`:225` send
