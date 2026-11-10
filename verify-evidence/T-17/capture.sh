@@ -99,6 +99,10 @@ if want source_anchors.txt; then
       "src/orchestrator/services/memory_service.py:def approval_impact" \
       "src/orchestrator/services/memory_service.py:def create" \
       "src/orchestrator/services/memory_service.py:def update" \
+      "src/orchestrator/services/memory_service.py:def _selection_relevant_change" \
+      "src/orchestrator/services/memory_service.py:lowers_pressure" \
+      "src/orchestrator/services/memory_service.py:ignore_self" \
+      "src/orchestrator/services/memory_service.py:does not contain the content of" \
       "src/orchestrator/services/memory_service.py:replace_approved" \
       "src/orchestrator/services/memory_service.py:def approve" \
       "src/orchestrator/services/memory_service.py:def condense" \
@@ -301,8 +305,12 @@ if want tsc_web.txt; then
   T0=$(now)
   {
     echo "$STAMP"
-    echo "# command: tsc -b --force on the web/ sources of THIS worktree, via a /tmp scratch"
-    echo "#          project whose node_modules is the main checkout's (the worktree has none)."
+    echo "# WHOLE web/src tree, with the project's own web/tsconfig.json (include: src,"
+    echo "# vite.config.ts). This is NOT a full frontend verification: the gate has no build"
+    echo "# step (T-31), so this proves the TypeScript sources typecheck, not that the GUI works."
+    echo "# WORKAROUND (disclosed): this worktree has no web/node_modules, so a /tmp scratch"
+    echo "# project symlinks web/node_modules from the MAIN checkout and symlinks every source"
+    echo "# and config of THIS worktree's web/ into it. Nothing under the worktree is written."
     COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
     MAIN="${COMMON%/.git}"
     SCRATCH="$(mktemp -d)"
@@ -317,19 +325,35 @@ if want tsc_web.txt; then
       ln -s "$ROOT/web/$p" "$SCRATCH/$p"
     done
     echo "# scratch src resolves to: $(readlink -f "$SCRATCH/src")"
+    echo "# tsconfig used:           $(readlink -f "$SCRATCH/tsconfig.json")"
+    echo "# exact command: $MAIN/web/node_modules/.bin/tsc -b --force (cwd=$SCRATCH)"
     cd "$SCRATCH"
-    if "$MAIN/web/node_modules/.bin/tsc" -b --force; then
-      echo "tsc_exit=0"
-    else
-      rc=$?
-      echo "tsc_exit=$rc"
+    rc=0
+    "$MAIN/web/node_modules/.bin/tsc" -b --force || rc=$?
+    # tsc_exit is the ACTUAL exit status of the command above; it is not inferred from text.
+    echo "# tsc_exit=$rc is the status of the exact command recorded above (0 = success)"
+    echo "tsc_exit=$rc"
+    if [ "$rc" -ne 0 ]; then
       cd "$ROOT"
       rm -rf "$SCRATCH"
       exit "$rc"
     fi
-    echo "# sources the compiler actually read (the two files this round names):"
-    "$MAIN/web/node_modules/.bin/tsc" --noEmit --listFiles 2>&1 \
-      | grep -E '/src/(api/client|pages/Memory)\.(ts|tsx)$'
+    echo "# exact command: $MAIN/web/node_modules/.bin/tsc -p $SCRATCH/tsconfig.json --listFiles"
+    lf_rc=0
+    "$MAIN/web/node_modules/.bin/tsc" -p "$SCRATCH/tsconfig.json" --listFiles \
+      > "$SCRATCH/listfiles.txt" 2>&1 || lf_rc=$?
+    echo "# listFiles_exit=$lf_rc (0 = the file list above is complete)"
+    total=$(wc -l < "$SCRATCH/listfiles.txt")
+    src_total=$(grep -c '/src/' "$SCRATCH/listfiles.txt" || true)
+    react_types=$(grep -c '/@types/react/' "$SCRATCH/listfiles.txt" || true)
+    react_dom_types=$(grep -c '/@types/react-dom/' "$SCRATCH/listfiles.txt" || true)
+    echo "listfiles_total=$total"
+    echo "listfiles_src=$src_total"
+    echo "listfiles_types_react=$react_types"
+    echo "listfiles_types_react_dom=$react_dom_types"
+    echo "# first listFiles line: $(head -n 1 "$SCRATCH/listfiles.txt")"
+    echo "# last  listFiles line: $(tail -n 1 "$SCRATCH/listfiles.txt")"
+    echo "# @types/react example: $(grep -m1 '/@types/react/' "$SCRATCH/listfiles.txt")"
     cd "$ROOT"
     rm -rf "$SCRATCH"
   } > "$OUT/tsc_web.txt" 2>&1
@@ -357,6 +381,7 @@ if want dod_map.txt; then
    duplicate_record / _duplicate_tags; memory_text.SUBJECT_MAX_DF / def is_subject_pair
    (rare identifiers, never a text ratio). The ratio, threshold and shared terms live in
    tags_json next to the link, so triage reads the reason FROM THE ROW.
+   test_every_shared_subject_term_is_stored_so_the_reason_matches (all terms, not five)
 2 value-ordered demotion from tags_json only, id only the last tiebreak; untagged rows keep
   the pre-T-17 rot-prone-then-oldest order; two calls are byte-identical:
    test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
@@ -404,6 +429,10 @@ if want dod_map.txt; then
    integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
    integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
    test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict
+   test_pinning_a_demoted_approved_row_is_refused_when_it_would_evict
+   test_moving_an_approved_row_to_a_tighter_scope_is_refused
+   test_a_rank_lowering_edit_demotes_itself_without_an_override
+   test_a_content_shrinking_edit_still_succeeds_without_an_override
    test_editing_an_approved_row_into_a_garbled_shape_is_refused
    test_patching_a_row_cannot_flip_it_to_approved
    test_markdown_import_creates_only_pending_rows_and_never_evicts

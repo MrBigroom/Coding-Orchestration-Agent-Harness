@@ -198,10 +198,14 @@ pending row can be demoted the moment it enters a full section — approving it 
 `approved #N` while #N was never injected). The response names every entry at risk and the
 section it would leave. The same gate covers every other approval-shaped write —
 `orchestrator memory add --approve`, `POST /api/memory {"approved": true}`, `memory
-import`, and an **edit that lengthens an approved row** (`PATCH /api/memory/{id}`, and a
-`condense --apply`/`--content` that writes a longer surviving row) — because a path that
-could write an approved row, or make one grow, would otherwise be a silent eviction hole.
-Markdown import (`memory import --markdown`) only ever creates **pending** rows, so it cannot
+import`, and an **edit to an approved row that changes any selection-relevant field**
+(content, tags, scope, role or category — `PATCH /api/memory/{id}`, and a
+`condense --apply`/`--content` that rewrites a surviving row) — because a path that could
+write an approved row, make one grow, or raise its value rank / move it into a tighter
+section would otherwise be a silent eviction hole. A change that only *lowers* the edited
+row's own rank demotes that row, not a neighbour, so it is allowed without an override and
+is reported by budget/triage like any other demotion. Markdown import (`memory import
+--markdown`) only ever creates **pending** rows, so it cannot
 evict anything; the later `approve` is gated like any other. `PATCH /api/memory/{id}` has no
 `approved` field at all, and a PATCH that would turn an approved row garbled is refused.
 `orchestrator memory approve ID --override` /

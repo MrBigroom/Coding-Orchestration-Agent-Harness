@@ -248,7 +248,13 @@ def duplicate_record(entry: MemoryEntry) -> dict[str, Any] | None:
 
 
 def _duplicate_tags(match: dict[str, Any]) -> list[str]:
-    """The tags that record a link AND its evidence in the existing tags_json column."""
+    """The tags that record a link AND its evidence in the existing tags_json column.
+
+    EVERY shared term is stored, not the first five: `duplicate_record` rebuilds the
+    reason from these tags, and the outcome/build-log reason is built from the matcher's
+    full term set. Truncating here made the reason on the row differ from the reason the
+    operator saw at ingest (T-17 review round 5, finding 5).
+    """
     tags = [
         f"{DUPLICATE_TAG_PREFIX}{match['existing_id']}",
         f"{DUPLICATE_MATCH_PREFIX}{match['match']}",
@@ -258,7 +264,7 @@ def _duplicate_tags(match: dict[str, Any]) -> list[str]:
     if match.get("threshold") is not None:
         tags.append(f"{DUPLICATE_THRESHOLD_PREFIX}{match['threshold']:.2f}")
     if match.get("terms"):
-        tags.append(f"{DUPLICATE_TERMS_PREFIX}{','.join(match['terms'][:5])}")
+        tags.append(f"{DUPLICATE_TERMS_PREFIX}{','.join(match['terms'])}")
     return tags
 
 
@@ -804,11 +810,14 @@ def update(
     PATCH leaves the stored row and its rendered markdown exactly as they were — the
     "unchanged" guarantee does not depend on session rollback behaviour.
 
-    An edit to an APPROVED row that makes the section cost more (a longer text, or a tag
-    change that drops its value rank) is an approval-shaped write: it can push another
-    approved row out of the injected section, so it goes through the same eviction gate as
-    `create`/`approve`/`import` (T-17 review round 4, finding 4). `override=True` is the
-    explicit opt-in and records the casualties in the build log.
+    An edit to an APPROVED row is an approval-shaped write whenever ANY selection-relevant
+    field changes -- content, tags, scope, role or category -- not only when the text grows:
+    pinning a demoted row or moving it into a section with less headroom can push a
+    NEIGHBOUR out just as surely as a longer text (T-17 review round 5, finding 1). A change
+    that only lowers the edited row's own pressure (line cost and tag rank both no higher)
+    may demote that row itself -- triage/budget report it -- so its own exclusion is not a
+    refusal. A growth edit that pushes itself out is still refused, like an approval that
+    would never be injected. `override=True` is the explicit opt-in and records casualties.
     """
     entry = _get(session, entry_id)
     if data.content is not None:
@@ -844,12 +853,24 @@ def update(
         # An edit that would leave an APPROVED row garbled is refused like every other
         # approval-shaped write: the pipeline would stop injecting it with no warning.
         _refuse_garbled(priced, action=action)
-        # Only GROWTH is gated: a shorter edit cannot push another row out. A tag change that
-        # lowers this row's own value rank demotes the row itself, not a neighbour, and is
-        # reported by triage/budget like any other demotion.
-        if _line_tokens(new_content) > _line_tokens(entry.content):
+        # ANY selection-relevant change is priced, not only growth. A pin raises this row's
+        # keep rank and a scope/role/category move puts it in another section, either of which
+        # can demote a neighbour; a length-only check misses both. An edit that only lowers
+        # this row's own pressure (cost and tag rank both no higher) may demote ITSELF, which
+        # budget/triage report, so its own exclusion is not a refusal; a growth edit that
+        # pushes itself out still is, like an approval that would never be injected.
+        if _selection_relevant_change(entry, priced):
+            lowers_pressure = (
+                _tag_rank(priced) <= _tag_rank(entry)
+                and _line_tokens(new_content) <= _line_tokens(entry.content)
+            )
             evicted = _refuse_eviction(
-                session, priced, override=override, action=action, replacing=True
+                session,
+                priced,
+                override=override,
+                action=action,
+                replacing=True,
+                ignore_self=lowers_pressure,
             )
     entry.content = new_content
     entry.tags_json = new_tags
@@ -878,8 +899,29 @@ class EvictionRefused(MemoryError_):
         self.payload = payload
 
 
+def _selection_relevant_change(stored: MemoryEntry, priced: MemoryEntry) -> bool:
+    """Did an edit change anything the injector selects or orders on?
+
+    Content text (not just its length: rotation-proneness is content-derived), tags (the
+    value rank), scope/role (which section and which role reads the row) and category (the
+    bucket). A pure `updated_at` touch is not included -- it changes no selection.
+    """
+    return (
+        priced.category != stored.category
+        or priced.scope != stored.scope
+        or priced.role != stored.role
+        or priced.content.strip() != stored.content.strip()
+        or sorted(priced.tags_json or []) != sorted(stored.tags_json or [])
+    )
+
+
 def _eviction_impact(
-    session: Session, entry: MemoryEntry, *, treat_as_new: bool, replacing: bool = False
+    session: Session,
+    entry: MemoryEntry,
+    *,
+    treat_as_new: bool,
+    replacing: bool = False,
+    ignore_self: bool = False,
 ) -> dict[str, Any]:
     """Which approved rows `entry` would demote, from the same selection the prompt uses.
 
@@ -895,6 +937,9 @@ def _eviction_impact(
     succeed, the CLI would print "approved #N", and nothing would say #N never reaches a
     prompt. It is a casualty like any other, so it is refused by default and recorded on
     override.
+
+    `ignore_self` is the EDIT shape: lowering the edited row's own rank demotes that row,
+    not a neighbour, so triage/budget report it and the edit is allowed without an override.
     """
     if entry.id is not None and entry.approved and not replacing:
         return {"entry_id": entry.id, "evicted": []}
@@ -938,6 +983,9 @@ def _eviction_impact(
                 is_self = entry.id is not None and row["id"] == entry.id
                 if row["id"] == priced.id and not is_self:
                     # The synthetic newest id of a create/import price: never a casualty.
+                    continue
+                if is_self and ignore_self:
+                    # An edit may lower its own rank; that is a self-demotion, not an eviction.
                     continue
                 record = evicted.setdefault(
                     row["id"],
@@ -998,17 +1046,21 @@ def _refuse_eviction(
     override: bool,
     action: str,
     replacing: bool = False,
+    ignore_self: bool = False,
 ) -> list[dict[str, Any]]:
     """Refuse an approval-shaped write that would evict an approved row; return casualties.
 
-    Shared by `create(approved=True)`, `import_all`, `approve()` and an edit that grows or
-    devalues an approved row (`replacing=True`). `override=True` is the explicit operator
-    opt-in; even then nothing is deleted, the evicted rows are reported by budget/triage as
-    not injected and the caller records their ids in a build-log event via
+    Shared by `create(approved=True)`, `import_all`, `approve()` and any edit to an approved
+    row that changes a selection-relevant field (`replacing=True`; `ignore_self=True` there
+    because an edit may demote its own row without evicting a neighbour). `override=True` is
+    the explicit operator opt-in; even then nothing is deleted, the evicted rows are reported
+    by budget/triage as not injected and the caller records their ids in a build-log event via
     `_log_eviction_override`. `action` names the write in the message, so a caller can tell
     an import refusal from a CLI add.
     """
-    impact = _eviction_impact(session, entry, treat_as_new=True, replacing=replacing)
+    impact = _eviction_impact(
+        session, entry, treat_as_new=True, replacing=replacing, ignore_self=ignore_self
+    )
     if not impact["evicted"] or override:
         return impact["evicted"]
     casualties = ", ".join(_casualty_text(row) for row in impact["evicted"])

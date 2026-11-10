@@ -126,9 +126,12 @@ def update_memory(
     session: Session = SessionDep,
 ) -> dict[str, Any] | JSONResponse:
     # A PATCH that would move an entry to a scope no injector can read is a 400, not a
-    # silently unreachable row. An edit of an APPROVED row that makes it cost more (or drops
-    # its tag value) is an approval-shaped write, so it returns the same structured 400 body
-    # as an over-cap approval; `override=true` is the additive explicit opt-in.
+    # silently unreachable row. An edit of an APPROVED row that changes ANY selection-relevant
+    # field (content, tags, scope, role, category) is an approval-shaped write -- pinning a
+    # demoted row or moving it into a tighter section can evict a neighbour -- so it returns
+    # the same structured 400 body as an over-cap approval; `override=true` is the additive
+    # explicit opt-in. A change that only lowers the row's own rank demotes that row, not a
+    # neighbour, and is not refused.
     try:
         return dump(memory_service.update(session, entry_id, body, override=override))
     except memory_service.EvictionRefused as e:

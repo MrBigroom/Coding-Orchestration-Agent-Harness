@@ -739,6 +739,36 @@ def test_triage_reads_the_link_reason_out_of_tags_json(session):
     assert m.duplicate_record(session.get(MemoryEntry, row["id"]))["reason"] == stored["reason"]
 
 
+def test_every_shared_subject_term_is_stored_so_the_reason_matches():
+    """The row must carry enough terms to rebuild the OUTCOME's reason (round-5 finding 5)."""
+    terms = [
+        "widget_alpha.parse_row",
+        "widget_beta.emit_all",
+        "widget_gamma.flush_seen",
+        "widget_delta.close_pool",
+        "widget_epsilon.report",
+        "widget_zeta.reset",
+    ]
+    match = {
+        "existing_id": 7,
+        "match": "subject",
+        "ratio": None,
+        "threshold": None,
+        "terms": terms,
+    }
+    entry = MemoryEntry(
+        category="project",
+        scope="gotchas",
+        project_slug="demo",
+        content="placeholder",
+        approved=False,
+        tags_json=m._duplicate_tags(match),
+    )
+    stored = m.duplicate_record(entry)
+    assert stored["terms"] == terms
+    assert stored["reason"] == m._duplicate_reason(match)
+
+
 # ------------------------------------- condense never drops an absorbed fact (round-4 F2)
 
 
@@ -798,6 +828,64 @@ def test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict(sessi
 
     updated = m.update(session, edited.id, MemoryUpdate(content=longer), override=True)
     assert updated.content == longer.strip()
+
+
+def test_pinning_a_demoted_approved_row_is_refused_when_it_would_evict(session, budgets):
+    """A tag edit is an approval-shaped write: raising a row's rank can evict a neighbour."""
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    demoted = add(session, "Demoted rule " + "beta " * 10, tags=["tier:3"])
+    budgets(max_memory_tokens_project=tokens(keep) + tokens(demoted) - 1)
+    assert [x["id"] for x in m.select_for_prompt(session, "worker", "demo").excluded] == [
+        demoted.id
+    ]
+
+    with pytest.raises(m.EvictionRefused) as exc:
+        m.update(session, demoted.id, MemoryUpdate(tags=["pinned"]))
+    assert f"#{keep.id} (" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, demoted.id).tags_json == ["tier:3"]
+
+    updated = m.update(session, demoted.id, MemoryUpdate(tags=["pinned"]), override=True)
+    assert updated.tags_json == ["pinned"]
+
+
+def test_moving_an_approved_row_to_a_tighter_scope_is_refused(session, budgets):
+    """Scope decides which role reads a row, so a move can fill another role's section."""
+    neighbour = add(session, "Older worker rule " + "delta " * 10, scope="gotchas")
+    mover = add(session, "Newer decisions rule " + "gamma " * 10, scope="decisions")
+    budgets(max_memory_tokens_project=tokens(neighbour) + tokens(mover) - 1)
+    # Before the move only the gotchas row is in the worker section, so nothing is demoted.
+    assert m.select_for_prompt(session, "worker", "demo").excluded == []
+
+    with pytest.raises(m.EvictionRefused) as exc:
+        m.update(session, mover.id, MemoryUpdate(scope="gotchas"))
+    assert f"#{neighbour.id} (" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, mover.id).scope == "decisions"
+
+
+def test_a_rank_lowering_edit_demotes_itself_without_an_override(session, budgets):
+    pinned = add(session, "Rule A " + "alpha " * 10, tags=["pinned"])
+    neighbour = add(session, "Rule B " + "alpha " * 10)
+    budgets(max_memory_tokens_project=tokens(neighbour))
+    before = m.select_for_prompt(session, "worker", "demo")
+    assert [x["id"] for x in before.excluded] == [neighbour.id]
+
+    updated = m.update(session, pinned.id, MemoryUpdate(tags=["tier:3"]))
+    assert updated.tags_json == ["tier:3"]
+    after = m.select_for_prompt(session, "worker", "demo")
+    assert [x["id"] for x in after.excluded] == [pinned.id]
+    assert neighbour.id not in {x["id"] for x in after.excluded}
+
+
+def test_a_content_shrinking_edit_still_succeeds_without_an_override(session, budgets):
+    shrunk = add(session, "Quarterly durable rule " + "gamma " * 20)
+    budgets(max_memory_tokens_project=tokens(shrunk) - 5)
+    shorter = "Quarterly durable rule gamma."
+
+    updated = m.update(session, shrunk.id, MemoryUpdate(content=shorter))
+    assert updated.content == shorter
+    assert m.select_for_prompt(session, "worker", "demo").excluded == []
 
 
 def test_patching_a_row_cannot_flip_it_to_approved(session):
