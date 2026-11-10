@@ -1,4 +1,4 @@
-# HEAD=1c878a1f919786b0970bc4a5490aad27769cad89 mode=full
+# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
@@ -21,6 +21,7 @@ tests/unit/test_memory_lifecycle.py::test_lifecycle_fields_stay_behind_a_contrac
 tests/unit/test_memory_lifecycle.py::test_the_frozen_memory_table_has_no_lifecycle_columns_yet PASSED
 tests/unit/test_memory_lifecycle.py::test_adding_a_key_value_phrase_records_the_substitution PASSED
 tests/unit/test_memory_lifecycle.py::test_updating_a_key_value_phrase_records_the_substitution PASSED
+tests/unit/test_memory_lifecycle.py::test_editing_an_approved_row_into_a_garbled_shape_is_refused PASSED
 tests/unit/test_memory_lifecycle.py::test_a_marked_entry_is_garbled_not_rendered_and_not_approvable PASSED
 tests/unit/test_memory_lifecycle.py::test_a_marked_approved_entry_is_not_injected_or_rendered PASSED
 tests/unit/test_memory_lifecycle.py::test_creating_an_approved_key_value_entry_is_refused_as_garbled PASSED
@@ -33,6 +34,12 @@ tests/unit/test_memory_lifecycle.py::test_approval_that_would_evict_names_the_ca
 tests/unit/test_memory_lifecycle.py::test_approving_a_row_that_would_itself_be_demoted_is_refused PASSED
 tests/unit/test_memory_lifecycle.py::test_override_records_the_demoted_ids_in_the_build_log PASSED
 tests/unit/test_memory_lifecycle.py::test_budget_and_triage_name_the_current_demotions PASSED
+tests/unit/test_memory_lifecycle.py::test_triage_reads_the_link_reason_out_of_tags_json PASSED
+tests/unit/test_memory_lifecycle.py::test_a_condense_apply_that_lengthens_the_survivor_is_refused PASSED
+tests/unit/test_memory_lifecycle.py::test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict PASSED
+tests/unit/test_memory_lifecycle.py::test_patching_a_row_cannot_flip_it_to_approved PASSED
+tests/unit/test_memory_lifecycle.py::test_markdown_import_creates_only_pending_rows_and_never_evicts PASSED
+tests/unit/test_memory_lifecycle.py::test_suggestion_event_names_come_from_the_structured_kind PASSED
 tests/unit/test_memory.py::test_suggestion_approval_flow_and_injection PASSED
 tests/unit/test_memory.py::test_role_aware_injection PASSED             
 tests/unit/test_memory.py::test_duplicate_suggestions_are_ignored PASSED
@@ -209,4 +216,5 @@ tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers
 tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers1] PASSED
 tests/integration/test_api.py::test_a_token_replaces_the_local_host_check PASSED
 tests/integration/test_api.py::test_one_time_schedule_api PASSED        
-============================= 208 passed =============================
+tests/integration/test_api.py::test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail PASSED
+============================= 216 passed =============================

@@ -1,0 +1,8 @@
+# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
+# command: tsc -b --force on the web/ sources of THIS worktree, via a /tmp scratch
+#          project whose node_modules is the main checkout's (the worktree has none).
+# scratch src resolves to: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/web/src
+tsc_exit=0
+# sources the compiler actually read (the two files this round names):
+/tmp/tmp.ibJhrgH9LE/src/api/client.ts
+/tmp/tmp.ibJhrgH9LE/src/pages/Memory.tsx

@@ -1,4 +1,4 @@
-# HEAD=1c878a1f919786b0970bc4a5490aad27769cad89 mode=full
+# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
 # static DoD map; focused_tests.txt supplies each node's PASSED line
 1 ingest dedup: a reworded restatement is a REAL pending row linked to the approved
   entry it restates (`duplicate-of:<id>` in the existing tags column), a byte-identical
@@ -11,8 +11,11 @@
    test_a_repeated_restatement_does_not_add_a_second_linked_row
    test_a_pending_row_from_the_same_batch_is_not_a_link_target
    test_triage_flags_a_linked_restatement_as_a_merge_candidate
-   source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of;
-   memory_text.SUBJECT_MAX_DF / def is_subject_pair (rare identifiers, never a text ratio)
+   test_triage_reads_the_link_reason_out_of_tags_json
+   source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of /
+   duplicate_record / _duplicate_tags; memory_text.SUBJECT_MAX_DF / def is_subject_pair
+   (rare identifiers, never a text ratio). The ratio, threshold and shared terms live in
+   tags_json next to the link, so triage reads the reason FROM THE ROW.
 2 value-ordered demotion from tags_json only, id only the last tiebreak; untagged rows keep
   the pre-T-17 rot-prone-then-oldest order; two calls are byte-identical:
    test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
@@ -22,8 +25,10 @@
    source_anchors.txt: memory_service.def _keep_priority / _tag_rank; migrations_untouched.txt
 3 condense non-destructive default + explicit apply + project scoping + distinct-fact union:
    test_condense_dry_run_changes_no_row
-   test_condense_apply_updates_the_survivor_and_rejects_the_absorbed
+   test_condense_apply_updates_the_survivor_and_rejects_the_absorbed (refuses a rare-token
+     merge WITHOUT merged --content; applies with it)
    test_condense_partial_apply_is_refused_without_writing
+   test_a_condense_apply_that_lengthens_the_survivor_is_refused
    test_condense_rendered_markdown_matches_the_surviving_approved_rows
    test_a_subject_cluster_proposal_keeps_every_distinct_fact
    test_condense_requires_a_project_and_never_groups_global_or_role_rows
@@ -57,8 +62,18 @@
    integration::test_approval_eviction_is_refused_and_override_is_explicit
    integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
    integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
+   test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict
+   test_editing_an_approved_row_into_a_garbled_shape_is_refused
+   test_patching_a_row_cannot_flip_it_to_approved
+   test_markdown_import_creates_only_pending_rows_and_never_evicts
+   integration::test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail
    source_anchors.txt: class EvictionRefused / _refuse_eviction / _eviction_impact /
-   _log_eviction_override; both UIs read detail.evicted (structure, never a message substring)
+   _log_eviction_override / def update / replace_approved; both UIs read detail.evicted
+   (structure, never a message substring), and tsc_web.txt type-checks web/ from THIS
+   worktree with client.ts's `this.detail = detail` shown in source_anchors.txt.
+   Build-log event kinds come from structured outcome fields:
+   test_suggestion_event_names_come_from_the_structured_kind
+   source_anchors.txt: run_service._SUGGESTION_EVENT_BY_KIND
 acceptance: live_condense.txt is the live DB snapshot run on a COPY at the operator's caps:
    the operator-cited topical clusters with the RARE-TOKEN answer per cluster, condense dry
    run (rows unchanged), one explicit apply, and budget/triage before and after.
