@@ -210,6 +210,14 @@ def test_memory_condense_is_a_dry_run_until_apply_names_the_ids(home):
     args = ["memory", "condense", "--project", "demo"]
     for entry_id in proposal["ids"]:
         args += ["--apply", str(entry_id)]
-    applied = runner.invoke(app, args)
+    # A rare-token duplicate keeps the survivor's wording, which does not contain the
+    # absorbed row's text: without merged --content the apply must refuse (round-4 F2).
+    refused = runner.invoke(app, args)
+    assert refused.exit_code == 1, refused.output
+    # Rich wraps the message: compare on whitespace-collapsed text, not raw output lines.
+    assert "does not contain the content of" in " ".join(refused.output.split())
+    applied = runner.invoke(
+        app, args + ["--content", "Resolve the interpreter in the worktree before tests."]
+    )
     assert applied.exit_code == 0, applied.output
     assert "applied: kept" in applied.output

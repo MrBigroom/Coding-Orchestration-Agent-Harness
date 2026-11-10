@@ -197,11 +197,17 @@ it would leave the row being approved out of the injected section (a rot-prone o
 pending row can be demoted the moment it enters a full section — approving it used to print
 `approved #N` while #N was never injected). The response names every entry at risk and the
 section it would leave. The same gate covers every other approval-shaped write —
-`orchestrator memory add --approve`, `POST /api/memory {"approved": true}`, and `memory
-import` — because a creation path that could write an approved row directly would be a
-silent eviction hole. `orchestrator memory approve ID --override` /
+`orchestrator memory add --approve`, `POST /api/memory {"approved": true}`, `memory
+import`, and an **edit that lengthens an approved row** (`PATCH /api/memory/{id}`, and a
+`condense --apply`/`--content` that writes a longer surviving row) — because a path that
+could write an approved row, or make one grow, would otherwise be a silent eviction hole.
+Markdown import (`memory import --markdown`) only ever creates **pending** rows, so it cannot
+evict anything; the later `approve` is gated like any other. `PATCH /api/memory/{id}` has no
+`approved` field at all, and a PATCH that would turn an approved row garbled is refused.
+`orchestrator memory approve ID --override` /
 `POST /api/memory/{id}/approve?override=true` (and `--override` on `memory
-add`/`memory import`, `POST /api/memory?override=true`) is the explicit opt-in. The refusal
+add`/`memory import`/`memory condense --apply`, `POST /api/memory?override=true`,
+`PATCH /api/memory/{id}?override=true`) is the explicit opt-in. The refusal
 is an HTTP 400 whose frozen `{"error", "detail"}` body carries the casualty list as
 **structure** in `detail.evicted` (`id`, `bucket`, `scope`, `tokens`, `reason`, `roles`,
 `self`), and both GUIs render that list before asking for the override — neither keys the
@@ -284,19 +290,25 @@ optional form could group global and role rows with project rows. It prints the 
 every absorbed id, the proposed content and the token delta
 (`tokens_after - tokens_before`).
 
-A rare-token duplicate group can keep the survivor's text, because the absorbed rows restate
-it. A subject cluster may group rows that state **different facts**, so its proposed content is
-the union of every member's text (`distinct_facts=true`) and applying without `--content`
-writes that union: an `--apply` can never silently drop an absorbed rule. Use `--content` to
-rewrite the cluster into one tighter durable statement (the way to strip task framing while
-keeping the rule).
+Losing a fact is worse than keeping a duplicate, so an apply **without `--content` is refused
+whenever the surviving text does not literally contain an absorbed row's content**. A rare-token
+duplicate group keeps the survivor's wording, which does not contain the reworded absorbed row,
+so that branch can only be applied with an explicit merged `--content`. A subject cluster may
+group rows that state **different facts**, so its proposed content is the union of every
+member's text (`distinct_facts=true`) and it passes that check: an `--apply` can never silently
+drop an absorbed rule. Use `--content` to rewrite a cluster into one tighter durable statement
+(the way to strip task framing while keeping the rule). If the longer surviving row would evict
+another approved entry from the capped section, the apply is refused like any other growing
+edit; `--override` is the explicit opt-in.
 
 The default is non-destructive: a dry run changes no row, no approval state and no markdown.
 `--apply` writes only when it names the **complete** id set of a proposal (survivor plus every
 absorbed row); a partial or unknown id set is refused before anything is written. Applying
 means `memory_service.update` on the survivor and `memory_service.reject` on the absorbed
 rows, so redaction and markdown re-rendering stay on the one sanctioned path. `--content`
-rewrites the surviving row in the same call (use it to strip task framing and keep the rule).
+rewrites the surviving row in the same call (use it to strip task framing and keep the rule);
+it is also the only way to apply a rare-token duplicate, whose survivor text does not contain
+the absorbed wording.
 
 ## Approval workflow
 
@@ -315,7 +327,11 @@ rewrites the surviving row in the same call (use it to strip task framing and ke
    uses); neither is a whole-text ratio, and the `duplicate_reason`/`subject_reason` text is
    built from the matcher's actual numbers and shared terms. A repeat restatement already
    recorded against the same entry adds no new row. The chat notice and the build log event
-   `memory_suggestion_linked` name the anchor and the new row.
+   `memory_suggestion_linked` name the anchor and the new row. The rest of the record lives in
+`tags_json` next to the link — `duplicate-match:rare-token|subject`, `duplicate-ratio:…`,
+`duplicate-threshold:…` and `duplicate-terms:…` — so triage rebuilds the reason **from the
+row** (the `linked-duplicate` flag and the `duplicate_link` field) instead of relying on the
+transient outcome or the build log.
 3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →
    memory tab, `orchestrator memory approve|reject ID`, or `POST /api/memory/{id}/approve`.
    An entry whose scope was substituted is still pending, and the build log says which

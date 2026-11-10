@@ -118,14 +118,21 @@ async def import_memory(
         raise HTTPException(400, str(e)) from e
 
 
-@router.patch("/memory/{entry_id}")
+@router.patch("/memory/{entry_id}", response_model=None)
 def update_memory(
-    entry_id: int, body: MemoryUpdate, session: Session = SessionDep
-) -> dict[str, Any]:
+    entry_id: int,
+    body: MemoryUpdate,
+    override: bool = False,
+    session: Session = SessionDep,
+) -> dict[str, Any] | JSONResponse:
     # A PATCH that would move an entry to a scope no injector can read is a 400, not a
-    # silently unreachable row.
+    # silently unreachable row. An edit of an APPROVED row that makes it cost more (or drops
+    # its tag value) is an approval-shaped write, so it returns the same structured 400 body
+    # as an over-cap approval; `override=true` is the additive explicit opt-in.
     try:
-        return dump(memory_service.update(session, entry_id, body))
+        return dump(memory_service.update(session, entry_id, body, override=override))
+    except memory_service.EvictionRefused as e:
+        return eviction_response(e)
     except memory_service.MemoryError_ as e:
         raise HTTPException(400, str(e)) from e
 

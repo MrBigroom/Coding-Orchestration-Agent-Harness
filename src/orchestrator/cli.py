@@ -1479,6 +1479,14 @@ def memory_condense(
         "--content",
         help="Rewrite the surviving row while applying one proposal (strip task framing).",
     ),
+    override: bool = typer.Option(
+        False,
+        "--override",
+        help=(
+            "Apply even if the longer surviving row would evict another approved entry "
+            "from the capped section."
+        ),
+    ),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Propose merges among approved memory; write nothing unless --apply names the ids.
@@ -1493,7 +1501,11 @@ def memory_condense(
     _ensure_ready()
     with _session() as s:
         result = memory_service.condense(
-            s, project, apply_ids=apply or None, rewrite_content=content
+            s,
+            project,
+            apply_ids=apply or None,
+            rewrite_content=content,
+            override=override,
         )
     if as_json:
         _print_json(result)

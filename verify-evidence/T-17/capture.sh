@@ -87,6 +87,8 @@ if want source_anchors.txt; then
       "src/orchestrator/services/memory_service.py:def _tag_rank" \
       "src/orchestrator/services/memory_service.py:def _linked_duplicate" \
       "src/orchestrator/services/memory_service.py:def duplicate_of" \
+      "src/orchestrator/services/memory_service.py:def duplicate_record" \
+      "src/orchestrator/services/memory_service.py:def _duplicate_tags" \
       "src/orchestrator/services/memory_service.py:def is_garbled" \
       "src/orchestrator/services/memory_service.py:def _redact_memory_content" \
       "src/orchestrator/services/memory_service.py:class EvictionRefused" \
@@ -96,6 +98,8 @@ if want source_anchors.txt; then
       "src/orchestrator/services/memory_service.py:def _log_eviction_override" \
       "src/orchestrator/services/memory_service.py:def approval_impact" \
       "src/orchestrator/services/memory_service.py:def create" \
+      "src/orchestrator/services/memory_service.py:def update" \
+      "src/orchestrator/services/memory_service.py:replace_approved" \
       "src/orchestrator/services/memory_service.py:def approve" \
       "src/orchestrator/services/memory_service.py:def condense" \
       "src/orchestrator/services/memory_service.py:def import_all" \
@@ -106,14 +110,17 @@ if want source_anchors.txt; then
       "src/orchestrator/utils/memory_text.py:SUBJECT_MAX_DF" \
       "src/orchestrator/utils/memory_text.py:def is_subject_pair" \
       "src/orchestrator/utils/memory_text.py:def subject_clusters" \
-      "src/orchestrator/services/run_service.py:memory_suggestion_linked" \
+      "src/orchestrator/services/run_service.py:_SUGGESTION_EVENT_BY_KIND" \
       "src/orchestrator/services/memory_service.py:memory_eviction_override" \
       "src/orchestrator/cli.py:def memory_condense" \
       "src/orchestrator/cli.py:def memory_approve" \
       "src/orchestrator/api/routes/memory.py:def approve_memory" \
+      "src/orchestrator/api/routes/memory.py:def update_memory" \
       "web/src/pages/Memory.tsx:Injection caps" \
       "web/src/pages/Memory.tsx:detail.evicted" \
       "web/src/pages/Memory.tsx:casualtyLines" \
+      "web/src/api/client.ts:this.detail = detail;" \
+      "web/src/pages/Memory.tsx:e.detail" \
       "src/orchestrator/api/static_fallback/index.html:Injection caps" \
       "src/orchestrator/api/static_fallback/index.html:detail.evicted"; do
       file="${pair%%:*}"; needle="${pair#*:}"
@@ -227,13 +234,45 @@ with session_scope() as s:
     status = "pass" if same and dry["dry_run"] else "fail"
 
     if proposals:
-        # Demonstrate the path on the proposal that saves the most tokens: a real merge,
-        # not a token-neutral union, so the budget effect is visible.
-        chosen = max(proposals, key=lambda p: (p["tokens_saved"], -len(p["ids"]), p["ids"]))
-        result = m.condense(s, "coding-orchestrator", apply_ids=chosen["ids"])
-        print(f"applied|ids={chosen['ids']}|survivor={chosen['survivor']}|"
-              f"rejected={chosen['absorbed']}|distinct_facts={chosen['distinct_facts']}|"
-              f"tokens_saved={result['applied'][0]['tokens_saved']}")
+        # (1) The rare-token branch keeps only the survivor's wording, so absorbing a reworded
+        #     row would lose that fact: --apply without merged --content must REFUSE. Show the
+        #     refusal on the live corpus and prove no row moved.
+        rare = [p for p in proposals if not p["distinct_facts"]]
+        if rare:
+            target = max(rare, key=lambda p: (p["tokens_saved"], -len(p["ids"]), p["ids"]))
+            try:
+                m.condense(s, "coding-orchestrator", apply_ids=target["ids"])
+                print(f"apply_refused|ids={target['ids']}|refused=False")
+                status = "fail"
+            except m.MemoryError_ as exc:
+                reason = " ".join(str(exc).split())
+                print(f"apply_refused|ids={target['ids']}|refused=True|reason={reason}")
+            print(f"refusal_rows_unchanged={digest(s) == before}")
+            if digest(s) != before:
+                status = "fail"
+        # (2) Apply a UNION proposal, whose surviving text literally contains every member's
+        #     content -- the safe branch. It may grow the survivor, so any eviction is refused.
+        safe = [p for p in proposals if p["distinct_facts"]]
+        chosen = max(safe, key=lambda p: (p["tokens_saved"], -len(p["ids"]), p["ids"])) if safe else None
+        if chosen is not None:
+            try:
+                result = m.condense(s, "coding-orchestrator", apply_ids=chosen["ids"])
+            except m.EvictionRefused as exc:
+                print(f"apply_refused_growth|ids={chosen['ids']}|reason={' '.join(str(exc).split())}")
+                result = m.condense(
+                    s, "coding-orchestrator", apply_ids=chosen["ids"], override=True
+                )
+            survivor_row = m._get(s, chosen["survivor"])
+            contained = all(
+                m._get(s, i).content.strip() in survivor_row.content
+                for i in chosen["absorbed"]
+            )
+            print(f"applied|ids={chosen['ids']}|survivor={chosen['survivor']}|"
+                  f"rejected={chosen['absorbed']}|distinct_facts={chosen['distinct_facts']}|"
+                  f"absorbed_text_contained={contained}|"
+                  f"tokens_saved={result['applied'][0]['tokens_saved']}")
+            if not contained:
+                status = "fail"
         triage = mt.triage(s, status="approved", project_slug="coding-orchestrator")
         after_groups = triage["totals"]["merge_groups"]
         co_grouped = [g for g in after_groups if set(chosen["ids"]).issubset(set(g))]
@@ -258,6 +297,45 @@ PYCODE
   fi
 fi
 
+if want tsc_web.txt; then
+  T0=$(now)
+  {
+    echo "$STAMP"
+    echo "# command: tsc -b --force on the web/ sources of THIS worktree, via a /tmp scratch"
+    echo "#          project whose node_modules is the main checkout's (the worktree has none)."
+    COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
+    MAIN="${COMMON%/.git}"
+    SCRATCH="$(mktemp -d)"
+    if [ ! -d "$MAIN/web/node_modules" ]; then
+      echo "tsc unavailable: $MAIN/web/node_modules is missing"
+      echo "tsc_exit=2"
+      rm -rf "$SCRATCH"
+      exit 2
+    fi
+    ln -s "$MAIN/web/node_modules" "$SCRATCH/node_modules"
+    for p in src index.html package.json tsconfig.json vite.config.ts tailwind.config.js postcss.config.js; do
+      ln -s "$ROOT/web/$p" "$SCRATCH/$p"
+    done
+    echo "# scratch src resolves to: $(readlink -f "$SCRATCH/src")"
+    cd "$SCRATCH"
+    if "$MAIN/web/node_modules/.bin/tsc" -b --force; then
+      echo "tsc_exit=0"
+    else
+      rc=$?
+      echo "tsc_exit=$rc"
+      cd "$ROOT"
+      rm -rf "$SCRATCH"
+      exit "$rc"
+    fi
+    echo "# sources the compiler actually read (the two files this round names):"
+    "$MAIN/web/node_modules/.bin/tsc" --noEmit --listFiles 2>&1 \
+      | grep -E '/src/(api/client|pages/Memory)\.(ts|tsx)$'
+    cd "$ROOT"
+    rm -rf "$SCRATCH"
+  } > "$OUT/tsc_web.txt" 2>&1
+  emit tsc_web "$(ms "$T0" "$(now)")"
+fi
+
 if want dod_map.txt; then
   T0=$(now)
   { echo "$STAMP"
@@ -274,8 +352,11 @@ if want dod_map.txt; then
    test_a_repeated_restatement_does_not_add_a_second_linked_row
    test_a_pending_row_from_the_same_batch_is_not_a_link_target
    test_triage_flags_a_linked_restatement_as_a_merge_candidate
-   source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of;
-   memory_text.SUBJECT_MAX_DF / def is_subject_pair (rare identifiers, never a text ratio)
+   test_triage_reads_the_link_reason_out_of_tags_json
+   source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of /
+   duplicate_record / _duplicate_tags; memory_text.SUBJECT_MAX_DF / def is_subject_pair
+   (rare identifiers, never a text ratio). The ratio, threshold and shared terms live in
+   tags_json next to the link, so triage reads the reason FROM THE ROW.
 2 value-ordered demotion from tags_json only, id only the last tiebreak; untagged rows keep
   the pre-T-17 rot-prone-then-oldest order; two calls are byte-identical:
    test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
@@ -285,8 +366,10 @@ if want dod_map.txt; then
    source_anchors.txt: memory_service.def _keep_priority / _tag_rank; migrations_untouched.txt
 3 condense non-destructive default + explicit apply + project scoping + distinct-fact union:
    test_condense_dry_run_changes_no_row
-   test_condense_apply_updates_the_survivor_and_rejects_the_absorbed
+   test_condense_apply_updates_the_survivor_and_rejects_the_absorbed (refuses a rare-token
+     merge WITHOUT merged --content; applies with it)
    test_condense_partial_apply_is_refused_without_writing
+   test_a_condense_apply_that_lengthens_the_survivor_is_refused
    test_condense_rendered_markdown_matches_the_surviving_approved_rows
    test_a_subject_cluster_proposal_keeps_every_distinct_fact
    test_condense_requires_a_project_and_never_groups_global_or_role_rows
@@ -320,8 +403,18 @@ if want dod_map.txt; then
    integration::test_approval_eviction_is_refused_and_override_is_explicit
    integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
    integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
+   test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict
+   test_editing_an_approved_row_into_a_garbled_shape_is_refused
+   test_patching_a_row_cannot_flip_it_to_approved
+   test_markdown_import_creates_only_pending_rows_and_never_evicts
+   integration::test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail
    source_anchors.txt: class EvictionRefused / _refuse_eviction / _eviction_impact /
-   _log_eviction_override; both UIs read detail.evicted (structure, never a message substring)
+   _log_eviction_override / def update / replace_approved; both UIs read detail.evicted
+   (structure, never a message substring), and tsc_web.txt type-checks web/ from THIS
+   worktree with client.ts's `this.detail = detail` shown in source_anchors.txt.
+   Build-log event kinds come from structured outcome fields:
+   test_suggestion_event_names_come_from_the_structured_kind
+   source_anchors.txt: run_service._SUGGESTION_EVENT_BY_KIND
 acceptance: live_condense.txt is the live DB snapshot run on a COPY at the operator's caps:
    the operator-cited topical clusters with the RARE-TOKEN answer per cluster, condense dry
    run (rows unchanged), one explicit apply, and budget/triage before and after.

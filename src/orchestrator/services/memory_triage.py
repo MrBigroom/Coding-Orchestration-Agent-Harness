@@ -311,12 +311,13 @@ def audit_entry(
         out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
     linked = memory_service.duplicate_of(entry)
     if linked is not None:
-        out.append(
-            {
-                "code": "linked-duplicate",
-                "detail": f"recorded at ingest as a restatement of #{linked}",
-            }
-        )
+        # The link AND its evidence live in tags_json, so the reason is shown ON THE ROW here
+        # instead of only in the transient ingest outcome and the build log (round-4 F3).
+        record = memory_service.duplicate_record(entry) or {"reason": None}
+        detail = f"recorded at ingest as a restatement of #{linked}"
+        if record.get("reason"):
+            detail += f": {record['reason']}"
+        out.append({"code": "linked-duplicate", "detail": detail})
     project = _project_for(session, entry)
     if entry.category == "project" and not project:
         out.append(
@@ -672,6 +673,7 @@ def triage(
                 "flags": flags,
                 "duplicates_of": dups,
                 "duplicate_of": memory_service.duplicate_of(e),
+                "duplicate_link": memory_service.duplicate_record(e),
                 "amend_candidates": amends,
                 "suggested_action": action,
                 "reason": reason,

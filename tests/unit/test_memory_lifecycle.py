@@ -125,6 +125,15 @@ def test_a_reworded_restatement_is_recorded_as_a_linked_row(session):
     assert record["reason"] == duplicate_reason(ratio, threshold)
     assert f"#{approved.id}" in out.notes[0]
     assert f"#{linked.id}" in out.notes[0]
+    # ... and the SAME record survives on the row, in tags_json, so triage can show the
+    # reason instead of relying on the transient outcome or the build log (round-4 F3).
+    stored = m.duplicate_record(linked)
+    assert stored["existing_id"] == approved.id
+    assert stored["match"] == "rare-token"
+    assert stored["ratio"] == pytest.approx(ratio)
+    assert stored["threshold"] == pytest.approx(threshold)
+    assert stored["reason"] == duplicate_reason(ratio, threshold)
+    assert m.duplicate_record(session.get(MemoryEntry, approved.id)) is None
 
 
 def test_a_byte_identical_suggestion_still_creates_no_row(session):
@@ -203,6 +212,10 @@ def test_a_reworded_restatement_shared_only_by_subject_is_linked(session):
     assert out.created == []
     assert out.linked[0]["existing_id"] == approved.id
     assert "rare identifier" in out.linked[0]["reason"]
+    stored = m.duplicate_record(session.get(MemoryEntry, out.linked[0]["entry_id"]))
+    assert stored["match"] == "subject"
+    assert "floor_only_reason" in stored["terms"]
+    assert "rare identifier term(s)" in stored["reason"]
 
 
 def test_a_repeated_restatement_does_not_add_a_second_linked_row(session):
@@ -330,11 +343,24 @@ def test_condense_apply_updates_the_survivor_and_rejects_the_absorbed(session):
     a, b, c = _condense_fixture(session)
     proposal = next(p for p in m.condense(session, "demo")["proposals"] if b.id in p["ids"])
     assert proposal["survivor"] == b.id  # tier:1 outranks tier:3
-    result = m.condense(session, "demo", apply_ids=proposal["ids"])
+    assert proposal["distinct_facts"] is False
+    # A rare-token duplicate keeps the survivor's wording, which does NOT contain the absorbed
+    # row's text: an apply without merged --content would lose that fact, so it is refused.
+    before = rows_snapshot(session)
+    with pytest.raises(m.MemoryError_) as exc:
+        m.condense(session, "demo", apply_ids=proposal["ids"])
+    assert "does not contain the content of" in str(exc.value)
+    assert f"#{a.id}" in str(exc.value)
+    assert rows_snapshot(session) == before
+
+    merged = f"{b.content} {a.content}"
+    result = m.condense(session, "demo", apply_ids=proposal["ids"], rewrite_content=merged)
     assert result["applied"][0]["survivor"] == b.id
     session.expire_all()
     assert session.get(MemoryEntry, a.id).rejected is True
-    assert session.get(MemoryEntry, b.id).approved is True
+    survivor = session.get(MemoryEntry, b.id)
+    assert survivor.approved is True
+    assert a.content in survivor.content
 
 
 def test_condense_partial_apply_is_refused_without_writing(session):
@@ -347,9 +373,14 @@ def test_condense_partial_apply_is_refused_without_writing(session):
 
 
 def test_condense_rendered_markdown_matches_the_surviving_approved_rows(session):
-    _condense_fixture(session)
+    a, b, c = _condense_fixture(session)
     proposal = m.condense(session, "demo")["proposals"][0]
-    m.condense(session, "demo", apply_ids=proposal["ids"])
+    m.condense(
+        session,
+        "demo",
+        apply_ids=proposal["ids"],
+        rewrite_content=f"{a.content} {b.content}",
+    )
 
     approved = m.list_entries(session, status="approved", project_slug="demo")
     files = {m._file_for(e) for e in approved}
@@ -444,11 +475,24 @@ def test_adding_a_key_value_phrase_records_the_substitution(session):
 
 
 def test_updating_a_key_value_phrase_records_the_substitution(session):
-    entry = add(session, "A clean durable rule about the scheduler.")
+    # Pending on purpose: an approved row may not be EDITED into a garbled shape either (the
+    # pipeline would stop injecting it), so the recorded-substitution path is exercised on
+    # the unapproved shape it is allowed in.
+    entry = add(session, "A clean durable rule about the scheduler.", approved=False)
     updated = m.update(session, entry.id, MemoryUpdate(content=KEY_VALUE_PHRASE))
     record = [t for t in updated.tags_json if t.startswith(m.REDACTION_TAG_PREFIX)]
     assert len(record) == 1
     assert "assignment" in record[0]
+
+
+def test_editing_an_approved_row_into_a_garbled_shape_is_refused(session):
+    entry = add(session, "A clean durable rule about the scheduler.")
+    with pytest.raises(m.MemoryError_) as exc:
+        m.update(session, entry.id, MemoryUpdate(content=KEY_VALUE_PHRASE))
+    assert f"editing #{entry.id}" in str(exc.value)
+    assert "redaction marker" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, entry.id).content == "A clean durable rule about the scheduler."
 
 
 def test_a_marked_entry_is_garbled_not_rendered_and_not_approvable(session):
@@ -669,3 +713,142 @@ def test_budget_and_triage_name_the_current_demotions(session, budgets):
     assert casualty in report["roles"]["worker"]["excluded_now"]
     triage = mt.triage(session, status="approved", project_slug="demo")
     assert casualty in [x["id"] for x in triage["excluded_now"]]
+
+
+# ------------------------------------- ingest link record carries its evidence (round-4 F3)
+
+
+def test_triage_reads_the_link_reason_out_of_tags_json(session):
+    add(session, ANCHOR_RULE)
+    out = m.suggest_from_handoff_report(
+        session,
+        [MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED)],
+        source="handoff:R-30",
+        project_slug="demo",
+    )
+    row = next(
+        r for r in mt.triage(session, status="pending", project_slug="demo")["rows"]
+        if r["id"] == out.linked[0]["entry_id"]
+    )
+    flag = next(f for f in row["flags"] if f["code"] == "linked-duplicate")
+    stored = row["duplicate_link"]
+    assert stored["ratio"] is not None
+    assert stored["threshold"] is not None
+    # The flag the operator reads carries the SAME reason built from the stored numbers.
+    assert stored["reason"] in flag["detail"]
+    assert m.duplicate_record(session.get(MemoryEntry, row["id"]))["reason"] == stored["reason"]
+
+
+# ------------------------------------- condense never drops an absorbed fact (round-4 F2)
+
+
+def test_a_condense_apply_that_lengthens_the_survivor_is_refused(session, budgets):
+    """The edit path is an approval-shaped write: a longer survivor can evict a row."""
+    a = add(
+        session,
+        "prompt_builder.render_diff_budget must allocate by the DELIVERED token count: "
+        "rendering stops on whole-hunk boundaries, so the token target is not what a "
+        "`per_file` share receives.",
+    )
+    b = add(
+        session,
+        "prompt_builder._floor_only_reason must compare `max(per_file, cap)`, not `per_file`: "
+        "a per-file-only check prints a reason whose numbers contradict the budget.",
+    )
+    other = add(session, "Unrelated scheduler rule " + "beta " * 10)
+    proposal = next(p for p in m.condense(session, "demo")["proposals"] if a.id in p["ids"])
+    assert proposal["distinct_facts"] is True
+    budgets(max_memory_tokens_project=tokens(a) + tokens(b) + tokens(other))
+    before = rows_snapshot(session)
+    longer = proposal["content"] + " " + "extra " * 20
+
+    with pytest.raises(m.EvictionRefused) as exc:
+        m.condense(
+            session, "demo", apply_ids=proposal["ids"], rewrite_content=longer
+        )
+    assert f"editing #{proposal['survivor']}" in str(exc.value)
+    assert rows_snapshot(session) == before
+    session.expire_all()
+    assert session.get(MemoryEntry, a.id).approved is True
+    assert session.get(MemoryEntry, b.id).approved is True
+
+    result = m.condense(
+        session, "demo", apply_ids=proposal["ids"], rewrite_content=longer, override=True
+    )
+    assert result["applied"][0]["survivor"] == proposal["survivor"]
+    session.expire_all()
+    assert session.get(MemoryEntry, proposal["survivor"]).content == longer.strip()
+
+
+# ------------------------- the guard on the edit and markdown-import paths (round-4 F4)
+
+
+def test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict(session, budgets):
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    edited = add(session, "Edited rule " + "beta " * 10)
+    budgets(max_memory_tokens_project=tokens(keep) + tokens(edited))
+    longer = edited.content + " " + "beta " * 20
+
+    with pytest.raises(m.EvictionRefused) as exc:
+        m.update(session, edited.id, MemoryUpdate(content=longer))
+    assert f"editing #{edited.id}" in str(exc.value)
+    assert f"#{keep.id} (" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, edited.id).content == edited.content
+
+    updated = m.update(session, edited.id, MemoryUpdate(content=longer), override=True)
+    assert updated.content == longer.strip()
+
+
+def test_patching_a_row_cannot_flip_it_to_approved(session):
+    """`PATCH /memory/{id}` is not an approval path: the body has no `approved` field."""
+    assert "approved" not in MemoryUpdate.model_fields
+    pending = add(session, "Pending rule about the scheduler.", approved=False)
+    body = MemoryUpdate.model_validate({"content": pending.content, "approved": True})
+    updated = m.update(session, pending.id, body)
+    assert updated.approved is False
+    assert updated.rejected is False
+
+
+def test_markdown_import_creates_only_pending_rows_and_never_evicts(session, budgets):
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    at_risk = add(session, "At-risk rule " + "beta " * 10)
+    budgets(max_memory_tokens_project=tokens(keep) + tokens(at_risk))
+    path = m.memory_root() / "projects" / "demo" / "gotchas.md"
+    path.write_text(path.read_text() + "- Imported hand-edited rule about the queue.\n")
+
+    before = m.select_for_prompt(session, "worker", "demo")
+    assert m.import_markdown_tree(session) == 1
+    imported = [e for e in m.list_entries(session) if e.source == "markdown"]
+    assert [e.approved for e in imported] == [False]
+    after = m.select_for_prompt(session, "worker", "demo")
+    assert after.sections == before.sections
+    assert [x["id"] for x in after.excluded] == [x["id"] for x in before.excluded]
+
+    # The import cannot create an approved row, and the later flip is still gated.
+    with pytest.raises(m.EvictionRefused):
+        m.approve(session, imported[0].id)
+
+
+# ------------------------------- the build-log event comes from structure (round-4 F6)
+
+
+def test_suggestion_event_names_come_from_the_structured_kind(session, monkeypatch):
+    from sqlmodel import select
+
+    from orchestrator.core.models import BuildLogEntry
+    from orchestrator.services import run_service
+
+    outcome = m.SuggestionOutcome()
+    # Deliberately misleading texts: each one is shaped like the OTHER kind, which is
+    # exactly what the old prefix-matching code keyed on.
+    outcome.note("substituted", "dropped suggestion from handoff:R-1: shaped like a drop")
+    outcome.note("dropped", "memory suggestion from handoff:R-1: shaped like a move")
+    monkeypatch.setattr(m, "suggest_from_handoff_report", lambda *a, **k: outcome)
+    run_service._store_memory_suggestions(
+        session, [], source="handoff:R-1", project_slug="demo", role="worker"
+    )
+    events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
+    assert events["memory_scope_substituted"] == "dropped suggestion from handoff:R-1: shaped like a drop"
+    assert events["memory_suggestion_dropped"] == "memory suggestion from handoff:R-1: shaped like a move"
+    assert outcome.moved == ["dropped suggestion from handoff:R-1: shaped like a drop"]

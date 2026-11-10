@@ -449,6 +449,16 @@ def _salvage_log_payload(
     return payload
 
 
+#: Structured suggestion outcome kind -> build-log event name. The mapping is exhaustive over
+#: `SuggestionOutcome.records`; an unknown kind is a programming error, not a fallback to
+#: "substituted", because guessing would write the wrong event.
+_SUGGESTION_EVENT_BY_KIND = {
+    "dropped": "memory_suggestion_dropped",
+    "linked": "memory_suggestion_linked",
+    "substituted": "memory_scope_substituted",
+}
+
+
 def _store_memory_suggestions(
     session: Session,
     suggestions: list[MemorySuggestion],
@@ -462,24 +472,19 @@ def _store_memory_suggestions(
     """Store a run's memory suggestions, and put every scope the harness rewrote in the log.
 
     T-4 DoD 1: a suggestion is never stored with a scope no injector can read, and a
-    coercion or a drop is an operator-visible event, not a silent `continue`. The notes go
-    to the build log as `memory_scope_substituted` / `memory_suggestion_dropped`, one line
-    per affected suggestion, so the run's log tells the truth about what was filed where.
+    coercion or a drop is an operator-visible event, not a silent `continue`. Each structured
+    `SuggestionOutcome.records` entry carries its own `kind`, and the event NAME comes from
+    that kind - never from the shape of the message text (fourth citation of that
+    convention; T-17 review round 4, finding 6).
     """
     outcome = memory_service.suggest_from_handoff_report(
         session, suggestions, source=source, project_slug=project_slug, role=role
     )
-    for note in outcome.notes:
-        if note.startswith("dropped "):
-            event = "memory_suggestion_dropped"
-        elif note.startswith("linked "):
-            event = "memory_suggestion_linked"
-        else:
-            event = "memory_scope_substituted"
+    for record in outcome.records:
         log_service.log_event(
             session,
-            event,
-            note,
+            _SUGGESTION_EVENT_BY_KIND[record.kind],
+            record.message,
             role="system",
             task_id=task.id if task else None,
             run_id=run.id if run else None,
