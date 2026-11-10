@@ -1,4 +1,4 @@
-# HEAD=ec93c6cd4e22e2867afbe1f3db01651149a56449 mode=full
+# HEAD=d091ca8259e9c38dcae890bbae5547746b2fff1b mode=full
 # Both pass modes in one file. Only a --full pass writes it, so the default fast pass
 # stays byte-identical on a re-run (DoD 5d); the next --full pass refreshes both.
 # Every row carries the HEAD ITS OWN pass measured: a fast row may name an older code
@@ -7,4 +7,4 @@
 # rewrote in that pass (manifest.json, the self-check and this file are written after the
 # capture and are not counted). Quote these numbers, never a scratch or /tmp log.
 mode=fast head=- wall_seconds=not-recorded files=- rewritten=-
-mode=full head=ec93c6cd4e22e2867afbe1f3db01651149a56449 wall_seconds=169.02 files=13 rewritten=8 assertion_shape_ms=192 dod_map_ms=2 focused_tests_ms=19995 full_suite_ms=146910 lint_ms=41 live_condense_ms=1513 migrations_untouched_ms=324 source_anchors_ms=23
+mode=full head=d091ca8259e9c38dcae890bbae5547746b2fff1b wall_seconds=170.61 files=13 rewritten=8 assertion_shape_ms=181 dod_map_ms=1 focused_tests_ms=20378 full_suite_ms=148083 lint_ms=42 live_condense_ms=1559 migrations_untouched_ms=313 source_anchors_ms=25

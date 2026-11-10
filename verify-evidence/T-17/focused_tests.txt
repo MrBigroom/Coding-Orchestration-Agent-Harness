@@ -1,4 +1,4 @@
-# HEAD=ec93c6cd4e22e2867afbe1f3db01651149a56449 mode=full
+# HEAD=d091ca8259e9c38dcae890bbae5547746b2fff1b mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
@@ -6,6 +6,7 @@ tests/unit/test_memory_lifecycle.py::test_a_byte_identical_suggestion_still_crea
 tests/unit/test_memory_lifecycle.py::test_same_domain_but_unrelated_facts_are_not_linked PASSED
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_shared_only_by_subject_is_linked PASSED
 tests/unit/test_memory_lifecycle.py::test_a_repeated_restatement_does_not_add_a_second_linked_row PASSED
+tests/unit/test_memory_lifecycle.py::test_a_pending_row_from_the_same_batch_is_not_a_link_target PASSED
 tests/unit/test_memory_lifecycle.py::test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted PASSED
 tests/unit/test_memory_lifecycle.py::test_untagged_entries_keep_the_pre_t17_demotion_order PASSED
 tests/unit/test_memory_lifecycle.py::test_untagged_durable_entries_are_still_demoted_oldest_first PASSED
@@ -22,11 +23,15 @@ tests/unit/test_memory_lifecycle.py::test_adding_a_key_value_phrase_records_the_
 tests/unit/test_memory_lifecycle.py::test_updating_a_key_value_phrase_records_the_substitution PASSED
 tests/unit/test_memory_lifecycle.py::test_a_marked_entry_is_garbled_not_rendered_and_not_approvable PASSED
 tests/unit/test_memory_lifecycle.py::test_a_marked_approved_entry_is_not_injected_or_rendered PASSED
+tests/unit/test_memory_lifecycle.py::test_creating_an_approved_key_value_entry_is_refused_as_garbled PASSED
+tests/unit/test_memory_lifecycle.py::test_importing_an_approved_key_value_entry_is_refused_as_garbled PASSED
 tests/unit/test_memory_lifecycle.py::test_log_redaction_is_still_a_security_control PASSED
 tests/unit/test_memory_lifecycle.py::test_creating_an_already_approved_row_is_refused_when_it_would_evict PASSED
 tests/unit/test_memory_lifecycle.py::test_importing_an_approved_row_is_refused_when_it_would_evict PASSED
 tests/unit/test_memory_lifecycle.py::test_triage_flags_a_linked_restatement_as_a_merge_candidate PASSED
 tests/unit/test_memory_lifecycle.py::test_approval_that_would_evict_names_the_casualty_and_needs_override PASSED
+tests/unit/test_memory_lifecycle.py::test_approving_a_row_that_would_itself_be_demoted_is_refused PASSED
+tests/unit/test_memory_lifecycle.py::test_override_records_the_demoted_ids_in_the_build_log PASSED
 tests/unit/test_memory_lifecycle.py::test_budget_and_triage_name_the_current_demotions PASSED
 tests/unit/test_memory.py::test_suggestion_approval_flow_and_injection PASSED
 tests/unit/test_memory.py::test_role_aware_injection PASSED             
@@ -204,4 +209,4 @@ tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers
 tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers1] PASSED
 tests/integration/test_api.py::test_a_token_replaces_the_local_host_check PASSED
 tests/integration/test_api.py::test_one_time_schedule_api PASSED        
-============================= 203 passed =============================
+============================= 208 passed =============================

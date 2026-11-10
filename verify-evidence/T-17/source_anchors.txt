@@ -1,18 +1,21 @@
-# HEAD=ec93c6cd4e22e2867afbe1f3db01651149a56449 mode=full
+# HEAD=d091ca8259e9c38dcae890bbae5547746b2fff1b mode=full
 # command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
-1096:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
-1085:def _tag_rank(entry: MemoryEntry) -> int:
-637:def _linked_duplicate(
+1178:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+1167:def _tag_rank(entry: MemoryEntry) -> int:
+658:def _linked_duplicate(
 168:def duplicate_of(entry: MemoryEntry) -> int | None:
 161:def is_garbled(entry: MemoryEntry) -> bool:
 130:def _redact_memory_content(text: str) -> tuple[str, list[str]]:
-699:def _eviction_impact(
-752:def _refuse_eviction(
-778:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
-418:def create(
-791:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
-1281:def condense(
-1403:def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
+720:class EvictionRefused(MemoryError_):
+733:def _eviction_impact(
+834:def _refuse_eviction(
+179:def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
+813:def _log_eviction_override(
+863:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+437:def create(
+876:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+1363:def condense(
+1485:def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
 399:def duplicate_groups(entries: list[MemoryEntry]) -> list[list[int]]:
 471:def condense_proposals(session: Session, project_slug: str) -> list[dict[str, Any]]:
 111:_FLAG_LABELS["redaction-marker"] = (
@@ -29,11 +32,14 @@
 258:def is_subject_pair(
 283:def subject_clusters(
 476:            event = "memory_suggestion_linked"
+831:    log_service.log_event(session, "memory_eviction_override", details)
 1472:def memory_condense(
 1191:def memory_approve(
-119:def approve_memory(
-120:          <Card title="Injection caps">
-56:  // An approval that would evict an approved entry is refused (400) with the casualties named.
-64:      if (!message.includes("would evict")) throw e;
-127:    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"} · approving over a cap is refused with the casualties named and offers an explicit override</div>${demoted}</div>
-137:          if (!String(e.message).includes("would evict")) throw e;
+134:def approve_memory(
+140:          <Card title="Injection caps">
+74:  // section) is refused (400) with the casualties in `detail.evicted`. Show that list and
+29:function casualtyLines(detail: EvictionDetail | undefined): string[] {
+82:      const lines = casualtyLines(detail ?? undefined);
+134:    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"} · approving over a cap is refused with the casualty list in the error detail and offers an explicit override</div>${demoted}</div>
+65:    // flow can act on detail.evicted instead of matching a substring of the message.
+145:          const rows = detail && Array.isArray(detail.evicted) ? detail.evicted : [];
