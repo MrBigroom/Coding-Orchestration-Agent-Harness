@@ -258,11 +258,14 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
   optional and local-first: SQLite remains authoritative, deletions have no tombstones yet, and
   content conflicts are preserved for a future resolution UI rather than merged. The version
   counter is remote per-entity state and a push may only advance it by one; a permanent rejection
-  stops automatic sync and records a stopped state instead of retrying forever. There is no
-  incrementally cursor-based pull, no per-entity conflict UI, and no encryption. A stopped sync is
-  visible in `orchestrator sync status`, `GET /api/sync/status`, and Settings → Cloud Sync, and
-  recovery is `orchestrator sync reinit --dry-run` then `--apply` (or a successful manual sync).
-  See `docs/cloud-sync.md` for the protocol and the measured `0 -> 3` failure.
+  stops automatic sync and records a stopped state instead of retrying forever, while a transient
+  failure (5xx/timeout/network) retries indefinitely with an exponential delay capped at 900 s.
+  There is no incrementally cursor-based pull, no per-entity conflict UI, and no encryption. A
+  stopped sync and the consecutive-failure/next-retry state are visible in
+  `orchestrator sync status`, `GET /api/sync/status`, and Settings → Cloud Sync; recovery from a
+  permanent stop is `orchestrator sync reinit --dry-run` then `--apply` (or a successful manual
+  sync). Persistent failures raise the `sync_failed` notification. See `docs/cloud-sync.md` for the
+  protocol and the measured `0 -> 3` failure.
 
 - **Desktop notifications: one channel, and the link is usually text.** Only the `notify-send`
   path was live-tested (CachyOS/Hyprland's mako/portal stack); the `gdbus` transport, its

@@ -197,14 +197,21 @@ export default function Settings() {
                       <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
                         Automatic sync is stopped: {sync.stopped_reason ?? sync.last_failure_error ?? "unknown reason"}
                         <span className="mt-1 block text-muted">
-                          Fix the cause, then run <span className="mono">orchestrator sync reinit --dry-run</span>, then
-                          <span className="mono"> --apply</span>, or retry with Sync now.
+                          {sync.last_failure_kind === "permanent" ? (
+                            <>Fix the cause, then run <span className="mono">orchestrator sync reinit --dry-run</span>,
+                              then <span className="mono"> --apply</span>, or retry with Sync now.</>
+                          ) : (
+                            <>Retry with Sync now; a transient failure is not repaired by reinit.</>
+                          )}
                         </span>
                       </p>
                     )}
                     {!sync.stopped && sync.consecutive_failures > 0 && (
                       <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
                         {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
+                        <span className="mt-1 block text-muted">
+                          Retrying with exponential backoff; next attempt {fmtTime(sync.next_retry_at)}.
+                        </span>
                       </p>
                     )}
                     {sync.last_error && <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">{sync.last_error}</p>}

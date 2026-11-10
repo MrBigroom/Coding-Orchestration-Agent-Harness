@@ -107,3 +107,24 @@ def test_manual_sync_returns_the_permanent_error_as_structured_detail(client, mo
     assert body["detail"]["kind"] == "permanent"
     assert body["detail"]["status_code"] == 400
     assert body["detail"]["recovery"] == "orchestrator sync reinit --dry-run"
+
+
+def test_manual_sync_returns_a_transient_error_as_503(client, monkeypatch):
+    """A retryable upstream failure is 503, not 400: the request itself was not wrong."""
+    from orchestrator.api.routes import sync
+    from orchestrator.services.sync_transport import SyncTransientError
+
+    async def unavailable():
+        raise SyncTransientError(
+            "Supabase returned HTTP 503: unavailable",
+            status_code=503,
+            detail={"retryable": True},
+        )
+
+    monkeypatch.setattr(sync.sync_runner, "run_once", unavailable)
+    response = client.post("/api/sync/run")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"] == "Supabase returned HTTP 503: unavailable"
+    assert body["detail"]["kind"] == "transient"
+    assert body["detail"]["retryable"] is True

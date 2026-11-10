@@ -4,9 +4,16 @@ The loop has exactly three outcomes for a failed cycle:
 
 * a permanent client error (4xx other than 408/425/429) stops the loop immediately and records a
   stopped state — retrying a refusal forever is not a recovery strategy;
-* a transient failure (5xx, timeout, network, 408/429) retries with exponential backoff, capped by
-  ``max_consecutive_failures``, after which the loop stops as well;
+* a transient failure (5xx, timeout, network, 408/425/429) retries indefinitely with exponential
+  backoff capped at ``backoff_max_seconds``. A transient failure never becomes terminal: a laptop
+  that is offline for an hour is not the same event as a permanent 400, and must recover by
+  itself when connectivity returns;
 * a success clears the streak, the stop, and the log-dedup signature.
+
+The delay is capped, not the attempt count. The first retry is never sooner than the configured
+interval (``base = max(30 s, supabase_sync_interval_seconds)``), so the default sequence is
+60, 120, 240, 480, 900, 900, ... seconds. ``backoff_max_seconds`` is raised to the interval when a
+device polls less often than 900 s, so the documented cap is reachable at every interval.
 
 The stopped state lives in the device-local ``sync_state`` table (key ``sync_health``). The
 polling coroutine stays alive so enable/disable and interval changes still apply without a
@@ -35,7 +42,6 @@ log = get_logger(__name__)
 
 DEFAULT_BACKOFF_BASE_SECONDS = 30.0
 DEFAULT_BACKOFF_MAX_SECONDS = 900.0
-DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_NOTIFY_AFTER_FAILURES = 3
 
 
@@ -46,8 +52,8 @@ def backoff_seconds(
 ) -> float:
     """Exponential backoff: base, 2*base, 4*base ... capped; zero when healthy.
 
-    Pure and injectable so the retry sequence is asserted as a sequence rather than slept
-    through in a test.
+    The cap is a ceiling on the delay, never on the number of attempts. Pure and injectable so
+    the retry sequence is asserted as a sequence rather than slept through in a test.
     """
     if consecutive_failures <= 0:
         return 0.0
@@ -66,14 +72,12 @@ class SyncRunner:
         *,
         backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS,
         backoff_max_seconds: float = DEFAULT_BACKOFF_MAX_SECONDS,
-        max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
         notify_after_failures: int = DEFAULT_NOTIFY_AFTER_FAILURES,
     ) -> None:
         self.transport_factory = transport_factory
         self.poll_seconds = poll_seconds
         self.backoff_base_seconds = backoff_base_seconds
         self.backoff_max_seconds = backoff_max_seconds
-        self.max_consecutive_failures = max_consecutive_failures
         self.notify_after_failures = notify_after_failures
         self._lock = asyncio.Lock()
         self._running = False
@@ -142,18 +146,16 @@ class SyncRunner:
             same_signature = previous.get("last_logged_error") == signature
             occurrences = int(previous.get("log_occurrences") or 0) + 1 if same_signature else 1
             failures = int(previous.get("consecutive_failures") or 0) + 1
-            stopped = kind == "permanent" or failures >= self.max_consecutive_failures
-            backoff = 0.0 if stopped else backoff_seconds(
-                failures, self.backoff_base_seconds, self.backoff_max_seconds
+            # Only a permanent client error is terminal. A transient failure keeps retrying for
+            # as long as it takes; the cap below is a ceiling on the delay, not on attempts.
+            stopped = kind == "permanent"
+            interval = float(
+                settings_service.get(session, "supabase_sync_interval_seconds") or 0
             )
-            if kind == "permanent":
-                reason = f"permanent client error: {exc}"
-            elif stopped:
-                reason = (
-                    f"{failures} consecutive transient failures; last: {exc}"
-                )
-            else:
-                reason = None
+            base = max(float(self.backoff_base_seconds), interval)
+            cap = max(float(self.backoff_max_seconds), base)
+            backoff = 0.0 if stopped else backoff_seconds(failures, base, cap)
+            reason = f"permanent client error: {exc}" if stopped else None
             values = sync_service.write_health(
                 session,
                 consecutive_failures=failures,
@@ -246,6 +248,10 @@ class SyncRunner:
             except Exception as exc:
                 self._last_error = str(exc)
                 health = self._record_failure(exc)
+                # Notify from run_once, not only from the loop: a manual `sync now` that stops the
+                # sync must reach the operator too. The persisted flags make this idempotent, so
+                # the loop calling it as well would not double-alert.
+                self._notify_if_needed(health)
                 self._next_run = time.monotonic() + float(health["backoff_seconds"] or 0)
                 raise
             finally:
@@ -266,8 +272,8 @@ class SyncRunner:
                     # Run immediately after both enablement and configuration become available.
                     self._next_run = 0.0
                 elif health["stopped"]:
-                    # A permanent refusal (or a capped transient streak) is terminal until a
-                    # human fixes the state. Keep polling preferences, attempt nothing.
+                    # Only a permanent refusal is terminal; keep polling preferences and make no
+                    # further automatic attempts until a human repairs the state.
                     self._next_run = 0.0
                 elif time.monotonic() >= self._next_run:
                     self._next_run = time.monotonic() + interval
@@ -275,7 +281,7 @@ class SyncRunner:
                         await self.run_once()
                     except SyncBusyError:
                         pass
-                    except Exception:  # noqa: BLE001 - classified and persisted by run_once
+                    except Exception:  # noqa: BLE001 - classified, persisted, and notified
                         with session_scope() as session:
                             health = sync_service.health(session)
                         if not health["stopped"]:
@@ -283,7 +289,6 @@ class SyncRunner:
                             self._next_run = time.monotonic() + max(
                                 float(health["backoff_seconds"] or 0), self.poll_seconds
                             )
-                        self._notify_if_needed(health)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - keep the background loop alive

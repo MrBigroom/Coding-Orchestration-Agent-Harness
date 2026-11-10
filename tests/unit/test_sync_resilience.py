@@ -143,11 +143,12 @@ def test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason(
     assert status["stopped_reason"] == health["stopped_reason"]
 
 
-def test_transient_failures_back_off_and_stop_at_the_consecutive_cap(
-    initialized, monkeypatch
-):
+def test_transient_failures_back_off_without_ever_stopping(initialized, monkeypatch):
+    """A capped delay, not a capped attempt count: an offline device must self-heal."""
     _configured(monkeypatch)
     _enable_sync()
+    with session_scope() as session:
+        settings_service.update(session, {"supabase_sync_interval_seconds": 15})
     calls: list[str] = []
     client = FailingClient(SyncTransientError("Supabase returned HTTP 503: unavailable"), calls)
     runner = SyncRunner(
@@ -155,36 +156,54 @@ def test_transient_failures_back_off_and_stop_at_the_consecutive_cap(
         poll_seconds=0.01,
         backoff_base_seconds=30.0,
         backoff_max_seconds=50.0,
-        max_consecutive_failures=3,
     )
 
     observed = []
-    for _ in range(3):
+    for _ in range(4):
         with pytest.raises(SyncTransientError):
             asyncio.run(runner.run_once())
         with session_scope() as session:
             health = sync_service.health(session)
-        observed.append((health["consecutive_failures"], health["backoff_seconds"]))
+        observed.append(
+            (
+                health["consecutive_failures"],
+                health["backoff_seconds"],
+                health["stopped"],
+                health["next_retry_at"] is not None,
+            )
+        )
 
-    assert observed == [(1, 30.0), (2, 50.0), (3, 0.0)]
+    assert observed == [
+        (1, 30.0, False, True),
+        (2, 50.0, False, True),
+        (3, 50.0, False, True),
+        (4, 50.0, False, True),
+    ]
     with session_scope() as session:
         health = sync_service.health(session)
-    assert health["stopped"] is True
     assert health["last_failure_kind"] == "transient"
-    assert health["stopped_reason"].startswith("3 consecutive transient failures")
-    assert calls == ["SyncTransientError"] * 3
+    assert health["stopped_reason"] is None
+    assert calls == ["SyncTransientError"] * 4
 
-    async def retry_after_cap():
-        reached = asyncio.Event()
-        reached.set()  # already stopped: the loop must not call the transport again
-        task = asyncio.create_task(runner.run_loop())
-        await asyncio.sleep(0.06)
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
 
-    asyncio.run(retry_after_cap())
-    assert calls == ["SyncTransientError"] * 3
+def test_default_transient_retries_reach_the_900_second_cap(initialized, monkeypatch):
+    """Under the shipping defaults the first retry waits an interval and 900 s is reachable."""
+    _configured(monkeypatch)
+    _enable_sync()
+    calls: list[str] = []
+    client = FailingClient(SyncTransientError("Supabase returned HTTP 503: unavailable"), calls)
+    runner = SyncRunner(transport_factory=lambda: client, poll_seconds=0.01)
+
+    observed = []
+    for _ in range(6):
+        with pytest.raises(SyncTransientError):
+            asyncio.run(runner.run_once())
+        with session_scope() as session:
+            health = sync_service.health(session)
+        observed.append(health["backoff_seconds"])
+    assert observed == [60.0, 120.0, 240.0, 480.0, 900.0, 900.0]
+    with session_scope() as session:
+        assert sync_service.health(session)["stopped"] is False
 
 
 def test_the_running_loop_retries_a_transient_failure_after_backoff(
@@ -193,6 +212,16 @@ def test_the_running_loop_retries_a_transient_failure_after_backoff(
     """The loop itself (not just repeated run_once calls) waits and retries a 5xx."""
     _configured(monkeypatch)
     _enable_sync()
+    # The retry base is floored at the configured interval, so shrink the interval too; the
+    # production default (60 s) is asserted separately by the 900 s cap test.
+    real_get = settings_service.get
+
+    def fast_interval(session, key):
+        if key == "supabase_sync_interval_seconds":
+            return 0.02
+        return real_get(session, key)
+
+    monkeypatch.setattr(settings_service, "get", fast_interval)
     calls: list[str] = []
     reached = asyncio.Event()
     runner = SyncRunner(
@@ -202,7 +231,6 @@ def test_the_running_loop_retries_a_transient_failure_after_backoff(
         poll_seconds=0.005,
         backoff_base_seconds=0.01,
         backoff_max_seconds=0.02,
-        max_consecutive_failures=10,
     )
 
     async def scenario():
@@ -229,7 +257,7 @@ def test_the_running_loop_retries_a_transient_failure_after_backoff(
 def test_identical_failures_log_once_with_an_occurrence_counter(initialized, caplog):
     calls: list[str] = []
     client = FailingClient(SyncTransientError("Supabase returned HTTP 503: unavailable"), calls)
-    runner = SyncRunner(transport_factory=lambda: client, max_consecutive_failures=10)
+    runner = SyncRunner(transport_factory=lambda: client)
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
         for _ in range(2):
@@ -442,6 +470,63 @@ def test_a_stopped_sync_emits_one_sync_failed_notification_per_streak(
         ))
     assert [(row.event, row.status) for row in rows] == [("sync_failed", "failed")]
     assert calls == ["SyncPermanentError"]
+
+
+def test_a_manual_sync_that_stops_permanently_still_notifies(initialized, monkeypatch):
+    """The loop skips notification while stopped, so run_once itself must emit the alert."""
+    _configured(monkeypatch)
+    _enable_sync()
+    with session_scope() as session:
+        settings_service.update(
+            session, {"notifications_enabled": True, "notification_sync_failed": True}
+        )
+    calls: list[str] = []
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncPermanentError("Supabase returned HTTP 400: invalid version transition: 0 -> 3"),
+            calls,
+        )
+    )
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+
+    with session_scope() as session:
+        rows = list(session.exec(
+            select(Notification).where(Notification.trigger == "sync_failed")
+        ))
+    assert [(row.event, row.status) for row in rows] == [("sync_failed", "failed")]
+    assert calls == ["SyncPermanentError"] * 2
+
+
+def test_a_persistently_failing_transient_sync_notifies_once(initialized, monkeypatch):
+    _configured(monkeypatch)
+    _enable_sync()
+    with session_scope() as session:
+        settings_service.update(
+            session,
+            {
+                "notifications_enabled": True,
+                "notification_sync_failed": True,
+                "supabase_sync_interval_seconds": 15,
+            },
+        )
+    calls: list[str] = []
+    client = FailingClient(SyncTransientError("Supabase returned HTTP 503: unavailable"), calls)
+    runner = SyncRunner(transport_factory=lambda: client, backoff_base_seconds=1.0)
+    for _ in range(4):
+        with pytest.raises(SyncTransientError):
+            asyncio.run(runner.run_once())
+
+    with session_scope() as session:
+        rows = list(session.exec(
+            select(Notification).where(Notification.trigger == "sync_failed")
+        ))
+        health = sync_service.health(session)
+    assert [(row.event, row.status) for row in rows] == [("sync_failed", "failed")]
+    assert health["streak_notified"] is True
+    assert health["stopped"] is False
 
 
 def test_a_stopped_sync_respects_the_notification_master_switch(initialized, monkeypatch):

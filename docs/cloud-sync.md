@@ -45,12 +45,18 @@ The version counter is **remote per-entity state**, owned by the cloud row, not 
 cursor:
 
 - `orchestrator_sync_records.version` is the compare-and-swap counter stored in Supabase. The
-  cloud push function (`supabase/migrations/0001_orchestrator_sync.sql`,
-  `orchestrator_sync_push`) requires `p_version = p_expected_version + 1`, where
+  cloud push function (`supabase/migrations/0001_orchestrator_sync.sql:42` `orchestrator_sync_push`)
+  requires `p_version = p_expected_version + 1`; lines 62-63 are the exact rejection:
+
+  ```sql
+  if p_expected_version < 0 or p_version != p_expected_version + 1 then
+      raise exception 'invalid version transition: % -> %', p_expected_version, p_version;
+  ```
+
   `p_expected_version` is the last remote version this device observed (`0` when the row is new).
-  If the row exists but its version differs from `p_expected_version`, the guarded `UPDATE` matches
-  nothing and the function returns `{"status": "conflict"}` instead of overwriting. A device can
-  therefore never overwrite a remote edit it has not seen.
+  If the row exists but its version differs from `p_expected_version`, the guarded `UPDATE` at
+  lines 80-90 matches nothing and the function returns `{"status": "conflict"}` instead of
+  overwriting. A device can therefore never overwrite a remote edit it has not seen.
 - Locally, `sync_entities` carries both numbers: `synced_version` is the last remote version this
   device adopted or successfully wrote, and `version` is the local dirty revision. They are
   different columns on purpose.
@@ -101,25 +107,36 @@ A failed cycle is classified rather than retried blindly:
 
 - **Permanent** (4xx other than 408/425/429, including the version-transition 400, bad credentials,
   and a malformed response) stops automatic attempts immediately and records a stopped state.
-- **Transient** (5xx, 408/425/429, timeout, network) retries with exponential backoff
-  (30 s, 60 s, 120 s, ... capped at 900 s) up to five consecutive failures, after which it stops as
-  well.
+- **Transient** (5xx, 408/425/429, timeout, network) retries indefinitely with exponential backoff.
+  The cap is on the **delay**, never on the number of attempts: a laptop that is offline for an
+  hour must recover by itself, and must not need the same repair (`reinit`) as a permanent 400.
+  The first retry is never sooner than the configured interval, so with the default 60 s interval
+  the sequence is 60, 120, 240, 480, 900, 900, ... seconds. The 900 s ceiling is reachable at the
+  fifth retry; when the interval itself is longer than 900 s the ceiling is raised to the interval
+  so a backoff can never poll more often than the configured cadence.
 - A success clears the streak, the stop, and the log-dedup counter.
+
+A transient failure therefore never sets `stopped`; it sets `consecutive_failures`,
+`next_retry_at`, and `backoff_seconds`. Only a permanent client error sets `stopped` and
+`stopped_reason`.
 
 The stopped reason and consecutive-failure count are exposed by `orchestrator sync status`, the
 `GET /api/sync/status` response, and **Settings → Cloud Sync** in both the React and fallback UIs.
 A `sync_failed` build-log event (and therefore one notification decision, subject to the master
 switch and the `notification_sync_failed` subscription) is emitted at most twice per failure
-streak: once when a transient streak becomes persistent, and once when the loop stops. It is
-never emitted per retry. While stopped, the background coroutine keeps polling preferences but makes no further
-attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
-succeeds.
+streak: once when a transient streak becomes persistent (3 consecutive failures), and once when
+the loop stops on a permanent error. It is never emitted per retry, and it is emitted whether the
+failing cycle came from the background loop or a manual `sync now`. While stopped, the background
+coroutine keeps polling preferences but makes no further attempts: the explicit recovery paths are
+`sync reinit --apply` and a manual `sync now` that succeeds.
 
 **Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
 signature. The first occurrence logs once, with a traceback; identical repeats only increment
 `sync_health.log_occurrences` and are logged at DEBUG, and a different signature logs again and
 restarts the count. This is what keeps a permanent 400 from writing thousands of tracebacks
-(6,682 at filing, 7,000 identical `0 -> 3` lines when re-measured).
+(6,682 at filing, 7,000 identical `0 -> 3` lines when re-measured). A signature's counter lives
+in `sync_health.log_occurrences`, so `orchestrator sync status` still reports the true repeat count
+without another traceback.
 
 ## Conflict rules
 

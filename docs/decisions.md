@@ -528,7 +528,7 @@ Running log of architecture decisions. Newest last. Format: date â€” decision â€
   `expected + 1`, so the local record could never advance. Push now sends
   `synced_version + 1` and records the landed version, `sync_health` in the device-local
   `sync_state` records the failure streak, permanent 4xx stops automatic attempts, transient
-  failures back off exponentially to a cap, and one `sync_failed` event per streak notifies the
-  operator. `orchestrator sync reinit --dry-run|--apply` re-baselines counters to remote truth and
+  failures retry indefinitely with exponential backoff capped on the delay (not on attempts), and
+  one `sync_failed` event per streak notifies the operator. `orchestrator sync reinit --dry-run|--apply` re-baselines counters to remote truth and
   never touches payload conflicts. No schema, status vocabulary, or notification status changed.
 
