@@ -89,8 +89,11 @@ if want source_anchors.txt; then
       "src/orchestrator/services/memory_service.py:def duplicate_of" \
       "src/orchestrator/services/memory_service.py:def is_garbled" \
       "src/orchestrator/services/memory_service.py:def _redact_memory_content" \
+      "src/orchestrator/services/memory_service.py:class EvictionRefused" \
       "src/orchestrator/services/memory_service.py:def _eviction_impact" \
       "src/orchestrator/services/memory_service.py:def _refuse_eviction" \
+      "src/orchestrator/services/memory_service.py:def _refuse_garbled" \
+      "src/orchestrator/services/memory_service.py:def _log_eviction_override" \
       "src/orchestrator/services/memory_service.py:def approval_impact" \
       "src/orchestrator/services/memory_service.py:def create" \
       "src/orchestrator/services/memory_service.py:def approve" \
@@ -104,13 +107,15 @@ if want source_anchors.txt; then
       "src/orchestrator/utils/memory_text.py:def is_subject_pair" \
       "src/orchestrator/utils/memory_text.py:def subject_clusters" \
       "src/orchestrator/services/run_service.py:memory_suggestion_linked" \
+      "src/orchestrator/services/memory_service.py:memory_eviction_override" \
       "src/orchestrator/cli.py:def memory_condense" \
       "src/orchestrator/cli.py:def memory_approve" \
       "src/orchestrator/api/routes/memory.py:def approve_memory" \
       "web/src/pages/Memory.tsx:Injection caps" \
-      "web/src/pages/Memory.tsx:would evict" \
+      "web/src/pages/Memory.tsx:detail.evicted" \
+      "web/src/pages/Memory.tsx:casualtyLines" \
       "src/orchestrator/api/static_fallback/index.html:Injection caps" \
-      "src/orchestrator/api/static_fallback/index.html:would evict"; do
+      "src/orchestrator/api/static_fallback/index.html:detail.evicted"; do
       file="${pair%%:*}"; needle="${pair#*:}"
       grep -nF "$needle" "$file"
     done

@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from sqlmodel import Session
 
 from orchestrator.api.dependencies import AUTH, SessionDep
@@ -17,6 +18,16 @@ router = APIRouter(dependencies=AUTH)
 
 def dump(obj: Any) -> dict[str, Any]:
     return json.loads(obj.model_dump_json())
+
+
+def eviction_response(e: memory_service.EvictionRefused) -> JSONResponse:
+    """The frozen error body, with the casualty list as STRUCTURE in `detail`.
+
+    Both GUIs act on `detail.evicted` (ids, bucket, scope, roles, self) instead of matching
+    a substring of the message, so rewording the prose can never break the override flow
+    (T-17 review round 3, finding 4).
+    """
+    return JSONResponse(status_code=400, content={"error": str(e), "detail": e.payload})
 
 
 @router.get("/memory")
@@ -41,10 +52,10 @@ def list_memory(
     ]
 
 
-@router.post("/memory", status_code=201)
+@router.post("/memory", status_code=201, response_model=None)
 def create_memory(
     body: MemoryCreate, override: bool = False, session: Session = SessionDep
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     # Out-of-vocabulary scopes are refused here for EVERY category (T-4 DoD 2); the message
     # names the allowed values. The entry shape stays exactly as frozen — the marker for an
     # unreachable scope is shown by `orchestrator memory list`, not by a new response field.
@@ -52,6 +63,8 @@ def create_memory(
     # `POST /memory/{id}/approve`; `override=true` is the explicit opt-in.
     try:
         return dump(memory_service.create(session, body, override=override))
+    except memory_service.EvictionRefused as e:
+        return eviction_response(e)
     except memory_service.MemoryError_ as e:
         raise HTTPException(400, str(e)) from e
 
@@ -89,7 +102,7 @@ def export_memory(session: Session = SessionDep) -> dict[str, Any]:
     return memory_service.export_all(session)
 
 
-@router.post("/memory/import")
+@router.post("/memory/import", response_model=None)
 async def import_memory(
     request: Request, override: bool = False, session: Session = SessionDep
 ) -> dict[str, Any]:
@@ -99,6 +112,8 @@ async def import_memory(
         raise HTTPException(400, "body must be a JSON memory export") from e
     try:
         return {"imported": memory_service.import_all(session, payload, override=override)}
+    except memory_service.EvictionRefused as e:
+        return eviction_response(e)
     except memory_service.MemoryError_ as e:
         raise HTTPException(400, str(e)) from e
 
@@ -115,14 +130,19 @@ def update_memory(
         raise HTTPException(400, str(e)) from e
 
 
-@router.post("/memory/{entry_id}/approve")
+@router.post("/memory/{entry_id}/approve", response_model=None)
 def approve_memory(
     entry_id: int, override: bool = False, session: Session = SessionDep
-) -> dict[str, Any]:
-    # An approval that would evict another approved row is refused (400) with the ids at
-    # risk; `override=true` is the explicit opt-in. The route shape is unchanged and the
-    # query parameter is additive.
-    return dump(memory_service.approve(session, entry_id, override=override))
+) -> dict[str, Any] | JSONResponse:
+    # An approval that would evict another approved row (or leave the row itself out of the
+    # injected section) is refused (400); the casualty list is in `detail` and `override=true`
+    # is the explicit opt-in. The route shape is unchanged and the query parameter is additive.
+    try:
+        return dump(memory_service.approve(session, entry_id, override=override))
+    except memory_service.EvictionRefused as e:
+        return eviction_response(e)
+    except memory_service.MemoryError_ as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @router.post("/memory/{entry_id}/reject")

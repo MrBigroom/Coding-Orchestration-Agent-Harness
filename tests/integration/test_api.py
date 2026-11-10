@@ -186,7 +186,12 @@ def test_approval_eviction_is_refused_and_override_is_explicit(client, monkeypat
 
     refused = client.post(f"/api/memory/{pending_id}/approve")
     assert refused.status_code == 400
-    assert f"#{casualty} (" in refused.json()["error"]
+    body = refused.json()
+    assert f"#{casualty} (" in body["error"]
+    # DoD 7c/finding 4: the casualty list is STRUCTURE in the frozen error body, so a GUI
+    # never has to match a substring of the prose to offer the override.
+    assert [row["id"] for row in body["detail"]["evicted"]] == [casualty]
+    assert body["detail"]["evicted"][0]["bucket"] == "project"
     approved = client.post(f"/api/memory/{pending_id}/approve", params={"override": "true"})
     assert approved.status_code == 200 and approved.json()["approved"] is True
 
@@ -226,7 +231,9 @@ def test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explic
     }
     refused = client.post("/api/memory", json=body)
     assert refused.status_code == 400
-    assert f"#{keep_id} (" in refused.json()["error"]
+    body_json = refused.json()
+    assert f"#{keep_id} (" in body_json["error"]
+    assert [row["id"] for row in body_json["detail"]["evicted"]] == [keep_id]
 
     accepted = client.post("/api/memory", params={"override": "true"}, json=body)
     assert accepted.status_code == 201 and accepted.json()["approved"] is True

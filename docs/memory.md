@@ -192,16 +192,22 @@ of the render. Every exclusion names its casualty and reason in prompt preview
 (`excluded_now`), `orchestrator memory budget` (per role "demoted by cap"), and the GUI
 Memory page's Injection caps panel.
 
-Approve is **refused by default** when it would evict an already-approved row: the response
-names every entry at risk and the section it would leave. The same gate covers every other
-approval-shaped write — `orchestrator memory add --approve`, `POST /api/memory
-{"approved": true}`, and `memory import` — because a creation path that could write an
-approved row directly would be a silent eviction hole. `orchestrator memory approve ID
---override` / `POST /api/memory/{id}/approve?override=true` (and `--override` on `memory
-add`/`memory import`, `POST /api/memory?override=true`) is the explicit opt-in; even then the
-evicted rows stay approved and are reported, never deleted. Condense or reword first. Both
-GUIs show the casualty list on refusal and ask before sending the override, so an approval
-over the cap is never impossible and never silent.
+Approve is **refused by default** when it would evict an already-approved row, and also when
+it would leave the row being approved out of the injected section (a rot-prone or `tier:3`
+pending row can be demoted the moment it enters a full section — approving it used to print
+`approved #N` while #N was never injected). The response names every entry at risk and the
+section it would leave. The same gate covers every other approval-shaped write —
+`orchestrator memory add --approve`, `POST /api/memory {"approved": true}`, and `memory
+import` — because a creation path that could write an approved row directly would be a
+silent eviction hole. `orchestrator memory approve ID --override` /
+`POST /api/memory/{id}/approve?override=true` (and `--override` on `memory
+add`/`memory import`, `POST /api/memory?override=true`) is the explicit opt-in. The refusal
+is an HTTP 400 whose frozen `{"error", "detail"}` body carries the casualty list as
+**structure** in `detail.evicted` (`id`, `bucket`, `scope`, `tokens`, `reason`, `roles`,
+`self`), and both GUIs render that list before asking for the override — neither keys the
+flow on a substring of the message. An override records the demoted ids in the build-log
+event `memory_eviction_override`; even then the rows stay approved and are reported, never
+deleted. Condense or reword first.
 
 Selection depends on entry content, tags and ids only — no clock, no file access — so a
 rendered section stays byte-identical between calls and does not churn the prompt cache.
@@ -257,7 +263,10 @@ gate remains human by construction.
 
 A row with a `redaction-marker` flag (one whose text was rewritten on write) is reported as
 garbled, cannot be approved, and is left out of both the prompt section and the rendered
-markdown until it is reworded.
+markdown until it is reworded. Every approval-shaped write enforces this, not only
+`memory approve`: `memory add --approve`, `POST /api/memory {"approved": true}` and
+`memory import` of an approved garbled row are refused, so the pipeline cannot store an
+approved row whose text it will not inject.
 
 ## Condensing memory
 
@@ -297,7 +306,9 @@ rewrites the surviving row in the same call (use it to strip task framing and ke
    A restatement of an existing **approved** entry in the same domain (category, project or
    role file) is **recorded as linked**: it is stored as a normal pending row whose
    `tags_json` carries `duplicate-of:<existing id>`, and `SuggestionOutcome.linked` records
-   the existing id, the new row id, the content and the reason. It is never auto-rejected —
+   the existing id, the new row id, the content and the reason. A row created earlier in the
+   same batch is still pending, so it is never a link target — the link always names an
+   approved entry. It is never auto-rejected —
    discarding a suggestion without an operator command would be a silent ingest decision —
    and triage flags it `linked-duplicate` with a `merge` suggestion. Ingest tries rare-token
    containment first, then the rare-identifier subject matcher (the same two signals triage
@@ -319,9 +330,9 @@ Memory content is operator-authored durable text. The one redaction control
 rewrite is **recorded per entry** instead of being silent: `tags_json` gains
 `redaction-substitution:<pattern>:count=<n>:lines=<where>`, and `memory_triage` flags the row
 `redaction-marker`. Such a row is not injected and not rendered into markdown until it is
-reworded (PATCH the content). Log, review-payload and command-preview redaction are
-unchanged; this only stops a benign `KEY: value`-shaped phrase from being silently eaten in
-memory.
+reworded (PATCH the content), and it cannot be stored or approved as an `approved` row by
+any path. Log, review-payload and command-preview redaction are unchanged; this only stops a
+benign `KEY: value`-shaped phrase from being silently eaten in memory.
 
 ## Lifecycle fields are not here yet
 

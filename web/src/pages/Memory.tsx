@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { api, patch, post } from "../api/client";
+import { ApiError, api, patch, post } from "../api/client";
 import type { MemoryEntry } from "../api/types";
 import { Badge, Card, Empty, ErrorNote, Field, PageHeader } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
@@ -14,6 +14,23 @@ type BudgetReport = {
   budget_enabled: boolean;
   roles: Record<string, BudgetRole>;
 };
+type Casualty = {
+  id: number;
+  bucket: string;
+  scope: string;
+  roles?: string[];
+  self?: boolean;
+  reason?: string;
+};
+type EvictionDetail = { action?: string; entry_id?: number | null; evicted?: Casualty[] };
+
+// The 400 body carries the casualties as STRUCTURE in `detail` (DoD 7c). Never key the
+// override flow on a substring of the message: rewording the prose must not break it.
+function casualtyLines(detail: EvictionDetail | undefined): string[] {
+  return (detail?.evicted ?? []).map((row) =>
+    `#${row.id} (${row.bucket}/${row.scope}${row.self ? ", this row itself would not be injected" : `, roles ${(row.roles ?? []).join(",")}`})`,
+  );
+}
 
 export default function Memory() {
   const [filters, setFilters] = useState({ status: "", category: "", project_slug: "", role: "" });
@@ -53,16 +70,19 @@ export default function Memory() {
     setForm({ ...form, content: "" });
     await reload();
   });
-  // An approval that would evict an approved entry is refused (400) with the casualties named.
-  // Show that message and offer the explicit override; never approve silently over the cap.
+  // An approval that would evict an approved entry (or leave itself out of the injected
+  // section) is refused (400) with the casualties in `detail.evicted`. Show that list and
+  // offer the explicit override; never approve silently over the cap.
   const approve = (id: number) => act.run(async () => {
     const call = (override: boolean) => post(`/memory/${id}/approve${override ? "?override=true" : ""}`);
     try {
       await call(false);
     } catch (e) {
-      const message = (e as Error).message;
-      if (!message.includes("would evict")) throw e;
-      if (!window.confirm(`${message}\n\nOverride and approve anyway? The evicted entries stay approved but are not injected.`)) return;
+      const detail = e instanceof ApiError ? (e.detail as EvictionDetail | null) : null;
+      const lines = casualtyLines(detail ?? undefined);
+      if (!lines.length) throw e;
+      const message = `Approving #${id} would demote:\n${lines.join("\n")}\n\nOverride and approve anyway? The demoted entries stay approved but are not injected.`;
+      if (!window.confirm(message)) return;
       await call(true);
     }
     await reload();
@@ -118,7 +138,7 @@ export default function Memory() {
         </div>
         <div className="space-y-4">
           <Card title="Injection caps">
-            <p className="mb-3 text-xs text-muted">A section over its cap demotes entries; the casualties are named here so a favourite cannot silently stop being injected. Tags <code>pinned</code>/<code>durable</code> and <code>tier:1</code>..<code>tier:3</code> order the demotion. Approving over a cap is refused with the casualties named, and offers an explicit override.</p>
+            <p className="mb-3 text-xs text-muted">A section over its cap demotes entries; the casualties are named here so a favourite cannot silently stop being injected. Tags <code>pinned</code>/<code>durable</code> and <code>tier:1</code>..<code>tier:3</code> order the demotion. Approving over a cap is refused with the casualty list in the error detail, and offers an explicit override.</p>
             {budget.data && Object.entries(budget.data.roles).map(([role, p]) => (
               <div key={role} className="mb-3 text-sm">
                 <div className="flex justify-between gap-2"><b>{role}</b><span className="text-xs text-muted">{Object.entries(p.sections_now).map(([k, v]) => `${k} ${v}/${budget.data?.budgets[k] ?? 0}`).join(" · ")}</span></div>

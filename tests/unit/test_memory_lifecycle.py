@@ -228,6 +228,27 @@ def test_a_repeated_restatement_does_not_add_a_second_linked_row(session):
     assert len(m.list_entries(session)) == before
 
 
+def test_a_pending_row_from_the_same_batch_is_not_a_link_target(session):
+    """Only an APPROVED fact is a link target (T-17 review round 3, finding 3).
+
+    The first suggestion is stored pending; the second restates it. Linking the second to
+    the first would record "linked to existing memory #X" for an unapproved #X, so both are
+    stored as ordinary pending rows and out.linked stays empty.
+    """
+    out = m.suggest_from_handoff_report(
+        session,
+        [
+            MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RULE),
+            MemorySuggestion(category="project", scope="gotchas", content=ANCHOR_RESTATED),
+        ],
+        source="handoff:R-17",
+        project_slug="demo",
+    )
+    assert out.linked == []
+    assert len(out.created) == 2
+    assert all(e.approved is False for e in out.created)
+
+
 # ------------------------------------------------------- value-ordered demotion (DoD 2)
 
 
@@ -413,7 +434,9 @@ KEY_VALUE_PHRASE = "The max_log_tokens: a-short-phrase is a config name, not a s
 
 
 def test_adding_a_key_value_phrase_records_the_substitution(session):
-    entry = add(session, KEY_VALUE_PHRASE)
+    # Pending on purpose: `create(approved=True)` refuses a row the redactor rewrote, so the
+    # recorded-substitution path is exercised on the unapproved shape it is allowed in.
+    entry = add(session, KEY_VALUE_PHRASE, approved=False)
     record = [t for t in entry.tags_json if t.startswith(m.REDACTION_TAG_PREFIX)]
     assert len(record) == 1
     assert "assignment:count=1" in record[0]
@@ -441,16 +464,51 @@ def test_a_marked_entry_is_garbled_not_rendered_and_not_approvable(session):
 
 
 def test_a_marked_approved_entry_is_not_injected_or_rendered(session):
-    entry = add(
-        session,
-        "Global rule with a garbled value " + REDACTED + " that must not reach a prompt.",
+    # A legacy row can already be approved and garbled; `create(approved=True)` now refuses
+    # that shape (see the test below), so insert it the way old data arrived: directly.
+    entry = MemoryEntry(
         category="global",
         scope="environment",
-        slug=None,
+        content="Global rule with a garbled value " + REDACTED + " that must not reach a prompt.",
         approved=True,
+        source="legacy",
     )
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
     assert entry.content not in m.for_prompt(session, "worker", None)["global"]
     assert entry.content not in (m.memory_root() / "global" / "environment.md").read_text()
+
+
+def test_creating_an_approved_key_value_entry_is_refused_as_garbled(session):
+    """Finding 1: `create(approved=True)` must apply the same garbled refusal as approve()."""
+    before = len(m.list_entries(session))
+    with pytest.raises(m.MemoryError_) as exc:
+        add(session, KEY_VALUE_PHRASE)  # add() defaults to approved=True
+    assert "redaction marker" in str(exc.value)
+    assert "creating approved entry" in str(exc.value)
+    assert len(m.list_entries(session)) == before
+
+
+def test_importing_an_approved_key_value_entry_is_refused_as_garbled(session):
+    payload = {
+        "version": 1,
+        "entries": [
+            {
+                "category": "project",
+                "scope": "gotchas",
+                "project_slug": "demo",
+                "content": KEY_VALUE_PHRASE,
+                "approved": True,
+            }
+        ],
+    }
+    before = len(m.list_entries(session))
+    with pytest.raises(m.MemoryError_) as exc:
+        m.import_all(session, payload)
+    assert "redaction marker" in str(exc.value)
+    assert "importing approved entry" in str(exc.value)
+    assert len(m.list_entries(session)) == before
 
 
 def test_log_redaction_is_still_a_security_control():
@@ -554,6 +612,49 @@ def test_approval_that_would_evict_names_the_casualty_and_needs_override(session
     assert session.get(MemoryEntry, casualty).content not in m.for_prompt(
         session, "worker", "demo"
     )["project"]
+
+
+def test_approving_a_row_that_would_itself_be_demoted_is_refused(session, budgets):
+    """Finding 2: an approval that will not inject the row must not report plain success."""
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    pending = add(session, "T-99 note: " + "gamma " * 10, approved=False)
+    budgets(max_memory_tokens_project=tokens(keep))
+
+    impact = m.approval_impact(session, pending.id)
+    assert [row["id"] for row in impact["evicted"]] == [pending.id]
+    assert impact["evicted"][0]["self"] is True
+
+    with pytest.raises(m.MemoryError_) as exc:
+        m.approve(session, pending.id)
+    assert f"#{pending.id} (" in str(exc.value)
+    assert "this row itself would not be injected" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, pending.id).approved is False
+
+    m.approve(session, pending.id, override=True)
+    session.expire_all()
+    assert session.get(MemoryEntry, pending.id).approved is True
+    assert pending.content not in m.for_prompt(session, "worker", "demo")["project"]
+
+
+def test_override_records_the_demoted_ids_in_the_build_log(session, budgets):
+    from sqlmodel import select
+
+    from orchestrator.core.models import BuildLogEntry
+
+    keep = add(session, "Keep rule " + "alpha " * 10)
+    pending = add(session, "T-99 note: " + "gamma " * 10, approved=False)
+    budgets(max_memory_tokens_project=tokens(keep))
+    casualty = m.approval_impact(session, pending.id)["evicted"][0]["id"]
+
+    m.approve(session, pending.id, override=True)
+    rows = list(
+        session.exec(
+            select(BuildLogEntry).where(BuildLogEntry.event == "memory_eviction_override")
+        )
+    )
+    assert len(rows) == 1
+    assert f"#{casualty}" in rows[0].details
 
 
 def test_budget_and_triage_name_the_current_demotions(session, budgets):

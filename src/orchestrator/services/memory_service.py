@@ -176,6 +176,25 @@ def duplicate_of(entry: MemoryEntry) -> int | None:
     return None
 
 
+def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
+    """Refuse an approval-shaped write of a row whose text was rewritten on write.
+
+    Every path that can store or flip an APPROVED row calls this, not only `approve()`:
+    `create(approved=True)`, `import_all` and `approve`. An approved garbled row is not
+    injected (and triage flags it), but storing one approved is a silent decision the
+    operator never made, so the write is refused until the text is reworded. There is no
+    override: DoD 6 says a marked row is unapprovable until reworded.
+    """
+    if not is_garbled(entry):
+        return
+    ident = f"#{entry.id}" if entry.id is not None else f"content {entry.content[:60]!r}"
+    raise MemoryError_(
+        f"{action} refused: {ident} carries a redaction marker or substitution record; "
+        "reword it (PATCH content) before approving: the pipeline would otherwise render "
+        "the garbled text into every future prompt"
+    )
+
+
 # Injection buckets -> (setting name for the cap).
 MEMORY_BUDGETS = {
     "global": "max_memory_tokens_global",
@@ -440,18 +459,17 @@ def create(
         approved=data.approved,
     )
     _validate(entry)
+    action = f"creating approved entry {entry.content[:60]!r}"
+    evicted: list[dict[str, Any]] = []
     if entry.approved:
-        _refuse_eviction(
-            session,
-            entry,
-            override=override,
-            action=f"creating approved entry {entry.content[:60]!r}",
-        )
+        _refuse_garbled(entry, action=action)
+        evicted = _refuse_eviction(session, entry, override=override, action=action)
     session.add(entry)
     session.commit()
     session.refresh(entry)
     if entry.approved:
         render_file(session, _file_for(entry))
+        _log_eviction_override(session, action, evicted)
     return entry
 
 
@@ -612,6 +630,10 @@ def suggest_from_handoff_report(
                 all_entries.append(linked_entry)
                 continue
             existing.add(key)
+            # Deliberately NOT added to `by_domain`: only an existing APPROVED fact is a
+            # link target. A row created earlier in this same batch is still pending, so
+            # linking a later suggestion to it would record "linked to existing memory
+            # #X" for an unapproved #X (T-17 review round 3, finding 3).
             outcome.created.append(
                 create(
                     session,
@@ -627,7 +649,6 @@ def suggest_from_handoff_report(
                     ),
                 )
             )
-            by_domain.setdefault(domain, []).append(outcome.created[-1])
         except (ValueError, MemoryError_) as e:
             # A drop is an operator-visible decision, never a silent `continue`.
             outcome.notes.append(f"dropped suggestion from {source}: {e}")
@@ -696,6 +717,19 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     return entry
 
 
+class EvictionRefused(MemoryError_):
+    """An approval-shaped write refused because it would demote approved rows.
+
+    Carries the casualty list as structure (`payload`) as well as prose, so the API can put
+    it in the frozen `{"error", "detail"}` body and a GUI can act on the ids instead of
+    matching a substring of the message (T-17 review round 3, finding 4).
+    """
+
+    def __init__(self, message: str, payload: dict[str, Any]):
+        super().__init__(message)
+        self.payload = payload
+
+
 def _eviction_impact(
     session: Session, entry: MemoryEntry, *, treat_as_new: bool
 ) -> dict[str, Any]:
@@ -703,8 +737,14 @@ def _eviction_impact(
 
     `treat_as_new` is for a row that is not committed yet (create/import): the entry is
     priced through `also_approved`, and an already-approved row is not double-counted.
+
+    The row ITSELF is included (`"self": True`) when approving it would leave it out of
+    the injected section. That is the common rot-prone-pending case: the approval would
+    succeed, the CLI would print "approved #N", and nothing would say #N never reaches a
+    prompt. It is a casualty like any other, so it is refused by default and recorded on
+    override.
     """
-    if entry.approved and not treat_as_new:
+    if entry.id is not None and entry.approved:
         return {"entry_id": entry.id, "evicted": []}
     # An uncommitted row has id None, and `_keep_priority` treats None as the OLDEST id, so
     # pricing it directly would demote the new row itself and report "no eviction". Price a
@@ -733,7 +773,11 @@ def _eviction_impact(
             after = select_for_prompt(session, role, project_slug, also_approved=[priced])
             already = {x["id"] for x in before.excluded}
             for row in after.excluded:
-                if row["id"] == priced.id or row["id"] in already:
+                if row["id"] in already:
+                    continue
+                is_self = entry.id is not None and row["id"] == entry.id
+                if row["id"] == priced.id and not is_self:
+                    # The synthetic newest id of a create/import price: never a casualty.
                     continue
                 record = evicted.setdefault(
                     row["id"],
@@ -741,37 +785,78 @@ def _eviction_impact(
                         "id": row["id"],
                         "bucket": row["bucket"],
                         "scope": row["scope"],
+                        "tokens": row.get("tokens", 0),
+                        "reason": row.get("reason", ""),
                         "roles": [],
+                        "self": is_self,
                     },
                 )
+                if is_self:
+                    record["self"] = True
                 if role not in record["roles"]:
                     record["roles"].append(role)
     return {"entry_id": entry.id, "evicted": sorted(evicted.values(), key=lambda r: r["id"])}
 
 
+def _casualty_text(row: dict[str, Any]) -> str:
+    if row.get("self"):
+        return (
+            f"#{row['id']} ({row['bucket']}/{row['scope']}; this row itself would not be "
+            "injected)"
+        )
+    return (
+        f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
+        f"{','.join(row['roles']) or 'none'})"
+    )
+
+
+def _log_eviction_override(
+    session: Session, action: str, evicted: list[dict[str, Any]]
+) -> None:
+    """Record the demoted ids when an operator explicitly overrode the eviction gate.
+
+    The approval returned is the ACTUAL result (the row is approved), and this event is
+    what says which approved rows will no longer be injected as a result. Nothing here
+    runs on the refused path, so a refusal is never recorded as an override.
+    """
+    if not evicted:
+        return
+    from orchestrator.services import log_service  # local: keep the module import light
+
+    ids = ", ".join(f"#{row['id']}" for row in evicted)
+    self_ids = [f"#{row['id']}" for row in evicted if row.get("self")]
+    details = f"{action} overrode the eviction guard; demoted from injection: {ids}"
+    if self_ids:
+        details += f" (including the approved row itself: {', '.join(self_ids)})"
+    log_service.log_event(session, "memory_eviction_override", details)
+
+
 def _refuse_eviction(
     session: Session, entry: MemoryEntry, *, override: bool, action: str
-) -> None:
-    """Refuse an approval-shaped write that would evict an already-approved row.
+) -> list[dict[str, Any]]:
+    """Refuse an approval-shaped write that would evict an approved row; return casualties.
 
     Shared by `create(approved=True)`, `import_all`, and `approve()`. `override=True` is the
     explicit operator opt-in; even then nothing is deleted, the evicted rows are reported by
-    budget/triage as not injected. `action` names the write in the message, so a caller can
-    tell an import refusal from a CLI add.
+    budget/triage as not injected and the caller records their ids in a build-log event via
+    `_log_eviction_override`. `action` names the write in the message, so a caller can tell
+    an import refusal from a CLI add.
     """
     impact = _eviction_impact(session, entry, treat_as_new=True)
     if not impact["evicted"] or override:
-        return
-    casualties = ", ".join(
-        f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
-        f"{','.join(row['roles'])})"
-        for row in impact["evicted"]
-    )
-    raise MemoryError_(
-        f"{action} would evict already-approved entr"
+        return impact["evicted"]
+    casualties = ", ".join(_casualty_text(row) for row in impact["evicted"])
+    payload = {
+        "action": action,
+        "entry_id": impact["entry_id"],
+        "evicted": impact["evicted"],
+    }
+    raise EvictionRefused(
+        f"{action} would evict approved entr"
         f"{'y' if len(impact['evicted']) == 1 else 'ies'} {casualties} from the injected "
         "section; nothing was written. Condense/reword first, or repeat with override=true "
-        "(the evicted rows stay approved but are not injected)"
+        "(the evicted rows stay approved but are not injected)",
+        payload,
     )
 
 
@@ -795,17 +880,14 @@ def approve(session: Session, entry_id: int, *, override: bool = False) -> Memor
     approved in SQLite and are reported by triage/budget, never deleted.
     """
     entry = _get(session, entry_id)
-    if is_garbled(entry):
-        raise MemoryError_(
-            f"memory #{entry.id} carries a redaction marker or substitution record; reword "
-            "it (PATCH content) before approving: the pipeline would otherwise render the "
-            "garbled text into every future prompt"
-        )
-    _refuse_eviction(session, entry, override=override, action=f"approving #{entry.id}")
+    action = f"approving #{entry.id}"
+    _refuse_garbled(entry, action=action)
+    evicted = _refuse_eviction(session, entry, override=override, action=action)
     entry.approved, entry.rejected, entry.updated_at = True, False, utcnow()
     session.add(entry)
     session.commit()
     render_file(session, _file_for(entry))
+    _log_eviction_override(session, action, evicted)
     return entry
 
 
@@ -1418,6 +1500,7 @@ def import_all(session: Session, payload: dict[str, Any], *, override: bool = Fa
     for e in list_entries(session):
         existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
     count = 0
+    overridden: list[dict[str, Any]] = []
     touched: set[Path] = set()
     for raw in payload["entries"]:
         content, redaction_tags = _redact_memory_content(str(raw.get("content", "")).strip())
@@ -1447,11 +1530,10 @@ def import_all(session: Session, payload: dict[str, Any], *, override: bool = Fa
         except MemoryError_:
             continue
         if entry.approved:
-            _refuse_eviction(
-                session,
-                entry,
-                override=override,
-                action=f"importing approved entry {content[:60]!r}",
+            action = f"importing approved entry {content[:60]!r}"
+            _refuse_garbled(entry, action=action)
+            overridden.extend(
+                _refuse_eviction(session, entry, override=override, action=action)
             )
         key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
         existing |= raw_keys | {key}
@@ -1462,6 +1544,7 @@ def import_all(session: Session, payload: dict[str, Any], *, override: bool = Fa
     session.commit()
     for path in touched:
         render_file(session, path)
+    _log_eviction_override(session, "importing an approved memory export", overridden)
     return count
 
 
