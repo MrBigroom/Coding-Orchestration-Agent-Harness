@@ -1,5 +1,5 @@
-# HEAD=155f256e47d2c93151c0cd9e85c317c65551cc89 mode=fast
-# command: git show HEAD:<file> | grep -nE '<anchor>'
+# HEAD=8aedfd693e89ddcfd9f18c4b04de7cd2b04c0f34 mode=fast
+# command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)
 
 ## src/orchestrator/services/sync_transport.py
 27:class SyncPermanentError(SyncTransportError):
@@ -9,15 +9,16 @@
 254:    async def remote_versions(self) -> dict[str, int]:
 
 ## src/orchestrator/services/sync_runner.py
-42:def backoff_seconds(
-119:            "stopped": health["stopped"],
-126:    def _record_failure(self, exc: Exception) -> dict[str, Any]:
-174:                "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
-186:    def _notify_if_needed(self, health: dict[str, Any]) -> bool:
-206:                log_service.log_event(session, "sync_failed", details, role="system")
-218:            log_service.log_event(session, "sync_failed", details, role="system")
-268:                elif health["stopped"]:
-281:                        if not health["stopped"]:
+48:def backoff_seconds(
+123:            "stopped": health["stopped"],
+130:    def _record_failure(self, exc: Exception) -> dict[str, Any]:
+152:            interval = float(
+176:                "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
+188:    def _notify_if_needed(self, health: dict[str, Any]) -> bool:
+208:                log_service.log_event(session, "sync_failed", details, role="system")
+220:            log_service.log_event(session, "sync_failed", details, role="system")
+274:                elif health["stopped"]:
+287:                        if not health["stopped"]:
 
 ## src/orchestrator/services/sync_service.py
 236:SYNC_HEALTH_KEY = "sync_health"
@@ -25,21 +26,27 @@
 256:    stored = get_state(session, SYNC_HEALTH_KEY, {})
 266:    set_state(session, SYNC_HEALTH_KEY, values)
 276:def reinitialise(
+287:    is also left untouched (``remote_ahead_skipped``): re-baselining forward would let the next
 293:    conflicts_skipped = 0
+294:    remote_ahead_skipped = 0
 297:            conflicts_skipped += 1
+304:            remote_ahead_skipped += 1
 306:        version = synced + 1 if mapping.dirty else synced
 319:            mapping.synced_version = synced
 323:    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
 332:        "conflicts_skipped": conflicts_skipped,
+333:        "remote_ahead_skipped": remote_ahead_skipped,
 
 ## src/orchestrator/core/notification_vocab.py
 55:    "sync_failed": _t(
 56:        "sync_failed", "Cloud sync needs attention",
 
 ## src/orchestrator/api/routes/sync.py
-21:    return {**sync_runner.status(session), **sync_service.status(session)}
-31:    except SyncError as exc:
-36:            status_code=400, content={"error": str(exc), "detail": detail}
+17:    SyncTransientError,
+25:    return {**sync_runner.status(session), **sync_service.status(session)}
+35:    except SyncError as exc:
+43:        elif isinstance(exc, SyncTransientError):
+44:            status_code = 503
 
 ## src/orchestrator/cli.py
 1594:def sync_status() -> None:
@@ -48,8 +55,9 @@
 1630:        result = sync_service.reinitialise(s, versions, dry_run=not apply)
 
 ## src/orchestrator/api/static_fallback/index.html
-214:      ? `<div class="err">Cloud sync stopped: ${esc(sync.stopped_reason || sync.last_failure_error || "unknown reason")}. Run orchestrator sync reinit --dry-run, then --apply, or retry with sync now.</div>`
-215:      : `<p class="muted">Cloud sync: ${sync.enabled ? "automatic" : "manual"} · ${esc(sync.consecutive_failures || 0)} consecutive failure(s)${sync.last_failure_error ? " · " + esc(sync.last_failure_error) : ""}</p>`;
+213:    const syncHint = sync.last_failure_kind === "permanent"
+217:      ? `<div class="err">Cloud sync stopped: ${esc(sync.stopped_reason || sync.last_failure_error || "unknown reason")}. ${syncHint}</div>`
+218:      : `<p class="muted">Cloud sync: ${sync.enabled ? "automatic" : "manual"} · ${esc(sync.consecutive_failures || 0)} consecutive failure(s)${sync.last_failure_error ? " · " + esc(sync.last_failure_error) : ""}${sync.consecutive_failures && sync.next_retry_at ? " · next attempt " + esc(sync.next_retry_at) : ""}</p>`;
 
 ## web/src/pages/Settings.tsx
 28:  consecutive_failures: number;
@@ -57,15 +65,72 @@
 63:  ["notification_sync_failed", "Cloud sync needs attention", false],
 188:                      <dd className={sync.consecutive_failures ? "text-bad" : ""}>{sync.consecutive_failures}</dd>
 198:                        Automatic sync is stopped: {sync.stopped_reason ?? sync.last_failure_error ?? "unknown reason"}
-205:                    {!sync.stopped && sync.consecutive_failures > 0 && (
-207:                        {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
+209:                    {!sync.stopped && sync.consecutive_failures > 0 && (
+211:                        {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
+213:                          Retrying with exponential backoff; next attempt {fmtTime(sync.next_retry_at)}.
 
 ## docs/cloud-sync.md
 42:## Version protocol and rejected transitions (T-41)
-62:A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
-67:fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
-80:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
-85:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
-86:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
-115:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
-118:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+53:      raise exception 'invalid version transition: % -> %', p_expected_version, p_version;
+68:A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
+73:fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
+86:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+91:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
+92:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
+110:- **Transient** (5xx, 408/425/429, timeout, network) retries indefinitely with exponential backoff.
+131:`sync reinit --apply` and a manual `sync now` that succeeds.
+133:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+
+## supabase/migrations/0001_orchestrator_sync.sql:39-90 (the RPC contract, quoted)
+  39  -- Atomic compare-and-swap push. expected_version is the last version observed by the
+  40  -- device (0 for a new record). A concurrent remote edit returns a conflict instead of
+  41  -- being overwritten.
+  42  create or replace function public.orchestrator_sync_push(
+  43      p_entity_type text,
+  44      p_entity_id uuid,
+  45      p_expected_version bigint,
+  46      p_version bigint,
+  47      p_payload jsonb,
+  48      p_origin_device text,
+  49      p_device_modified_at timestamptz
+  50  )
+  51  returns jsonb
+  52  language plpgsql
+  53  security invoker
+  54  set search_path = public, pg_temp
+  55  as $$
+  56  declare
+  57      result public.orchestrator_sync_records%ROWTYPE;
+  58  begin
+  59      if auth.uid() is null then
+  60          raise exception 'authentication required';
+  61      end if;
+  62      if p_expected_version < 0 or p_version != p_expected_version + 1 then
+  63          raise exception 'invalid version transition: % -> %', p_expected_version, p_version;
+  64      end if;
+  65  
+  66      insert into public.orchestrator_sync_records (
+  67          user_id, entity_type, entity_id, version, payload,
+  68          origin_device, device_modified_at
+  69      ) values (
+  70          auth.uid(), p_entity_type, p_entity_id, p_version, p_payload,
+  71          p_origin_device, p_device_modified_at
+  72      )
+  73      on conflict (user_id, entity_type, entity_id) do nothing
+  74      returning * into result;
+  75  
+  76      if found then
+  77          return jsonb_build_object('status', 'ok', 'record', to_jsonb(result));
+  78      end if;
+  79  
+  80      update public.orchestrator_sync_records
+  81      set version = p_version,
+  82          payload = p_payload,
+  83          origin_device = p_origin_device,
+  84          device_modified_at = p_device_modified_at,
+  85          server_updated_at = now()
+  86      where user_id = auth.uid()
+  87        and entity_type = p_entity_type
+  88        and entity_id = p_entity_id
+  89        and version = p_expected_version
+  90      returning * into result;

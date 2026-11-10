@@ -7,9 +7,10 @@ committed `capture.sh`, canonicalises the stamp on every file the pass rewrote t
 commit that ships this bundle does not change code, so it does not stale the bundle.
 
 `freshness_selfcheck.txt` is the driver's own record (no stamp by construction: it certifies the
-files around it). `manifest.json` lists the five stamped outputs (`full_suite.txt`, `lint.txt`,
-`t41_tests.txt`, `tsc_web.txt`, `source_anchors.txt`); `README.md`, the manifest and the self-check
-are bookkeeping and are not hashed as measurements.
+files around it) and reports `stamped_files=5`. `manifest.json` hashes six produced files: the five
+stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `tsc_web.txt`, `source_anchors.txt`)
+plus the unstamped `freshness_selfcheck.txt`; `README.md` and the manifest itself are bookkeeping
+and are not hashed as measurements.
 
 | file | proves |
 | --- | --- |
