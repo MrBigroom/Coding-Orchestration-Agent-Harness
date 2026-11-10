@@ -1,4 +1,4 @@
-# HEAD=10b3fa7b940c260297efe3d8ed601a9b3e9516f9 mode=fast
+# HEAD=be5c40dc80b898b38c64e165fe15d2310c64635a mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>'
 
 ## src/orchestrator/services/sync_transport.py
@@ -25,11 +25,12 @@
 256:    stored = get_state(session, SYNC_HEALTH_KEY, {})
 266:    set_state(session, SYNC_HEALTH_KEY, values)
 276:def reinitialise(
-290:    conflicts_skipped = 0
-293:            conflicts_skipped += 1
-296:        version = synced + 1 if mapping.dirty else synced
-309:            mapping.synced_version = synced
-319:        "conflicts_skipped": conflicts_skipped,
+293:    conflicts_skipped = 0
+297:            conflicts_skipped += 1
+306:        version = synced + 1 if mapping.dirty else synced
+319:            mapping.synced_version = synced
+323:    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
+332:        "conflicts_skipped": conflicts_skipped,
 
 ## src/orchestrator/core/notification_vocab.py
 55:    "sync_failed": _t(
@@ -66,5 +67,5 @@
 80:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
 85:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
 86:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
-112:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
-115:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+115:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
+118:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
