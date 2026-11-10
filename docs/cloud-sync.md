@@ -69,13 +69,34 @@ A rejection reading `invalid version transition: 0 -> 3` means the local side pr
 revision `3` as the next **remote** version while the remote still expected `0 -> 1`. That is what
 the pre-T-41 push did: it sent `mapping.version` (which increments on every local payload change)
 instead of `mapping.synced_version + 1`. A record edited three times before its first successful
-push therefore produced a permanent 400 on every cycle. Re-measured read-only on 2026-11-11
-02:07 +08 before the fix: `wc -l logs/desktop-server.log` was 277,088 lines; `grep -c` found 7,028
-lines of exactly `invalid version transition: 0 -> 3` (7,416 version-transition lines in total; the
-others are the same defect at other local revisions such as `9 -> 14`); a read-only SQLite query
-found 1,445 `sync_entities` rows (1,426 when the task was filed) and exactly one `sync_state` key,
-`device_id` (written 2026-10-28). Retrying could never succeed because nothing on either side
-changed.
+push therefore produced a permanent 400 on every cycle.
+
+The live evidence was re-measured read-only on 2026-11-11 and reconciled against the operator's
+earlier figure. The apparent disagreement was a counting-pattern difference plus a growing file,
+not a contradiction:
+
+| measurement | log prefix | `grep -c 'invalid version transition'` (all pairs) | `grep -c '... 0 -> 3'` |
+| --- | --- | --- | --- |
+| operator, task filed | 275,740 lines | **7,373** | 6,985 |
+| T-41 docs (earlier round) | 277,088 lines | 7,416 | 7,028 |
+| bundle snapshot | see `verify-evidence/T-41/live_measurement.txt` | recorded there | recorded there |
+
+The operator's 7,373 is the **all-transitions** count at the 275,740-line prefix; the 7,028 quoted
+earlier was the **exactly `0 -> 3`** count at a later prefix. The 388 other transition lines in the
+7,416 total are the same defect at other revisions: 370 `9 -> 14`, 14 `9 -> 11`, 2 `9 -> 12`, and
+2 `0 -> 2` (counts at the 275,740-line prefix are stable and reproducible because the log is
+append-only). `background Supabase synchronization failed` is a slightly larger count than the
+transitions because a handful of historical cycles failed for a different reason (7
+`AttributeError: 'ModelProfile' object has no attribute 'context_window'` and one
+`httpcore.ConnectError`); they are the same missing-visibility defect, not version rejections. At
+the measured DB snapshot `sync_entities` held 1,459 rows (1,426 when the task was filed; 911 still
+dirty) and `sync_state` held exactly one key, `device_id` (written 2026-10-28), with no version row.
+The raw commands and output behind every number in this section are committed in
+`verify-evidence/T-41/live_measurement.txt`; the reference commands are `wc -l`, `head -n`, `grep
+-c`/`grep -oE`, and a `mode=ro` SQLite query.
+
+Retrying could never succeed because nothing on either side changed: the remote version stayed 3
+while the local push kept presenting the local revision 3 as the next remote version.
 
 After the fix, the transport sends `p_expected_version = synced_version` and
 `p_version = synced_version + 1`, then records the version that actually landed as both `version`
@@ -123,6 +144,14 @@ A transient failure therefore never sets `stopped`; it sets `consecutive_failure
 
 The stopped reason and consecutive-failure count are exposed by `orchestrator sync status`, the
 `GET /api/sync/status` response, and **Settings → Cloud Sync** in both the React and fallback UIs.
+The health record lives in the device-local `sync_state` key `sync_health` (additive data, not a
+schema change). The desktop loop and a CLI `sync now` are separate processes sharing one SQLite
+file, so **no single-writer assumption is made**: every health write is a compare-and-set
+(`sync_service.update_health`) that re-reads and re-applies the change if another process wrote
+first, and the once-per-streak notification flags are claimed through the same conditional write
+(`claim_health_flag`). Two racing processes therefore produce one event and cannot lose a failure
+increment.
+
 A `sync_failed` build-log event (and therefore one notification decision, subject to the master
 switch and the `notification_sync_failed` subscription) is emitted at most twice per failure
 streak: once when a transient streak becomes persistent (3 consecutive failures), and once when
@@ -135,9 +164,9 @@ coroutine keeps polling preferences but makes no further attempts: the explicit 
 signature. The first occurrence logs once, with a traceback; identical repeats only increment
 `sync_health.log_occurrences` and are logged at DEBUG, and a different signature logs again and
 restarts the count. This is what keeps a permanent 400 from writing thousands of tracebacks
-(6,682 at filing, 7,000 identical `0 -> 3` lines when re-measured). A signature's counter lives
-in `sync_health.log_occurrences`, so `orchestrator sync status` still reports the true repeat count
-without another traceback.
+(6,682 exact `0 -> 3` lines at filing, 6,985 in the 275,740-line reconciliation window above). A
+signature's counter lives in `sync_health.log_occurrences`, so `orchestrator sync status` still
+reports the true repeat count without another traceback.
 
 ## Conflict rules
 

@@ -135,17 +135,18 @@ class SyncRunner:
         repeat only increments ``sync_health.log_occurrences`` (at DEBUG, normally invisible);
         a different signature logs again and restarts the count. That is what turns 6,682
         identical tracebacks into one line plus a counter.
+
+        The counter and the signature are derived inside the compare-and-set mutation, never
+        from a snapshot read in an earlier session: the desktop loop and a CLI ``sync now`` are
+        separate processes, so a plain read-modify-write could lose an increment.
         """
         from orchestrator.services.sync_transport import SyncPermanentError
 
         kind = "permanent" if isinstance(exc, SyncPermanentError) else "transient"
         now = utcnow()
+        signature = f"{type(exc).__name__}: {exc}"
+        decision: dict[str, Any] = {}
         with session_scope() as session:
-            previous = sync_service.health(session)
-            signature = f"{type(exc).__name__}: {exc}"
-            same_signature = previous.get("last_logged_error") == signature
-            occurrences = int(previous.get("log_occurrences") or 0) + 1 if same_signature else 1
-            failures = int(previous.get("consecutive_failures") or 0) + 1
             # Only a permanent client error is terminal. A transient failure keeps retrying for
             # as long as it takes; the cap below is a ceiling on the delay, not on attempts.
             stopped = kind == "permanent"
@@ -154,23 +155,33 @@ class SyncRunner:
             )
             base = max(float(self.backoff_base_seconds), interval)
             cap = max(float(self.backoff_max_seconds), base)
-            backoff = 0.0 if stopped else backoff_seconds(failures, base, cap)
-            reason = f"permanent client error: {exc}" if stopped else None
-            values = sync_service.write_health(
-                session,
-                consecutive_failures=failures,
-                last_failure_at=now.isoformat(),
-                last_failure_kind=kind,
-                last_failure_error=str(exc)[:1000],
-                stopped=stopped,
-                stopped_reason=reason if stopped else None,
-                stopped_at=now.isoformat() if stopped else None,
-                next_retry_at=(now + timedelta(seconds=backoff)).isoformat() if backoff else None,
-                backoff_seconds=backoff,
-                log_occurrences=occurrences,
-                last_logged_error=signature,
-            )
-        if not same_signature:
+
+            def mutate(previous: dict[str, Any]) -> dict[str, Any]:
+                failures = int(previous.get("consecutive_failures") or 0) + 1
+                same = previous.get("last_logged_error") == signature
+                occurrences = (int(previous.get("log_occurrences") or 0) if same else 0) + 1
+                backoff = 0.0 if stopped else backoff_seconds(failures, base, cap)
+                decision.update(
+                    same_signature=same, occurrences=occurrences, failures=failures
+                )
+                return {
+                    "consecutive_failures": failures,
+                    "last_failure_at": now.isoformat(),
+                    "last_failure_kind": kind,
+                    "last_failure_error": str(exc)[:1000],
+                    "stopped": stopped,
+                    "stopped_reason": f"permanent client error: {exc}" if stopped else None,
+                    "stopped_at": now.isoformat() if stopped else None,
+                    "next_retry_at": (
+                        (now + timedelta(seconds=backoff)).isoformat() if backoff else None
+                    ),
+                    "backoff_seconds": backoff,
+                    "log_occurrences": occurrences,
+                    "last_logged_error": signature,
+                }
+
+            values = sync_service.update_health(session, mutate)
+        if not decision["same_signature"]:
             log.error(
                 "background Supabase synchronization failed: %s "
                 "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
@@ -180,7 +191,7 @@ class SyncRunner:
         else:
             log.debug(
                 "background Supabase synchronization failed again (occurrence %d): %s",
-                occurrences,
+                decision["occurrences"],
                 exc,
             )
         return values
@@ -189,36 +200,39 @@ class SyncRunner:
         """At most two build-log events (and so notifications) per failure streak.
 
         One when a transient streak becomes persistent (``notify_after_failures``) and one when
-        the loop stops. Each is guarded by a persisted flag, so a restart cannot replay the same
-        alert every interval. The notification fan-out is the T-9 trigger mechanism, so the
-        master switch and the per-trigger subscription decide whether a popup happens; either
-        way the event is visible in the Notifications list and the build log.
+        the loop stops. Each is claimed with an atomic compare-and-set flag, so a restart or a
+        concurrent process cannot replay the same alert every interval and two processes racing
+        the same failing cycle produce one event, not two. The notification fan-out is the T-9
+        trigger mechanism, so the master switch and the per-trigger subscription decide whether
+        a popup happens; either way the event is visible in the Notifications list and the build
+        log.
         """
         from orchestrator.services import log_service
 
         failures = int(health.get("consecutive_failures") or 0)
         if health.get("stopped"):
-            if health.get("stop_notified"):
-                return False
             details = (
                 f"Supabase sync stopped after {failures} failure(s): "
                 f"{health.get('stopped_reason') or health.get('last_failure_error') or 'unknown'}"
             )
             with session_scope() as session:
+                # Claim before logging: the loser of the race writes nothing and logs nothing.
+                if not sync_service.claim_health_flag(
+                    session, "stop_notified", streak_notified=True
+                ):
+                    return False
                 log_service.log_event(session, "sync_failed", details, role="system")
-                sync_service.write_health(
-                    session, streak_notified=True, stop_notified=True
-                )
             return True
-        if health.get("streak_notified") or failures < self.notify_after_failures:
+        if failures < self.notify_after_failures:
             return False
         details = (
             f"Supabase sync has failed {failures} consecutive times: "
             f"{health.get('last_failure_error') or 'unknown'}"
         )
         with session_scope() as session:
+            if not sync_service.claim_health_flag(session, "streak_notified"):
+                return False
             log_service.log_event(session, "sync_failed", details, role="system")
-            sync_service.write_health(session, streak_notified=True)
         return True
 
     async def run_once(self) -> dict[str, Any]:

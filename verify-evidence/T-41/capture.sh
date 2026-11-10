@@ -75,14 +75,14 @@ MAIN="${COMMON%/.git}"
   echo "# command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)"
   for spec in \
     "src/orchestrator/services/sync_transport.py|class SyncPermanentError|class SyncTransientError|next_version = mapping.synced_version|p_version|async def remote_versions" \
-    "src/orchestrator/services/sync_runner.py|def backoff_seconds|def _record_failure|identical repeats|def _notify_if_needed|health\[\"stopped\"\]|sync_failed|interval = float" \
-    "src/orchestrator/services/sync_service.py|SYNC_HEALTH_KEY|def health|def reinitialise|conflicts_skipped|remote_ahead_skipped|version = synced" \
+    "src/orchestrator/services/sync_runner.py|def backoff_seconds|def _record_failure|identical repeats|def _notify_if_needed|claim_health_flag|sync_failed|health\[\"stopped\"\]|interval = float" \
+    "src/orchestrator/services/sync_service.py|SYNC_HEALTH_KEY|def _read_health_raw|def health|def update_health|def write_health|def claim_health_flag|compare-and-set|def reinitialise|conflicts_skipped|remote_ahead_skipped|version = synced" \
     "src/orchestrator/core/notification_vocab.py|sync_failed|Cloud sync needs attention" \
     "src/orchestrator/api/routes/sync.py|except SyncError|status_code = 503|SyncTransientError|sync_runner.status" \
     "src/orchestrator/cli.py|def sync_status|def sync_reinit|remote_versions|reinitialise" \
     "src/orchestrator/api/static_fallback/index.html|Cloud sync stopped|syncHint|next attempt" \
     "web/src/pages/Settings.tsx|notification_sync_failed|stopped_reason|consecutive_failures|Retrying with exponential backoff" \
-    "docs/cloud-sync.md|Version protocol|invalid version transition|sync reinit|Log deduplication rule|retries indefinitely" ; do
+    "docs/cloud-sync.md|Version protocol|invalid version transition|reconciled|sync reinit|Log deduplication rule|no single-writer assumption|retries indefinitely" ; do
     file="${spec%%|*}"; patterns="${spec#*|}"
     echo
     echo "## $file"
@@ -93,6 +93,63 @@ MAIN="${COMMON%/.git}"
   git show "HEAD:supabase/migrations/0001_orchestrator_sync.sql" | sed -n '39,90p' \
     | nl -ba -v39 -w4 -s'  '
 } > "$STAGE/source_anchors.txt"
+
+# Live failure evidence (DoD 1): read-only measurement of the operator's log and device DB.
+# The log grows while it is being read, so every count is taken against one frozen `head -n`
+# snapshot and the snapshot's own sha256 is recorded. Nothing under ORCHESTRATOR_HOME is written.
+LIVE_LOG="${T41_LIVE_LOG:-$HOME/.local/share/coding-orchestrator/logs/desktop-server.log}"
+LIVE_DB="${T41_LIVE_DB:-$HOME/.local/share/coding-orchestrator/orchestrator.db}"
+{
+  echo "$STAMP"
+  echo "# T-41 live measurement (read-only; no file under ORCHESTRATOR_HOME is modified)"
+  echo "# measured_at=$(date -Iseconds)"
+  echo "# log=$LIVE_LOG"
+  if [ -r "$LIVE_LOG" ]; then
+    N=$(wc -l < "$LIVE_LOG")
+    head -n "$N" "$LIVE_LOG" > "$STAGE/live-snapshot.log"
+    echo "live_lines=$N"
+    echo "snapshot_sha256=$(sha256sum "$STAGE/live-snapshot.log" | cut -d' ' -f1)"
+    echo "exact_0_3=$(grep -c 'invalid version transition: 0 -> 3' "$STAGE/live-snapshot.log")"
+    echo "all_transition_lines=$(grep -c 'invalid version transition' "$STAGE/live-snapshot.log")"
+    echo "background_failed_lines=$(grep -c 'background Supabase synchronization failed' "$STAGE/live-snapshot.log")"
+    echo "### by transition pair (snapshot)"
+    grep -oE 'invalid version transition: [0-9]+ -> [0-9]+' "$STAGE/live-snapshot.log" \
+      | sort | uniq -c | sort -rn
+    echo "### by terminal exception (snapshot)"
+    grep -A30 'background Supabase synchronization failed' "$STAGE/live-snapshot.log" \
+      | grep -oE '^(orchestrator\.[a-z_.]+\.)?[A-Za-z_][A-Za-z0-9_.]*Error:' \
+      | sed -E 's/^orchestrator\.[a-z_.]+\.//' | sort | uniq -c | sort -rn
+    # The reconciliation window is fixed: the operator's 7,373 figure was an all-transitions
+    # count at this prefix, so `head -n 275740` reproduces it on any later copy of the file.
+    head -n 275740 "$STAGE/live-snapshot.log" > "$STAGE/live-window.log"
+    echo "### reconciliation window: head -n 275740 (the operator's snapshot)"
+    echo "window_lines=$(wc -l < "$STAGE/live-window.log")"
+    echo "window_all_transitions=$(grep -c 'invalid version transition' "$STAGE/live-window.log")"
+    echo "window_exact_0_3=$(grep -c 'invalid version transition: 0 -> 3' "$STAGE/live-window.log")"
+    echo "window_other_transitions=$(($(grep -c 'invalid version transition' "$STAGE/live-window.log") - $(grep -c 'invalid version transition: 0 -> 3' "$STAGE/live-window.log")))"
+    echo "### by transition pair (reconciliation window)"
+    grep -oE 'invalid version transition: [0-9]+ -> [0-9]+' "$STAGE/live-window.log" \
+      | sort | uniq -c | sort -rn
+  else
+    echo "live_log=absent (not readable at $LIVE_LOG)"
+  fi
+  echo "# device-local DB=$LIVE_DB (sqlite mode=ro)"
+  if [ -r "$LIVE_DB" ]; then
+    "${PYTHON:-python3}" - "$LIVE_DB" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+cur = con.cursor()
+print("sync_state_keys=", [r[0] for r in cur.execute("select key from sync_state order by key")])
+print("device_id_updated_at=", cur.execute("select updated_at from sync_state where key='device_id'").fetchone())
+print("sync_entities_rows=", cur.execute("select count(*) from sync_entities").fetchone()[0])
+print("sync_entities_dirty=", cur.execute("select count(*) from sync_entities where dirty=1").fetchone()[0])
+print("sync_entities_conflicts=", cur.execute("select count(*) from sync_entities where conflict_json is not null and conflict_json not in ('null','')").fetchone()[0])
+con.close()
+PY
+  else
+    echo "live_db=absent (not readable at $LIVE_DB)"
+  fi
+} > "$STAGE/live_measurement.txt" 2>&1
 
 cp "$STAGE"/*.txt "$OUT/"
 echo "wrote: $(cd "$OUT" && ls *.txt | tr '\n' ' ')"

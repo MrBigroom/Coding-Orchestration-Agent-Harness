@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -251,21 +252,127 @@ HEALTH_DEFAULTS: dict[str, Any] = {
 }
 
 
+class HealthConflict(RuntimeError):
+    """The health record changed under us on every compare-and-set attempt."""
+
+
+def _read_health_raw(session: Session) -> tuple[bool, str | None, dict[str, Any]]:
+    """Read the stored JSON verbatim, bypassing the ORM identity map.
+
+    The raw text is the compare-and-set token: it is what the conditional ``UPDATE`` matches on,
+    so a write from another session or process (the desktop loop vs ``orchestrator sync now``)
+    cannot be silently overwritten by a value read before that write landed.
+    """
+    row = session.connection().exec_driver_sql(
+        "SELECT value_json FROM sync_state WHERE key = ?", (SYNC_HEALTH_KEY,)
+    ).first()
+    if row is None:
+        return False, None, {}
+    raw = row[0]
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        stored = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        stored = {}
+    return True, raw, stored if isinstance(stored, dict) else {}
+
+
 def health(session: Session) -> dict[str, Any]:
     """Read the additive sync health record; a device that never ran reads as healthy."""
-    stored = get_state(session, SYNC_HEALTH_KEY, {})
+    _exists, _raw, stored = _read_health_raw(session)
     values = dict(HEALTH_DEFAULTS)
-    if isinstance(stored, dict):
-        values.update(stored)
+    values.update(stored)
     return values
+
+
+def update_health(
+    session: Session,
+    mutate: Callable[[dict[str, Any]], dict[str, Any] | None],
+    *,
+    attempts: int = 8,
+) -> dict[str, Any]:
+    """Compare-and-set read-modify-write of the health record.
+
+    There is deliberately no single-writer assumption. The desktop background loop and a CLI
+    ``sync now`` are separate processes sharing one SQLite file, so two of them can read the same
+    streak (or the same ``*_notified`` flag) before either writes. Every write is therefore a
+    conditional ``UPDATE ... WHERE value_json = <the exact text we read>``; if another writer got
+    there first the update matches zero rows, and this function re-reads and re-applies ``mutate``
+    to the new value. Increments are re-derived on each attempt, so a lost update is impossible,
+    and a claim that returns ``None`` on an already-set flag is won by exactly one caller.
+
+    ``mutate`` receives a complete health dict and returns the fields to change, or ``None`` to
+    abandon the write (a claim that lost the race). The row is created with an ``INSERT`` when a
+    device has never recorded health; a racing insert is retried as a normal CAS conflict.
+    """
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    for _ in range(attempts):
+        exists, raw, stored = _read_health_raw(session)
+        values = dict(HEALTH_DEFAULTS)
+        values.update(stored)
+        changes = mutate(dict(values))
+        if changes is None:
+            return values
+        values.update(changes)
+        # Canonical text: the next CAS compares against exactly these bytes.
+        payload = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        now = utcnow()
+        result = None
+        try:
+            if exists:
+                result = session.connection().exec_driver_sql(
+                    "UPDATE sync_state SET value_json = ?, updated_at = ? "
+                    "WHERE key = ? AND value_json IS ?",
+                    (payload, now, SYNC_HEALTH_KEY, raw),
+                )
+            else:
+                session.connection().exec_driver_sql(
+                    "INSERT INTO sync_state (key, value_json, updated_at) VALUES (?, ?, ?)",
+                    (SYNC_HEALTH_KEY, payload, now),
+                )
+        except (IntegrityError, OperationalError):
+            # A racing insert (unique key) or a WAL snapshot taken before another process
+            # committed is not a lost write: roll back and re-read, then CAS again.
+            session.rollback()
+            continue
+        session.commit()
+        if result is None or result.rowcount == 1:
+            # The raw write bypassed the ORM; make any cached SyncState row re-read next time.
+            session.expire_all()
+            return values
+        session.rollback()
+    raise HealthConflict(
+        f"sync health changed on {attempts} consecutive compare-and-set attempts"
+    )
 
 
 def write_health(session: Session, **changes: Any) -> dict[str, Any]:
-    values = health(session)
-    values.update(changes)
-    set_state(session, SYNC_HEALTH_KEY, values)
-    session.commit()
-    return values
+    """Set absolute health fields through the same compare-and-set path as the counters."""
+    return update_health(session, lambda _current: changes)
+
+
+def claim_health_flag(session: Session, flag: str, **extra: Any) -> bool:
+    """Atomically set ``flag`` once; exactly one caller (across processes) returns ``True``.
+
+    This is the notification once-per-streak gate. Checking a flag read in a previous session
+    and then writing it lets the loop and a manual run both alert; the conditional update keeps
+    the write if and only if the flag was still false in the bytes we just matched.
+    """
+    claimed = {"value": False}
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any] | None:
+        # Re-evaluated on every CAS attempt: a failed attempt must not leave this set, or the
+        # loser of the race would report a claim it never wrote.
+        claimed["value"] = False
+        if current.get(flag):
+            return None
+        claimed["value"] = True
+        return {flag: True, **extra}
+
+    update_health(session, mutate)
+    return claimed["value"]
 
 
 def clear_health(session: Session) -> dict[str, Any]:

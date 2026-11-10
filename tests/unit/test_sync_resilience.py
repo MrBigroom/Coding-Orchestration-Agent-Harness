@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from contextlib import suppress
 
 import httpx
@@ -569,3 +570,88 @@ def test_a_stopped_sync_respects_the_notification_master_switch(initialized, mon
         ))
     assert [(row.status, row.reason) for row in rows] == [("skipped", "master_disabled")]
     assert settings_service.defaults()["notification_sync_failed"] is True
+
+
+# ---------------------------------------------------------------- cross-process health writes
+#
+# The desktop loop and a CLI `sync now` are separate processes sharing one SQLite file. These
+# tests force the interleaving a read-modify-write loses: both writers read the same bytes before
+# either commits. A plain "read, update, write" fails them; the compare-and-set path passes.
+
+
+def _race(two_writers):
+    """Run two session-per-writer threads, each released by the same barrier."""
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            results.append(two_writers(barrier))
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not errors, errors
+    assert not any(thread.is_alive() for thread in threads)
+    return results
+
+
+def test_concurrent_failure_records_cannot_lose_an_increment(initialized):
+    """Both writers compute failures=old+1 from the same snapshot; the CAS must still yield 2."""
+    with session_scope() as session:
+        sync_service.write_health(session, consecutive_failures=0)
+
+    def record(barrier: threading.Barrier) -> dict:
+        with session_scope() as session:
+            first = {"seen": False}
+
+            def mutate(current: dict) -> dict:
+                if not first["seen"]:
+                    first["seen"] = True
+                    # Both threads are here with the same bytes read: the lost-update window.
+                    barrier.wait(timeout=5)
+                return {"consecutive_failures": int(current.get("consecutive_failures") or 0) + 1}
+
+            return sync_service.update_health(session, mutate)
+
+    results = _race(record)
+    assert sorted(r["consecutive_failures"] for r in results) == [1, 2]
+    with session_scope() as session:
+        assert sync_service.health(session)["consecutive_failures"] == 2
+
+
+def test_a_health_flag_claim_is_won_by_exactly_one_racer(initialized, monkeypatch):
+    """Two processes that both read the flag as false must not both alert."""
+    with session_scope() as session:
+        sync_service.write_health(session, stop_notified=False)
+
+    original = sync_service._read_health_raw
+    barrier = threading.Barrier(2)
+    local = threading.local()
+    stale: list[tuple] = []
+    with session_scope() as session:
+        stale.append(original(session))
+
+    def stale_first_read(session):
+        # Force the exact pre-CAS shape: every racer's first read returns the same old bytes.
+        if not getattr(local, "used", False):
+            local.used = True
+            barrier.wait(timeout=5)
+            return stale[0]
+        return original(session)
+
+    monkeypatch.setattr(sync_service, "_read_health_raw", stale_first_read)
+
+    def claim(_barrier: threading.Barrier) -> bool:
+        with session_scope() as session:
+            return sync_service.claim_health_flag(session, "stop_notified")
+
+    assert sorted(_race(claim)) == [False, True]
+    with session_scope() as session:
+        _exists, _raw, stored = original(session)
+        assert stored["stop_notified"] is True
