@@ -64,7 +64,7 @@ and are not hashed as measurements.
 5. **Log damage bounded.** `sync_runner.py:130` `_record_failure` states the rule in its docstring:
    a line is keyed by exact `<exception type>: <message>`; `:146` compares the signature, `:147`
    increments `sync_health.log_occurrences`, the first occurrence logs once with a traceback
-   (`:173`) and identical repeats log at DEBUG (`:181`). Test
+   (`:174`) and identical repeats log at DEBUG (`:181`). Test
    `test_identical_failures_log_once_with_an_occurrence_counter` asserts one ERROR for two
    identical failures and `log_occurrences == 2`.
 6. **Offline tests (a)-(f).** `tests/unit/test_sync_resilience.py`,
