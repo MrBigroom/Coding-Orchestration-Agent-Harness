@@ -1,0 +1,39 @@
+# HEAD=08f89c06cd384a352233eaf02ed04ba0657edfe0 mode=full
+# command: sqlite3 .backup of the live memory DB -> a throwaway ORCHESTRATOR_HOME;
+#          condense/budget/triage then run on the COPY at the operator's own caps.
+#          The live home is opened read-only and never written. Copy is removed after.
+# source_db=/home/mrbigroom/.local/share/coding-orchestrator/orchestrator.db
+# source_sha256=bf687ce3a31786b58c155b87778963d07f971108adaa0125607c63e0d8761df4
+# source_bytes=2654208
+corpus_rows=148 rare_token_pairs=1 subject_plus_rare_groups=33
+cited|evidence_freshness 152/156/164|members=[152, 156, 164]|groups=[[152, 156], [164, 166]]
+cited|diff_floor 157/159/161/163|members=[157, 159, 161, 163]|groups=[[84, 131, 157, 158], [159, 161, 163]]
+cited|bundle_ordering 154/165|members=[154, 165]|groups=[[66, 154, 155, 165, 167]]
+cited|notify_send 135/140/143|members=[135, 140, 143]|groups=[[135, 140, 143]]
+caps={'global': 2000, 'role': 1100, 'project': 8000} enabled=True
+budget_before|architect|used={'global': 1599, 'role': 0, 'project': 3119}|excluded=[]
+budget_before|worker|used={'global': 1599, 'role': 1029, 'project': 7356}|excluded=[]
+budget_before|supervisor|used={'global': 1599, 'role': 0, 'project': 5271}|excluded=[]
+condense_project=coding-orchestrator proposals=14
+  proposal|ids=[25, 23]|survivor=25|distinct_facts=True|tokens=505->505|delta=0
+  proposal|ids=[46, 88]|survivor=46|distinct_facts=True|tokens=514->513|delta=-1
+  proposal|ids=[67, 49]|survivor=67|distinct_facts=False|tokens=271->96|delta=-175
+  proposal|ids=[71, 60, 89]|survivor=71|distinct_facts=True|tokens=514->512|delta=-2
+  proposal|ids=[76, 66]|survivor=76|distinct_facts=True|tokens=329->328|delta=-1
+  proposal|ids=[78, 20, 45]|survivor=78|distinct_facts=True|tokens=613->612|delta=-1
+  proposal|ids=[79, 68]|survivor=79|distinct_facts=True|tokens=306->304|delta=-2
+  proposal|ids=[83, 26, 52]|survivor=83|distinct_facts=True|tokens=782->780|delta=-2
+  proposal|ids=[87, 62, 74]|survivor=87|distinct_facts=True|tokens=661->659|delta=-2
+  proposal|ids=[92, 41, 65]|survivor=92|distinct_facts=True|tokens=718->716|delta=-2
+  proposal|ids=[96, 95]|survivor=96|distinct_facts=True|tokens=218->217|delta=-1
+  proposal|ids=[98, 57]|survivor=98|distinct_facts=True|tokens=384->384|delta=0
+  proposal|ids=[99, 84]|survivor=99|distinct_facts=True|tokens=240->239|delta=-1
+  proposal|ids=[100, 32, 63]|survivor=100|distinct_facts=True|tokens=390->388|delta=-2
+dry_run=True rows_unchanged=True
+applied|ids=[67, 49]|survivor=67|rejected=[49]|distinct_facts=False|tokens_saved=175
+triage_after|groups=11|merged_ids_still_grouped_together=[]
+condense_after_same_ids_proposed=0
+budget_after|architect|used={'global': 1599, 'role': 0, 'project': 2944}|excluded=[]
+budget_after|worker|used={'global': 1599, 'role': 1029, 'project': 7181}|excluded=[]
+budget_after|supervisor|used={'global': 1599, 'role': 0, 'project': 5271}|excluded=[]
+status=pass

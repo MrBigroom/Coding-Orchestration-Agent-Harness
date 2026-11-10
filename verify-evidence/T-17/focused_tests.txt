@@ -1,16 +1,21 @@
-# HEAD=63137c3e98a7b38ef5177672785f199b555aa950 mode=full
+# HEAD=08f89c06cd384a352233eaf02ed04ba0657edfe0 mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
-tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_linked_not_stored PASSED
+tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
 tests/unit/test_memory_lifecycle.py::test_a_byte_identical_suggestion_still_creates_no_row PASSED
 tests/unit/test_memory_lifecycle.py::test_same_domain_but_unrelated_facts_are_not_linked PASSED
+tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_shared_only_by_subject_is_linked PASSED
+tests/unit/test_memory_lifecycle.py::test_a_repeated_restatement_does_not_add_a_second_linked_row PASSED
 tests/unit/test_memory_lifecycle.py::test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted PASSED
 tests/unit/test_memory_lifecycle.py::test_untagged_entries_keep_the_pre_t17_demotion_order PASSED
+tests/unit/test_memory_lifecycle.py::test_untagged_durable_entries_are_still_demoted_oldest_first PASSED
 tests/unit/test_memory_lifecycle.py::test_two_selections_are_byte_identical_and_exclude_the_same_ids PASSED
 tests/unit/test_memory_lifecycle.py::test_condense_dry_run_changes_no_row PASSED
 tests/unit/test_memory_lifecycle.py::test_condense_apply_updates_the_survivor_and_rejects_the_absorbed PASSED
 tests/unit/test_memory_lifecycle.py::test_condense_partial_apply_is_refused_without_writing PASSED
 tests/unit/test_memory_lifecycle.py::test_condense_rendered_markdown_matches_the_surviving_approved_rows PASSED
+tests/unit/test_memory_lifecycle.py::test_a_subject_cluster_proposal_keeps_every_distinct_fact PASSED
+tests/unit/test_memory_lifecycle.py::test_condense_requires_a_project_and_never_groups_global_or_role_rows PASSED
 tests/unit/test_memory_lifecycle.py::test_lifecycle_fields_stay_behind_a_contract_change_request PASSED
 tests/unit/test_memory_lifecycle.py::test_the_frozen_memory_table_has_no_lifecycle_columns_yet PASSED
 tests/unit/test_memory_lifecycle.py::test_adding_a_key_value_phrase_records_the_substitution PASSED
@@ -18,6 +23,9 @@ tests/unit/test_memory_lifecycle.py::test_updating_a_key_value_phrase_records_th
 tests/unit/test_memory_lifecycle.py::test_a_marked_entry_is_garbled_not_rendered_and_not_approvable PASSED
 tests/unit/test_memory_lifecycle.py::test_a_marked_approved_entry_is_not_injected_or_rendered PASSED
 tests/unit/test_memory_lifecycle.py::test_log_redaction_is_still_a_security_control PASSED
+tests/unit/test_memory_lifecycle.py::test_creating_an_already_approved_row_is_refused_when_it_would_evict PASSED
+tests/unit/test_memory_lifecycle.py::test_importing_an_approved_row_is_refused_when_it_would_evict PASSED
+tests/unit/test_memory_lifecycle.py::test_triage_flags_a_linked_restatement_as_a_merge_candidate PASSED
 tests/unit/test_memory_lifecycle.py::test_approval_that_would_evict_names_the_casualty_and_needs_override PASSED
 tests/unit/test_memory_lifecycle.py::test_budget_and_triage_name_the_current_demotions PASSED
 tests/unit/test_memory.py::test_suggestion_approval_flow_and_injection PASSED
@@ -96,6 +104,26 @@ tests/unit/test_memory_scopes.py::test_role_rows_still_render_by_the_rule_main_u
 tests/unit/test_memory_scopes.py::test_injectability_marks_only_the_unreachable PASSED
 tests/unit/test_memory_scopes.py::test_coercion_is_written_to_the_build_log_the_operator_reads PASSED
 tests/unit/test_memory_scopes.py::test_legacy_rows_that_cannot_be_injected_do_not_reach_any_prompt PASSED
+tests/unit/test_redaction.py::test_redacts_provider_keys PASSED         
+tests/unit/test_redaction.py::test_branch_task_and_phase_names_survive_redaction PASSED
+tests/unit/test_redaction.py::test_findings_json_payload_survives_redaction PASSED
+tests/unit/test_redaction.py::test_credentials_are_still_redacted_wherever_they_appear PASSED
+tests/unit/test_redaction.py::test_build_log_details_keep_operational_commands_copy_pasteable PASSED
+tests/unit/test_redaction.py::test_underscore_joined_other_credentials_are_a_recorded_gap_not_a_regression PASSED
+tests/unit/test_redaction.py::test_redacts_assignments_and_bearer PASSED
+tests/unit/test_redaction.py::test_redacts_private_key_block PASSED     
+tests/unit/test_redaction.py::test_redacts_secret_values_from_environment PASSED
+tests/unit/test_redaction.py::test_leaves_normal_text_alone PASSED      
+tests/unit/test_redaction.py::test_token_counts_are_not_secrets PASSED  
+tests/unit/test_redaction.py::test_long_unbroken_text_redacts_quickly PASSED
+tests/unit/test_redaction.py::test_sensitive_paths_and_diff_stripping PASSED
+tests/unit/test_redaction.py::test_dotenv_loaded_without_overriding PASSED
+tests/unit/test_redaction.py::test_inline_token_counts_in_prose_survive_byte_identically PASSED
+tests/unit/test_redaction.py::test_synthetic_placeholder_assignments_in_test_literals_survive PASSED
+tests/unit/test_redaction.py::test_a_real_secret_with_a_placeholder_prefix_is_still_redacted PASSED
+tests/unit/test_redaction.py::test_angle_bracket_and_url_placeholders_do_not_exempt_real_values PASSED
+tests/unit/test_redaction.py::test_redaction_report_names_the_pattern_class_and_count_without_the_secret PASSED
+tests/unit/test_redaction.py::test_a_dollar_prefixed_secret_value_still_redacts_while_a_braced_reference_survives PASSED
 tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body0-memory scope 'global-environment-verifying' is not injectable; allowed scopes for global: environment|preferences|patterns] PASSED
 tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body1-memory scope 'ai-livestreaming-avatar' is not injectable; allowed scopes for project: conventions|decisions|gotchas] PASSED
 tests/integration/test_memory_scope_boundary.py::test_api_create_rejects_an_uninjectable_scope_for_every_category[body2-role memory scope 'ai-livestreaming-avatar-logbook' is not injectable; allowed scopes for role: architect|worker|supervisor (role names agent -> worker, reviewer -> architect are accepted and resolve to their file)] PASSED
@@ -117,4 +145,4 @@ tests/integration/test_memory_scope_boundary.py::test_cli_list_prints_an_uninjec
 tests/integration/test_memory_scope_boundary.py::test_cli_import_repairs_a_legacy_export_scope PASSED
 tests/integration/test_migrations.py::test_upgrade_downgrade_populated_db PASSED
 tests/integration/test_migrations.py::test_models_match_migration PASSED
-============================= 116 passed ==============================
+============================= 144 passed ==============================
