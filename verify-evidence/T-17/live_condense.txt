@@ -1,4 +1,4 @@
-# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
+# HEAD=5bc4077dc836c805544ec8f49ecef989f4792248 mode=full
 # command: sqlite3 .backup of the live memory DB -> a throwaway ORCHESTRATOR_HOME;
 #          condense/budget/triage then run on the COPY at the operator's own caps.
 #          The live home is opened read-only and never written. Copy is removed after.
