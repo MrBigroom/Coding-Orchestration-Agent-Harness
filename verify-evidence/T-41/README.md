@@ -44,7 +44,7 @@ and are not hashed as measurements.
    60/120/240/480/900/900 s at defaults (`test_default_transient_retries_reach_the_900_second_cap`)
    and never set `stopped` (`test_transient_failures_back_off_without_ever_stopping`). A permanent
    4xx records `stopped`/`stopped_reason` (`sync_service.py:236` `SYNC_HEALTH_KEY`, `:254`
-   `health`). `sync_runner.py:119` status, `GET /api/sync/status` (`api/routes/sync.py`), and
+   `health`). `sync_runner.py:103` status, `GET /api/sync/status` (`api/routes/sync.py`), and
    `cli.py:1594` `sync status` expose `stopped`, `stopped_reason`, `consecutive_failures`,
    `last_failure_kind`, `next_retry_at`. Tests: `test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason`,
    `test_sync_status_reports_the_stopped_reason_and_failure_streak`,
