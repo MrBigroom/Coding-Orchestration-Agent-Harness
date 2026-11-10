@@ -326,23 +326,32 @@ if want tsc_web.txt; then
     done
     echo "# scratch src resolves to: $(readlink -f "$SCRATCH/src")"
     echo "# tsconfig used:           $(readlink -f "$SCRATCH/tsconfig.json")"
+    echo "# tsc version:             $("$MAIN/web/node_modules/.bin/tsc" --version 2>&1)"
     echo "# exact command: $MAIN/web/node_modules/.bin/tsc -b --force (cwd=$SCRATCH)"
     cd "$SCRATCH"
+    T1=$(now)
     rc=0
     "$MAIN/web/node_modules/.bin/tsc" -b --force || rc=$?
+    build_ms=$(ms "$T1" "$(now)")
     # tsc_exit is the ACTUAL exit status of the command above; it is not inferred from text.
     echo "# tsc_exit=$rc is the status of the exact command recorded above (0 = success)"
+    echo "# tsc_build_wall_ms=$build_ms is that command's measured wall time"
     echo "tsc_exit=$rc"
+    echo "tsc_build_wall_ms=$build_ms"
     if [ "$rc" -ne 0 ]; then
       cd "$ROOT"
       rm -rf "$SCRATCH"
       exit "$rc"
     fi
     echo "# exact command: $MAIN/web/node_modules/.bin/tsc -p $SCRATCH/tsconfig.json --listFiles"
+    T2=$(now)
     lf_rc=0
     "$MAIN/web/node_modules/.bin/tsc" -p "$SCRATCH/tsconfig.json" --listFiles \
       > "$SCRATCH/listfiles.txt" 2>&1 || lf_rc=$?
+    listfiles_ms=$(ms "$T2" "$(now)")
     echo "# listFiles_exit=$lf_rc (0 = the file list above is complete)"
+    echo "# tsc_listfiles_wall_ms=$listfiles_ms is that command's measured wall time"
+    echo "tsc_listfiles_wall_ms=$listfiles_ms"
     total=$(wc -l < "$SCRATCH/listfiles.txt")
     src_total=$(grep -c '/src/' "$SCRATCH/listfiles.txt" || true)
     react_types=$(grep -c '/@types/react/' "$SCRATCH/listfiles.txt" || true)
