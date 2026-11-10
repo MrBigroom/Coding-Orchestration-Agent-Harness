@@ -1,11 +1,11 @@
 # T-17 evidence index
 
-Bundle measured at code HEAD `d091ca8` by `orchestrator task evidence T-17 --full` (the
+Bundle measured at code HEAD `1c878a1` by `orchestrator task evidence T-17 --full` (the
 committed `verify-evidence/T-17/capture.sh` is the only thing that ran). Quote only
-`timing.txt`: **866 passed, 10 skipped** in the full suite (148.1s), focused memory/API/CLI/
-migration run **208 passed** (20.4s), lint **All checks passed!**. Every `.txt` here carries
+`timing.txt`: **866 passed, 10 skipped** in the full suite (147.9s), focused memory/API/CLI/
+migration run **208 passed** (20.9s), lint **All checks passed!**. Every `.txt` here carries
 its own `# HEAD=…` stamp; `freshness_selfcheck.txt` reports `status=pass`, `stamped_files=9`,
-`stale_count=0` against `d091ca8` before this index was written.
+`stale_count=0` against `1c878a1` before this index was written.
 
 Round-3 review findings (R-79) fixed on this branch, with their tests:
 

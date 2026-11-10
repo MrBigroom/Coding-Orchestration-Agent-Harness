@@ -1,4 +1,4 @@
-# HEAD=d091ca8259e9c38dcae890bbae5547746b2fff1b mode=full
+# HEAD=1c878a1f919786b0970bc4a5490aad27769cad89 mode=full
 # command: prove no Alembic revision in this branch touches memory_entries lifecycle
 # merge-base HEAD main: d89efada334fa4da7c9288b7a1a54ffe726a7acd
 $ git diff --name-only "$BASE"..HEAD -- src/orchestrator/migrations

@@ -1,4 +1,4 @@
-# HEAD=d091ca8259e9c38dcae890bbae5547746b2fff1b mode=full
+# HEAD=1c878a1f919786b0970bc4a5490aad27769cad89 mode=full
 # static DoD map; focused_tests.txt supplies each node's PASSED line
 1 ingest dedup: a reworded restatement is a REAL pending row linked to the approved
   entry it restates (`duplicate-of:<id>` in the existing tags column), a byte-identical
