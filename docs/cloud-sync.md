@@ -88,9 +88,12 @@ orchestrator sync now                # normal cycle; a success clears the stop
 ```
 
 Records with an unresolved payload conflict are reported as `conflicts_skipped` and never
-touched: a version repair must not silently choose one side of a real content conflict. If the
-remote is unreachable, `reinit` fails rather than guessing, because the remote version is the
-authority it is aligning to.
+touched: a version repair must not silently choose one side of a real content conflict. A local
+row that is dirty while the remote version is **ahead** of its `synced_version` is reported as
+`remote_ahead_skipped` and also left untouched: re-baselining forward would let the next push
+overwrite remote changes this device has not seen. The stopped/failure streak is only cleared
+when every row could be aligned. If the remote is unreachable, `reinit` fails rather than
+guessing, because the remote version is the authority it is aligning to.
 
 ### Failure handling and visibility
 

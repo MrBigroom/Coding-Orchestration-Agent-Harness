@@ -322,6 +322,36 @@ def test_reinit_dry_run_then_apply_realigns_a_rejected_version(initialized, tmp_
     assert project_body["p_version"] == 2
 
 
+def test_reinit_never_rebaselines_a_dirty_row_past_unseen_remote_changes(
+    initialized, tmp_path
+):
+    """Reinit must not let a local dirty payload overwrite a newer remote version."""
+    (tmp_path / "project").mkdir()
+    with session_scope() as session:
+        project = project_service.create(
+            session, ProjectCreate(name="RemoteAhead", path=str(tmp_path / "project"))
+        )
+        sync_service.scan_local(session)
+        mapping = sync_service.get_mapping(session, "project", str(project.id))
+        mapping.synced_version = 1
+        mapping.version = 2
+        mapping.dirty = True
+        session.add(mapping)
+        session.commit()
+        entity_id = mapping.uuid
+        sync_service.write_health(session, consecutive_failures=1, stopped=True,
+                                  stopped_reason="conflict")
+
+        plan = sync_service.reinitialise(
+            session, {entity_id: 3}, dry_run=False
+        )
+        mapping = sync_service.get_mapping(session, "project", str(project.id))
+        assert plan["remote_ahead_skipped"] == 1
+        assert plan["health_cleared"] is False
+        assert (mapping.synced_version, mapping.version) == (1, 2)
+        assert sync_service.health(session)["stopped"] is True
+
+
 def test_an_enabled_sync_that_has_never_run_initialises_and_succeeds(
     initialized, monkeypatch
 ):

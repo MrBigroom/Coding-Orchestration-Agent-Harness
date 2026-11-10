@@ -283,16 +283,26 @@ def reinitialise(
     database, a lost push, the legacy `0 -> 3` drift), this aligns ``synced_version`` with the
     version the remote actually holds and leaves a dirty record's payload pending. Rows with an
     unresolved payload conflict are reported and left untouched: silently discarding one side is
-    not a version repair. With ``dry_run`` the plan is returned and no row or health key is
+    not a version repair. A dirty row whose remote version is AHEAD of the local synced version
+    is also left untouched (``remote_ahead_skipped``): re-baselining forward would let the next
+    push overwrite remote changes this device has not seen. The stop is only cleared when every
+    row could be aligned. With ``dry_run`` the plan is returned and no row or health key is
     written, so an operator can inspect it first.
     """
     changes: list[dict[str, Any]] = []
     conflicts_skipped = 0
+    remote_ahead_skipped = 0
     for mapping in session.exec(select(SyncEntity)):
         if mapping.conflict_json is not None:
             conflicts_skipped += 1
             continue
         synced = int(remote_versions.get(mapping.uuid, 0))
+        if mapping.dirty and synced > mapping.synced_version:
+            # The remote has changes this device has never seen. Re-baselining forward would let
+            # the next push overwrite them, defeating the compare-and-swap guarantee, so this
+            # row is reported until the content conflict is resolved by a human.
+            remote_ahead_skipped += 1
+            continue
         version = synced + 1 if mapping.dirty else synced
         if mapping.synced_version == synced and mapping.version == version:
             continue
@@ -309,15 +319,19 @@ def reinitialise(
             mapping.synced_version = synced
             mapping.version = version
             session.add(mapping)
+    # A skipped row means the stop is real: resuming the loop would only re-hit a conflict.
+    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
     if not dry_run:
         session.commit()
-        clear_health(session)
+        if health_cleared:
+            clear_health(session)
     return {
         "dry_run": dry_run,
         "changes": changes,
         "change_count": len(changes),
         "conflicts_skipped": conflicts_skipped,
-        "health_cleared": not dry_run,
+        "remote_ahead_skipped": remote_ahead_skipped,
+        "health_cleared": health_cleared,
     }
 
 
