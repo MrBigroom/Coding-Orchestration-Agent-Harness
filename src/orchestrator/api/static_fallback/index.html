@@ -58,7 +58,14 @@ async function api(path, opts = {}) {
   const text = await res.text();
   let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (res.status === 401) { const t = prompt("ORCHESTRATOR_TOKEN required:"); if (t) { try { localStorage.setItem("orchestrator.token", t); } catch {} location.reload(); } }
-  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || res.statusText);
+    err.status = res.status;
+    // The frozen error body is {error, detail}; keep the structure so the memory override
+    // flow can act on detail.evicted instead of matching a substring of the message.
+    err.detail = data && data.detail;
+    throw err;
+  }
   return data;
 }
 const post = (p, body = {}) => api(p, { method: "POST", body: JSON.stringify(body) });
@@ -122,12 +129,28 @@ const views = {
     if (run && !["completed", "failed", "cancelled", "timeout"].includes(run.status)) timer = setTimeout(() => views.task(id), 2000);
   },
   async memory() {
-    const m = await api("/memory");
-    show(`<h2>Memory</h2><div class="card"><table><tr><th>#</th><th>Category / scope</th><th>Content</th><th>Status</th><th></th></tr>
+    const [m, budget] = await Promise.all([api("/memory"), api("/memory/budget")]);
+    const demoted = Object.entries(budget.roles).map(([role, p]) => `<div class="row"><b>${esc(role)}</b><span class="muted">${p.excluded_now.length ? "not injected: " + p.excluded_now.map((id) => "#" + id).join(", ") : "not injected: none"}</span></div>`).join("");
+    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"} · approving over a cap is refused with the casualty list in the error detail and offers an explicit override</div>${demoted}</div>
+      <div class="card"><table><tr><th>#</th><th>Category / scope</th><th>Content</th><th>Status</th><th></th></tr>
       ${m.map((e) => `<tr><td>${e.id}</td><td>${esc(e.category)}/${esc(e.scope)}<div class="muted">${esc(e.project_slug || e.role || "")}</div></td><td>${esc(e.content)}</td>
       <td>${badge(e.approved ? "approved" : e.rejected ? "rejected" : "pending")}</td><td class="row"><button data-m="approve" data-id="${e.id}" class="primary">Approve</button><button data-m="reject" data-id="${e.id}" class="danger">Reject</button></td></tr>`).join("")}</table></div>
       <div class="card row"><button id="m-export">Export JSON</button></div><pre id="m-out" hidden></pre>`);
-    $main.querySelectorAll("button[data-m]").forEach((b) => b.onclick = () => guard(async () => { await post(`/memory/${b.dataset.id}/${b.dataset.m}`); views.memory(); }));
+    $main.querySelectorAll("button[data-m]").forEach((b) => b.onclick = () => guard(async () => {
+      const id = b.dataset.id, action = b.dataset.m;
+      if (action === "approve") {
+        try { await post(`/memory/${id}/approve`); }
+        catch (e) {
+          const detail = e && e.detail;
+          const rows = detail && Array.isArray(detail.evicted) ? detail.evicted : [];
+          if (!rows.length) throw e;
+          const list = rows.map((r) => `#${r.id} (${r.bucket}/${r.scope}${r.self ? ", this row itself would not be injected" : ", roles " + (r.roles || []).join(",")})`).join("\n");
+          if (!confirm(`Approving #${id} would demote:\n${list}\n\nOverride and approve anyway? The demoted entries stay approved but are not injected.`)) return;
+          await post(`/memory/${id}/approve?override=true`);
+        }
+      } else { await post(`/memory/${id}/${action}`); }
+      views.memory();
+    }));
     document.getElementById("m-export").onclick = () => guard(async () => { const o = document.getElementById("m-out"); o.hidden = false; o.textContent = JSON.stringify(await api("/memory/export"), null, 2); });
   },
   async prompt() {

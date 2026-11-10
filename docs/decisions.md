@@ -494,3 +494,30 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `timing.txt` rows each carry the HEAD their own pass measured. Paths are resolved before
   `is_relative_to`, so a lexical escape is refused. The shared clock-out rule: an instruction the
   Worker cannot satisfy without violating another is not tightness, it is a timeout.
+- **2026-11-10 — T-17: memory ingest dedups by subject, demotion is value-ordered, and a
+  rewrite is recorded.** Ingest (handoff and chat suggestions) keeps the byte-identical
+  skip, and records a reworded restatement as a pending row tagged `duplicate-of:<id>` in the
+  existing `tags_json` column: its content is persisted, triage flags it `linked-duplicate`
+  with a `merge` suggestion, and nothing is auto-rejected. Two containment signals are used,
+  never a whole-text similarity ratio (on the live home a bag-of-words ratio flagged 461 of
+  595 pending pairs above 0.72 while the true duplicate count was zero): rare-token
+  containment (`memory_text.is_duplicate_pair`) and a star-shaped rare-IDENTIFIER subject
+  match (code symbols, paths, files, CLI flags). The subject pass exists because the
+  operator measured topical restatements that share no rare prose words; it is star-shaped,
+  not a transitive entity union, so A-B and B-C cannot fuse A and C. Reasons name the
+  matcher's own numbers and shared terms. Demotion order comes from `tags_json`:
+  `pinned`/`durable` first, then `tier:1`/`tier:2` (untagged default)/`tier:3`, then content
+  class, and `id` only as the final tiebreak; an untagged set keeps the pre-T-17 rot-prone
+  then oldest-first order. Every approval-shaped write — `approve`, `create(approved=True)`,
+  `memory add --approve`, `POST /api/memory {approved:true}` and `memory import` — is refused
+  when it would evict an approved row, names the casualties, and needs an explicit
+  `override`; demotions stay visible in triage, budget, prompt preview and both GUIs.
+  `orchestrator memory condense --project` (required) groups approved rows of ONE project and
+  ONE scope — a scope decides the audience — prints the survivor, ids, proposed content and
+  token delta, and writes nothing until `--apply` names a complete proposal's ids. A
+  rare-token duplicate keeps the survivor's text; a subject cluster that may state different
+  facts proposes the union of every member's text (`distinct_facts`), so apply cannot drop a
+  fact. Finally, memory redaction is not silent: a rewrite records pattern class, count and
+  line(s) in tags_json, triage flags the entry as garbled, and it is excluded from prompts
+  and rendered markdown until reworded. Log and review redaction are untouched. Lifecycle
+  columns (`supersedes`, `stale_after`) remain a contract-change request, not a migration.

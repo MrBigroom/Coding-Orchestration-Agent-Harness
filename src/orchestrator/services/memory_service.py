@@ -53,29 +53,282 @@ from orchestrator.core.memory_vocab import (
 )
 from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, Setting, utcnow
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
-from orchestrator.utils.memory_text import is_rot_prone
+from orchestrator.utils.memory_text import (
+    build_df,
+    build_term_df,
+    duplicate_detail,
+    duplicate_reason,
+    is_duplicate_pair,
+    is_rot_prone,
+    is_subject_pair,
+    subject_reason,
+)
 from orchestrator.utils.paths import safe_join
-from orchestrator.utils.redaction import redact
+from orchestrator.utils.redaction import REDACTED, redact_with_report
 from orchestrator.utils.slug import slugify
 from orchestrator.utils.truncate import estimate_tokens
 
 
 @dataclass
-class SuggestionOutcome:
-    """What the suggestion path stored, and what it refused to store.
+class SuggestionRecord:
+    """One structured outcome per suggestion: what happened, and the words for the log.
 
-    `notes` carries every substitution and every drop in submission order; the caller
-    writes them to the build log / chat stream so the operator sees a scope that was
-    quietly rewritten instead of an entry that silently never reaches a prompt.
+    `kind` is the STRUCTURE the build log derives its event name from (`dropped`,
+    `substituted`, `linked`); `message` is free text. Callers must never infer the kind from
+    the shape of `message` -- a note that happens to start with "dropped " is not a drop.
+    """
+
+    kind: str
+    message: str
+
+
+@dataclass
+class SuggestionOutcome:
+    """What the suggestion path stored, what it linked, and what it refused to store.
+
+    `notes` carries every substitution, every duplicate link and every drop in submission
+    order; the caller writes them to the build log / chat stream so the operator sees a
+    scope that was quietly rewritten, or a fact that was linked instead of stored, instead
+    of an entry that silently never reaches a prompt. `records` is the same list with the
+    kind made explicit, so no consumer has to match message prefixes.
     """
 
     created: list[MemoryEntry] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    records: list[SuggestionRecord] = field(default_factory=list)
+    #: Restatements recorded as pending rows. Each record names the existing entry, the new row
+    #: that carries the fact (so its content is persisted, not only logged) and the matcher
+    #: numbers behind the link. Nothing is auto-rejected; the operator decides in triage.
+    linked: list[dict[str, Any]] = field(default_factory=list)
+
+    def note(self, kind: str, message: str) -> None:
+        """Record one outcome for BOTH the human log line and the structured consumer."""
+        self.notes.append(message)
+        self.records.append(SuggestionRecord(kind=kind, message=message))
 
     @property
     def moved(self) -> list[str]:
-        """Just the substitution notes (drops start with 'dropped ')."""
-        return [n for n in self.notes if not n.startswith("dropped ")]
+        """Just the scope-substitution notes (drops and duplicate links are not moves)."""
+        return [r.message for r in self.records if r.kind == "substituted"]
+
+
+REDACTION_TAG_PREFIX = "redaction-substitution:"
+#: Ingest duplicate marker. The memory_entries shape is frozen, so a linked restatement is a
+#: normal pending row whose existing tags_json column names the entry it restates; triage
+#: reads the tag and reports it as `linked-duplicate`. It is never auto-rejected: dropping it
+#: without an operator command would be the silent ingest decision T-17 DoD 1 forbids.
+DUPLICATE_TAG_PREFIX = "duplicate-of:"
+#: The rest of the ingest link record, stored next to it in the SAME frozen tags_json column so
+#: triage can show WHY the row was linked (T-17 review round 4, finding 3). The numbers and the
+#: shared terms are the matcher's own output; the reason string is rebuilt from them, never
+#: retyped, so a threshold change cannot leave stale prose on a row.
+DUPLICATE_MATCH_PREFIX = "duplicate-match:"
+DUPLICATE_RATIO_PREFIX = "duplicate-ratio:"
+DUPLICATE_THRESHOLD_PREFIX = "duplicate-threshold:"
+DUPLICATE_TERMS_PREFIX = "duplicate-terms:"
+#: Terms are joined with the ASCII unit separator, not a comma: an identifier-shaped term
+#: can itself contain a comma (inside a backticked command span), so a comma-joined list
+#: would not round-trip through `duplicate_record`. Rows written before this change are
+#: still read with the old comma separator.
+DUPLICATE_TERM_SEPARATOR = "\x1f"
+#: Tag-driven value order. Higher value is kept longer; an untagged entry behaves exactly as
+#: it did before T-13's remainder (content class, then id as the last tiebreak only).
+PINNED_TAGS = frozenset({"pinned", "durable"})
+TIER_TAGS = {"tier:1": 3, "tier:2": 2, "tier:3": 1}
+DEFAULT_TIER_RANK = 2
+#: Tag namespaces only the OPERATOR or the harness may write. `tags_json` decides the
+#: demotion order (`pinned`/`durable`/`tier:N`), records the ingest link (`duplicate-of:` and
+#: the `duplicate-*` evidence tags) and flags a rewrite (`redaction-substitution:`), so a
+#: Worker- or chat-supplied suggestion -- untrusted model output -- must not be able to write
+#: its own priority or forge a link to an arbitrary entry id.
+RESERVED_TAG_PREFIXES = ("tier:", "duplicate-", REDACTION_TAG_PREFIX)
+
+
+def _line_hits(text: str) -> dict[str, list[int]]:
+    """Which line(s) each redaction pattern class matched (for the per-entry record)."""
+    out: dict[str, list[int]] = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        for hit in redact_with_report(line).hits:
+            out.setdefault(hit.pattern_class, []).append(number)
+    return out
+
+
+def _redaction_tags(text: str, report) -> list[str]:
+    """Per-entry record of a rewrite: pattern class, count, and where it matched."""
+    if not report.changed:
+        return []
+    located = _line_hits(text)
+    tags = []
+    for hit in report.hits:
+        lines = sorted(set(located.get(hit.pattern_class, [])))
+        where = ",".join(str(n) for n in lines) if lines else "content"
+        tags.append(f"{REDACTION_TAG_PREFIX}{hit.pattern_class}:count={hit.count}:lines={where}")
+    return sorted(tags)
+
+
+def _redact_memory_content(text: str) -> tuple[str, list[str]]:
+    """Redact durable memory text AND return the visible substitution record.
+
+    Memory is not a log line: a benign `KEY: value` phrase must never be silently rewritten.
+    `utils/redaction.py` stays the one security control, so real credentials are still
+    removed; when that happens the entry carries the pattern class, count and line(s) in
+    `tags_json` (an existing column, so the frozen memory_entries shape does not change).
+    `memory_triage` flags any entry with such a record or a marker as garbled, and
+    `select_for_prompt`/`render_file` refuse to inject it until it is reworded.
+    """
+    report = redact_with_report(text)
+    return report.text, _redaction_tags(text, report)
+
+
+def _combine_tags(
+    base: list[str] | None, redaction: list[str], *, preserve_existing: bool = False
+) -> list[str]:
+    """User tags plus the CURRENT redaction record; a stale record is always dropped.
+
+    `preserve_existing` is for a payload that already carries a record and whose content was
+    redacted earlier (an export/import round trip): the record is re-stated rather than
+    silently lost. An edit that rewrites clean content passes the default, so re-wording a
+    garbled entry clears its old record.
+    """
+    existing = [t for t in (base or []) if t.startswith(REDACTION_TAG_PREFIX)]
+    kept = [t for t in (base or []) if not t.startswith(REDACTION_TAG_PREFIX)]
+    if preserve_existing and not redaction:
+        redaction = existing
+    return sorted(set(kept) | set(redaction))
+
+
+def is_garbled(entry: MemoryEntry) -> bool:
+    """Was this entry's text rewritten on write (marker and/or a substitution record)?"""
+    return REDACTED in (entry.content or "") or any(
+        t.startswith(REDACTION_TAG_PREFIX) for t in (entry.tags_json or [])
+    )
+
+
+def duplicate_of(entry: MemoryEntry) -> int | None:
+    """The entry id this row was recorded as restating at ingest, or None."""
+    for tag in entry.tags_json or []:
+        if isinstance(tag, str) and tag.startswith(DUPLICATE_TAG_PREFIX):
+            try:
+                return int(tag[len(DUPLICATE_TAG_PREFIX) :])
+            except ValueError:
+                return None
+    return None
+
+
+def duplicate_record(entry: MemoryEntry) -> dict[str, Any] | None:
+    """The whole ingest link record: anchor id, matcher, its numbers/terms and the reason.
+
+    Read back out of `tags_json` (the frozen schema has no column for it), so triage shows
+    the reason ON THE ROW instead of leaving it in a transient outcome and the build log.
+    A row linked before this record existed carries only `duplicate-of:<id>`; its reason is
+    `None` and triage falls back to naming the anchor.
+    """
+    anchor = duplicate_of(entry)
+    if anchor is None:
+        return None
+    tags = {t.split(":", 1)[0]: t.split(":", 1)[1] for t in (entry.tags_json or [])
+            if isinstance(t, str) and ":" in t}
+    match = tags.get(DUPLICATE_MATCH_PREFIX.rstrip(":"))
+    ratio: float | None = None
+    threshold: float | None = None
+    terms: list[str] = []
+    try:
+        if tags.get(DUPLICATE_RATIO_PREFIX.rstrip(":")) is not None:
+            ratio = float(tags[DUPLICATE_RATIO_PREFIX.rstrip(":")])
+        if tags.get(DUPLICATE_THRESHOLD_PREFIX.rstrip(":")) is not None:
+            threshold = float(tags[DUPLICATE_THRESHOLD_PREFIX.rstrip(":")])
+    except ValueError:
+        ratio = threshold = None
+    raw_terms = tags.get(DUPLICATE_TERMS_PREFIX.rstrip(":"))
+    if raw_terms:
+        separator = DUPLICATE_TERM_SEPARATOR if DUPLICATE_TERM_SEPARATOR in raw_terms else ","
+        terms = [t for t in raw_terms.split(separator) if t]
+    if match == "rare-token" and ratio is not None and threshold is not None:
+        reason: str | None = duplicate_reason(ratio, threshold)
+    elif match == "subject" and terms:
+        reason = subject_reason(terms)
+    else:
+        reason = None
+    return {
+        "existing_id": anchor,
+        "match": match,
+        "ratio": ratio,
+        "threshold": threshold,
+        "terms": terms,
+        "reason": reason,
+    }
+
+
+def _duplicate_tags(match: dict[str, Any]) -> list[str]:
+    """The tags that record a link AND its evidence in the existing tags_json column.
+
+    EVERY shared term is stored, not the first five: `duplicate_record` rebuilds the
+    reason from these tags, and the outcome/build-log reason is built from the matcher's
+    full term set. Truncating here made the reason on the row differ from the reason the
+    operator saw at ingest (T-17 review round 5, finding 5).
+    """
+    tags = [
+        f"{DUPLICATE_TAG_PREFIX}{match['existing_id']}",
+        f"{DUPLICATE_MATCH_PREFIX}{match['match']}",
+    ]
+    if match.get("ratio") is not None:
+        tags.append(f"{DUPLICATE_RATIO_PREFIX}{match['ratio']:.3f}")
+    if match.get("threshold") is not None:
+        tags.append(f"{DUPLICATE_THRESHOLD_PREFIX}{match['threshold']:.2f}")
+    if match.get("terms"):
+        tags.append(
+            f"{DUPLICATE_TERMS_PREFIX}{DUPLICATE_TERM_SEPARATOR.join(match['terms'])}"
+        )
+    return tags
+
+
+def strip_reserved_tags(tags: list[str] | None) -> list[str]:
+    """Drop reserved namespaces from UNTRUSTED suggestion tags, keeping ordinary ones.
+
+    One helper for both suggestion create sites (`suggest_from_handoff_report`): a handoff
+    or chat suggestion is model output, so it may not self-pin, claim a tier, forge a
+    `duplicate-of:` link or a `redaction-substitution:` record. The operator paths (`create`
+    from the CLI/API, `import_all` and markdown import) deliberately do NOT call this: an
+    export/import round trip must preserve `pinned` and `tier:N`, or a restore would silently
+    unpin the entries the operator pinned. The harness appends its own `_duplicate_tags`
+    AFTER this filter, so the generated link still lands on a linked suggestion.
+    """
+    kept: list[str] = []
+    for tag in tags or []:
+        if not isinstance(tag, str):
+            continue
+        name = tag.strip()
+        lowered = name.lower()
+        if not name or lowered in PINNED_TAGS or lowered.startswith(RESERVED_TAG_PREFIXES):
+            continue
+        kept.append(name)
+    return kept
+
+
+def _duplicate_reason(match: dict[str, Any]) -> str:
+    """The reason built from the matcher's actual numbers/terms (never retyped prose)."""
+    if match["match"] == "rare-token":
+        return duplicate_reason(match["ratio"], match["threshold"])
+    return subject_reason(match["terms"])
+
+
+def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
+    """Refuse an approval-shaped write of a row whose text was rewritten on write.
+
+    Every path that can store or flip an APPROVED row calls this, not only `approve()`:
+    `create(approved=True)`, `import_all` and `approve`. An approved garbled row is not
+    injected (and triage flags it), but storing one approved is a silent decision the
+    operator never made, so the write is refused until the text is reworded. There is no
+    override: DoD 6 says a marked row is unapprovable until reworded.
+    """
+    if not is_garbled(entry):
+        return
+    ident = f"#{entry.id}" if entry.id is not None else f"content {entry.content[:60]!r}"
+    raise MemoryError_(
+        f"{action} refused: {ident} carries a redaction marker or substitution record; "
+        "reword it (PATCH content) before approving: the pipeline would otherwise render "
+        "the garbled text into every future prompt"
+    )
 
 
 # Injection buckets -> (setting name for the cap).
@@ -299,11 +552,16 @@ def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
 
 
 def render_file(session: Session, path: Path) -> None:
-    """Re-render one markdown file from all approved entries that map to it."""
+    """Re-render one markdown file from all approved entries that map to it.
+
+    A garbled entry (one whose text was rewritten on write) is deliberately left out: the
+    current pipeline used to render the marker into every future prompt with no warning.
+    The row stays approved in SQLite; triage reports it as needing a reword.
+    """
     entries = [
         e
         for e in session.exec(select(MemoryEntry).where(MemoryEntry.approved == True))  # noqa: E712
-        if _file_for(e) == path
+        if _file_for(e) == path and not is_garbled(e)
     ]
     entries.sort(key=lambda e: e.id or 0)
     title = path.stem
@@ -312,7 +570,16 @@ def render_file(session: Session, path: Path) -> None:
     path.write_text(f"# {title}\n\n{body}\n" if body else f"# {title}\n")
 
 
-def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+def create(
+    session: Session, data: MemoryCreate, *, override: bool = False
+) -> MemoryEntry:
+    """Create a row. `approved=True` is an APPROVAL and is refused if it would evict.
+
+    The approval gate lives in `approve()`; a creation path that could write an approved row
+    directly would otherwise be the silent-eviction hole T-17 review round 1 found (CLI
+    `memory add --approve`, `POST /api/memory {approved:true}`, `memory import`).
+    """
+    content, redaction_tags = _redact_memory_content(data.content.strip())
     entry = MemoryEntry(
         category=data.category.value,
         scope=data.scope,
@@ -322,17 +589,23 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
         # that shape (an unvalidated object, an import payload, a future caller) with the
         # vocabulary error rather than crashing on `.value`.
         role=getattr(data.role, "value", data.role) or None,
-        content=redact(data.content.strip()),
+        content=content,
         source=data.source,
-        tags_json=sorted(set(data.tags)),
+        tags_json=_combine_tags(data.tags, redaction_tags, preserve_existing=True),
         approved=data.approved,
     )
     _validate(entry)
+    action = f"creating approved entry {entry.content[:60]!r}"
+    evicted: list[dict[str, Any]] = []
+    if entry.approved:
+        _refuse_garbled(entry, action=action)
+        evicted = _refuse_eviction(session, entry, override=override, action=action)
     session.add(entry)
     session.commit()
     session.refresh(entry)
     if entry.approved:
         render_file(session, _file_for(entry))
+        _log_eviction_override(session, action, evicted)
     return entry
 
 
@@ -342,11 +615,19 @@ def suggest_from_handoff(
     source: str,
     project_slug: str | None,
     role: str = "worker",
-) -> list[MemoryEntry]:
-    """The created entries only. Kept for callers that do not read the notes."""
-    return suggest_from_handoff_report(
+    *,
+    report: bool = False,
+) -> list[MemoryEntry] | SuggestionOutcome:
+    """The created entries only, or the full outcome with `report=True`.
+
+    The list-returning default is kept for every existing caller. `report=True` is how a test
+    (or a new caller) sees the duplicate links and substitution notes without changing the
+    shape those callers already use.
+    """
+    outcome = suggest_from_handoff_report(
         session, suggestions, source, project_slug, role=role
-    ).created
+    )
+    return outcome if report else outcome.created
 
 
 def suggest_from_handoff_report(
@@ -366,16 +647,35 @@ def suggest_from_handoff_report(
     injector can read.
     """
     outcome = SuggestionOutcome()
-    existing = {
-        (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
-    }
+    all_entries = list_entries(session)
+    existing = {(e.category, e.scope, e.project_slug, e.content.strip()) for e in all_entries}
+    # The duplicate index is the same rare-token containment triage uses, plus the
+    # identifier-subject matcher (rare words alone miss the topical clusters the operator
+    # measured). Build both document frequencies over every stored entry plus this batch, so
+    # the domain's common words/identifiers are not "rare" merely because a bucket is small
+    # (a whole-text ratio would fuse unrelated facts).
+    suggestion_texts = [s.content for s in suggestions]
+    corpus = [e.content for e in all_entries] + suggestion_texts
+    df = build_df(corpus)
+    tdf = build_term_df(corpus)
+    by_domain: dict[tuple[str, str | None, str | None], list[MemoryEntry]] = {}
+    for e in all_entries:
+        if not e.approved:
+            continue  # only an existing APPROVED fact is a link target
+        domain = (
+            e.category,
+            e.project_slug if e.category == MemoryCategory.project else None,
+            role_file_key(e) if e.category == MemoryCategory.role else None,
+        )
+        by_domain.setdefault(domain, []).append(e)
     for s in suggestions:
         try:
             category = MemoryCategory(s.category)
         except ValueError:
-            outcome.notes.append(
+            outcome.note(
+                "dropped",
                 f"dropped suggestion from {source}: unknown category {s.category!r}; "
-                f"allowed: global|project|role"
+                f"allowed: global|project|role",
             )
             continue
         slug = slugify(s.scope)
@@ -390,17 +690,96 @@ def suggest_from_handoff_report(
             else:
                 scope, note = coerce_scope(category, slug)
                 if note:
-                    outcome.notes.append(f"memory suggestion from {source}: {note}")
+                    outcome.note(
+                        "substituted", f"memory suggestion from {source}: {note}"
+                    )
                 create_role = None
             proj = (
                 slugify(project_slug)
                 if category == MemoryCategory.project and project_slug
                 else None
             )
-            key = (category, scope, proj, redact(s.content.strip()))
+            redacted_content, _ = _redact_memory_content(
+                s.content.strip()
+            )
+            key = (category, scope, proj, redacted_content)
             if key in existing:
+                continue  # byte-identical: no row, exactly as before
+            domain = (
+                category,
+                proj,
+                scope if category == MemoryCategory.role else None,
+            )
+            match = _linked_duplicate(
+                redacted_content, by_domain.get(domain, []), df, tdf
+            )
+            if match is not None:
+                existing_id = match["existing_id"]
+                reason = _duplicate_reason(match)
+                already = next(
+                    (
+                        e
+                        for e in all_entries
+                        if duplicate_of(e) == existing_id
+                        and not e.rejected
+                        and (
+                            is_duplicate_pair(e.content, redacted_content, df)[0]
+                            or is_subject_pair(e.content, redacted_content, tdf)[0]
+                        )
+                    ),
+                    None,
+                )
+                if already is not None:
+                    record = {
+                        "existing_id": existing_id,
+                        "entry_id": already.id,
+                        "content": redacted_content,
+                        "reason": f"already recorded as linked to #{existing_id}",
+                    }
+                    outcome.linked.append(record)
+                    outcome.note(
+                        "linked",
+                        f"linked suggestion from {source} to existing memory #{existing_id} "
+                        f"(already recorded as pending row #{already.id})",
+                    )
+                    continue
+                linked_entry = create(
+                    session,
+                    MemoryCreate(
+                        category=category,
+                        scope=scope,
+                        content=s.content,
+                        project_slug=project_slug if category == MemoryCategory.project else None,
+                        role=create_role,
+                        tags=strip_reserved_tags(s.tags) + _duplicate_tags(match),
+                        source=source,
+                        approved=False,
+                    ),
+                )
+                record = {
+                    "existing_id": existing_id,
+                    "entry_id": linked_entry.id,
+                    "content": redacted_content,
+                    "reason": reason,
+                    "match": match["match"],
+                    "ratio": match.get("ratio"),
+                    "threshold": match.get("threshold"),
+                    "terms": list(match.get("terms", [])),
+                }
+                outcome.linked.append(record)
+                existing.add((category, scope, proj, redacted_content))
+                outcome.note(
+                    "linked",
+                    f"linked suggestion from {source} to existing memory #{existing_id} as "
+                    f"pending row #{linked_entry.id}: {reason}",
+                )
+                all_entries.append(linked_entry)
                 continue
             existing.add(key)
+            # Deliberately NOT added to `by_domain`: only an existing APPROVED fact is a
+            # link target. A row created earlier in this same batch is still pending, so
+            # linking a later suggestion to it would record "linked to existing memory
+            # #X" for an unapproved #X (T-17 review round 3, finding 3).
             outcome.created.append(
                 create(
                     session,
@@ -410,7 +789,7 @@ def suggest_from_handoff_report(
                         content=s.content,
                         project_slug=project_slug if category == MemoryCategory.project else None,
                         role=create_role,
-                        tags=s.tags,
+                        tags=strip_reserved_tags(s.tags),
                         source=source,
                         approved=False,
                     ),
@@ -418,21 +797,77 @@ def suggest_from_handoff_report(
             )
         except (ValueError, MemoryError_) as e:
             # A drop is an operator-visible decision, never a silent `continue`.
-            outcome.notes.append(f"dropped suggestion from {source}: {e}")
+            outcome.note("dropped", f"dropped suggestion from {source}: {e}")
     return outcome
 
 
-def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
+def _linked_duplicate(
+    content: str,
+    candidates: list[MemoryEntry],
+    df: dict[str, int],
+    tdf: dict[str, int],
+) -> dict[str, Any] | None:
+    """The first existing entry that states `content` (or the same subject), as a record.
+
+    Rare-token containment is tried first (`memory_text.is_duplicate_pair`), then the
+    identifier-subject matcher. Both are containment-style predicates on extracted terms;
+    neither is a whole-text similarity ratio, which on this corpus fuses unrelated entries.
+    Deterministic: candidates are in id order. The returned record carries the matcher's own
+    numbers and shared terms, so the tags written to the row can be rebuilt into the reason.
+    """
+    for candidate in candidates:
+        is_dup, ratio, threshold = duplicate_detail(content, candidate.content, df)
+        if is_dup and candidate.id is not None:
+            return {
+                "existing_id": candidate.id,
+                "match": "rare-token",
+                "ratio": ratio,
+                "threshold": threshold,
+                "terms": [],
+            }
+        same_subject, shared = is_subject_pair(content, candidate.content, tdf)
+        if same_subject and candidate.id is not None:
+            return {
+                "existing_id": candidate.id,
+                "match": "subject",
+                "ratio": None,
+                "threshold": None,
+                "terms": list(shared),
+            }
+    return None
+
+
+def update(
+    session: Session, entry_id: int, data: MemoryUpdate, *, override: bool = False
+) -> MemoryEntry:
     """Apply an edit. A scope the caller supplies is checked like at creation; a stored
     legacy scope that is out of vocabulary does not freeze the row.
 
     Validation happens on a throwaway preview BEFORE anything is assigned, so a rejected
     PATCH leaves the stored row and its rendered markdown exactly as they were — the
     "unchanged" guarantee does not depend on session rollback behaviour.
+
+    An edit to an APPROVED row is an approval-shaped write whenever ANY selection-relevant
+    field changes -- content, tags, scope, role or category -- not only when the text grows:
+    pinning a demoted row or moving it into a section with less headroom can push a
+    NEIGHBOUR out just as surely as a longer text (T-17 review round 5, finding 1). A change
+    that only lowers the edited row's own pressure (SAME rendered section, line cost and tag
+    rank both no higher) may demote that row itself -- triage/budget report it -- so its own
+    exclusion is not a refusal. That holds only inside the same section: a scope/role/category
+    MOVE puts the row among different neighbours, where it can rank lowest, so a move goes
+    through the full eviction gate and is refused when the row itself would fall out. A growth
+    edit that pushes itself out is refused too, like an approval that would never be injected.
+    `override=True` is the explicit opt-in and records casualties.
     """
     entry = _get(session, entry_id)
-    new_content = redact(data.content.strip()) if data.content is not None else entry.content
-    new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
+    if data.content is not None:
+        new_content, redaction_tags = _redact_memory_content(data.content.strip())
+    else:
+        new_content = entry.content
+        redaction_tags = [t for t in entry.tags_json if t.startswith(REDACTION_TAG_PREFIX)]
+    new_tags = _combine_tags(
+        data.tags if data.tags is not None else entry.tags_json, redaction_tags
+    )
     preview = MemoryEntry(
         category=entry.category,
         scope=data.scope if data.scope is not None else entry.scope,
@@ -442,6 +877,45 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     )
     _validate(preview, check_scope=data.scope is not None)
     old_file = _file_for(entry)  # before the mutation: the file this row used to render into
+    action = f"editing #{entry.id}"
+    evicted: list[dict[str, Any]] = []
+    if entry.approved:
+        priced = MemoryEntry(
+            id=entry.id,
+            category=entry.category,
+            scope=preview.scope,
+            project_slug=entry.project_slug,
+            role=preview.role,
+            content=new_content,
+            tags_json=new_tags,
+            approved=True,
+        )
+        # An edit that would leave an APPROVED row garbled is refused like every other
+        # approval-shaped write: the pipeline would stop injecting it with no warning.
+        _refuse_garbled(priced, action=action)
+        # ANY selection-relevant change is priced, not only growth. A pin raises this row's
+        # keep rank and a scope/role/category move puts it in another section, either of which
+        # can demote a neighbour; a length-only check misses both. An edit that only lowers
+        # this row's own pressure (cost and tag rank both no higher) may demote ITSELF, which
+        # budget/triage report, so its own exclusion is not a refusal; a growth edit that
+        # pushes itself out still is, like an approval that would never be injected.
+        # "Its own pressure" only holds INSIDE the same rendered section: after a move the row
+        # competes with a different set of neighbours and can rank lowest there, so a move goes
+        # through the full eviction gate with ignore_self=False (T-17 round 6, finding 1).
+        if _selection_relevant_change(entry, priced):
+            lowers_pressure = (
+                _file_for(priced) == old_file
+                and _tag_rank(priced) <= _tag_rank(entry)
+                and _line_tokens(new_content) <= _line_tokens(entry.content)
+            )
+            evicted = _refuse_eviction(
+                session,
+                priced,
+                override=override,
+                action=action,
+                replacing=True,
+                ignore_self=lowers_pressure,
+            )
     entry.content = new_content
     entry.tags_json = new_tags
     entry.scope = preview.scope  # normalized by _validate when a scope was supplied
@@ -452,15 +926,233 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     if entry.approved:
         render_file(session, old_file)
         render_file(session, _file_for(entry))
+        _log_eviction_override(session, action, evicted)
     return entry
 
 
-def approve(session: Session, entry_id: int) -> MemoryEntry:
+class EvictionRefused(MemoryError_):
+    """An approval-shaped write refused because it would demote approved rows.
+
+    Carries the casualty list as structure (`payload`) as well as prose, so the API can put
+    it in the frozen `{"error", "detail"}` body and a GUI can act on the ids instead of
+    matching a substring of the message (T-17 review round 3, finding 4).
+    """
+
+    def __init__(self, message: str, payload: dict[str, Any]):
+        super().__init__(message)
+        self.payload = payload
+
+
+def _selection_relevant_change(stored: MemoryEntry, priced: MemoryEntry) -> bool:
+    """Did an edit change anything the injector selects or orders on?
+
+    Content text (not just its length: rotation-proneness is content-derived), tags (the
+    value rank), scope/role (which section and which role reads the row) and category (the
+    bucket). A pure `updated_at` touch is not included -- it changes no selection.
+    """
+    return (
+        priced.category != stored.category
+        or priced.scope != stored.scope
+        or priced.role != stored.role
+        or priced.content.strip() != stored.content.strip()
+        or sorted(priced.tags_json or []) != sorted(stored.tags_json or [])
+    )
+
+
+def _eviction_impact(
+    session: Session,
+    entry: MemoryEntry,
+    *,
+    treat_as_new: bool,
+    replacing: bool = False,
+    ignore_self: bool = False,
+) -> dict[str, Any]:
+    """Which approved rows `entry` would demote, from the same selection the prompt uses.
+
+    `treat_as_new` is for a row that is not committed yet (create/import): the entry is
+    priced through `also_approved`, and an already-approved row is not double-counted.
+
+    `replacing` is the EDIT shape (T-17 review round 4): the row keeps its id and approval but
+    its new text/tags stand in for the stored row, so the price is computed against the
+    selection with that one row substituted — not added beside itself.
+
+    The row ITSELF is included (`"self": True`) when approving it would leave it out of
+    the injected section. That is the common rot-prone-pending case: the approval would
+    succeed, the CLI would print "approved #N", and nothing would say #N never reaches a
+    prompt. It is a casualty like any other, so it is refused by default and recorded on
+    override.
+
+    `ignore_self` is the EDIT shape: lowering the edited row's own rank inside the SAME
+    rendered section demotes that row, not a neighbour, so triage/budget report it and the
+    edit is allowed without an override. `update()` never passes it for a move, because the
+    row then competes with a different set of neighbours.
+    """
+    if entry.id is not None and entry.approved and not replacing:
+        return {"entry_id": entry.id, "evicted": []}
+    # An uncommitted row has id None, and `_keep_priority` treats None as the OLDEST id, so
+    # pricing it directly would demote the new row itself and report "no eviction". Price a
+    # detached copy with a synthetic newest id instead, without touching the row that will be
+    # inserted (assigning an id on a session-bound object would insert that primary key).
+    priced = entry
+    replace: list[MemoryEntry] | None = None
+    if entry.id is None:
+        newest = max((e.id or 0 for e in list_entries(session)), default=0)
+        priced = MemoryEntry(
+            category=entry.category,
+            scope=entry.scope,
+            project_slug=entry.project_slug,
+            role=entry.role,
+            content=entry.content,
+            tags_json=list(entry.tags_json or []),
+            approved=True,
+        )
+        priced.id = newest + 1
+    elif replacing:
+        replace = [entry]
+    projects: tuple[str | None, ...] = (
+        (priced.project_slug,) if priced.category == MemoryCategory.project else (None,)
+    )
+    evicted: dict[int, dict[str, Any]] = {}
+    for role in (Role.architect.value, Role.worker.value, Role.supervisor.value):
+        for project_slug in projects:
+            before = select_for_prompt(session, role, project_slug)
+            if replace is not None:
+                after = select_for_prompt(
+                    session, role, project_slug, replace_approved=replace
+                )
+            else:
+                after = select_for_prompt(session, role, project_slug, also_approved=[priced])
+            already = {x["id"] for x in before.excluded}
+            for row in after.excluded:
+                if row["id"] in already:
+                    continue
+                is_self = entry.id is not None and row["id"] == entry.id
+                if row["id"] == priced.id and not is_self:
+                    # The synthetic newest id of a create/import price: never a casualty.
+                    continue
+                if is_self and ignore_self:
+                    # An edit may lower its own rank; that is a self-demotion, not an eviction.
+                    continue
+                record = evicted.setdefault(
+                    row["id"],
+                    {
+                        "id": row["id"],
+                        "bucket": row["bucket"],
+                        "scope": row["scope"],
+                        "tokens": row.get("tokens", 0),
+                        "reason": row.get("reason", ""),
+                        "roles": [],
+                        "self": is_self,
+                    },
+                )
+                if is_self:
+                    record["self"] = True
+                if role not in record["roles"]:
+                    record["roles"].append(role)
+    return {"entry_id": entry.id, "evicted": sorted(evicted.values(), key=lambda r: r["id"])}
+
+
+def _casualty_text(row: dict[str, Any]) -> str:
+    if row.get("self"):
+        return (
+            f"#{row['id']} ({row['bucket']}/{row['scope']}; this row itself would not be "
+            "injected)"
+        )
+    return (
+        f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
+        f"{','.join(row['roles']) or 'none'})"
+    )
+
+
+def _log_eviction_override(
+    session: Session, action: str, evicted: list[dict[str, Any]]
+) -> None:
+    """Record the demoted ids when an operator explicitly overrode the eviction gate.
+
+    The approval returned is the ACTUAL result (the row is approved), and this event is
+    what says which approved rows will no longer be injected as a result. Nothing here
+    runs on the refused path, so a refusal is never recorded as an override.
+    """
+    if not evicted:
+        return
+    from orchestrator.services import log_service  # local: keep the module import light
+
+    ids = ", ".join(f"#{row['id']}" for row in evicted)
+    self_ids = [f"#{row['id']}" for row in evicted if row.get("self")]
+    details = f"{action} overrode the eviction guard; demoted from injection: {ids}"
+    if self_ids:
+        details += f" (including the approved row itself: {', '.join(self_ids)})"
+    log_service.log_event(session, "memory_eviction_override", details)
+
+
+def _refuse_eviction(
+    session: Session,
+    entry: MemoryEntry,
+    *,
+    override: bool,
+    action: str,
+    replacing: bool = False,
+    ignore_self: bool = False,
+) -> list[dict[str, Any]]:
+    """Refuse an approval-shaped write that would evict an approved row; return casualties.
+
+    Shared by `create(approved=True)`, `import_all`, `approve()` and any edit to an approved
+    row that changes a selection-relevant field (`replacing=True`; `ignore_self` there only
+    when the row stays in the same rendered section, because such an edit may demote its own
+    row without evicting a neighbour). `override=True` is
+    the explicit operator opt-in; even then nothing is deleted, the evicted rows are reported
+    by budget/triage as not injected and the caller records their ids in a build-log event via
+    `_log_eviction_override`. `action` names the write in the message, so a caller can tell
+    an import refusal from a CLI add.
+    """
+    impact = _eviction_impact(
+        session, entry, treat_as_new=True, replacing=replacing, ignore_self=ignore_self
+    )
+    if not impact["evicted"] or override:
+        return impact["evicted"]
+    casualties = ", ".join(_casualty_text(row) for row in impact["evicted"])
+    payload = {
+        "action": action,
+        "entry_id": impact["entry_id"],
+        "evicted": impact["evicted"],
+    }
+    raise EvictionRefused(
+        f"{action} would evict approved entr"
+        f"{'y' if len(impact['evicted']) == 1 else 'ies'} {casualties} from the injected "
+        "section; nothing was written. Condense/reword first, or repeat with override=true "
+        "(the evicted rows stay approved but are not injected)",
+        payload,
+    )
+
+
+def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+    """Which approved entries a pending approval would demote, and in which section.
+
+    Memory is a zero-sum static section: approving over a cap evicts another approved row.
+    The comparison is the same deterministic selection the prompt will use, so the answer
+    cannot drift from the render.
+    """
     entry = _get(session, entry_id)
+    if entry.approved:
+        return {"entry_id": entry.id, "evicted": []}
+    return _eviction_impact(session, entry, treat_as_new=True)
+
+
+def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+    """Approve a row. Over-cap eviction is refused by default and explained.
+
+    `override=True` is the explicit operator opt-in; even then the evicted rows stay
+    approved in SQLite and are reported by triage/budget, never deleted.
+    """
+    entry = _get(session, entry_id)
+    action = f"approving #{entry.id}"
+    _refuse_garbled(entry, action=action)
+    evicted = _refuse_eviction(session, entry, override=override, action=action)
     entry.approved, entry.rejected, entry.updated_at = True, False, utcnow()
     session.add(entry)
     session.commit()
     render_file(session, _file_for(entry))
+    _log_eviction_override(session, action, evicted)
     return entry
 
 
@@ -737,11 +1429,53 @@ def for_prompt(session: Session, role: str, project_slug: str | None) -> dict[st
     return select_for_prompt(session, role, project_slug).sections
 
 
-def _keep_priority(entry: MemoryEntry) -> tuple[int, int]:
-    """Higher = keep. Durable entries outrank task/round/SHA-shaped ones; within a class,
-    newer (higher id) outranks older. Content-derived only: no clock, no file access, so the
-    rendered text stays byte-identical across calls and does not churn the prompt cache."""
-    return (0 if is_rot_prone(entry.content) else 1, entry.id or 0)
+def _tag_rank(entry: MemoryEntry) -> int:
+    """Explicit operator value: pinned/durable, then tier:1, tier:2/untagged, tier:3."""
+    tags = {t.strip().lower() for t in (entry.tags_json or [])}
+    if tags & PINNED_TAGS:
+        return 4
+    for tag, rank in TIER_TAGS.items():
+        if tag in tags:
+            return rank
+    return DEFAULT_TIER_RANK
+
+
+def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+    """Higher = keep. Pin/tier from `tags_json` first, then content class, then id last.
+
+    No new column: the value signal is the existing tags_json. An untagged set keeps the
+    pre-T-13 behaviour exactly (rot-prone demoted first, then the oldest id), while a
+    pinned entry is demoted last and an unpinned tier:3 entry first. Content-derived only:
+    no clock, no file access, so the rendered text stays byte-identical across calls.
+    """
+    return (
+        _tag_rank(entry),
+        0 if is_rot_prone(entry.content) else 1,
+        entry.id or 0,
+    )
+
+
+def _exclusion_reason(entry: MemoryEntry, bucket: str, budget: int) -> str:
+    tags = {t.strip().lower() for t in (entry.tags_json or [])}
+    if tags & PINNED_TAGS:
+        return (
+            f"pinned/durable but the {bucket} section still cannot fit it within its "
+            f"budget of {budget} tokens"
+        )
+    if "tier:3" in tags:
+        return (
+            f"tagged tier:3 (lowest value) and the {bucket} section is over its budget "
+            f"of {budget} tokens"
+        )
+    if is_rot_prone(entry.content):
+        return (
+            f"rot-prone (names a task/round/SHA) and the {bucket} section is over "
+            f"its budget of {budget} tokens"
+        )
+    return (
+        f"no pinned/durable/tier tag and the {bucket} section is over its budget of "
+        f"{budget} tokens; id #{entry.id} is only the last tiebreak"
+    )
 
 
 def _line_tokens(content: str) -> int:
@@ -754,10 +1488,10 @@ def _select_bucket(
     """Keep entries within `budget` tokens; return (kept sorted by id, excluded with reasons).
 
     `budget <= 0` disables the cap. Rule, stated so it is reviewable: if the bucket already
-    fits, everything is injected. If it does not, demote until it fits -- first the
-    rot-prone entries (task/round/SHA-shaped) oldest-first, then the rest oldest-first.
-    The newest entries are therefore never the ones silently dropped, and every exclusion
-    carries a reason that prompt preview and `orchestrator memory triage` show.
+    fits, everything is injected. If it does not, demote in `_keep_priority` order -- tag
+    value (`pinned`/`durable`, then `tier:1`..`tier:3`), then content class (rot-prone
+    first), and id only as the final tiebreak. `id` is a timestamp proxy, not a measure of
+    worth; every exclusion carries a reason that prompt preview, triage and budget show.
     """
     cost = {e.id: _line_tokens(e.content) for e in entries}
     total = sum(cost.values())
@@ -772,20 +1506,13 @@ def _select_bucket(
             break
         total -= cost[entry.id]
         kept_ids.discard(entry.id)
-        prone = is_rot_prone(entry.content)
         excluded.append(
             {
                 "id": entry.id,
                 "bucket": bucket,
                 "scope": entry.scope,
                 "tokens": cost[entry.id],
-                "reason": (
-                    f"rot-prone (names a task/round/SHA) and the {bucket} section is over "
-                    f"its budget of {budget} tokens"
-                    if prone
-                    else f"oldest of the remaining durable entries while the {bucket} section "
-                    f"is over its budget of {budget} tokens"
-                ),
+                "reason": _exclusion_reason(entry, bucket, budget),
             }
         )
     kept = [e for e in entries if e.id in kept_ids]
@@ -800,6 +1527,7 @@ def select_for_prompt(
     *,
     budgets: dict[str, int] | None = None,
     also_approved: list[MemoryEntry] | None = None,
+    replace_approved: list[MemoryEntry] | None = None,
 ) -> MemorySelection:
     """Approved memory for a role, capped per injected section (see MEMORY_BUDGETS).
 
@@ -807,12 +1535,22 @@ def select_for_prompt(
     calculation only (used by `orchestrator memory triage` to price a batch). Nothing is
     written.
 
+    `replace_approved` is the EDIT what-if: each listed row stands in for the stored row with
+    the same id (same approval, new text/tags), which is how `update()` prices an edit without
+    adding the row beside itself. Nothing is written.
+
+    A garbled entry (redaction marker or substitution record) is reported as excluded and
+    is never injected, because it is not a fact the operator authored.
+
     Memory is a static prompt section, so `prompt_builder.enforce_budget` can never trim it;
     uncapped growth squeezes diff/handoff/verification evidence instead. Capping happens here
     so the squeeze is visible, reviewable and reported.
     """
     budgets = budgets if budgets is not None else memory_budgets(session)
     approved = list_entries(session, status="approved")
+    if replace_approved:
+        replaced = {e.id for e in replace_approved}
+        approved = [e for e in approved if e.id not in replaced] + list(replace_approved)
     if also_approved:
         approved = approved + list(also_approved)
     role_key = ROLE_MEMORY_KEY.get(role, role)
@@ -836,8 +1574,23 @@ def select_for_prompt(
     buckets = {"global": glob, "role": role_mem, "project": proj}
     selection = MemorySelection(budgets=dict(budgets))
     for bucket, entries in buckets.items():
-        kept, excluded = _select_bucket(bucket, entries, budgets.get(bucket, -1))
+        garbled = sorted((e for e in entries if is_garbled(e)), key=lambda e: e.id or 0)
+        usable = [e for e in entries if not is_garbled(e)]
+        kept, excluded = _select_bucket(bucket, usable, budgets.get(bucket, -1))
         selection.excluded.extend(excluded)
+        for e in garbled:
+            selection.excluded.append(
+                {
+                    "id": e.id,
+                    "bucket": bucket,
+                    "scope": e.scope,
+                    "tokens": _line_tokens(e.content),
+                    "reason": (
+                        "contains a redaction marker or substitution record; reword it before "
+                        "it can be injected"
+                    ),
+                }
+            )
         by_scope: dict[str, list[str]] = {}
         for e in kept:
             by_scope.setdefault(e.scope, []).append(e.content.strip())
@@ -862,17 +1615,127 @@ def _budget_warnings(selection: MemorySelection, session: Session | None = None)
             continue
         used = selection.used.get(bucket, 0)
         if used >= frac * cap:
-            demoted = sum(1 for x in selection.excluded if x["bucket"] == bucket)
+            demoted = [x for x in selection.excluded if x["bucket"] == bucket]
+            names = ", ".join(f"#{x['id']}" for x in demoted)
             out.append(
                 f"memory section '{bucket}' is at {used}/{cap} tokens "
                 f"({round(100 * used / cap)}% of its cap)"
-                + (f"; {demoted} approved entry(ies) are already demoted" if demoted else "")
+                + (
+                    f"; already demoted: {names}"
+                    if demoted
+                    else ""
+                )
                 + " - condense or merge entries before approving more"
             )
     return out
 
 
 # ---------------------------------------------------------------- export/import
+
+
+def condense(
+    session: Session,
+    project_slug: str,
+    *,
+    apply_ids: list[int] | None = None,
+    rewrite_content: str | None = None,
+    override: bool = False,
+) -> dict[str, Any]:
+    """Report merge candidates; write only when the caller names the exact ids.
+
+    A dry run (the default) changes no row and no rendered file. `apply_ids` must name the
+    complete id set of one or more proposals (survivor + every absorbed row); a partial or
+    unknown set is refused before anything is written. Applying means `update()` on the
+    survivor and `reject()` on the absorbed rows, both through this module, so redaction and
+    markdown re-rendering stay on the one sanctioned path.
+
+    `project_slug` is required: condense is a per-project operation, and the old optional form
+    grouped global and role rows with project rows into one "proposal". `rewrite_content` is
+    the explicit way to strip task framing while keeping the rule; it is only allowed for one
+    proposal. Without it the proposal's own `content` is written -- for a subject cluster that
+    is the union of every member's text, so no absorbed fact is dropped.
+
+    Losing a fact is worse than keeping a duplicate, so an apply without `--content` is
+    REFUSED whenever the surviving text does not literally contain an absorbed row's content
+    (T-17 review round 4, finding 2). The rare-token branch keeps the survivor's wording, so
+    it can only be applied with an explicit `--content`; the subject branch writes the union
+    and passes. `override` is the same explicit opt-in as the approval gate, needed when the
+    longer survivor would push another approved row out of the capped section.
+    """
+    from orchestrator.services import memory_triage as mt  # local: avoids an import cycle
+
+    proposals = mt.condense_proposals(session, project_slug)
+    result: dict[str, Any] = {
+        "project_slug": project_slug,
+        "proposals": proposals,
+        "applied": [],
+        "dry_run": True,
+    }
+    if not apply_ids:
+        return result
+    try:
+        requested = {int(i) for i in apply_ids}
+    except (TypeError, ValueError) as e:
+        raise MemoryError_(f"--apply needs integer memory ids: {e}") from e
+    known = {i for p in proposals for i in p["ids"]}
+    unknown = sorted(requested - known)
+    if unknown:
+        raise MemoryError_(
+            "refusing to apply: "
+            + ", ".join(f"#{i}" for i in unknown)
+            + " is not part of any current merge candidate (run the dry run first)"
+        )
+    touched = [p for p in proposals if requested & set(p["ids"])]
+    incomplete = [p for p in touched if not set(p["ids"]).issubset(requested)]
+    if incomplete:
+        missing = sorted({i for p in incomplete for i in p["ids"]} - requested)
+        raise MemoryError_(
+            "refusing a partial merge: --apply must also name "
+            + ", ".join(f"#{i}" for i in missing)
+        )
+    if rewrite_content is not None and len(touched) != 1:
+        raise MemoryError_(
+            "--content can rewrite exactly one surviving row; name one proposal's ids"
+        )
+    for proposal in touched:
+        survivor_id = proposal["survivor"]
+        new_content = rewrite_content if rewrite_content is not None else proposal["content"]
+        if rewrite_content is None:
+            # Literal containment, BOTH branches: a reworded duplicate's survivor does not
+            # contain the absorbed wording, so it needs an explicit --content. Never absorb
+            # a row whose text the surviving row does not carry.
+            dropped = [
+                absorbed_id
+                for absorbed_id in proposal["absorbed"]
+                if _get(session, absorbed_id).content.strip() not in new_content
+            ]
+            if dropped:
+                raise MemoryError_(
+                    "refusing to apply: the surviving text of #"
+                    f"{survivor_id} does not contain the content of "
+                    + ", ".join(f"#{i}" for i in dropped)
+                    + "; pass --content carrying every absorbed fact, because losing a fact "
+                    "is worse than keeping a duplicate"
+                )
+        update(
+            session,
+            survivor_id,
+            MemoryUpdate(content=new_content, tags=proposal["tags"]),
+            override=override,
+        )
+        for absorbed_id in proposal["absorbed"]:
+            reject(session, absorbed_id)
+        result["applied"].append(
+            {
+                "survivor": survivor_id,
+                "rejected": proposal["absorbed"],
+                "ids": proposal["ids"],
+                "distinct_facts": proposal["distinct_facts"],
+                "tokens_saved": proposal["tokens_saved"],
+            }
+        )
+    result["dry_run"] = False
+    return result
 
 
 def export_all(session: Session) -> dict[str, Any]:
@@ -918,7 +1781,7 @@ def _import_keys(
     return keys
 
 
-def import_all(session: Session, payload: dict[str, Any]) -> int:
+def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
     """Import entries; skips duplicates (same category/scope/project/role/content).
 
     T-4: an export written before scope validation existed carries free-form scopes, so the
@@ -926,6 +1789,9 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     mistake — and the duplicate check runs on BOTH the stored and the REPAIRED scope, so
     importing a legacy export neither duplicates a row that is still awaiting `fix-scopes`
     nor re-adds anything on a second pass.
+
+    An imported APPROVED row is an approval and is refused by default when it would evict an
+    already-approved row (`override=True` restores the old restore-the-backup behaviour).
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise MemoryError_("invalid memory export: expected {'entries': [...]}")
@@ -933,9 +1799,10 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     for e in list_entries(session):
         existing |= _import_keys(e.category, e.scope, e.project_slug, e.role, e.content)
     count = 0
+    overridden: list[dict[str, Any]] = []
     touched: set[Path] = set()
     for raw in payload["entries"]:
-        content = redact(str(raw.get("content", "")).strip())
+        content, redaction_tags = _redact_memory_content(str(raw.get("content", "")).strip())
         category = raw.get("category")
         if not content or category not in {c.value for c in MemoryCategory}:
             continue
@@ -946,7 +1813,9 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             role=raw.get("role"),
             content=content,
             source=raw.get("source", "import"),
-            tags_json=list(raw.get("tags_json") or []),
+            tags_json=_combine_tags(
+                list(raw.get("tags_json") or []), redaction_tags, preserve_existing=True
+            ),
             approved=bool(raw.get("approved")),
             rejected=bool(raw.get("rejected")),
         )
@@ -959,6 +1828,12 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             _validate(entry)
         except MemoryError_:
             continue
+        if entry.approved:
+            action = f"importing approved entry {content[:60]!r}"
+            _refuse_garbled(entry, action=action)
+            overridden.extend(
+                _refuse_eviction(session, entry, override=override, action=action)
+            )
         key = (entry.category, entry.scope, entry.project_slug, entry.role, entry.content)
         existing |= raw_keys | {key}
         session.add(entry)
@@ -968,6 +1843,7 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     session.commit()
     for path in touched:
         render_file(session, path)
+    _log_eviction_override(session, "importing an approved memory export", overridden)
     return count
 
 

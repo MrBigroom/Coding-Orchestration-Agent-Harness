@@ -1,0 +1,70 @@
+# HEAD=fc7429917746cc3410ab51805fc0255e51efbb71 mode=full
+# command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
+1443:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+1432:def _tag_rank(entry: MemoryEntry) -> int:
+804:def _linked_duplicate(
+207:def duplicate_of(entry: MemoryEntry) -> int | None:
+218:def duplicate_record(entry: MemoryEntry) -> dict[str, Any] | None:
+262:def _duplicate_tags(match: dict[str, Any]) -> list[str]:
+200:def is_garbled(entry: MemoryEntry) -> bool:
+169:def _redact_memory_content(text: str) -> tuple[str, list[str]]:
+933:class EvictionRefused(MemoryError_):
+962:def _eviction_impact(
+1088:def _refuse_eviction(
+315:def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
+1067:def _log_eviction_override(
+1128:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+573:def create(
+840:def update(
+946:def _selection_relevant_change(stored: MemoryEntry, priced: MemoryEntry) -> bool:
+906:            lowers_pressure = (
+917:                ignore_self=lowers_pressure,
+904:        # through the full eviction gate with ignore_self=False (T-17 round 6, finding 1).
+917:                ignore_self=lowers_pressure,
+968:    ignore_self: bool = False,
+985:    `ignore_self` is the EDIT shape: lowering the edited row's own rank inside the SAME
+1033:                if is_self and ignore_self:
+1095:    ignore_self: bool = False,
+1100:    row that changes a selection-relevant field (`replacing=True`; `ignore_self` there only
+1109:        session, entry, treat_as_new=True, replacing=replacing, ignore_self=ignore_self
+1715:                    f"{survivor_id} does not contain the content of "
+1021:                    session, role, project_slug, replace_approved=replace
+1530:    replace_approved: list[MemoryEntry] | None = None,
+1538:    `replace_approved` is the EDIT what-if: each listed row stands in for the stored row with
+1551:    if replace_approved:
+1552:        replaced = {e.id for e in replace_approved}
+1553:        approved = [e for e in approved if e.id not in replaced] + list(replace_approved)
+1141:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+1636:def condense(
+1784:def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
+400:def duplicate_groups(entries: list[MemoryEntry]) -> list[list[int]]:
+472:def condense_proposals(session: Session, project_slug: str) -> list[dict[str, Any]]:
+111:_FLAG_LABELS["redaction-marker"] = (
+311:        out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
+594:    if "redaction-marker" in codes:
+116:_FLAG_LABELS["linked-duplicate"] = (
+320:        out.append({"code": "linked-duplicate", "detail": detail})
+585:    if "linked-duplicate" in codes:
+587:            (f["detail"] for f in flags if f["code"] == "linked-duplicate"), "an approved entry"
+71:SUBJECT_MAX_DF = 6
+252:    text: str, tdf: dict[str, int], *, max_df: int = SUBJECT_MAX_DF
+263:    max_df: int = SUBJECT_MAX_DF,
+286:    max_df: int = SUBJECT_MAX_DF,
+258:def is_subject_pair(
+283:def subject_clusters(
+457:_SUGGESTION_EVENT_BY_KIND = {
+488:            _SUGGESTION_EVENT_BY_KIND.get(record.kind, SUGGESTION_EVENT_FALLBACK),
+1085:    log_service.log_event(session, "memory_eviction_override", details)
+1472:def memory_condense(
+1191:def memory_approve(
+144:def approve_memory(
+122:def update_memory(
+140:          <Card title="Injection caps">
+74:  // section) is refused (400) with the casualties in `detail.evicted`. Show that list and
+29:function casualtyLines(detail: EvictionDetail | undefined): string[] {
+82:      const lines = casualtyLines(detail ?? undefined);
+29:    this.detail = detail;
+81:      const detail = e instanceof ApiError ? (e.detail as EvictionDetail | null) : null;
+134:    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"} · approving over a cap is refused with the casualty list in the error detail and offers an explicit override</div>${demoted}</div>
+65:    // flow can act on detail.evicted instead of matching a substring of the message.
+145:          const rows = detail && Array.isArray(detail.evicted) ? detail.evicted : [];

@@ -171,14 +171,59 @@ cap of `0` disables that one section. `memory_budget_warn_fraction` (default `0.
 warns before anything is dropped.
 
 Demotion rule, stated so it is reviewable: if a section fits, every approved entry is
-injected. If it does not, entries are demoted **rot-prone first (names a task/round/commit),
-then oldest first** — the newest durable entries are never the ones silently dropped.
-Demotion is reporting, not deletion: the row stays approved in SQLite and is simply left out
-of the render. Every exclusion surfaces as a warning in prompt preview
-(`orchestrator prompt-preview`, the GUI Prompt Cache page) and in `orchestrator memory budget`.
+injected. If it does not, entries are demoted in **value order**, and `id` is only the last
+tiebreak. The value signal is the existing `tags_json` column — no new column and no
+migration:
 
-Selection depends on entry content and ids only — no clock, no file access — so a rendered
-section stays byte-identical between calls and does not churn the prompt cache.
+1. `pinned` (or `durable`) is kept longest.
+2. `tier:1` outranks `tier:2` (also the value of an untagged entry) and `tier:2` outranks
+   `tier:3`, so an unpinned `tier:3` entry is demoted first.
+3. Within one tag rank, a rot-prone entry (one that names a task/round/commit) is demoted
+   before a durable one, and the older id goes before the newer one.
+
+This is intentional: **an id is a timestamp proxy, not a measure of worth**, so approving a
+new suggestion can never evict a load-bearing row merely because the row is older. Tag the
+rows you cannot afford to lose (`PATCH /api/memory/{id}` with `{"tags": ["pinned"]}`, or
+`orchestrator memory add ... --tag pinned`).
+
+Demotion is reporting, not deletion: the row stays approved in SQLite and is simply left out
+of the render. Every exclusion names its casualty and reason in prompt preview
+(`orchestrator prompt-preview`, the GUI Prompt Cache page), `orchestrator memory triage`
+(`excluded_now`), `orchestrator memory budget` (per role "demoted by cap"), and the GUI
+Memory page's Injection caps panel.
+
+Approve is **refused by default** when it would evict an already-approved row, and also when
+it would leave the row being approved out of the injected section (a rot-prone or `tier:3`
+pending row can be demoted the moment it enters a full section — approving it used to print
+`approved #N` while #N was never injected). The response names every entry at risk and the
+section it would leave. The same gate covers every other approval-shaped write —
+`orchestrator memory add --approve`, `POST /api/memory {"approved": true}`, `memory
+import`, and an **edit to an approved row that changes any selection-relevant field**
+(content, tags, scope, role or category — `PATCH /api/memory/{id}`, and a
+`condense --apply`/`--content` that rewrites a surviving row) — because a path that could
+write an approved row, make one grow, or raise its value rank / move it into a tighter
+section would otherwise be a silent eviction hole. A change that only *lowers* the edited
+row's own rank **inside the same rendered section** demotes that row, not a neighbour, so
+it is allowed without an override and is reported by budget/triage like any other
+demotion. A scope/role/category move is never treated that way: the row then competes with
+a different set of neighbours, so it goes through the full gate and is refused when the
+moved row itself would fall out of the section. Markdown import (`memory import
+--markdown`) only ever creates **pending** rows, so it cannot
+evict anything; the later `approve` is gated like any other. `PATCH /api/memory/{id}` has no
+`approved` field at all, and a PATCH that would turn an approved row garbled is refused.
+`orchestrator memory approve ID --override` /
+`POST /api/memory/{id}/approve?override=true` (and `--override` on `memory
+add`/`memory import`/`memory condense --apply`, `POST /api/memory?override=true`,
+`PATCH /api/memory/{id}?override=true`) is the explicit opt-in. The refusal
+is an HTTP 400 whose frozen `{"error", "detail"}` body carries the casualty list as
+**structure** in `detail.evicted` (`id`, `bucket`, `scope`, `tokens`, `reason`, `roles`,
+`self`), and both GUIs render that list before asking for the override — neither keys the
+flow on a substring of the message. An override records the demoted ids in the build-log
+event `memory_eviction_override`; even then the rows stay approved and are reported, never
+deleted. Condense or reword first.
+
+Selection depends on entry content, tags and ids only — no clock, no file access — so a
+rendered section stays byte-identical between calls and does not churn the prompt cache.
 
 ## Triage (read-only)
 
@@ -205,29 +250,126 @@ Flags per entry:
 | `contradicts-live-config` | claims, e.g., no test command while `projects.test_command` is set |
 | `unknown-project` | `project_slug` matches no registered project |
 
-Groupings: a **duplicate group** is two pending rows whose rare content words overlap by
-≥50%; **amend candidates** are approved rows sharing ≥2 code entities. Duplication is
-measured with rare-token containment, never a whole-text ratio — on a single-project corpus
-every pair shares the domain vocabulary (measured: 461 of 595 pending pairs above 0.72 while
-the true duplicate count was zero), so ratio dedup collapses unrelated entries.
+Groupings: a **duplicate group** is two rows that state the same fact. Two signals are used,
+neither of them a whole-text similarity ratio:
+
+- **rare-token containment** — the smaller entry's rare content-word set is at least half
+  contained in the other's;
+- **rare-identifier subject** — both rows share at least two rare identifier terms (a code
+  symbol such as `prompt_builder._floor_head`, a path, a filename, or a CLI flag such as
+  `--at-tip`). Rare means the term appears in at most `SUBJECT_MAX_DF` (6) of the compared
+  rows, so domain furniture such as `verify-evidence` or `handoff.md` cannot link two facts.
+
+Subject clusters are **star-shaped**: a member has to match the group's anchor directly, so
+A–B and B–C does not merge A into C. Transitive entity unions are deliberately not used —
+they once grouped two unrelated facts that merely shared `handoff.json`. The subject pass
+exists because the operator measured that the pending pile restates the same subject in
+different words without the rare-word sets lining up (three entries restating the evidence
+freshness rule, four restating the diff-floor arithmetic), while a bag-of-words ratio flagged
+461 of 595 pending pairs at 0.72 when the true duplicate count was zero. **Amend candidates**
+are still approved rows sharing ≥2 code entities.
 
 Suggested actions (advisory, one per entry): `fix-stale`, `rewrite-durable`, `merge`,
 `amend`, `split`, `verify-claims`, `approve`. Triage never writes: approving and rejecting
 stay explicit (`memory approve|reject`, the GUI, `POST /api/memory/{id}/approve`), so the
 gate remains human by construction.
 
+A row with a `redaction-marker` flag (one whose text was rewritten on write) is reported as
+garbled, cannot be approved, and is left out of both the prompt section and the rendered
+markdown until it is reworded. Every approval-shaped write enforces this, not only
+`memory approve`: `memory add --approve`, `POST /api/memory {"approved": true}` and
+`memory import` of an approved garbled row are refused, so the pipeline cannot store an
+approved row whose text it will not inject.
+
+## Condensing memory
+
+```bash
+orchestrator memory condense --project myapp          # dry run: proposals, token delta, ids
+orchestrator memory condense --project myapp --json   # the same report as JSON
+orchestrator memory condense --project myapp --apply 12 --apply 13
+orchestrator memory condense --project myapp --apply 12 --apply 13 --content "the durable rule"
+```
+
+`condense` groups **approved rows of one project** by the same duplicate group triage shows
+(rare-token containment plus the star-shaped rare-identifier subject clusters) and chooses
+the survivor with the injection value order above. `--project` is required: an earlier,
+optional form could group global and role rows with project rows. It prints the survivor,
+every absorbed id, the proposed content and the token delta
+(`tokens_after - tokens_before`).
+
+Losing a fact is worse than keeping a duplicate, so an apply **without `--content` is refused
+whenever the surviving text does not literally contain an absorbed row's content**. A rare-token
+duplicate group keeps the survivor's wording, which does not contain the reworded absorbed row,
+so that branch can only be applied with an explicit merged `--content`. A subject cluster may
+group rows that state **different facts**, so its proposed content is the union of every
+member's text (`distinct_facts=true`) and it passes that check: an `--apply` can never silently
+drop an absorbed rule. Use `--content` to rewrite a cluster into one tighter durable statement
+(the way to strip task framing while keeping the rule). If the longer surviving row would evict
+another approved entry from the capped section, the apply is refused like any other growing
+edit; `--override` is the explicit opt-in.
+
+The default is non-destructive: a dry run changes no row, no approval state and no markdown.
+`--apply` writes only when it names the **complete** id set of a proposal (survivor plus every
+absorbed row); a partial or unknown id set is refused before anything is written. Applying
+means `memory_service.update` on the survivor and `memory_service.reject` on the absorbed
+rows, so redaction and markdown re-rendering stay on the one sanctioned path. `--content`
+rewrites the surviving row in the same call (use it to strip task framing and keep the rule);
+it is also the only way to apply a rare-token duplicate, whose survivor text does not contain
+the absorbed wording.
+
 ## Approval workflow
 
 1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
-   (`{category, scope, content, tags}`).
-2. The orchestrator stores them as **pending** and skips exact duplicates of existing
-   entries. Content is redacted before storage.
+   (`{category, scope, content, tags}`). Suggestion tags are **untrusted model output**, so
+   the reserved namespaces are stripped at ingest: `pinned`/`durable`, any `tier:`, any
+   `duplicate-` prefix (including a forged `duplicate-of:` link) and
+   `redaction-substitution:`. Ordinary tags are kept; the harness appends its own link tags
+   after the filter. Only the operator can pin or tier a row (`memory add --tag`,
+   `PATCH /api/memory/{id}`), and export/import round-trips those operator tags unchanged.
+2. The orchestrator stores them as **pending**. A byte-identical suggestion creates no row.
+   A restatement of an existing **approved** entry in the same domain (category, project or
+   role file) is **recorded as linked**: it is stored as a normal pending row whose
+   `tags_json` carries `duplicate-of:<existing id>`, and `SuggestionOutcome.linked` records
+   the existing id, the new row id, the content and the reason. A row created earlier in the
+   same batch is still pending, so it is never a link target — the link always names an
+   approved entry. It is never auto-rejected —
+   discarding a suggestion without an operator command would be a silent ingest decision —
+   and triage flags it `linked-duplicate` with a `merge` suggestion. Ingest tries rare-token
+   containment first, then the rare-identifier subject matcher (the same two signals triage
+   uses); neither is a whole-text ratio, and the `duplicate_reason`/`subject_reason` text is
+   built from the matcher's actual numbers and shared terms. A repeat restatement already
+   recorded against the same entry adds no new row. The chat notice and the build log event
+   `memory_suggestion_linked` name the anchor and the new row. The rest of the record lives in
+`tags_json` next to the link — `duplicate-match:rare-token|subject`, `duplicate-ratio:…`,
+`duplicate-threshold:…` and `duplicate-terms:…` (terms joined with the ASCII unit separator,
+so a term containing a comma still round-trips) — so triage rebuilds the reason **from the
+row** (the `linked-duplicate` flag and the `duplicate_link` field) instead of relying on the
+transient outcome or the build log.
 3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →
    memory tab, `orchestrator memory approve|reject ID`, or `POST /api/memory/{id}/approve`.
    An entry whose scope was substituted is still pending, and the build log says which
    scope it was filed under. `orchestrator memory list` marks any row no prompt can read.
 4. Approving re-renders the matching markdown file. Rejecting keeps the row (marked
    `rejected`) so the suggestion doesn't come back.
+
+## Storage is not log redaction
+
+Memory content is operator-authored durable text. The one redaction control
+(`utils/redaction.py`) still runs on write so real credentials never reach a prompt, but a
+rewrite is **recorded per entry** instead of being silent: `tags_json` gains
+`redaction-substitution:<pattern>:count=<n>:lines=<where>`, and `memory_triage` flags the row
+`redaction-marker`. Such a row is not injected and not rendered into markdown until it is
+reworded (PATCH the content), and it cannot be stored or approved as an `approved` row by
+any path. Log, review-payload and command-preview redaction are unchanged; this only stops a
+benign `KEY: value`-shaped phrase from being silently eaten in memory.
+
+## Lifecycle fields are not here yet
+
+`supersedes` and `stale_after` would need new columns on the frozen `memory_entries` table,
+so they ship only as `docs/contract-change-request-T13-memory-lifecycle.md` plus written
+operator approval. No Alembic revision in this task touches `memory_entries`. The current,
+weaker mechanism is content-derived: the `absolute_date`, `forward_looking` and
+`task_shape` flags demote a row first but never retire it.
 
 ## Export / import
 

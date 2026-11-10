@@ -36,7 +36,9 @@ from orchestrator.utils.memory_text import (
     is_duplicate_pair,
     referenced_paths,
     rot_flags,
+    subject_clusters,
 )
+from orchestrator.utils.slug import slugify
 from orchestrator.utils.truncate import estimate_tokens
 
 TRIAGE_ROLES = (Role.architect, Role.worker, Role.supervisor)
@@ -104,6 +106,16 @@ _UNMERGED = re.compile(
     r"\b(?:pending merge|not yet merged|not merged yet|still unmerged|awaiting merge)\b", re.I
 )
 _FLAG_LABELS = dict(ROT_FLAGS)
+# A memory entry whose text was rewritten on write is not a fact the operator authored. It is
+# reported and kept out of every prompt/markdown render until it is reworded (DoD 6b).
+_FLAG_LABELS["redaction-marker"] = (
+    "contains a redaction marker or a substitution record; reword it before it is injected"
+)
+# A row recorded at ingest as a restatement of an approved entry. It is a real pending row,
+# never an automatic rejection: the operator approves, merges or rejects it explicitly.
+_FLAG_LABELS["linked-duplicate"] = (
+    "recorded at ingest as a restatement of an approved entry; approve only if it adds a fact"
+)
 # Codes that mean "this entry asserts something that is not true right now".
 _HARD_STALE = frozenset(
     {"contradicts-live-config", "stale-branch-claim", "stale-merge-claim", "unknown-project"}
@@ -295,6 +307,17 @@ def audit_entry(
     out: list[dict[str, str]] = [
         {"code": c, "detail": _FLAG_LABELS.get(c, c)} for c in rot_flags(entry.content)
     ]
+    if memory_service.is_garbled(entry):
+        out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
+    linked = memory_service.duplicate_of(entry)
+    if linked is not None:
+        # The link AND its evidence live in tags_json, so the reason is shown ON THE ROW here
+        # instead of only in the transient ingest outcome and the build log (round-4 F3).
+        record = memory_service.duplicate_record(entry) or {"reason": None}
+        detail = f"recorded at ingest as a restatement of #{linked}"
+        if record.get("reason"):
+            detail += f": {record['reason']}"
+        out.append({"code": "linked-duplicate", "detail": detail})
     project = _project_for(session, entry)
     if entry.category == "project" and not project:
         out.append(
@@ -375,11 +398,17 @@ def audit_entry(
 
 
 def duplicate_groups(entries: list[MemoryEntry]) -> list[list[int]]:
-    """Pending groups that state the same fact in different words.
+    """Groups that state the same fact: rare-token containment, then rare-identifier subject.
 
-    Uses rare-token containment, never a whole-text ratio: on a single-project corpus every
-    pair shares the domain vocabulary, and ratio-based dedup collapses everything (measured:
-    461 of 595 pairs above 0.72 while the true duplicate count was zero).
+    Rare-word containment is the original, high-precision signal. On this corpus it misses
+    the topical clusters the operator measured (three entries restating the evidence
+    freshness rule, four restating the diff floor arithmetic): each round's Worker re-derives
+    the lesson in its own words, so the rare word sets do not line up. The second pass adds
+    star-shaped subject clusters keyed on rare IDENTIFIER terms (code symbols, paths, files,
+    CLI flags). Neither pass is a whole-text similarity ratio: on a single-project corpus
+    every pair shares the domain vocabulary (measured: 461 of 595 pending pairs above 0.72
+    while the true duplicate count was zero), and a transitive entity union would fuse
+    unrelated facts that merely share `handoff.json`.
     """
     if len(entries) < 2:
         return []
@@ -404,7 +433,14 @@ def duplicate_groups(entries: list[MemoryEntry]) -> list[list[int]]:
     groups: dict[int, list[int]] = {}
     for e in entries:
         groups.setdefault(find(e.id), []).append(e.id)
-    return sorted((sorted(g) for g in groups.values() if len(g) > 1), key=lambda g: g[0])
+    rare_groups = sorted(
+        (sorted(g) for g in groups.values() if len(g) > 1), key=lambda g: g[0]
+    )
+    covered = {i for group in rare_groups for i in group}
+    rest = [e for e in entries if e.id not in covered]
+    rest.sort(key=memory_service._keep_priority, reverse=True)
+    subject_groups = subject_clusters(rest)
+    return sorted(rare_groups + subject_groups, key=lambda g: g[0])
 
 
 def related_approved(
@@ -433,6 +469,103 @@ def related_approved(
     return hits[:3]
 
 
+def condense_proposals(session: Session, project_slug: str) -> list[dict[str, Any]]:
+    """Approved PROJECT rows that propose one surviving row, with the merge text it would write.
+
+    Read-only. `project_slug` is required because a proposal is scoped to one project's
+    memory: passing None used to group global and role rows together, which is how two
+    unrelated facts that merely shared `handoff.json` became a "merge candidate" (review round
+    1). Grouping uses the rare-token duplicate groups plus the star-shaped subject clusters
+    from `duplicate_groups`; a survivor is chosen by the SAME value order injection uses
+    (`memory_service._keep_priority`), so a pinned row is never the one dropped.
+
+    Every proposal carries the content `memory_service.condense` would write. A rare-token
+    duplicate group can safely keep the survivor's text (the absorbed rows restate it), but a
+    subject cluster groups rows that may state DIFFERENT facts, so its proposed content is the
+    union of every member's text (`distinct_facts=True`). Applying without `--content` can
+    therefore never silently drop a fact; rewriting is how the operator condenses it.
+    """
+    slug = slugify(project_slug)
+    approved = [
+        e
+        for e in memory_service.list_entries(session, status="approved", project_slug=slug)
+        if e.category == "project"
+        and e.project_slug == slug
+        and not memory_service.is_garbled(e)
+    ]
+    if len(approved) < 2:
+        return []
+    by_id = {e.id: e for e in approved if e.id is not None}
+
+    def line_tokens(content: str) -> int:
+        return estimate_tokens(f"- {content.strip()}\n")
+
+    proposals: list[dict[str, Any]] = []
+    # Same scope only: a scope decides which roles receive the note (gotchas go to
+    # Worker+Supervisor, conventions to Architect+Worker, decisions to Architect+Supervisor).
+    # Merging a gotcha into a conventions survivor would silently re-route the absorbed fact
+    # to the Architect, which is exactly the audience change the memory vocabulary prevents.
+    candidate_groups: list[list[int]] = []
+    for scope in sorted({e.scope for e in approved}):
+        candidate_groups.extend(
+            duplicate_groups([e for e in approved if e.scope == scope])
+        )
+    for group in sorted(candidate_groups, key=lambda g: g[0]):
+        members = [by_id[i] for i in group if i in by_id]
+        if len(members) < 2:
+            continue
+        survivor = max(members, key=memory_service._keep_priority)
+        absorbed = sorted(
+            (e for e in members if e.id != survivor.id), key=lambda e: e.id or 0
+        )
+        df = build_df([e.content for e in members])
+        duplicate_absorbed = [
+            e for e in absorbed if is_duplicate_pair(survivor.content, e.content, df)[0]
+        ]
+        distinct_facts = len(duplicate_absorbed) != len(absorbed)
+        if distinct_facts:
+            # Union, survivor first, each fact once: --apply without --content can never drop
+            # an absorbed row's rule. The operator can still pass --content to rewrite it.
+            seen: dict[str, None] = {}
+            for e in [survivor, *absorbed]:
+                if e.content.strip() not in seen:
+                    seen[e.content.strip()] = None
+            content = " ".join(seen)
+            shared = set.intersection(
+                *(entity_terms(e.content) for e in members)
+            )
+            reason = (
+                "shares rare identifiers"
+                + (": " + ", ".join(sorted(shared)[:6]) if shared else "")
+                + "; distinct facts, so the proposal keeps every member's text"
+            )
+        else:
+            content = survivor.content.strip()
+            reason = "restates the same fact in different words"
+        ids = [survivor.id] + [e.id for e in absorbed]
+        tokens_before = sum(line_tokens(e.content) for e in members)
+        tokens_after = line_tokens(content)
+        proposals.append(
+            {
+                "survivor": survivor.id,
+                "absorbed": [e.id for e in absorbed],
+                "ids": ids,
+                "scopes": sorted({e.scope for e in members}),
+                "project_slug": slug,
+                "reason": reason,
+                "content": content,
+                "distinct_facts": distinct_facts,
+                "tags": sorted({t for e in members for t in (e.tags_json or [])}),
+                "tokens_before": tokens_before,
+                "tokens_after": tokens_after,
+                "token_delta": tokens_after - tokens_before,
+                "tokens_saved": tokens_before - tokens_after,
+            }
+        )
+    proposals.sort(key=lambda p: (p["survivor"] or 0))
+    return proposals
+
+
 def _suggest(
     flags: list[dict[str, str]],
     dups: list[int],
@@ -449,6 +582,21 @@ def _suggest(
     section as four unrelated rows each needing a merge.
     """
     codes = {f["code"] for f in flags}
+    if "linked-duplicate" in codes:
+        link = next(
+            (f["detail"] for f in flags if f["code"] == "linked-duplicate"), "an approved entry"
+        )
+        return (
+            "merge",
+            f"{link}; recorded as a pending row, so approve it only if it adds a fact, "
+            "otherwise reject or merge it",
+        )
+    if "redaction-marker" in codes:
+        return (
+            "rewrite-durable",
+            "its text was rewritten on write; reword it so the fact is stored verbatim "
+            "before it can be approved or injected",
+        )
     if codes & _HARD_STALE:
         return (
             "fix-stale",
@@ -524,9 +672,12 @@ def triage(
                 "tokens": tokens,
                 "flags": flags,
                 "duplicates_of": dups,
+                "duplicate_of": memory_service.duplicate_of(e),
+                "duplicate_link": memory_service.duplicate_record(e),
                 "amend_candidates": amends,
                 "suggested_action": action,
                 "reason": reason,
+                "garbled": memory_service.is_garbled(e),
                 "excerpt": e.content[:160],
             }
         )

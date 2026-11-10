@@ -153,3 +153,95 @@ def test_memory_triage_and_budget_commands(home, tmp_path):
 
     b = runner.invoke(app, ["memory", "budget", "--project", "demo"])
     assert b.exit_code == 0 and "caps" in b.output
+
+
+def test_memory_add_approve_over_the_cap_is_refused_unless_override(home, monkeypatch):
+    from orchestrator.core import config as config_mod
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    common = ["--category", "project", "--scope", "gotchas", "--project", "demo"]
+    assert runner.invoke(app, ["memory", "add", "Keep rule " + "alpha " * 10, *common, "--approve"]).exit_code == 0
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", "20")
+    config_mod.reset_settings_cache()
+
+    refused = runner.invoke(
+        app, ["memory", "add", "New approved rule " + "gamma " * 10, *common, "--approve"]
+    )
+    assert refused.exit_code == 1, refused.output
+    assert "nothing was written" in refused.output
+    assert "override" in refused.output
+    accepted = runner.invoke(
+        app,
+        ["memory", "add", "New approved rule " + "gamma " * 10, *common, "--approve", "--override"],
+    )
+    assert accepted.exit_code == 0, accepted.output
+
+
+def test_memory_add_by_the_operator_keeps_a_pinned_tag(home):
+    """Reserved tags are stripped only from UNTRUSTED suggestions, never from the operator."""
+    from orchestrator.core import db as db_mod
+    from orchestrator.services import memory_service
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    added = runner.invoke(
+        app,
+        [
+            "memory", "add", "Operator pinned rule about the scheduler.",
+            "--category", "project", "--scope", "gotchas", "--project", "demo",
+            "--tag", "pinned", "--tag", "tier:2",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+    with db_mod.session_scope() as s:
+        rows = [
+            e for e in memory_service.list_entries(s)
+            if e.content == "Operator pinned rule about the scheduler."
+        ]
+    assert len(rows) == 1
+    assert rows[0].tags_json == ["pinned", "tier:2"]
+
+
+def test_memory_condense_requires_a_project(home):
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    missing = runner.invoke(app, ["memory", "condense"])
+    assert missing.exit_code == 2
+
+
+def test_memory_condense_is_a_dry_run_until_apply_names_the_ids(home):
+    import json
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    for content in (
+        "The wrapper must resolve the interpreter inside the worktree before running tests.",
+        "Resolve the interpreter inside the worktree before running tests with the wrapper.",
+    ):
+        assert runner.invoke(
+            app,
+            [
+                "memory", "add", content,
+                "--category", "project", "--scope", "gotchas",
+                "--project", "demo", "--approve",
+            ],
+        ).exit_code == 0
+
+    dry = runner.invoke(app, ["memory", "condense", "--project", "demo"])
+    assert dry.exit_code == 0, dry.output
+    assert "dry run" in dry.output and "proposal keep" in dry.output
+
+    report = runner.invoke(app, ["memory", "condense", "--project", "demo", "--json"])
+    data = json.loads(report.output[report.output.index("{"):])
+    proposal = data["proposals"][0]
+    args = ["memory", "condense", "--project", "demo"]
+    for entry_id in proposal["ids"]:
+        args += ["--apply", str(entry_id)]
+    # A rare-token duplicate keeps the survivor's wording, which does not contain the
+    # absorbed row's text: without merged --content the apply must refuse (round-4 F2).
+    refused = runner.invoke(app, args)
+    assert refused.exit_code == 1, refused.output
+    # Rich wraps the message: compare on whitespace-collapsed text, not raw output lines.
+    assert "does not contain the content of" in " ".join(refused.output.split())
+    applied = runner.invoke(
+        app, args + ["--content", "Resolve the interpreter in the worktree before tests."]
+    )
+    assert applied.exit_code == 0, applied.output
+    assert "applied: kept" in applied.output

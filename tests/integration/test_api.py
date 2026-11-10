@@ -144,6 +144,101 @@ def test_memory_budget_and_triage_endpoints_are_read_only(client, tmp_path):
     assert client.get("/api/memory/triage", params={"status": "bogus"}).status_code == 422
 
 
+def test_approval_eviction_is_refused_and_override_is_explicit(client, monkeypatch):
+    """DoD 7c: the response names the casualty, and only an explicit override approves it."""
+    from orchestrator.core import config as config_mod
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.schemas import MemoryCreate
+    from orchestrator.services import memory_service
+    from orchestrator.utils.truncate import estimate_tokens
+
+    def tokens(entry):
+        return estimate_tokens(f"- {entry.content.strip()}\n")
+
+    with session_scope() as s:
+        keep = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Keep rule " + "alpha " * 10, approved=True,
+            ),
+        )
+        risk = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="At-risk rule " + "beta " * 10, approved=True,
+            ),
+        )
+        pending = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="New rule " + "gamma " * 10, approved=False,
+            ),
+        )
+        cap = tokens(keep) + tokens(risk)
+        pending_id = pending.id
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", str(cap))
+    config_mod.reset_settings_cache()
+    with session_scope() as s:
+        casualty = memory_service.approval_impact(s, pending_id)["evicted"][0]["id"]
+
+    refused = client.post(f"/api/memory/{pending_id}/approve")
+    assert refused.status_code == 400
+    body = refused.json()
+    assert f"#{casualty} (" in body["error"]
+    # DoD 7c/finding 4: the casualty list is STRUCTURE in the frozen error body, so a GUI
+    # never has to match a substring of the prose to offer the override.
+    assert [row["id"] for row in body["detail"]["evicted"]] == [casualty]
+    assert body["detail"]["evicted"][0]["bucket"] == "project"
+    approved = client.post(f"/api/memory/{pending_id}/approve", params={"override": "true"})
+    assert approved.status_code == 200 and approved.json()["approved"] is True
+
+
+def test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit(
+    client, monkeypatch
+):
+    """DoD 7c also covers `POST /api/memory {approved: true}`, not only the approve route."""
+    from orchestrator.core import config as config_mod
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.schemas import MemoryCreate
+    from orchestrator.services import memory_service
+    from orchestrator.utils.truncate import estimate_tokens
+
+    def tokens(content):
+        return estimate_tokens(f"- {content}")
+
+    with session_scope() as s:
+        keep = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Keep rule " + "alpha " * 10, approved=True,
+            ),
+        )
+        keep_id = keep.id
+        cap = tokens(keep.content)
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", str(cap))
+    config_mod.reset_settings_cache()
+
+    body = {
+        "category": "project",
+        "scope": "gotchas",
+        "project_slug": "demo",
+        "content": "New approved rule " + "gamma " * 10 + " that is far too long for the cap.",
+        "approved": True,
+    }
+    refused = client.post("/api/memory", json=body)
+    assert refused.status_code == 400
+    body_json = refused.json()
+    assert f"#{keep_id} (" in body_json["error"]
+    assert [row["id"] for row in body_json["detail"]["evicted"]] == [keep_id]
+
+    accepted = client.post("/api/memory", params={"override": "true"}, json=body)
+    assert accepted.status_code == 201 and accepted.json()["approved"] is True
+
+
 def test_triage_flags_an_unregistered_project(client):
     client.post(
         "/api/memory",
@@ -388,3 +483,54 @@ def test_one_time_schedule_api(client):
     past = {**body, "run_at": "2020-01-02T09:00"}
     assert client.post("/api/schedules/validate", json=past).json()["valid"] is False
     assert client.post("/api/schedules", json={"name": "past", **past}).status_code == 400
+
+
+def test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail(client, monkeypatch):
+    """Round-4 F4: the PATCH edit path is gated too, with the same structured 400 body."""
+    from orchestrator.core import config as config_mod
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.schemas import MemoryCreate
+    from orchestrator.services import memory_service
+    from orchestrator.utils.truncate import estimate_tokens
+
+    def tokens(entry):
+        return estimate_tokens(f"- {entry.content.strip()}\n")
+
+    with session_scope() as s:
+        keep = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Keep rule " + "alpha " * 10, approved=True,
+            ),
+        )
+        edited = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Edited rule " + "beta " * 10, approved=True,
+            ),
+        )
+        cap = tokens(keep) + tokens(edited)
+        edited_id, keep_id = edited.id, keep.id
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", str(cap))
+    config_mod.reset_settings_cache()
+
+    longer = "Edited rule " + "beta " * 30
+    refused = client.patch(f"/api/memory/{edited_id}", json={"content": longer})
+    assert refused.status_code == 400
+    body = refused.json()
+    assert set(body) == {"error", "detail"}
+    assert body["detail"]["action"] == f"editing #{edited_id}"
+    casualties = {row["id"]: row for row in body["detail"]["evicted"]}
+    assert keep_id in casualties
+    # The longer edit can also push the edited row itself out; both are named, and the
+    # self-casualty is flagged as structure.
+    assert casualties[edited_id]["self"] is True
+    assert client.get("/api/memory?scope=gotchas").json()[0]["content"] != longer
+
+    ok = client.patch(
+        f"/api/memory/{edited_id}", params={"override": "true"}, json={"content": longer}
+    )
+    assert ok.status_code == 200
+    assert ok.json()["content"] == longer.strip()

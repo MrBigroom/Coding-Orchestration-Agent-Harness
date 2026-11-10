@@ -54,6 +54,30 @@ _ENTITY = re.compile(
     r"|\b[A-Za-z_][A-Za-z0-9_\-]*\.(?:py|md|sh|ts|tsx|js|jsx|json|sql|toml|html|txt|log|lock)\b"
 )
 
+# ---------------------------------------------------------------- subject dedup
+#
+# Rare-word containment alone is not enough on this corpus: the operator measured that the
+# pending pile restates the same SUBJECT (a code symbol, a file, a CLI flag, a rule) in
+# different words without the rare word sets lining up ("three entries restate the evidence
+# freshness rule", "four restate the diff floor arithmetic"). Whole-text similarity is worse
+# still -- a bag-of-words ratio flagged 461 of 595 pending pairs at 0.72 while the true
+# duplicate count was zero -- so subject grouping is keyed on IDENTIFIER-shaped terms, not on
+# prose overlap, and it is star-shaped rather than transitive (see `subject_clusters`).
+
+#: A pair of entries is the same fact when the smaller rare-word set is at least half contained.
+DUPLICATE_CONTAINMENT_THRESHOLD = 0.5
+#: Identifier terms in more than this many entries are domain furniture (`verify-evidence`,
+#: `handoff.md`, `coding-orchestrator`), not a subject: sharing them must not link two rows.
+SUBJECT_MAX_DF = 6
+#: Two rows are the same subject when they share at least this many RARE identifier terms.
+SUBJECT_MIN_SHARED = 2
+#: A dotted name, a hyphenated compound, a path or a filename: `prompt_builder._floor_head`,
+#: `evidence-freshness`, `verify-evidence/<task>`, `timing.txt`.
+_IDENT_COMPOUND = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[_.\-/][A-Za-z0-9<>]+)+")
+#: A CLI flag such as `--at-tip` or `--check` is a subject the operator can search for.
+_CLI_FLAG = re.compile(r"--[a-z][a-z0-9\-]{2,}")
+_BACKTICK = re.compile(r"`([^`]{2,80})`")
+
 ROT_FLAGS: tuple[tuple[str, str], ...] = (
     ("task_shape", "names a task/phase/round - true only while that task is open"),
     ("bare_sha", "contains a commit SHA - rot-prone and unreadable once history moves"),
@@ -152,16 +176,141 @@ def rare_words(text: str, df: dict[str, int], max_df: int = 3) -> set[str]:
     return {w for w in content_words(text) if df.get(w, 0) <= max_df}
 
 
-def is_duplicate_pair(a: str, b: str, df: dict[str, int]) -> tuple[bool, float]:
+def duplicate_detail(
+    a: str, b: str, df: dict[str, int], *, threshold: float = DUPLICATE_CONTAINMENT_THRESHOLD
+) -> tuple[bool, float, float]:
+    """(is_duplicate, containment, threshold) -- the threshold is data, not prose.
+
+    A reason string must name the comparison that produced it, so the caller builds it from
+    this returned threshold instead of hardcoding a copy that can drift from the matcher.
+    """
+    ra, rb = rare_words(a, df), rare_words(b, df)
+    if not ra or not rb:
+        return False, 0.0, threshold
+    shared = len(ra & rb)
+    c = token_containment(shared, len(ra), len(rb))
+    return c >= threshold, round(c, 3), threshold
+
+
+def is_duplicate_pair(
+    a: str, b: str, df: dict[str, int], *, threshold: float = DUPLICATE_CONTAINMENT_THRESHOLD
+) -> tuple[bool, float]:
     """True when one entry's rare words are ~fully contained in the other's.
 
     Bag-of-words ratios are useless on this corpus (every pair shares the domain
     vocabulary); rare-token containment is what separates 'same fact, new wording' from
     'different fact, same subject'.
     """
-    ra, rb = rare_words(a, df), rare_words(b, df)
-    if not ra or not rb:
-        return False, 0.0
-    shared = len(ra & rb)
-    c = token_containment(shared, len(ra), len(rb))
-    return c >= 0.5, round(c, 3)
+    is_dup, ratio, _threshold = duplicate_detail(a, b, df, threshold=threshold)
+    return is_dup, ratio
+
+
+def duplicate_reason(ratio: float, threshold: float) -> str:
+    """The recorded reason for a rare-token link, derived from the matcher's own numbers."""
+    return (
+        f"rare-token containment {ratio:.3f} >= {threshold:.2f} identifies the same fact "
+        "in new words"
+    )
+
+
+def subject_terms(text: str) -> set[str]:
+    """Identifier-shaped subject terms: code symbols, paths, filenames and CLI flags.
+
+    Deliberately not prose words: `prompt_builder` and `--at-tip` name a subject, while
+    `the`, `diff` and `file` only name the domain. Backticked spans keep their whole form
+    (``orchestrator task evidence <id> --at-tip``) so a command-shaped subject matches as
+    one term, and a dotted/path compound also contributes the parts that can be searched
+    (``prompt_builder._floor_head`` -> ``prompt_builder``, ``_floor_head``).
+    """
+    out: set[str] = set()
+    for span in _BACKTICK.findall(text or ""):
+        span = span.strip().lower().rstrip(".,;:)")
+        if len(span) > 3 and re.search(r"[_.\-/]", span):
+            out.add(span)
+    for compound in _IDENT_COMPOUND.findall(text or ""):
+        name = compound.lower().rstrip("/")
+        if len(name) > 3:
+            out.add(name)
+            for part in re.split(r"[_.\-/]", name):
+                if len(part) > 3 and not part.isdigit():
+                    out.add(part)
+    for flag in _CLI_FLAG.findall(text or ""):
+        out.add(flag.lower())
+    return out
+
+
+def build_term_df(texts: Iterable[str]) -> dict[str, int]:
+    """Document frequency of identifier terms, the basis for 'rare identifier'."""
+    df: dict[str, int] = {}
+    for text in texts:
+        for term in subject_terms(text):
+            df[term] = df.get(term, 0) + 1
+    return df
+
+
+def rare_subject_terms(
+    text: str, tdf: dict[str, int], *, max_df: int = SUBJECT_MAX_DF
+) -> set[str]:
+    """Identifier terms specific enough to identify a subject rather than the domain."""
+    return {t for t in subject_terms(text) if tdf.get(t, 0) <= max_df}
+
+
+def is_subject_pair(
+    a: str,
+    b: str,
+    tdf: dict[str, int],
+    *,
+    max_df: int = SUBJECT_MAX_DF,
+    min_shared: int = SUBJECT_MIN_SHARED,
+) -> tuple[bool, tuple[str, ...]]:
+    """(is_same_subject, shared rare identifiers). Never a whole-text ratio."""
+    shared = rare_subject_terms(a, tdf, max_df=max_df) & rare_subject_terms(
+        b, tdf, max_df=max_df
+    )
+    return len(shared) >= min_shared, tuple(sorted(shared))
+
+
+def subject_reason(shared: Iterable[str]) -> str:
+    """The recorded reason for a subject link, derived from the actual shared terms."""
+    terms = list(shared)
+    return (
+        f"shares {len(terms)} rare identifier term(s) "
+        f"({', '.join(terms[:5])}) with the existing entry; subject duplicate, not a "
+        "whole-text ratio"
+    )
+
+
+def subject_clusters(
+    entries: list,
+    *,
+    max_df: int = SUBJECT_MAX_DF,
+    min_shared: int = SUBJECT_MIN_SHARED,
+) -> list[list[int]]:
+    """Star-shaped subject clusters: each member matches the anchor, never a chain.
+
+    `entries` must already be in value order (highest first) -- the anchor is the row the
+    caller would keep, so a pinned row can never be absorbed into a weaker one. Transitive
+    entity unions are deliberately NOT used: A-B and B-C still leaves A and C apart, which
+    is the false merge the operator's live set exposed (two unrelated facts sharing only
+    `handoff.json`).
+    """
+    usable = [e for e in entries if getattr(e, "id", None) is not None]
+    if len(usable) < 2:
+        return []
+    tdf = build_term_df([e.content for e in usable])
+    rare = {e.id: rare_subject_terms(e.content, tdf, max_df=max_df) for e in usable}
+    assigned: set[int] = set()
+    groups: list[list[int]] = []
+    for anchor in usable:
+        if anchor.id in assigned:
+            continue
+        members = [anchor.id]
+        for other in usable:
+            if other.id == anchor.id or other.id in assigned:
+                continue
+            if len(rare[anchor.id] & rare[other.id]) >= min_shared:
+                members.append(other.id)
+        if len(members) > 1:
+            assigned.update(members)
+            groups.append(sorted(members))
+    return sorted(groups, key=lambda g: g[0])
