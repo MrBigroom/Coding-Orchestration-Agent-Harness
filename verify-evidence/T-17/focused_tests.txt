@@ -1,5 +1,5 @@
-# HEAD=08f89c06cd384a352233eaf02ed04ba0657edfe0 mode=full
-# command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + migration drift)
+# HEAD=ec93c6cd4e22e2867afbe1f3db01651149a56449 mode=full
+# command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
 tests/unit/test_memory_lifecycle.py::test_a_byte_identical_suggestion_still_creates_no_row PASSED
@@ -145,4 +145,63 @@ tests/integration/test_memory_scope_boundary.py::test_cli_list_prints_an_uninjec
 tests/integration/test_memory_scope_boundary.py::test_cli_import_repairs_a_legacy_export_scope PASSED
 tests/integration/test_migrations.py::test_upgrade_downgrade_populated_db PASSED
 tests/integration/test_migrations.py::test_models_match_migration PASSED
-============================= 144 passed ==============================
+tests/integration/test_cli.py::test_init_doctor_and_lists PASSED        
+tests/integration/test_cli.py::test_task_lifecycle_commands PASSED      
+tests/integration/test_cli.py::test_project_doctor_run_commands_flag PASSED
+tests/integration/test_cli.py::test_demo_and_cleanup_dry_run PASSED     
+tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSED
+tests/integration/test_cli.py::test_reset_requires_flag PASSED          
+tests/integration/test_cli.py::test_memory_triage_and_budget_commands PASSED
+tests/integration/test_cli.py::test_memory_add_approve_over_the_cap_is_refused_unless_override PASSED
+tests/integration/test_cli.py::test_memory_condense_requires_a_project PASSED
+tests/integration/test_cli.py::test_memory_condense_is_a_dry_run_until_apply_names_the_ids PASSED
+tests/integration/test_api.py::test_health PASSED                       
+tests/integration/test_api.py::test_startup_upgrades_existing_database PASSED
+tests/integration/test_api.py::test_task_creation_and_validation PASSED 
+tests/integration/test_api.py::test_dry_run_does_not_execute PASSED     
+tests/integration/test_api.py::test_artifact_path_traversal_blocked PASSED
+tests/integration/test_api.py::test_memory_endpoints_flow PASSED        
+tests/integration/test_api.py::test_memory_budget_and_triage_endpoints_are_read_only PASSED
+tests/integration/test_api.py::test_approval_eviction_is_refused_and_override_is_explicit PASSED
+tests/integration/test_api.py::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit PASSED
+tests/integration/test_api.py::test_triage_flags_an_unregistered_project PASSED
+tests/integration/test_api.py::test_prompt_preview_endpoint_detects_bad_order PASSED
+tests/integration/test_api.py::test_providers_never_expose_secrets PASSED
+tests/integration/test_api.py::test_settings_merge_gate_defaults_and_validation PASSED
+tests/integration/test_api.py::test_gui_commands_disabled_by_default PASSED
+tests/integration/test_api.py::test_project_doctor_route_stays_static PASSED
+tests/integration/test_api.py::test_token_auth PASSED                   
+tests/integration/test_api.py::test_websocket_streams_run_logs PASSED   
+tests/integration/test_api.py::test_fallback_ui_served PASSED           
+tests/integration/test_api.py::test_agents_api PASSED                   
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/health-headers0] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/health-headers1] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/health-headers2] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/health-headers3] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/health-headers4] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/settings-headers0] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/settings-headers1] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/settings-headers2] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/settings-headers3] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/settings-headers4] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/adapters-headers0] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/adapters-headers1] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/adapters-headers2] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/adapters-headers3] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/api/adapters-headers4] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/-headers0] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/-headers1] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/-headers2] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/-headers3] PASSED
+tests/integration/test_api.py::test_other_websites_are_refused_everywhere[/-headers4] PASSED
+tests/integration/test_api.py::test_refused_requests_change_nothing PASSED
+tests/integration/test_api.py::test_local_clients_are_allowed[headers0] PASSED
+tests/integration/test_api.py::test_local_clients_are_allowed[headers1] PASSED
+tests/integration/test_api.py::test_local_clients_are_allowed[headers2] PASSED
+tests/integration/test_api.py::test_local_clients_are_allowed[headers3] PASSED
+tests/integration/test_api.py::test_local_clients_are_allowed[headers4] PASSED
+tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers0] PASSED
+tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers1] PASSED
+tests/integration/test_api.py::test_a_token_replaces_the_local_host_check PASSED
+tests/integration/test_api.py::test_one_time_schedule_api PASSED        
+============================= 203 passed =============================

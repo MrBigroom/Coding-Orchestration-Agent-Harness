@@ -1,4 +1,4 @@
-# HEAD=08f89c06cd384a352233eaf02ed04ba0657edfe0 mode=full
+# HEAD=ec93c6cd4e22e2867afbe1f3db01651149a56449 mode=full
 # command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
 1096:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
 1085:def _tag_rank(entry: MemoryEntry) -> int:
