@@ -66,9 +66,9 @@ instead of `mapping.synced_version + 1`. A record edited three times before its 
 push therefore produced a permanent 400 on every cycle. Re-measured on 2026-11-11 before the
 fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
 (7,388 version-transition lines in total; the others are the same defect at other local revisions
-such as `9 -> 14`), `sync_entities` held 1,426 rows, and `sync_state` held exactly one key,
-`device_id` (written 2026-10-28). Retrying could never succeed because nothing on either side
-changed.
+such as `9 -> 14`), `sync_entities` held 1,431 rows (1,426 when the task was filed), and
+`sync_state` held exactly one key, `device_id` (written 2026-10-28). Retrying could never succeed
+because nothing on either side changed.
 
 After the fix, the transport sends `p_expected_version = synced_version` and
 `p_version = synced_version + 1`, then records the version that actually landed as both `version`
@@ -115,7 +115,8 @@ succeeds.
 **Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
 signature. The first occurrence logs once, with a traceback; identical repeats only increment
 `sync_health.log_occurrences` and are logged at DEBUG, and a different signature logs again and
-restarts the count. This is what keeps a permanent 400 from writing 6,682 tracebacks.
+restarts the count. This is what keeps a permanent 400 from writing thousands of tracebacks
+(6,682 at filing, 7,000 identical `0 -> 3` lines when re-measured).
 
 ## Conflict rules
 
