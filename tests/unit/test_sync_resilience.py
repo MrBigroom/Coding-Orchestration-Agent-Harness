@@ -108,6 +108,25 @@ async def _run_until(reached: asyncio.Event, runner: SyncRunner) -> None:
         await task
 
 
+def test_response_status_classification_separates_permanent_from_transient():
+    """The 400 that stopped cloud sync is permanent; 5xx/408/429 are retryable."""
+    def response(status_code: int, message: str) -> httpx.Response:
+        return httpx.Response(status_code, json={"message": message})
+
+    permanent = SupabaseSyncClient._response_error(
+        response(400, "invalid version transition: 0 -> 3")
+    )
+    assert isinstance(permanent, SyncPermanentError)
+    assert permanent.detail["kind"] == "permanent"
+    assert permanent.detail["recovery"] == "orchestrator sync reinit --dry-run"
+
+    for status_code in (500, 503, 408, 429):
+        transient = SupabaseSyncClient._response_error(response(status_code, "unavailable"))
+        assert isinstance(transient, SyncTransientError)
+        assert transient.detail["kind"] == "transient"
+        assert transient.detail["retryable"] is True
+
+
 def test_backoff_sequence_doubles_until_the_cap_and_resets_when_healthy():
     assert [backoff_seconds(n, 30.0, 900.0) for n in range(0, 8)] == [
         0.0, 30.0, 60.0, 120.0, 240.0, 480.0, 900.0, 900.0,

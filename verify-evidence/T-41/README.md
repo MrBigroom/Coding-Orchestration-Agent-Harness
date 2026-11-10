@@ -69,14 +69,15 @@ and are not hashed as measurements.
    identical failures and `log_occurrences == 2`.
 6. **Offline tests (a)-(f).** `tests/unit/test_sync_resilience.py`,
    `tests/integration/test_sync_api.py`, `tests/integration/test_cli.py`. (a) permanent 400 stops
-   and records; (b) the capped-backoff sequence plus the running loop retrying a 5xx; (c) dedupe
-   counter; (d) CLI and API status; (e) dry-run/apply reinit then a legal push, plus the
-   remote-ahead refusal; (f) an enabled sync that has never run initialises and succeeds. No
-   network: fake clients and `httpx.MockTransport`.
+   and records; (b) the capped-backoff sequence, the running loop retrying a 5xx, and the
+   transport classification (400 permanent vs 500/503/408/429 transient); (c) dedupe counter;
+   (d) CLI and API status; (e) dry-run/apply reinit then a legal push, plus the remote-ahead
+   refusal; (f) an enabled sync that has never run initialises and succeeds. No network: fake
+   clients and `httpx.MockTransport`.
 7. **Docs.** `docs/cloud-sync.md` covers the SQL-backed protocol, rejection meaning, reinit,
    permanent-stop vs transient-retry/notify, and the dedupe rule; `README.md` Known limitations
    states what sync does not guarantee and how a stop or transient streak is surfaced; the
    `sync_failed` notification default is in `docs/configuration.md` and `docs/decisions.md`.
 8. **Full suite and lint via `./scripts/orch_verify.sh`**, stamped at the code HEAD in
-   `full_suite.txt` (905 passed, 10 skipped) / `lint.txt` (`All checks passed!`), with this map in
+   `full_suite.txt` (906 passed, 10 skipped) / `lint.txt` (`All checks passed!`), with this map in
    the same evidence-only commit.
