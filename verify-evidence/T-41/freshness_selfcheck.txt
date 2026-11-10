@@ -1,0 +1,18 @@
+# Self-check written LAST by the one bundle pass (not hand-edited, no HEAD
+# stamp: it certifies the files around it; the gate reports the committed view).
+# command: orchestrator task evidence T-41
+mode=fast
+only=all files this pass produces
+# rewrites and wall time are reported by that command; this file records only
+# what the check saw, so a no-op second run is byte-identical.
+basis=worktree
+scope=every evidence file except manifest.json and this file
+commit_under_verification=f52a32f4b3b031ed92ca8031887c59840d51f790
+compared_commit=f52a32f4b3b031ed92ca8031887c59840d51f790
+status=pass
+stamped_files=5
+stale_count=0
+deleted_count=0
+evidence=5 stamped evidence file(s) fresh at f52a32f (f52a32f4b3b031ed92ca8031887c59840d51f790)
+notes=none
+committed_view=the stamps name this HEAD; the commit adding this bundle must be evidence-only, and the gate then reports pass with that explanation; run `orchestrator task evidence <id> --at-tip` at the delivered tip for the committed-view record (see tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).

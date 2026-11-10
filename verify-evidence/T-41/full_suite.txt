@@ -1,0 +1,4 @@
+# HEAD=f52a32f4b3b031ed92ca8031887c59840d51f790 mode=fast
+# command: ./scripts/orch_verify.sh test
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41
+899 passed, 10 skipped in 144.88s (0:02:24)

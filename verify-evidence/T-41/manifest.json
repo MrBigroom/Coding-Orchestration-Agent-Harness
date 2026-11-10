@@ -1,0 +1,45 @@
+{
+  "command": "verify-evidence/T-41/capture.sh",
+  "files": [
+    {
+      "path": "freshness_selfcheck.txt",
+      "sha256": "c1a18998b545f4c29f098c371c894ba4ab7d2f9452964c8369fa3c95875fcff9"
+    },
+    {
+      "path": "full_suite.txt",
+      "sha256": "0d456265108304703e5c19e2896855c2e8b66c2be9495500efcbf4e57e4e84f8"
+    },
+    {
+      "path": "lint.txt",
+      "sha256": "54e84c2138aca49e8f74bfd6dd29f591c0fd46fb699b045cdfef50bdce3098d1"
+    },
+    {
+      "path": "source_anchors.txt",
+      "sha256": "8f98dee5c7349fa8248f040997b8bdb799281d9cef19200e6fb0cb88851745a4"
+    },
+    {
+      "path": "t41_tests.txt",
+      "sha256": "336640ef1881c7e727c1e06b3d3852438bc3b904be291dd006d3c624d45f92c7"
+    },
+    {
+      "path": "tsc_web.txt",
+      "sha256": "4598fe0b4be3da327bd1ad2465a91a76a4f03451cff0bf8a631b0952dad3a673"
+    }
+  ],
+  "generated_at": "2026-11-10T17:38:50Z",
+  "generator": "verify-evidence/T-41/capture.sh",
+  "head": "f52a32f4b3b031ed92ca8031887c59840d51f790",
+  "head_short": "f52a32f",
+  "inputs": [
+    "capture.sh"
+  ],
+  "label": "T-41",
+  "mode": "fast",
+  "only": [],
+  "stamp": "# HEAD=f52a32f4b3b031ed92ca8031887c59840d51f790 mode=fast",
+  "tool_versions": {
+    "git": "git version 2.56.0",
+    "pytest": "9.1.1",
+    "python": "3.13.15"
+  }
+}

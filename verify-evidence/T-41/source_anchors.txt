@@ -1,0 +1,69 @@
+# HEAD=f52a32f4b3b031ed92ca8031887c59840d51f790 mode=fast
+# command: git show HEAD:<file> | grep -nE '<anchor>'
+
+## src/orchestrator/services/sync_transport.py
+27:class SyncPermanentError(SyncTransportError):
+42:class SyncTransientError(SyncTransportError):
+217:            next_version = mapping.synced_version + 1
+225:                    "p_version": next_version,
+254:    async def remote_versions(self) -> dict[str, int]:
+
+## src/orchestrator/services/sync_runner.py
+42:def backoff_seconds(
+119:            "stopped": health["stopped"],
+126:    def _record_failure(self, exc: Exception) -> dict[str, Any]:
+174:                "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
+186:    def _notify_if_needed(self, health: dict[str, Any]) -> bool:
+206:                log_service.log_event(session, "sync_failed", details, role="system")
+218:            log_service.log_event(session, "sync_failed", details, role="system")
+268:                elif health["stopped"]:
+281:                        if not health["stopped"]:
+
+## src/orchestrator/services/sync_service.py
+236:SYNC_HEALTH_KEY = "sync_health"
+254:def health(session: Session) -> dict[str, Any]:
+256:    stored = get_state(session, SYNC_HEALTH_KEY, {})
+266:    set_state(session, SYNC_HEALTH_KEY, values)
+276:def reinitialise(
+290:    conflicts_skipped = 0
+293:            conflicts_skipped += 1
+296:        version = synced + 1 if mapping.dirty else synced
+309:            mapping.synced_version = synced
+319:        "conflicts_skipped": conflicts_skipped,
+
+## src/orchestrator/core/notification_vocab.py
+55:    "sync_failed": _t(
+56:        "sync_failed", "Cloud sync needs attention",
+
+## src/orchestrator/api/routes/sync.py
+21:    return {**sync_runner.status(session), **sync_service.status(session)}
+31:    except SyncError as exc:
+36:            status_code=400, content={"error": str(exc), "detail": detail}
+
+## src/orchestrator/cli.py
+1594:def sync_status() -> None:
+1607:def sync_reinit(
+1625:            return await client.remote_versions()
+1630:        result = sync_service.reinitialise(s, versions, dry_run=not apply)
+
+## src/orchestrator/api/static_fallback/index.html
+214:      ? `<div class="err">Cloud sync stopped: ${esc(sync.stopped_reason || sync.last_failure_error || "unknown reason")}. Run orchestrator sync reinit --dry-run, then --apply, or retry with sync now.</div>`
+215:      : `<p class="muted">Cloud sync: ${sync.enabled ? "automatic" : "manual"} · ${esc(sync.consecutive_failures || 0)} consecutive failure(s)${sync.last_failure_error ? " · " + esc(sync.last_failure_error) : ""}</p>`;
+
+## web/src/pages/Settings.tsx
+28:  consecutive_failures: number;
+33:  stopped_reason: string | null;
+63:  ["notification_sync_failed", "Cloud sync needs attention", false],
+188:                      <dd className={sync.consecutive_failures ? "text-bad" : ""}>{sync.consecutive_failures}</dd>
+198:                        Automatic sync is stopped: {sync.stopped_reason ?? sync.last_failure_error ?? "unknown reason"}
+205:                    {!sync.stopped && sync.consecutive_failures > 0 && (
+207:                        {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
+
+## docs/cloud-sync.md
+42:## Version protocol and rejected transitions (T-41)
+62:A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
+78:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+83:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
+84:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
+110:attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
+113:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
