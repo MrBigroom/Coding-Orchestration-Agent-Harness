@@ -230,6 +230,97 @@ def mark_synced(session: Session, mapping: SyncEntity) -> None:
     session.commit()
 
 
+# Device-local health lives in the existing key/value sync_state table: no migration and no
+# change to which entities sync. `sync_state` is deliberately never cloud-synchronized, so a
+# stopped loop on one device cannot stop another. The key is additive data, not a new column.
+SYNC_HEALTH_KEY = "sync_health"
+HEALTH_DEFAULTS: dict[str, Any] = {
+    "consecutive_failures": 0,
+    "last_failure_at": None,
+    "last_failure_kind": None,
+    "last_failure_error": None,
+    "stopped": False,
+    "stopped_reason": None,
+    "stopped_at": None,
+    "next_retry_at": None,
+    "backoff_seconds": 0.0,
+    "log_occurrences": 0,
+    "last_logged_error": None,
+    "streak_notified": False,
+    "stop_notified": False,
+}
+
+
+def health(session: Session) -> dict[str, Any]:
+    """Read the additive sync health record; a device that never ran reads as healthy."""
+    stored = get_state(session, SYNC_HEALTH_KEY, {})
+    values = dict(HEALTH_DEFAULTS)
+    if isinstance(stored, dict):
+        values.update(stored)
+    return values
+
+
+def write_health(session: Session, **changes: Any) -> dict[str, Any]:
+    values = health(session)
+    values.update(changes)
+    set_state(session, SYNC_HEALTH_KEY, values)
+    session.commit()
+    return values
+
+
+def clear_health(session: Session) -> dict[str, Any]:
+    """A successful cycle clears the streak, the stop, and the dedupe counter together."""
+    return write_health(session, **HEALTH_DEFAULTS)
+
+
+def reinitialise(
+    session: Session, remote_versions: dict[str, int], *, dry_run: bool = True
+) -> dict[str, Any]:
+    """Re-baseline local version counters to remote truth; never edits synchronized payloads.
+
+    The remote version is a per-entity compare-and-swap counter. A local mapping is only allowed
+    to present ``synced_version + 1`` on its next push. When the two sides disagree (restored
+    database, a lost push, the legacy `0 -> 3` drift), this aligns ``synced_version`` with the
+    version the remote actually holds and leaves a dirty record's payload pending. Rows with an
+    unresolved payload conflict are reported and left untouched: silently discarding one side is
+    not a version repair. With ``dry_run`` the plan is returned and no row or health key is
+    written, so an operator can inspect it first.
+    """
+    changes: list[dict[str, Any]] = []
+    conflicts_skipped = 0
+    for mapping in session.exec(select(SyncEntity)):
+        if mapping.conflict_json is not None:
+            conflicts_skipped += 1
+            continue
+        synced = int(remote_versions.get(mapping.uuid, 0))
+        version = synced + 1 if mapping.dirty else synced
+        if mapping.synced_version == synced and mapping.version == version:
+            continue
+        changes.append(
+            {
+                "entity_type": mapping.entity_type,
+                "entity_id": mapping.uuid,
+                "local_id": mapping.local_id,
+                "synced_version": [mapping.synced_version, synced],
+                "version": [mapping.version, version],
+            }
+        )
+        if not dry_run:
+            mapping.synced_version = synced
+            mapping.version = version
+            session.add(mapping)
+    if not dry_run:
+        session.commit()
+        clear_health(session)
+    return {
+        "dry_run": dry_run,
+        "changes": changes,
+        "change_count": len(changes),
+        "conflicts_skipped": conflicts_skipped,
+        "health_cleared": not dry_run,
+    }
+
+
 def status(session: Session) -> dict[str, int]:
     rows = list(session.exec(select(SyncEntity)))
     return {

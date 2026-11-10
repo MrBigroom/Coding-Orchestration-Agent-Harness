@@ -245,3 +245,38 @@ def test_memory_condense_is_a_dry_run_until_apply_names_the_ids(home):
     )
     assert applied.exit_code == 0, applied.output
     assert "applied: kept" in applied.output
+
+
+def test_sync_status_reports_a_stopped_streak(home):
+    from orchestrator.core.db import session_scope
+    from orchestrator.services import sync_service
+
+    runner.invoke(app, ["init"])
+    with session_scope() as session:
+        sync_service.write_health(
+            session,
+            consecutive_failures=3,
+            last_failure_kind="permanent",
+            last_failure_error="Supabase returned HTTP 400: invalid version transition: 0 -> 3",
+            stopped=True,
+            stopped_reason="permanent client error: invalid version transition: 0 -> 3",
+        )
+    result = runner.invoke(app, ["sync", "status"])
+    assert result.exit_code == 0, result.output
+    assert '"stopped": true' in result.output
+    assert '"consecutive_failures": 3' in result.output
+    assert "invalid version transition: 0 -> 3" in result.output
+
+
+def test_sync_reinit_is_a_dry_run_by_default(home, monkeypatch):
+    from orchestrator.services.sync_transport import SupabaseSyncClient
+
+    async def no_remote_versions(_self):
+        return {}
+
+    monkeypatch.setattr(SupabaseSyncClient, "remote_versions", no_remote_versions)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["sync", "reinit"])
+    assert result.exit_code == 0, result.output
+    assert '"dry_run": true' in result.output
+    assert '"health_cleared": false' in result.output

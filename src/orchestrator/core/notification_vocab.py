@@ -50,6 +50,12 @@ TRIGGERS: dict[str, NotificationTrigger] = {
     "merge_candidate": _t("merge_candidate", "Merge candidate ready", "Merge the accepted branch."),
     "merged": _t("merged", "Branch merged", "No action unless a follow-up is needed."),
     "merge_refused": _t("merge_refused", "Merge refused", "Resolve it, then merge manually."),
+    # T-41: a stopped or repeatedly failing background sync is human-must-act, so it defaults
+    # subscribed; the notification is emitted once per failure streak, never once per retry.
+    "sync_failed": _t(
+        "sync_failed", "Cloud sync needs attention",
+        "Run `orchestrator sync status`; if versions drifted, reinit (dry-run first).",
+    ),
     "worktree_created": _t("worktree_created", "Worktree created", "No action needed.", noisy=True),
     "recovery_commit": _t(
         "recovery_commit", "Recovery commit", "Inspect unself-checked content.", noisy=True,

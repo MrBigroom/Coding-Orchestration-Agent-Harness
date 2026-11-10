@@ -1592,13 +1592,43 @@ def memory_import(
 @sync_app.command("status")
 @handled
 def sync_status() -> None:
-    """Show locally tracked, pending, synchronized, and conflicted records."""
+    """Show record counts, the failure streak, and why automatic sync stopped."""
     from orchestrator.services import sync_service
+    from orchestrator.services.sync_runner import sync_runner
 
     _ensure_ready()
     with _session() as s:
         sync_service.scan_local(s)
-        _print_json(sync_service.status(s))
+        _print_json({**sync_service.status(s), **sync_runner.status(s)})
+
+
+@sync_app.command("reinit")
+@handled
+def sync_reinit(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Write the re-baselined counters (default is a dry run that writes nothing).",
+    ),
+) -> None:
+    """Re-baseline local version counters to the versions the remote actually holds.
+
+    The remote version is a per-entity compare-and-swap counter; a local record may only present
+    ``synced_version + 1``. Use this after a permanent version rejection or a restored database.
+    Dry run by default, and unresolved payload conflicts are reported but never touched.
+    """
+    from orchestrator.services import sync_service
+    from orchestrator.services.sync_transport import SupabaseSyncClient
+
+    async def remote() -> dict[str, int]:
+        async with SupabaseSyncClient() as client:
+            return await client.remote_versions()
+
+    _ensure_ready()
+    versions = asyncio.run(remote())
+    with _session() as s:
+        result = sync_service.reinitialise(s, versions, dry_run=not apply)
+    _print_json(result)
 
 
 @sync_app.command("now")

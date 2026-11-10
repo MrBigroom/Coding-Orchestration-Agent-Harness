@@ -39,6 +39,82 @@ A background scanner detects inserts and edits by comparing canonical JSON paylo
 New or changed records increment their local version and become pending. This avoids
 requiring every service to implement its own change hook.
 
+## Version protocol and rejected transitions (T-41)
+
+The version counter is **remote per-entity state**, owned by the cloud row, not a device-global
+cursor:
+
+- `orchestrator_sync_records.version` is the compare-and-swap counter stored in Supabase. The
+  cloud push function (`supabase/migrations/0001_orchestrator_sync.sql`,
+  `orchestrator_sync_push`) requires `p_version = p_expected_version + 1`, where
+  `p_expected_version` is the last remote version this device observed (`0` when the row is new).
+  If the row exists but its version differs from `p_expected_version`, the guarded `UPDATE` matches
+  nothing and the function returns `{"status": "conflict"}` instead of overwriting. A device can
+  therefore never overwrite a remote edit it has not seen.
+- Locally, `sync_entities` carries both numbers: `synced_version` is the last remote version this
+  device adopted or successfully wrote, and `version` is the local dirty revision. They are
+  different columns on purpose.
+- `sync_state` has **no version row by design**. It is device-local bookkeeping (`device_id`, and
+  since T-41 the additive `sync_health` key); versions are per entity in `sync_entities`. A
+  device showing only `device_id` in `sync_state` while `sync_entities` has thousands of rows is
+  therefore normal, not a missing cursor.
+
+A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
+revision `3` as the next **remote** version while the remote still expected `0 -> 1`. That is what
+the pre-T-41 push did: it sent `mapping.version` (which increments on every local payload change)
+instead of `mapping.synced_version + 1`. A record edited three times before its first successful
+push therefore produced a permanent 400 on every cycle. Measured on 2026-11-11 before the fix:
+`logs/desktop-server.log` held 7,373 occurrences of that message, `sync_entities` held 1,426 rows,
+and `sync_state` held exactly one key, `device_id` (written 2026-10-28). Retrying could never
+succeed because nothing on either side changed.
+
+After the fix, the transport sends `p_expected_version = synced_version` and
+`p_version = synced_version + 1`, then records the version that actually landed as both `version`
+and `synced_version`. The local revision counter still tracks local edits; it no longer travels to
+the cloud.
+
+### Re-initialise after a version rejection or a restored database
+
+`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+It downloads versions only (never payloads), leaves dirty payloads pending so they upload on the
+next cycle, and prints a plan by default:
+
+```bash
+orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
+orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
+orchestrator sync now                # normal cycle; a success clears the stop
+```
+
+Records with an unresolved payload conflict are reported as `conflicts_skipped` and never
+touched: a version repair must not silently choose one side of a real content conflict. If the
+remote is unreachable, `reinit` fails rather than guessing, because the remote version is the
+authority it is aligning to.
+
+### Failure handling and visibility
+
+A failed cycle is classified rather than retried blindly:
+
+- **Permanent** (4xx other than 408/425/429, including the version-transition 400, bad credentials,
+  and a malformed response) stops automatic attempts immediately and records a stopped state.
+- **Transient** (5xx, 408/425/429, timeout, network) retries with exponential backoff
+  (30 s, 60 s, 120 s, ... capped at 900 s) up to five consecutive failures, after which it stops as
+  well.
+- A success clears the streak, the stop, and the log-dedup counter.
+
+The stopped reason and consecutive-failure count are exposed by `orchestrator sync status`, the
+`GET /api/sync/status` response, and **Settings → Cloud Sync** in both the React and fallback UIs.
+A `sync_failed` build-log event (and therefore one notification decision, subject to the master
+switch and the `notification_sync_failed` subscription) is emitted at most twice per failure
+streak: once when a transient streak becomes persistent, and once when the loop stops. It is
+never emitted per retry. While stopped, the background coroutine keeps polling preferences but makes no further
+attempts: the explicit recovery paths are `sync reinit --apply` and a manual `sync now` that
+succeeds.
+
+**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+signature. The first occurrence logs once, with a traceback; identical repeats only increment
+`sync_health.log_occurrences` and are logged at DEBUG, and a different signature logs again and
+restarts the count. This is what keeps a permanent 400 from writing 6,682 tracebacks.
+
 ## Conflict rules
 
 Cloud pushes use an atomic compare-and-swap function with the last remotely observed

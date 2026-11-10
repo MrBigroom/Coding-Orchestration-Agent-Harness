@@ -21,7 +21,37 @@ class SyncConfigurationError(SyncError):
 
 
 class SyncTransportError(SyncError):
-    pass
+    """A transport call failed. Subclasses carry the retry classification."""
+
+
+class SyncPermanentError(SyncTransportError):
+    """A client error that retrying cannot fix: stop the loop until a human intervenes.
+
+    ``detail`` is the machine-readable half of the frozen ``{error, detail}`` API shape; the
+    exception message is only the human sentence. Callers must never need to substring-match
+    the sentence to learn the status code or the recovery path (T-41).
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 detail: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = {"kind": "permanent", "status_code": status_code, **(detail or {})}
+
+
+class SyncTransientError(SyncTransportError):
+    """A failure worth retrying with backoff: 5xx, 408/429, timeout, or network error."""
+
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 detail: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = {"kind": "transient", "status_code": status_code, **(detail or {})}
+
+
+# 408 (request timeout) and 429 (rate limited) are client status codes that are still
+# transient; every other 4xx is a permanent refusal until the configuration or state changes.
+TRANSIENT_CLIENT_STATUSES = frozenset({408, 425, 429})
 
 
 class SupabaseSyncClient:
@@ -67,6 +97,25 @@ class SupabaseSyncClient:
             message = response.text
         return f"Supabase returned HTTP {response.status_code}: {str(message)[:500]}"
 
+    @staticmethod
+    def _response_error(response: httpx.Response) -> SyncTransportError:
+        """Classify one non-2xx response; the frozen API can return ``detail`` structurally."""
+        message = SupabaseSyncClient._safe_error(response)
+        detail = {
+            "status_code": response.status_code,
+            "body": message,
+            "retryable": False,
+        }
+        if response.status_code >= 500 or response.status_code in TRANSIENT_CLIENT_STATUSES:
+            detail["retryable"] = True
+            return SyncTransientError(message, status_code=response.status_code, detail=detail)
+        if "invalid version transition" in message:
+            # A 4xx version rejection is the legacy local/remote counter drift. It is still
+            # permanent for this process, but the detail names the dry-run recovery command so
+            # the GUI/CLI never has to parse the sentence.
+            detail["recovery"] = "orchestrator sync reinit --dry-run"
+        return SyncPermanentError(message, status_code=response.status_code, detail=detail)
+
     async def _authenticate(self, refresh: bool = False) -> None:
         url, key, email, password = self._configuration()
         if refresh and self._refresh_token:
@@ -80,9 +129,15 @@ class SupabaseSyncClient:
                 f"{url.rstrip('/')}{endpoint}", headers={"apikey": key}, json=body
             )
         except httpx.HTTPError as exc:
-            raise SyncTransportError(f"Supabase authentication failed: {exc}") from exc
+            raise SyncTransientError(
+                f"Supabase authentication failed: {exc}",
+                detail={"retryable": True, "cause": type(exc).__name__},
+            ) from exc
         if response.status_code >= 400:
-            raise SyncTransportError(self._safe_error(response))
+            error = self._response_error(response)
+            error.detail["stage"] = "authenticate"
+            error.detail["recovery"] = "check the Supabase credentials in .env"
+            raise error
         data = response.json()
         self._access_token = data["access_token"]
         self._refresh_token = data.get("refresh_token") or self._refresh_token
@@ -108,9 +163,12 @@ class SupabaseSyncClient:
                     method, f"{url.rstrip('/')}{path}", headers=headers, **kwargs
                 )
         except httpx.HTTPError as exc:
-            raise SyncTransportError(f"Supabase request failed: {exc}") from exc
+            raise SyncTransientError(
+                f"Supabase request failed: {exc}",
+                detail={"retryable": True, "cause": type(exc).__name__},
+            ) from exc
         if response.status_code >= 400:
-            raise SyncTransportError(self._safe_error(response))
+            raise self._response_error(response)
         return response
 
     async def pull(self, session: Session) -> dict[str, int]:
@@ -133,7 +191,10 @@ class SupabaseSyncClient:
             )
             records = response.json()
             if not isinstance(records, list):
-                raise SyncTransportError("Supabase pull response must be a JSON array")
+                raise SyncPermanentError(
+                    "Supabase pull response must be a JSON array",
+                    detail={"retryable": False, "response_type": type(records).__name__},
+                )
             result = sync_service.apply_remote_records(session, records)
             for key in totals:
                 totals[key] += result[key]
@@ -153,6 +214,7 @@ class SupabaseSyncClient:
                 result["errors"] += 1
                 continue
             payload = sync_service.canonical_payload(session, spec, row)
+            next_version = mapping.synced_version + 1
             response = await self._request(
                 "POST",
                 "/rest/v1/rpc/orchestrator_sync_push",
@@ -160,7 +222,7 @@ class SupabaseSyncClient:
                     "p_entity_type": mapping.entity_type,
                     "p_entity_id": mapping.uuid,
                     "p_expected_version": mapping.synced_version,
-                    "p_version": mapping.version,
+                    "p_version": next_version,
                     "p_payload": payload,
                     "p_origin_device": mapping.origin_device,
                     "p_device_modified_at": mapping.modified_at.isoformat(),
@@ -168,6 +230,12 @@ class SupabaseSyncClient:
             )
             body = response.json()
             if body.get("status") == "ok":
+                # The remote version is always the last synchronized version plus one. It is
+                # NOT the local revision counter (`mapping.version`): that one can jump by more
+                # than one when a record changes twice before a push, which is exactly how the
+                # `invalid version transition: 0 -> 3` failure was produced. Record the version
+                # that actually landed so the next push starts from it.
+                mapping.version = next_version
                 sync_service.mark_synced(session, mapping)
                 result["pushed"] += 1
             elif body.get("status") == "conflict":
@@ -177,8 +245,51 @@ class SupabaseSyncClient:
                 session.commit()
                 result["conflicts"] += 1
             else:
-                raise SyncTransportError("Supabase push response had an unknown status")
+                raise SyncPermanentError(
+                    "Supabase push response had an unknown status",
+                    detail={"retryable": False, "status": body.get("status")},
+                )
         return result
+
+    async def remote_versions(self) -> dict[str, int]:
+        """Read the remote entity versions without applying them (dry-run re-initialisation).
+
+        The same pull shape is used, but only ``entity_type``/``entity_id``/``version`` are
+        selected so a dry run can plan against remote truth without writing local rows.
+        """
+        versions: dict[str, int] = {}
+        limit = self.settings.supabase_sync_batch_size
+        offset = 0
+        while True:
+            response = await self._request(
+                "GET",
+                "/rest/v1/orchestrator_sync_records",
+                params={
+                    "select": "entity_type,entity_id,version",
+                    "order": "entity_type.asc,entity_id.asc",
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            records = response.json()
+            if not isinstance(records, list):
+                raise SyncPermanentError(
+                    "Supabase version response must be a JSON array",
+                    detail={"retryable": False, "response_type": type(records).__name__},
+                )
+            for record in records:
+                entity_id = record.get("entity_id")
+                version = record.get("version")
+                if not isinstance(entity_id, str) or not isinstance(version, int):
+                    raise SyncPermanentError(
+                        "Supabase version row is missing entity_id/version",
+                        detail={"retryable": False, "record": record},
+                    )
+                versions[entity_id] = version
+            if len(records) < limit:
+                break
+            offset += len(records)
+        return versions
 
     async def sync_once(self, session: Session) -> dict[str, Any]:
         # Pull first so a fresh device can adopt matching seeded rows before uploading.
