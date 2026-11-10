@@ -1,4 +1,4 @@
-# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
+# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
@@ -35,8 +35,13 @@ tests/unit/test_memory_lifecycle.py::test_approving_a_row_that_would_itself_be_d
 tests/unit/test_memory_lifecycle.py::test_override_records_the_demoted_ids_in_the_build_log PASSED
 tests/unit/test_memory_lifecycle.py::test_budget_and_triage_name_the_current_demotions PASSED
 tests/unit/test_memory_lifecycle.py::test_triage_reads_the_link_reason_out_of_tags_json PASSED
+tests/unit/test_memory_lifecycle.py::test_every_shared_subject_term_is_stored_so_the_reason_matches PASSED
 tests/unit/test_memory_lifecycle.py::test_a_condense_apply_that_lengthens_the_survivor_is_refused PASSED
 tests/unit/test_memory_lifecycle.py::test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict PASSED
+tests/unit/test_memory_lifecycle.py::test_pinning_a_demoted_approved_row_is_refused_when_it_would_evict PASSED
+tests/unit/test_memory_lifecycle.py::test_moving_an_approved_row_to_a_tighter_scope_is_refused PASSED
+tests/unit/test_memory_lifecycle.py::test_a_rank_lowering_edit_demotes_itself_without_an_override PASSED
+tests/unit/test_memory_lifecycle.py::test_a_content_shrinking_edit_still_succeeds_without_an_override PASSED
 tests/unit/test_memory_lifecycle.py::test_patching_a_row_cannot_flip_it_to_approved PASSED
 tests/unit/test_memory_lifecycle.py::test_markdown_import_creates_only_pending_rows_and_never_evicts PASSED
 tests/unit/test_memory_lifecycle.py::test_suggestion_event_names_come_from_the_structured_kind PASSED
@@ -217,4 +222,4 @@ tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers
 tests/integration/test_api.py::test_a_token_replaces_the_local_host_check PASSED
 tests/integration/test_api.py::test_one_time_schedule_api PASSED        
 tests/integration/test_api.py::test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail PASSED
-============================= 216 passed =============================
+============================= 221 passed =============================

@@ -1,11 +1,11 @@
-# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
+# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
 # command: sqlite3 .backup of the live memory DB -> a throwaway ORCHESTRATOR_HOME;
 #          condense/budget/triage then run on the COPY at the operator's own caps.
 #          The live home is opened read-only and never written. Copy is removed after.
 # source_db=/home/mrbigroom/.local/share/coding-orchestrator/orchestrator.db
-# source_sha256=bf687ce3a31786b58c155b87778963d07f971108adaa0125607c63e0d8761df4
-# source_bytes=2654208
-corpus_rows=154 rare_token_pairs=1 subject_plus_rare_groups=35
+# source_sha256=deb1cab1e145c17819a0b2eb1ddfaca9e4d49aa24668a43c0f4ecb51df817f6b
+# source_bytes=2777088
+corpus_rows=157 rare_token_pairs=1 subject_plus_rare_groups=36
 cited|evidence_freshness 152/156/164|members=[152, 156, 164]|rare_token_pairs=[[152, 156]]|groups=[[152, 156], [164, 166]]
 cited|diff_floor 157/159/161/163|members=[157, 159, 161, 163]|rare_token_pairs=[]|groups=[[84, 131, 157, 158], [159, 161, 163]]
 cited|bundle_ordering 154/165|members=[154, 165]|rare_token_pairs=[]|groups=[[66, 154, 155, 165, 167]]

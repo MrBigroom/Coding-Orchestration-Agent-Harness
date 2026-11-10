@@ -1,30 +1,41 @@
-# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
+# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
 # command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
-1344:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
-1333:def _tag_rank(entry: MemoryEntry) -> int:
-761:def _linked_duplicate(
+1396:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+1385:def _tag_rank(entry: MemoryEntry) -> int:
+767:def _linked_duplicate(
 196:def duplicate_of(entry: MemoryEntry) -> int | None:
 207:def duplicate_record(entry: MemoryEntry) -> dict[str, Any] | None:
 250:def _duplicate_tags(match: dict[str, Any]) -> list[str]:
 189:def is_garbled(entry: MemoryEntry) -> bool:
 158:def _redact_memory_content(text: str) -> tuple[str, list[str]]:
-868:class EvictionRefused(MemoryError_):
-881:def _eviction_impact(
-994:def _refuse_eviction(
-272:def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
-973:def _log_eviction_override(
-1029:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
-530:def create(
-797:def update(
-930:                    session, role, project_slug, replace_approved=replace
-1431:    replace_approved: list[MemoryEntry] | None = None,
-1439:    `replace_approved` is the EDIT what-if: each listed row stands in for the stored row with
-1452:    if replace_approved:
-1453:        replaced = {e.id for e in replace_approved}
-1454:        approved = [e for e in approved if e.id not in replaced] + list(replace_approved)
-1042:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
-1537:def condense(
-1685:def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
+889:class EvictionRefused(MemoryError_):
+918:def _eviction_impact(
+1042:def _refuse_eviction(
+278:def _refuse_garbled(entry: MemoryEntry, *, action: str) -> None:
+1021:def _log_eviction_override(
+1081:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+536:def create(
+803:def update(
+902:def _selection_relevant_change(stored: MemoryEntry, priced: MemoryEntry) -> bool:
+863:            lowers_pressure = (
+873:                ignore_self=lowers_pressure,
+873:                ignore_self=lowers_pressure,
+924:    ignore_self: bool = False,
+941:    `ignore_self` is the EDIT shape: lowering the edited row's own rank demotes that row,
+987:                if is_self and ignore_self:
+1049:    ignore_self: bool = False,
+1054:    row that changes a selection-relevant field (`replacing=True`; `ignore_self=True` there
+1062:        session, entry, treat_as_new=True, replacing=replacing, ignore_self=ignore_self
+1668:                    f"{survivor_id} does not contain the content of "
+975:                    session, role, project_slug, replace_approved=replace
+1483:    replace_approved: list[MemoryEntry] | None = None,
+1491:    `replace_approved` is the EDIT what-if: each listed row stands in for the stored row with
+1504:    if replace_approved:
+1505:        replaced = {e.id for e in replace_approved}
+1506:        approved = [e for e in approved if e.id not in replaced] + list(replace_approved)
+1094:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+1589:def condense(
+1737:def import_all(session: Session, payload: dict[str, Any], *, override: bool = False) -> int:
 400:def duplicate_groups(entries: list[MemoryEntry]) -> list[list[int]]:
 472:def condense_proposals(session: Session, project_slug: str) -> list[dict[str, Any]]:
 111:_FLAG_LABELS["redaction-marker"] = (
@@ -42,10 +53,10 @@
 283:def subject_clusters(
 455:_SUGGESTION_EVENT_BY_KIND = {
 486:            _SUGGESTION_EVENT_BY_KIND[record.kind],
-991:    log_service.log_event(session, "memory_eviction_override", details)
+1039:    log_service.log_event(session, "memory_eviction_override", details)
 1472:def memory_condense(
 1191:def memory_approve(
-141:def approve_memory(
+144:def approve_memory(
 122:def update_memory(
 140:          <Card title="Injection caps">
 74:  // section) is refused (400) with the casualties in `detail.evicted`. Show that list and

@@ -1,8 +1,21 @@
-# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
-# command: tsc -b --force on the web/ sources of THIS worktree, via a /tmp scratch
-#          project whose node_modules is the main checkout's (the worktree has none).
+# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
+# WHOLE web/src tree, with the project's own web/tsconfig.json (include: src,
+# vite.config.ts). This is NOT a full frontend verification: the gate has no build
+# step (T-31), so this proves the TypeScript sources typecheck, not that the GUI works.
+# WORKAROUND (disclosed): this worktree has no web/node_modules, so a /tmp scratch
+# project symlinks web/node_modules from the MAIN checkout and symlinks every source
+# and config of THIS worktree's web/ into it. Nothing under the worktree is written.
 # scratch src resolves to: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/web/src
+# tsconfig used:           /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/web/tsconfig.json
+# exact command: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/.bin/tsc -b --force (cwd=/tmp/tmp.GzMXtnqmrz)
+# tsc_exit=0 is the status of the exact command recorded above (0 = success)
 tsc_exit=0
-# sources the compiler actually read (the two files this round names):
-/tmp/tmp.ibJhrgH9LE/src/api/client.ts
-/tmp/tmp.ibJhrgH9LE/src/pages/Memory.tsx
+# exact command: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/.bin/tsc -p /tmp/tmp.GzMXtnqmrz/tsconfig.json --listFiles
+# listFiles_exit=0 (0 = the file list above is complete)
+listfiles_total=279
+listfiles_src=29
+listfiles_types_react=3
+listfiles_types_react_dom=2
+# first listFiles line: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/@typescript/typescript-linux-x64/lib/lib.es5.d.ts
+# last  listFiles line: /tmp/tmp.GzMXtnqmrz/vite.config.ts
+# @types/react example: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/@types/react/global.d.ts

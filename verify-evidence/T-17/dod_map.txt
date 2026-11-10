@@ -1,4 +1,4 @@
-# HEAD=523a6fae7f1bf062110c5f4ca92a823897012ced mode=full
+# HEAD=4a73cf50e7d434c55f706106373cd02db055e407 mode=full
 # static DoD map; focused_tests.txt supplies each node's PASSED line
 1 ingest dedup: a reworded restatement is a REAL pending row linked to the approved
   entry it restates (`duplicate-of:<id>` in the existing tags column), a byte-identical
@@ -16,6 +16,7 @@
    duplicate_record / _duplicate_tags; memory_text.SUBJECT_MAX_DF / def is_subject_pair
    (rare identifiers, never a text ratio). The ratio, threshold and shared terms live in
    tags_json next to the link, so triage reads the reason FROM THE ROW.
+   test_every_shared_subject_term_is_stored_so_the_reason_matches (all terms, not five)
 2 value-ordered demotion from tags_json only, id only the last tiebreak; untagged rows keep
   the pre-T-17 rot-prone-then-oldest order; two calls are byte-identical:
    test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
@@ -63,6 +64,10 @@
    integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
    integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
    test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict
+   test_pinning_a_demoted_approved_row_is_refused_when_it_would_evict
+   test_moving_an_approved_row_to_a_tighter_scope_is_refused
+   test_a_rank_lowering_edit_demotes_itself_without_an_override
+   test_a_content_shrinking_edit_still_succeeds_without_an_override
    test_editing_an_approved_row_into_a_garbled_shape_is_refused
    test_patching_a_row_cannot_flip_it_to_approved
    test_markdown_import_creates_only_pending_rows_and_never_evicts
