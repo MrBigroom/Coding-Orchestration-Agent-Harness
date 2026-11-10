@@ -177,6 +177,30 @@ def test_memory_add_approve_over_the_cap_is_refused_unless_override(home, monkey
     assert accepted.exit_code == 0, accepted.output
 
 
+def test_memory_add_by_the_operator_keeps_a_pinned_tag(home):
+    """Reserved tags are stripped only from UNTRUSTED suggestions, never from the operator."""
+    from orchestrator.core import db as db_mod
+    from orchestrator.services import memory_service
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    added = runner.invoke(
+        app,
+        [
+            "memory", "add", "Operator pinned rule about the scheduler.",
+            "--category", "project", "--scope", "gotchas", "--project", "demo",
+            "--tag", "pinned", "--tag", "tier:2",
+        ],
+    )
+    assert added.exit_code == 0, added.output
+    with db_mod.session_scope() as s:
+        rows = [
+            e for e in memory_service.list_entries(s)
+            if e.content == "Operator pinned rule about the scheduler."
+        ]
+    assert len(rows) == 1
+    assert rows[0].tags_json == ["pinned", "tier:2"]
+
+
 def test_memory_condense_requires_a_project(home):
     assert runner.invoke(app, ["init"]).exit_code == 0
     missing = runner.invoke(app, ["memory", "condense"])

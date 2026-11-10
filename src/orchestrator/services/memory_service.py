@@ -126,11 +126,22 @@ DUPLICATE_MATCH_PREFIX = "duplicate-match:"
 DUPLICATE_RATIO_PREFIX = "duplicate-ratio:"
 DUPLICATE_THRESHOLD_PREFIX = "duplicate-threshold:"
 DUPLICATE_TERMS_PREFIX = "duplicate-terms:"
+#: Terms are joined with the ASCII unit separator, not a comma: an identifier-shaped term
+#: can itself contain a comma (inside a backticked command span), so a comma-joined list
+#: would not round-trip through `duplicate_record`. Rows written before this change are
+#: still read with the old comma separator.
+DUPLICATE_TERM_SEPARATOR = "\x1f"
 #: Tag-driven value order. Higher value is kept longer; an untagged entry behaves exactly as
 #: it did before T-13's remainder (content class, then id as the last tiebreak only).
 PINNED_TAGS = frozenset({"pinned", "durable"})
 TIER_TAGS = {"tier:1": 3, "tier:2": 2, "tier:3": 1}
 DEFAULT_TIER_RANK = 2
+#: Tag namespaces only the OPERATOR or the harness may write. `tags_json` decides the
+#: demotion order (`pinned`/`durable`/`tier:N`), records the ingest link (`duplicate-of:` and
+#: the `duplicate-*` evidence tags) and flags a rewrite (`redaction-substitution:`), so a
+#: Worker- or chat-supplied suggestion -- untrusted model output -- must not be able to write
+#: its own priority or forge a link to an arbitrary entry id.
+RESERVED_TAG_PREFIXES = ("tier:", "duplicate-", REDACTION_TAG_PREFIX)
 
 
 def _line_hits(text: str) -> dict[str, list[int]]:
@@ -230,7 +241,8 @@ def duplicate_record(entry: MemoryEntry) -> dict[str, Any] | None:
         ratio = threshold = None
     raw_terms = tags.get(DUPLICATE_TERMS_PREFIX.rstrip(":"))
     if raw_terms:
-        terms = [t for t in raw_terms.split(",") if t]
+        separator = DUPLICATE_TERM_SEPARATOR if DUPLICATE_TERM_SEPARATOR in raw_terms else ","
+        terms = [t for t in raw_terms.split(separator) if t]
     if match == "rare-token" and ratio is not None and threshold is not None:
         reason: str | None = duplicate_reason(ratio, threshold)
     elif match == "subject" and terms:
@@ -264,8 +276,33 @@ def _duplicate_tags(match: dict[str, Any]) -> list[str]:
     if match.get("threshold") is not None:
         tags.append(f"{DUPLICATE_THRESHOLD_PREFIX}{match['threshold']:.2f}")
     if match.get("terms"):
-        tags.append(f"{DUPLICATE_TERMS_PREFIX}{','.join(match['terms'])}")
+        tags.append(
+            f"{DUPLICATE_TERMS_PREFIX}{DUPLICATE_TERM_SEPARATOR.join(match['terms'])}"
+        )
     return tags
+
+
+def strip_reserved_tags(tags: list[str] | None) -> list[str]:
+    """Drop reserved namespaces from UNTRUSTED suggestion tags, keeping ordinary ones.
+
+    One helper for both suggestion create sites (`suggest_from_handoff_report`): a handoff
+    or chat suggestion is model output, so it may not self-pin, claim a tier, forge a
+    `duplicate-of:` link or a `redaction-substitution:` record. The operator paths (`create`
+    from the CLI/API, `import_all` and markdown import) deliberately do NOT call this: an
+    export/import round trip must preserve `pinned` and `tier:N`, or a restore would silently
+    unpin the entries the operator pinned. The harness appends its own `_duplicate_tags`
+    AFTER this filter, so the generated link still lands on a linked suggestion.
+    """
+    kept: list[str] = []
+    for tag in tags or []:
+        if not isinstance(tag, str):
+            continue
+        name = tag.strip()
+        lowered = name.lower()
+        if not name or lowered in PINNED_TAGS or lowered.startswith(RESERVED_TAG_PREFIXES):
+            continue
+        kept.append(name)
+    return kept
 
 
 def _duplicate_reason(match: dict[str, Any]) -> str:
@@ -714,7 +751,7 @@ def suggest_from_handoff_report(
                         content=s.content,
                         project_slug=project_slug if category == MemoryCategory.project else None,
                         role=create_role,
-                        tags=list(s.tags or []) + _duplicate_tags(match),
+                        tags=strip_reserved_tags(s.tags) + _duplicate_tags(match),
                         source=source,
                         approved=False,
                     ),
@@ -752,7 +789,7 @@ def suggest_from_handoff_report(
                         content=s.content,
                         project_slug=project_slug if category == MemoryCategory.project else None,
                         role=create_role,
-                        tags=s.tags,
+                        tags=strip_reserved_tags(s.tags),
                         source=source,
                         approved=False,
                     ),
@@ -814,10 +851,13 @@ def update(
     field changes -- content, tags, scope, role or category -- not only when the text grows:
     pinning a demoted row or moving it into a section with less headroom can push a
     NEIGHBOUR out just as surely as a longer text (T-17 review round 5, finding 1). A change
-    that only lowers the edited row's own pressure (line cost and tag rank both no higher)
-    may demote that row itself -- triage/budget report it -- so its own exclusion is not a
-    refusal. A growth edit that pushes itself out is still refused, like an approval that
-    would never be injected. `override=True` is the explicit opt-in and records casualties.
+    that only lowers the edited row's own pressure (SAME rendered section, line cost and tag
+    rank both no higher) may demote that row itself -- triage/budget report it -- so its own
+    exclusion is not a refusal. That holds only inside the same section: a scope/role/category
+    MOVE puts the row among different neighbours, where it can rank lowest, so a move goes
+    through the full eviction gate and is refused when the row itself would fall out. A growth
+    edit that pushes itself out is refused too, like an approval that would never be injected.
+    `override=True` is the explicit opt-in and records casualties.
     """
     entry = _get(session, entry_id)
     if data.content is not None:
@@ -859,9 +899,13 @@ def update(
         # this row's own pressure (cost and tag rank both no higher) may demote ITSELF, which
         # budget/triage report, so its own exclusion is not a refusal; a growth edit that
         # pushes itself out still is, like an approval that would never be injected.
+        # "Its own pressure" only holds INSIDE the same rendered section: after a move the row
+        # competes with a different set of neighbours and can rank lowest there, so a move goes
+        # through the full eviction gate with ignore_self=False (T-17 round 6, finding 1).
         if _selection_relevant_change(entry, priced):
             lowers_pressure = (
-                _tag_rank(priced) <= _tag_rank(entry)
+                _file_for(priced) == old_file
+                and _tag_rank(priced) <= _tag_rank(entry)
                 and _line_tokens(new_content) <= _line_tokens(entry.content)
             )
             evicted = _refuse_eviction(
@@ -938,8 +982,10 @@ def _eviction_impact(
     prompt. It is a casualty like any other, so it is refused by default and recorded on
     override.
 
-    `ignore_self` is the EDIT shape: lowering the edited row's own rank demotes that row,
-    not a neighbour, so triage/budget report it and the edit is allowed without an override.
+    `ignore_self` is the EDIT shape: lowering the edited row's own rank inside the SAME
+    rendered section demotes that row, not a neighbour, so triage/budget report it and the
+    edit is allowed without an override. `update()` never passes it for a move, because the
+    row then competes with a different set of neighbours.
     """
     if entry.id is not None and entry.approved and not replacing:
         return {"entry_id": entry.id, "evicted": []}
@@ -1051,8 +1097,9 @@ def _refuse_eviction(
     """Refuse an approval-shaped write that would evict an approved row; return casualties.
 
     Shared by `create(approved=True)`, `import_all`, `approve()` and any edit to an approved
-    row that changes a selection-relevant field (`replacing=True`; `ignore_self=True` there
-    because an edit may demote its own row without evicting a neighbour). `override=True` is
+    row that changes a selection-relevant field (`replacing=True`; `ignore_self` there only
+    when the row stays in the same rendered section, because such an edit may demote its own
+    row without evicting a neighbour). `override=True` is
     the explicit operator opt-in; even then nothing is deleted, the evicted rows are reported
     by budget/triage as not injected and the caller records their ids in a build-log event via
     `_log_eviction_override`. `action` names the write in the message, so a caller can tell

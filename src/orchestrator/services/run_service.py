@@ -450,8 +450,10 @@ def _salvage_log_payload(
 
 
 #: Structured suggestion outcome kind -> build-log event name. The mapping is exhaustive over
-#: `SuggestionOutcome.records`; an unknown kind is a programming error, not a fallback to
-#: "substituted", because guessing would write the wrong event.
+#: today's `SuggestionOutcome.records`; an unknown kind must not break run FINALISATION, so the
+#: lookup is total and falls back to a named event instead of raising KeyError. It never falls
+#: back to "substituted": guessing a specific meaning would write the wrong event.
+SUGGESTION_EVENT_FALLBACK = "memory_suggestion_other"
 _SUGGESTION_EVENT_BY_KIND = {
     "dropped": "memory_suggestion_dropped",
     "linked": "memory_suggestion_linked",
@@ -483,7 +485,7 @@ def _store_memory_suggestions(
     for record in outcome.records:
         log_service.log_event(
             session,
-            _SUGGESTION_EVENT_BY_KIND[record.kind],
+            _SUGGESTION_EVENT_BY_KIND.get(record.kind, SUGGESTION_EVENT_FALLBACK),
             record.message,
             role="system",
             task_id=task.id if task else None,

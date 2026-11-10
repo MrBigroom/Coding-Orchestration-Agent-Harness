@@ -203,8 +203,11 @@ import`, and an **edit to an approved row that changes any selection-relevant fi
 `condense --apply`/`--content` that rewrites a surviving row) — because a path that could
 write an approved row, make one grow, or raise its value rank / move it into a tighter
 section would otherwise be a silent eviction hole. A change that only *lowers* the edited
-row's own rank demotes that row, not a neighbour, so it is allowed without an override and
-is reported by budget/triage like any other demotion. Markdown import (`memory import
+row's own rank **inside the same rendered section** demotes that row, not a neighbour, so
+it is allowed without an override and is reported by budget/triage like any other
+demotion. A scope/role/category move is never treated that way: the row then competes with
+a different set of neighbours, so it goes through the full gate and is refused when the
+moved row itself would fall out of the section. Markdown import (`memory import
 --markdown`) only ever creates **pending** rows, so it cannot
 evict anything; the later `approve` is gated like any other. `PATCH /api/memory/{id}` has no
 `approved` field at all, and a PATCH that would turn an approved row garbled is refused.
@@ -317,7 +320,12 @@ the absorbed wording.
 ## Approval workflow
 
 1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
-   (`{category, scope, content, tags}`).
+   (`{category, scope, content, tags}`). Suggestion tags are **untrusted model output**, so
+   the reserved namespaces are stripped at ingest: `pinned`/`durable`, any `tier:`, any
+   `duplicate-` prefix (including a forged `duplicate-of:` link) and
+   `redaction-substitution:`. Ordinary tags are kept; the harness appends its own link tags
+   after the filter. Only the operator can pin or tier a row (`memory add --tag`,
+   `PATCH /api/memory/{id}`), and export/import round-trips those operator tags unchanged.
 2. The orchestrator stores them as **pending**. A byte-identical suggestion creates no row.
    A restatement of an existing **approved** entry in the same domain (category, project or
    role file) is **recorded as linked**: it is stored as a normal pending row whose
@@ -333,7 +341,8 @@ the absorbed wording.
    recorded against the same entry adds no new row. The chat notice and the build log event
    `memory_suggestion_linked` name the anchor and the new row. The rest of the record lives in
 `tags_json` next to the link — `duplicate-match:rare-token|subject`, `duplicate-ratio:…`,
-`duplicate-threshold:…` and `duplicate-terms:…` — so triage rebuilds the reason **from the
+`duplicate-threshold:…` and `duplicate-terms:…` (terms joined with the ASCII unit separator,
+so a term containing a comma still round-trips) — so triage rebuilds the reason **from the
 row** (the `linked-duplicate` flag and the `duplicate_link` field) instead of relying on the
 transient outcome or the build log.
 3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →

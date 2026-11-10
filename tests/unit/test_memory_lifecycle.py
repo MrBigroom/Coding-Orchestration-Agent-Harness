@@ -241,6 +241,102 @@ def test_a_repeated_restatement_does_not_add_a_second_linked_row(session):
     assert len(m.list_entries(session)) == before
 
 
+# ------------------------------------------------------- untrusted suggestion tags
+
+
+def test_untrusted_suggestion_tags_cannot_claim_priority_or_forge_a_link(session):
+    """A handoff is model output: it must not self-pin, claim a tier or forge a link."""
+    out = m.suggest_from_handoff_report(
+        session,
+        [
+            MemorySuggestion(
+                category="project",
+                scope="gotchas",
+                content="The scheduler coalesces notifications in one pending flush batch.",
+                tags=[
+                    "durable",
+                    "tier:1",
+                    "duplicate-of:999",
+                    "redaction-substitution:assignment:count=1:lines=1",
+                    "ordinary-tag",
+                ],
+            )
+        ],
+        source="handoff:R-20",
+        project_slug="demo",
+    )
+    assert len(out.created) == 1
+    stored = out.created[0]
+    assert stored.tags_json == ["ordinary-tag"]
+    assert m.duplicate_of(stored) is None
+    assert m.is_garbled(stored) is False
+
+
+def test_a_linked_suggestion_keeps_the_harness_generated_link(session):
+    """Stripping the supplied tags must not strip the link the harness appends."""
+    approved = add(session, ANCHOR_RULE)
+    out = m.suggest_from_handoff_report(
+        session,
+        [
+            MemorySuggestion(
+                category="project",
+                scope="gotchas",
+                content=ANCHOR_RESTATED,
+                tags=["durable", "tier:1", "duplicate-of:999", "keep-me"],
+            )
+        ],
+        source="handoff:R-21",
+        project_slug="demo",
+    )
+    assert len(out.linked) == 1
+    linked = session.get(MemoryEntry, out.linked[0]["entry_id"])
+    assert m.duplicate_of(linked) == approved.id
+    assert "keep-me" in linked.tags_json
+    assert "durable" not in linked.tags_json
+    assert "tier:1" not in linked.tags_json
+
+
+def test_export_import_round_trip_preserves_operator_priority_tags(home, tmp_path, monkeypatch):
+    """The operator paths must NOT strip tags, or a restore would silently unpin rows."""
+    from orchestrator.core import db as db_mod
+    from orchestrator.services import bootstrap
+
+    bootstrap.init()
+    with db_mod.session_scope() as s:
+        m.create(
+            s,
+            MemoryCreate(
+                category="project",
+                scope="gotchas",
+                project_slug="demo",
+                content="Operator pinned rule about the scheduler.",
+                tags=["pinned", "tier:2"],
+                approved=False,
+            ),
+        )
+        payload = m.export_all(s)
+        exported = next(
+            row for row in payload["entries"]
+            if row["content"] == "Operator pinned rule about the scheduler."
+        )
+        assert exported["tags_json"] == ["pinned", "tier:2"]
+
+    second = tmp_path / "second-home"
+    monkeypatch.setenv("ORCHESTRATOR_HOME", str(second))
+    config_mod.reset_settings_cache()
+    db_mod.dispose_engines()
+    bootstrap.init()
+    with db_mod.session_scope() as s:
+        # The seeded bootstrap rows are identical in both homes, so only this row imports.
+        assert m.import_all(s, payload) == 1
+        rows = [
+            e for e in m.list_entries(s)
+            if e.content == "Operator pinned rule about the scheduler."
+        ]
+    assert len(rows) == 1
+    assert rows[0].tags_json == ["pinned", "tier:2"]
+
+
 def test_a_pending_row_from_the_same_batch_is_not_a_link_target(session):
     """Only an APPROVED fact is a link target (T-17 review round 3, finding 3).
 
@@ -769,6 +865,32 @@ def test_every_shared_subject_term_is_stored_so_the_reason_matches():
     assert stored["reason"] == m._duplicate_reason(match)
 
 
+def test_a_term_containing_a_comma_round_trips_through_the_link_record():
+    """A comma-joined term list cannot round-trip: identifier terms can contain commas."""
+    terms = [
+        "orchestrator task evidence <id>, --at-tip",
+        "prompt_builder.render_diff_budget",
+    ]
+    match = {
+        "existing_id": 7,
+        "match": "subject",
+        "ratio": None,
+        "threshold": None,
+        "terms": terms,
+    }
+    entry = MemoryEntry(
+        category="project",
+        scope="gotchas",
+        project_slug="demo",
+        content="placeholder",
+        approved=False,
+        tags_json=m._duplicate_tags(match),
+    )
+    stored = m.duplicate_record(entry)
+    assert stored["terms"] == terms
+    assert stored["reason"] == m._duplicate_reason(match)
+
+
 # ------------------------------------- condense never drops an absorbed fact (round-4 F2)
 
 
@@ -864,6 +986,30 @@ def test_moving_an_approved_row_to_a_tighter_scope_is_refused(session, budgets):
     assert session.get(MemoryEntry, mover.id).scope == "decisions"
 
 
+def test_moving_a_row_into_a_full_section_where_it_ranks_lowest_is_refused(session, budgets):
+    """A move competes with a DIFFERENT neighbour set, so the moved row itself can be the
+    casualty (T-17 round 6, finding 1). `lowers_pressure` must not treat an unchanged tag
+    rank and line cost as 'no new pressure' when the row changed rendered section.
+    """
+    keep = add(session, "Older pinned worker rule " + "delta " * 10, tags=["pinned"])
+    mover = add(session, "Newer decisions rule " + "gamma " * 10, scope="decisions")
+    budgets(max_memory_tokens_project=tokens(keep))
+
+    with pytest.raises(m.EvictionRefused) as exc:
+        m.update(session, mover.id, MemoryUpdate(scope="gotchas"))
+    assert f"#{mover.id} (" in str(exc.value)
+    assert "this row itself would not be injected" in str(exc.value)
+    session.expire_all()
+    assert session.get(MemoryEntry, mover.id).scope == "decisions"
+
+    updated = m.update(session, mover.id, MemoryUpdate(scope="gotchas"), override=True)
+    assert updated.scope == "gotchas"
+    session.expire_all()
+    assert mover.id in {
+        x["id"] for x in m.select_for_prompt(session, "worker", "demo").excluded
+    }
+
+
 def test_a_rank_lowering_edit_demotes_itself_without_an_override(session, budgets):
     pinned = add(session, "Rule A " + "alpha " * 10, tags=["pinned"])
     neighbour = add(session, "Rule B " + "alpha " * 10)
@@ -940,3 +1086,22 @@ def test_suggestion_event_names_come_from_the_structured_kind(session, monkeypat
     assert events["memory_scope_substituted"] == "dropped suggestion from handoff:R-1: shaped like a drop"
     assert events["memory_suggestion_dropped"] == "memory suggestion from handoff:R-1: shaped like a move"
     assert outcome.moved == ["dropped suggestion from handoff:R-1: shaped like a drop"]
+
+
+def test_an_unknown_suggestion_kind_uses_the_named_fallback_event(session, monkeypatch):
+    """Run finalisation must not raise KeyError on a suggestion kind added later."""
+    from sqlmodel import select
+
+    from orchestrator.core.models import BuildLogEntry
+    from orchestrator.services import run_service
+
+    outcome = m.SuggestionOutcome()
+    outcome.note("future-kind", "message from a suggestion kind main does not know yet")
+    monkeypatch.setattr(m, "suggest_from_handoff_report", lambda *a, **k: outcome)
+    run_service._store_memory_suggestions(
+        session, [], source="handoff:R-2", project_slug="demo", role="worker"
+    )
+    events = {e.event: e.details for e in session.exec(select(BuildLogEntry))}
+    assert events[run_service.SUGGESTION_EVENT_FALLBACK] == (
+        "message from a suggestion kind main does not know yet"
+    )
