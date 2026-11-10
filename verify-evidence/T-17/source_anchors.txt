@@ -1,0 +1,20 @@
+# HEAD=5bd36c24775076172ce4bc46e957c09a0724ec80 mode=full
+# command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
+948:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+937:def _tag_rank(entry: MemoryEntry) -> int:
+541:def _linked_duplicate(
+146:def is_garbled(entry: MemoryEntry) -> bool:
+115:def _redact_memory_content(text: str) -> tuple[str, list[str]]:
+595:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+631:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+1133:def condense(
+443:def condense_proposals(session: Session, project_slug: str | None = None) -> list[dict[str, Any]]:
+109:_FLAG_LABELS["redaction-marker"] = (
+304:        out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
+554:    if "redaction-marker" in codes:
+476:            event = "memory_suggestion_linked"
+1466:def memory_condense(
+1185:def memory_approve(
+113:def approve_memory(
+105:          <Card title="Injection caps">
+127:    show(`<h2>Memory</h2><div class="card"><b>Injection caps</b><div class="muted">caps: ${Object.entries(budget.budgets).map(([k, v]) => esc(k) + " " + v).join(" · ")}${budget.budget_enabled ? "" : " (disabled)"}</div>${demoted}</div>

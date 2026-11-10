@@ -1,0 +1,35 @@
+# HEAD=5bd36c24775076172ce4bc46e957c09a0724ec80 mode=full
+# static DoD map; focused_tests.txt supplies each node's PASSED line
+1 ingest dedup:
+   test_a_reworded_restatement_is_linked_not_stored
+   test_a_byte_identical_suggestion_still_creates_no_row
+   test_same_domain_but_unrelated_facts_are_not_linked
+2 value-ordered demotion:
+   test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted
+   test_untagged_entries_keep_the_pre_t17_demotion_order
+   test_two_selections_are_byte_identical_and_exclude_the_same_ids
+3 condense non-destructive default + apply:
+   test_condense_dry_run_changes_no_row
+   test_condense_apply_updates_the_survivor_and_rejects_the_absorbed
+   test_condense_partial_apply_is_refused_without_writing
+   test_condense_rendered_markdown_matches_the_surviving_approved_rows
+   integration::test_memory_condense_is_a_dry_run_until_apply_names_the_ids
+4 lifecycle behind a contract change, no migration:
+   test_lifecycle_fields_stay_behind_a_contract_change_request
+   test_the_frozen_memory_table_has_no_lifecycle_columns_yet
+   migrations_untouched.txt (empty migration diff; model fields False False)
+   integration::test_models_and_migrations_do_not_drift (test_migrations.py)
+5 docs/memory.md: ingest dedup, tag demotion, non-destructive condense
+   (source_anchors.txt grep names the implementation the doc describes)
+6 redaction record, garbled triage, unchanged log redaction:
+   test_adding_a_key_value_phrase_records_the_substitution
+   test_updating_a_key_value_phrase_records_the_substitution
+   test_a_marked_entry_is_garbled_not_rendered_and_not_approvable
+   test_a_marked_approved_entry_is_not_injected_or_rendered
+   test_log_redaction_is_still_a_security_control
+   plus the unchanged tests/unit/test_redaction.py in focused_tests.txt
+7 eviction is value-ordered and never silent:
+   test_approval_that_would_evict_names_the_casualty_and_needs_override
+   test_budget_and_triage_name_the_current_demotions
+   integration::test_approval_eviction_is_refused_and_override_is_explicit
+   source_anchors.txt shows the GUI Injection caps panel (React + fallback)
