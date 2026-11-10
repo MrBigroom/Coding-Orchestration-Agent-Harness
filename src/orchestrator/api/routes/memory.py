@@ -105,7 +105,7 @@ def export_memory(session: Session = SessionDep) -> dict[str, Any]:
 @router.post("/memory/import", response_model=None)
 async def import_memory(
     request: Request, override: bool = False, session: Session = SessionDep
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     try:
         payload = await request.json()
     except ValueError as e:
