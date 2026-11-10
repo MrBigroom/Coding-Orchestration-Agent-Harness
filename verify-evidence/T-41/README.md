@@ -25,8 +25,8 @@ and are not hashed as measurements.
 1. **Protocol recorded, evidence not circular.** `docs/cloud-sync.md:42` (`## Version protocol and
    rejected transitions (T-41)`) states the counter is remote per-entity state, that `sync_state`
    has no version row by design, and what `0 -> 3` means; `:68` states the rejection meaning and
-   `:73` records the re-measured 7,000 `0 -> 3` lines / 1,431 `sync_entities` rows / `device_id`-only
-   `sync_state`. The authority for `p_version = expected + 1` is the migration itself:
+   `:72-78` records the read-only re-measurement: 277,088 log lines, 7,028 `0 -> 3` lines (7,416
+   version-transition lines total), 1,445 `sync_entities` rows, and a `device_id`-only `sync_state`. The authority for `p_version = expected + 1` is the migration itself:
    `source_anchors.txt` section `## supabase/migrations/0001_orchestrator_sync.sql:39-90` quotes the
    created `orchestrator_sync_push` function and its lines 62-63 rejection verbatim.
    `src/orchestrator/services/sync_transport.py:217` shows the RPC-derived `next_version`, sent at

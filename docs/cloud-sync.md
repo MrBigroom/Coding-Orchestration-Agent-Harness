@@ -69,12 +69,13 @@ A rejection reading `invalid version transition: 0 -> 3` means the local side pr
 revision `3` as the next **remote** version while the remote still expected `0 -> 1`. That is what
 the pre-T-41 push did: it sent `mapping.version` (which increments on every local payload change)
 instead of `mapping.synced_version + 1`. A record edited three times before its first successful
-push therefore produced a permanent 400 on every cycle. Re-measured on 2026-11-11 before the
-fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
-(7,388 version-transition lines in total; the others are the same defect at other local revisions
-such as `9 -> 14`), `sync_entities` held 1,431 rows (1,426 when the task was filed), and
-`sync_state` held exactly one key, `device_id` (written 2026-10-28). Retrying could never succeed
-because nothing on either side changed.
+push therefore produced a permanent 400 on every cycle. Re-measured read-only on 2026-11-11
+02:07 +08 before the fix: `wc -l logs/desktop-server.log` was 277,088 lines; `grep -c` found 7,028
+lines of exactly `invalid version transition: 0 -> 3` (7,416 version-transition lines in total; the
+others are the same defect at other local revisions such as `9 -> 14`); a read-only SQLite query
+found 1,445 `sync_entities` rows (1,426 when the task was filed) and exactly one `sync_state` key,
+`device_id` (written 2026-10-28). Retrying could never succeed because nothing on either side
+changed.
 
 After the fix, the transport sends `p_expected_version = synced_version` and
 `p_version = synced_version + 1`, then records the version that actually landed as both `version`
