@@ -1,4 +1,4 @@
-# HEAD=5bc4077dc836c805544ec8f49ecef989f4792248 mode=full
+# HEAD=fc7429917746cc3410ab51805fc0255e51efbb71 mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_recorded_as_a_linked_row PASSED
@@ -6,6 +6,9 @@ tests/unit/test_memory_lifecycle.py::test_a_byte_identical_suggestion_still_crea
 tests/unit/test_memory_lifecycle.py::test_same_domain_but_unrelated_facts_are_not_linked PASSED
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_shared_only_by_subject_is_linked PASSED
 tests/unit/test_memory_lifecycle.py::test_a_repeated_restatement_does_not_add_a_second_linked_row PASSED
+tests/unit/test_memory_lifecycle.py::test_untrusted_suggestion_tags_cannot_claim_priority_or_forge_a_link PASSED
+tests/unit/test_memory_lifecycle.py::test_a_linked_suggestion_keeps_the_harness_generated_link PASSED
+tests/unit/test_memory_lifecycle.py::test_export_import_round_trip_preserves_operator_priority_tags PASSED
 tests/unit/test_memory_lifecycle.py::test_a_pending_row_from_the_same_batch_is_not_a_link_target PASSED
 tests/unit/test_memory_lifecycle.py::test_a_pinned_entry_is_kept_while_an_older_unpinned_entry_is_demoted PASSED
 tests/unit/test_memory_lifecycle.py::test_untagged_entries_keep_the_pre_t17_demotion_order PASSED
@@ -36,15 +39,18 @@ tests/unit/test_memory_lifecycle.py::test_override_records_the_demoted_ids_in_th
 tests/unit/test_memory_lifecycle.py::test_budget_and_triage_name_the_current_demotions PASSED
 tests/unit/test_memory_lifecycle.py::test_triage_reads_the_link_reason_out_of_tags_json PASSED
 tests/unit/test_memory_lifecycle.py::test_every_shared_subject_term_is_stored_so_the_reason_matches PASSED
+tests/unit/test_memory_lifecycle.py::test_a_term_containing_a_comma_round_trips_through_the_link_record PASSED
 tests/unit/test_memory_lifecycle.py::test_a_condense_apply_that_lengthens_the_survivor_is_refused PASSED
 tests/unit/test_memory_lifecycle.py::test_editing_an_approved_row_that_grows_is_refused_when_it_would_evict PASSED
 tests/unit/test_memory_lifecycle.py::test_pinning_a_demoted_approved_row_is_refused_when_it_would_evict PASSED
 tests/unit/test_memory_lifecycle.py::test_moving_an_approved_row_to_a_tighter_scope_is_refused PASSED
+tests/unit/test_memory_lifecycle.py::test_moving_a_row_into_a_full_section_where_it_ranks_lowest_is_refused PASSED
 tests/unit/test_memory_lifecycle.py::test_a_rank_lowering_edit_demotes_itself_without_an_override PASSED
 tests/unit/test_memory_lifecycle.py::test_a_content_shrinking_edit_still_succeeds_without_an_override PASSED
 tests/unit/test_memory_lifecycle.py::test_patching_a_row_cannot_flip_it_to_approved PASSED
 tests/unit/test_memory_lifecycle.py::test_markdown_import_creates_only_pending_rows_and_never_evicts PASSED
 tests/unit/test_memory_lifecycle.py::test_suggestion_event_names_come_from_the_structured_kind PASSED
+tests/unit/test_memory_lifecycle.py::test_an_unknown_suggestion_kind_uses_the_named_fallback_event PASSED
 tests/unit/test_memory.py::test_suggestion_approval_flow_and_injection PASSED
 tests/unit/test_memory.py::test_role_aware_injection PASSED             
 tests/unit/test_memory.py::test_duplicate_suggestions_are_ignored PASSED
@@ -170,6 +176,7 @@ tests/integration/test_cli.py::test_cleanup_sweeps_orphaned_parity_residue PASSE
 tests/integration/test_cli.py::test_reset_requires_flag PASSED          
 tests/integration/test_cli.py::test_memory_triage_and_budget_commands PASSED
 tests/integration/test_cli.py::test_memory_add_approve_over_the_cap_is_refused_unless_override PASSED
+tests/integration/test_cli.py::test_memory_add_by_the_operator_keeps_a_pinned_tag PASSED
 tests/integration/test_cli.py::test_memory_condense_requires_a_project PASSED
 tests/integration/test_cli.py::test_memory_condense_is_a_dry_run_until_apply_names_the_ids PASSED
 tests/integration/test_api.py::test_health PASSED                       
@@ -222,4 +229,4 @@ tests/integration/test_api.py::test_run_log_socket_refuses_other_origins[headers
 tests/integration/test_api.py::test_a_token_replaces_the_local_host_check PASSED
 tests/integration/test_api.py::test_one_time_schedule_api PASSED        
 tests/integration/test_api.py::test_editing_an_approved_row_over_the_cap_returns_the_casualty_in_detail PASSED
-============================= 221 passed =============================
+============================= 228 passed =============================
