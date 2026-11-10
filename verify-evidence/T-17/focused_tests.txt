@@ -1,4 +1,4 @@
-# HEAD=5bd36c24775076172ce4bc46e957c09a0724ec80 mode=full
+# HEAD=63137c3e98a7b38ef5177672785f199b555aa950 mode=full
 # command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + migration drift)
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17
 tests/unit/test_memory_lifecycle.py::test_a_reworded_restatement_is_linked_not_stored PASSED

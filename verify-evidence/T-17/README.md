@@ -1,7 +1,7 @@
 # T-17 evidence index
 
-Bundle measured at `5bd36c2` (code HEAD), full pass, then committed as an evidence-only
-commit. Quote only the numbers in `timing.txt`: **850 passed, 10 skipped** in 147.6s for the
+Bundle measured at `63137c3` (code HEAD), full pass, then committed as an evidence-only
+commit. Quote only the numbers in `timing.txt`: **850 passed, 10 skipped** in 147.2s for the
 full suite; focused run **116 passed** in 9.3s; lint **All checks passed!**.
 
 | DoD | Where it is proven |
@@ -23,5 +23,5 @@ Supporting checks:
 - `dod_map.txt` — the static DoD-to-test map.
 - `timing.txt` — both pass modes, written only by the `--full` pass.
 - `freshness_selfcheck.txt` — the generator's own worktree-basis check: `status=pass`,
-  `8 stamped evidence file(s) fresh at 5bd36c2`.
+  `8 stamped evidence file(s) fresh at 63137c3` (self-check before the README/tip files).
 - `freshness_at_tip.txt` — the committed-view check at the delivered tip, written last.

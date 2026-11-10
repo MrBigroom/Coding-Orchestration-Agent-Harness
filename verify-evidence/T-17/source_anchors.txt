@@ -1,13 +1,13 @@
-# HEAD=5bd36c24775076172ce4bc46e957c09a0724ec80 mode=full
+# HEAD=63137c3e98a7b38ef5177672785f199b555aa950 mode=full
 # command: grep -nF for the T-17 anchors (source line numbers at this HEAD)
-948:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
-937:def _tag_rank(entry: MemoryEntry) -> int:
-541:def _linked_duplicate(
+956:def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+945:def _tag_rank(entry: MemoryEntry) -> int:
+549:def _linked_duplicate(
 146:def is_garbled(entry: MemoryEntry) -> bool:
 115:def _redact_memory_content(text: str) -> tuple[str, list[str]]:
-595:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
-631:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
-1133:def condense(
+603:def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+639:def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+1141:def condense(
 443:def condense_proposals(session: Session, project_slug: str | None = None) -> list[dict[str, Any]]:
 109:_FLAG_LABELS["redaction-marker"] = (
 304:        out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
