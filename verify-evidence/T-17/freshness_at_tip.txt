@@ -1,0 +1,15 @@
+# Committed-view freshness at the delivered tip (not hand-edited, no HEAD stamp:
+# this is a report about the commits it names, not evidence measured at it).
+# command: orchestrator task evidence T-17 --at-tip
+basis=committed
+delivered_tip=0c2111f142d0b85ae82345fe6658eb7a1ab5e6e4
+delivered_tip_short=0c2111f
+compared_commit=5bd36c24775076172ce4bc46e957c09a0724ec80
+compared_short=5bd36c2
+status=pass
+stamped_files=9
+stale_count=0
+deleted_count=0
+evidence=9 stamped evidence file(s) fresh at 5bd36c2 (5bd36c24775076172ce4bc46e957c09a0724ec80); commit under verification 0c2111f (0c2111f142d0b85ae82345fe6658eb7a1ab5e6e4) is evidence-only/empty on top of that target
+notes=none
+delivery=the comparison target is the nearest ancestor of the delivered tip that is not an evidence-only or empty commit; the commit adding this report touches only verify-evidence/, so the same check at the final tip reports pass naming that code HEAD (5bd36c2).
