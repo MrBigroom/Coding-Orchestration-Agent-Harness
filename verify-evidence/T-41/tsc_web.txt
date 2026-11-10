@@ -1,10 +1,10 @@
-# HEAD=be5c40dc80b898b38c64e165fe15d2310c64635a mode=fast
+# HEAD=155f256e47d2c93151c0cd9e85c317c65551cc89 mode=fast
 # WORKAROUND (disclosed): scratch project symlinks MAIN web/node_modules and THIS
 # worktree's web sources/configs; no file under the worktree is written.
 # scratch src resolves to: /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41/web/src
 # tsconfig used:           /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41/web/tsconfig.json
-# exact command: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/.bin/tsc -b --force (cwd=/tmp/t41-tsc.xbWIsE)
+# exact command: /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/web/node_modules/.bin/tsc -b --force (cwd=/tmp/t41-tsc.tbbXIZ)
 tsc_exit=0
 listfiles_total=279
 listfiles_src=29
-# last listFiles line: /tmp/t41-tsc.xbWIsE/vite.config.ts
+# last listFiles line: /tmp/t41-tsc.tbbXIZ/vite.config.ts

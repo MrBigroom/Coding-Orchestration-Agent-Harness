@@ -1,21 +1,22 @@
-# HEAD=be5c40dc80b898b38c64e165fe15d2310c64635a mode=fast
+# HEAD=155f256e47d2c93151c0cd9e85c317c65551cc89 mode=fast
 # command: ./scripts/orch_verify.sh test -vv tests/unit/test_sync_resilience.py \
 ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41
 tests/unit/test_sync_resilience.py::test_backoff_sequence_doubles_until_the_cap_and_resets_when_healthy PASSED [  5%]
 tests/unit/test_sync_resilience.py::test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason PASSED [ 11%]
-tests/unit/test_sync_resilience.py::test_transient_failures_back_off_and_stop_at_the_consecutive_cap PASSED [ 17%]
-tests/unit/test_sync_resilience.py::test_identical_failures_log_once_with_an_occurrence_counter PASSED [ 23%]
-tests/unit/test_sync_resilience.py::test_push_sends_synced_version_plus_one_not_the_local_revision PASSED [ 29%]
-tests/unit/test_sync_resilience.py::test_reinit_dry_run_then_apply_realigns_a_rejected_version PASSED [ 35%]
-tests/unit/test_sync_resilience.py::test_reinit_never_rebaselines_a_dirty_row_past_unseen_remote_changes PASSED [ 41%]
-tests/unit/test_sync_resilience.py::test_an_enabled_sync_that_has_never_run_initialises_and_succeeds PASSED [ 47%]
-tests/unit/test_sync_resilience.py::test_a_stopped_sync_emits_one_sync_failed_notification_per_streak PASSED [ 52%]
-tests/unit/test_sync_resilience.py::test_a_stopped_sync_respects_the_notification_master_switch PASSED [ 58%]
-tests/integration/test_sync_api.py::test_sync_status_is_safe_and_disabled_by_default PASSED [ 64%]
-tests/integration/test_sync_api.py::test_manual_sync_endpoint_uses_runner_with_automatic_mode_off PASSED [ 70%]
-tests/integration/test_sync_api.py::test_sync_settings_validation_and_local_defaults PASSED [ 76%]
-tests/integration/test_sync_api.py::test_sync_status_reports_the_stopped_reason_and_failure_streak PASSED [ 82%]
+tests/unit/test_sync_resilience.py::test_transient_failures_back_off_and_stop_at_the_consecutive_cap PASSED [ 16%]
+tests/unit/test_sync_resilience.py::test_the_running_loop_retries_a_transient_failure_after_backoff PASSED [ 22%]
+tests/unit/test_sync_resilience.py::test_identical_failures_log_once_with_an_occurrence_counter PASSED [ 27%]
+tests/unit/test_sync_resilience.py::test_push_sends_synced_version_plus_one_not_the_local_revision PASSED [ 33%]
+tests/unit/test_sync_resilience.py::test_reinit_dry_run_then_apply_realigns_a_rejected_version PASSED [ 38%]
+tests/unit/test_sync_resilience.py::test_reinit_never_rebaselines_a_dirty_row_past_unseen_remote_changes PASSED [ 44%]
+tests/unit/test_sync_resilience.py::test_an_enabled_sync_that_has_never_run_initialises_and_succeeds PASSED [ 50%]
+tests/unit/test_sync_resilience.py::test_a_stopped_sync_emits_one_sync_failed_notification_per_streak PASSED [ 55%]
+tests/unit/test_sync_resilience.py::test_a_stopped_sync_respects_the_notification_master_switch PASSED [ 61%]
+tests/integration/test_sync_api.py::test_sync_status_is_safe_and_disabled_by_default PASSED [ 66%]
+tests/integration/test_sync_api.py::test_manual_sync_endpoint_uses_runner_with_automatic_mode_off PASSED [ 72%]
+tests/integration/test_sync_api.py::test_sync_settings_validation_and_local_defaults PASSED [ 77%]
+tests/integration/test_sync_api.py::test_sync_status_reports_the_stopped_reason_and_failure_streak PASSED [ 83%]
 tests/integration/test_sync_api.py::test_manual_sync_returns_the_permanent_error_as_structured_detail PASSED [ 88%]
 tests/integration/test_cli.py::test_sync_status_reports_a_stopped_streak PASSED [ 94%]
 tests/integration/test_cli.py::test_sync_reinit_is_a_dry_run_by_default PASSED [100%]
-====================== 17 passed, 11 deselected in 2.38s =======================
+====================== 18 passed, 11 deselected in 2.46s =======================
