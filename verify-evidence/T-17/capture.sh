@@ -44,7 +44,7 @@ fi
 if want focused_tests.txt; then
   T0=$(now)
   { echo "$STAMP"
-    echo "# command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + migration drift)"
+    echo "# command: ./scripts/orch_verify.sh test -vv (T-17 memory lifecycle + API/CLI + migration drift)"
     ./scripts/orch_verify.sh test -vv \
       tests/unit/test_memory_lifecycle.py \
       tests/unit/test_memory.py \
@@ -52,7 +52,9 @@ if want focused_tests.txt; then
       tests/unit/test_memory_scopes.py \
       tests/unit/test_redaction.py \
       tests/integration/test_memory_scope_boundary.py \
-      tests/integration/test_migrations.py
+      tests/integration/test_migrations.py \
+      tests/integration/test_cli.py \
+      tests/integration/test_api.py
   } 2>&1 | grep -E "PASSED|FAILED|ERROR|passed|failed|ORCH_VERIFY\||^# (HEAD|command)" | stable \
     > "$OUT/focused_tests.txt"
   emit focused_tests "$(ms "$T0" "$(now)")"
