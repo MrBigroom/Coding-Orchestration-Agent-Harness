@@ -200,9 +200,13 @@ with session_scope() as s:
         "bundle_ordering 154/165": [154, 165],
         "notify_send 135/140/143": [135, 140, 143],
     }
+    rare_pair_set = {tuple(sorted(pair)) for pair in rare_pairs}
     for label, members in cited.items():
         hits = [g for g in groups if set(members) & set(g)]
-        print(f"cited|{label}|members={members}|groups={hits}")
+        # Answer the operator's question explicitly: did the RARE-TOKEN matcher alone pair
+        # any two members of this topical cluster, independently of the subject pass?
+        inside = [list(pair) for pair in rare_pair_set if set(pair) <= set(members)]
+        print(f"cited|{label}|members={members}|rare_token_pairs={inside}|groups={hits}")
     caps = m.memory_budgets(s)
     print(f"caps={caps} enabled={m.memory_budgets_enabled(s)}")
     for role in ("architect", "worker", "supervisor"):
@@ -261,12 +265,14 @@ if want dod_map.txt; then
     cat <<'MAP'
 1 ingest dedup: a reworded restatement is a REAL pending row linked to the approved
   entry it restates (`duplicate-of:<id>` in the existing tags column), a byte-identical
-  suggestion still creates no row, and same-domain unrelated facts are not linked:
+  suggestion still creates no row, same-domain unrelated facts are not linked, and a row
+  created earlier in the same batch is never a link target:
    test_a_reworded_restatement_is_recorded_as_a_linked_row
    test_a_byte_identical_suggestion_still_creates_no_row
    test_same_domain_but_unrelated_facts_are_not_linked
    test_a_reworded_restatement_shared_only_by_subject_is_linked
    test_a_repeated_restatement_does_not_add_a_second_linked_row
+   test_a_pending_row_from_the_same_batch_is_not_a_link_target
    test_triage_flags_a_linked_restatement_as_a_merge_candidate
    source_anchors.txt: memory_service.def _linked_duplicate / duplicate_of;
    memory_text.SUBJECT_MAX_DF / def is_subject_pair (rare identifiers, never a text ratio)
@@ -293,26 +299,32 @@ if want dod_map.txt; then
    integration::test_models_match_migration / test_upgrade_downgrade_populated_db
 5 docs/memory.md documents ingest dedup (linked pending row), tag-driven demotion order
   replacing oldest-first, and condense usage including its non-destructive default
-6 redaction is recorded, garbled rows are not rendered, logs unchanged:
+6 redaction is recorded, garbled rows are not rendered, logs unchanged, and EVERY
+  approval-shaped write refuses one (create(approved=True), import_all, approve):
    test_adding_a_key_value_phrase_records_the_substitution
    test_updating_a_key_value_phrase_records_the_substitution
    test_a_marked_entry_is_garbled_not_rendered_and_not_approvable
    test_a_marked_approved_entry_is_not_injected_or_rendered
+   test_creating_an_approved_key_value_entry_is_refused_as_garbled
+   test_importing_an_approved_key_value_entry_is_refused_as_garbled
    test_log_redaction_is_still_a_security_control
    plus tests/unit/test_redaction.py in focused_tests.txt (it IS in the focused invocation)
-7 eviction is value-ordered, visible and refused on EVERY approval-shaped write:
+7 eviction is value-ordered, visible and refused on EVERY approval-shaped write, including
+  an approval that would leave the row itself out of the injected section:
    test_approval_that_would_evict_names_the_casualty_and_needs_override
+   test_approving_a_row_that_would_itself_be_demoted_is_refused
+   test_override_records_the_demoted_ids_in_the_build_log
    test_budget_and_triage_name_the_current_demotions
    test_creating_an_already_approved_row_is_refused_when_it_would_evict
    test_importing_an_approved_row_is_refused_when_it_would_evict
    integration::test_approval_eviction_is_refused_and_override_is_explicit
    integration::test_creating_an_approved_row_over_the_cap_is_refused_and_override_is_explicit
    integration::test_memory_add_approve_over_the_cap_is_refused_unless_override
-   source_anchors.txt: _refuse_eviction / _eviction_impact; GUI "would evict" in
-   web/src/pages/Memory.tsx and api/static_fallback/index.html (casualties + override)
+   source_anchors.txt: class EvictionRefused / _refuse_eviction / _eviction_impact /
+   _log_eviction_override; both UIs read detail.evicted (structure, never a message substring)
 acceptance: live_condense.txt is the live DB snapshot run on a COPY at the operator's caps:
-   rare-token pairs vs subject groups, the operator-cited topical clusters, condense dry
-   run (rows unchanged), one explicit apply, and budget/triage afterwards.
+   the operator-cited topical clusters with the RARE-TOKEN answer per cluster, condense dry
+   run (rows unchanged), one explicit apply, and budget/triage before and after.
 MAP
   } > "$OUT/dod_map.txt"
   emit dod_map "$(ms "$T0" "$(now)")"
