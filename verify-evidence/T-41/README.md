@@ -25,7 +25,7 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
 
 1. **Protocol recorded, evidence not circular.** `docs/cloud-sync.md:42` (`## Version protocol and
    rejected transitions (T-41)`) states the counter is remote per-entity state, that `sync_state`
-   has no version row by design, and what `0 -> 3` means; `:72-95` reconciles every count: the
+   has no version row by design, and what `0 -> 3` means; `:74-99` reconciles every count: the
    operator's 7,373 at 275,740 lines is the **all-transitions** pattern (6,985 of them exactly
    `0 -> 3`), the earlier 7,028 at 277,088 was the **exactly `0 -> 3`** pattern, and the remaining
    388 are the same defect at `9 -> 14` (370), `9 -> 11` (14), `9 -> 12` (2) and `0 -> 2` (2).
@@ -46,7 +46,7 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    is a capped delay; only a `SyncPermanentError` is terminal and the base is floored at the
    configured interval (`test_default_transient_retries_reach_the_900_second_cap`,
    `test_transient_failures_back_off_without_ever_stopping`). A permanent 4xx records
-   `stopped`/`stopped_reason` (`sync_service.py:238` `SYNC_HEALTH_KEY`, `:281` `health`).
+   `stopped`/`stopped_reason` (`sync_service.py:237` `SYNC_HEALTH_KEY`, `:281` `health`).
    `sync_runner.py:103` status, `GET /api/sync/status` (`api/routes/sync.py`), and `cli.py:1594`
    `sync status` expose `stopped`, `stopped_reason`, `consecutive_failures`, `last_failure_kind`,
    `next_retry_at`. Tests: `test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason`,
@@ -58,7 +58,7 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    calls it, so a manual `sync now` is covered too. The once-per-streak flags are atomic claims:
    `sync_service.py:356` `claim_health_flag` and `:289` `update_health` do a conditional
    `UPDATE ... WHERE value_json = <bytes read>` and re-apply on a lost race. No single-writer
-   assumption is made across the desktop loop and CLI processes; `docs/cloud-sync.md:146-156`
+   assumption is made across the desktop loop and CLI processes; `docs/cloud-sync.md:150-153`
    states this. The T-9 fan-out therefore respects the master switch and per-trigger subscription.
    React `web/src/pages/Settings.tsx:198` shows the stopped reason and `:200` gives reinit only for
    a permanent error; `:213` shows the transient retry line. Fallback UI:

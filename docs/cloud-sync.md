@@ -86,9 +86,10 @@ earlier was the **exactly `0 -> 3`** count at a later prefix. The 388 other tran
 7,416 total are the same defect at other revisions: 370 `9 -> 14`, 14 `9 -> 11`, 2 `9 -> 12`, and
 2 `0 -> 2` (counts at the 275,740-line prefix are stable and reproducible because the log is
 append-only). `background Supabase synchronization failed` is a slightly larger count than the
-transitions because a handful of historical cycles failed for a different reason (7
-`AttributeError: 'ModelProfile' object has no attribute 'context_window'` and one
-`httpcore.ConnectError`); they are the same missing-visibility defect, not version rejections. At
+transitions because a handful of historical cycles failed for a different reason (mostly a
+pre-fix `AttributeError: 'ModelProfile' object has no attribute 'context_window'`, plus isolated
+network/HTTP-522 errors); they are the same missing-visibility defect, not version rejections and
+the exact breakdown is in `live_measurement.txt`. At
 the measured DB snapshot `sync_entities` held 1,459 rows (1,426 when the task was filed; 911 still
 dirty) and `sync_state` held exactly one key, `device_id` (written 2026-10-28), with no version row.
 The raw commands and output behind every number in this section are committed in
