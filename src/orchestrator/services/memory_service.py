@@ -53,29 +53,101 @@ from orchestrator.core.memory_vocab import (
 )
 from orchestrator.core.models import MemoryCategory, MemoryEntry, Role, Setting, utcnow
 from orchestrator.core.schemas import MemoryCreate, MemorySuggestion, MemoryUpdate
-from orchestrator.utils.memory_text import is_rot_prone
+from orchestrator.utils.memory_text import build_df, is_duplicate_pair, is_rot_prone
 from orchestrator.utils.paths import safe_join
-from orchestrator.utils.redaction import redact
+from orchestrator.utils.redaction import REDACTED, redact_with_report
 from orchestrator.utils.slug import slugify
 from orchestrator.utils.truncate import estimate_tokens
 
 
 @dataclass
 class SuggestionOutcome:
-    """What the suggestion path stored, and what it refused to store.
+    """What the suggestion path stored, what it linked, and what it refused to store.
 
-    `notes` carries every substitution and every drop in submission order; the caller
-    writes them to the build log / chat stream so the operator sees a scope that was
-    quietly rewritten instead of an entry that silently never reaches a prompt.
+    `notes` carries every substitution, every duplicate link and every drop in submission
+    order; the caller writes them to the build log / chat stream so the operator sees a
+    scope that was quietly rewritten, or a fact that was linked instead of stored, instead
+    of an entry that silently never reaches a prompt.
     """
 
     created: list[MemoryEntry] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Near-duplicates are not rows (the memory_entries shape is frozen). Each record says
+    #: which existing entry a suggestion was linked to and why; it is mirrored in `notes`.
+    linked: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def moved(self) -> list[str]:
-        """Just the substitution notes (drops start with 'dropped ')."""
-        return [n for n in self.notes if not n.startswith("dropped ")]
+        """Just the scope-substitution notes (drops and duplicate links are not moves)."""
+        return [n for n in self.notes if n.startswith("memory suggestion from ")]
+
+
+REDACTION_TAG_PREFIX = "redaction-substitution:"
+#: Tag-driven value order. Higher value is kept longer; an untagged entry behaves exactly as
+#: it did before T-13's remainder (content class, then id as the last tiebreak only).
+PINNED_TAGS = frozenset({"pinned", "durable"})
+TIER_TAGS = {"tier:1": 3, "tier:2": 2, "tier:3": 1}
+DEFAULT_TIER_RANK = 2
+
+
+def _line_hits(text: str) -> dict[str, list[int]]:
+    """Which line(s) each redaction pattern class matched (for the per-entry record)."""
+    out: dict[str, list[int]] = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        for hit in redact_with_report(line).hits:
+            out.setdefault(hit.pattern_class, []).append(number)
+    return out
+
+
+def _redaction_tags(text: str, report) -> list[str]:
+    """Per-entry record of a rewrite: pattern class, count, and where it matched."""
+    if not report.changed:
+        return []
+    located = _line_hits(text)
+    tags = []
+    for hit in report.hits:
+        lines = sorted(set(located.get(hit.pattern_class, [])))
+        where = ",".join(str(n) for n in lines) if lines else "content"
+        tags.append(f"{REDACTION_TAG_PREFIX}{hit.pattern_class}:count={hit.count}:lines={where}")
+    return sorted(tags)
+
+
+def _redact_memory_content(text: str) -> tuple[str, list[str]]:
+    """Redact durable memory text AND return the visible substitution record.
+
+    Memory is not a log line: a benign `KEY: value` phrase must never be silently rewritten.
+    `utils/redaction.py` stays the one security control, so real credentials are still
+    removed; when that happens the entry carries the pattern class, count and line(s) in
+    `tags_json` (an existing column, so the frozen memory_entries shape does not change).
+    `memory_triage` flags any entry with such a record or a marker as garbled, and
+    `select_for_prompt`/`render_file` refuse to inject it until it is reworded.
+    """
+    report = redact_with_report(text)
+    return report.text, _redaction_tags(text, report)
+
+
+def _combine_tags(
+    base: list[str] | None, redaction: list[str], *, preserve_existing: bool = False
+) -> list[str]:
+    """User tags plus the CURRENT redaction record; a stale record is always dropped.
+
+    `preserve_existing` is for a payload that already carries a record and whose content was
+    redacted earlier (an export/import round trip): the record is re-stated rather than
+    silently lost. An edit that rewrites clean content passes the default, so re-wording a
+    garbled entry clears its old record.
+    """
+    existing = [t for t in (base or []) if t.startswith(REDACTION_TAG_PREFIX)]
+    kept = [t for t in (base or []) if not t.startswith(REDACTION_TAG_PREFIX)]
+    if preserve_existing and not redaction:
+        redaction = existing
+    return sorted(set(kept) | set(redaction))
+
+
+def is_garbled(entry: MemoryEntry) -> bool:
+    """Was this entry's text rewritten on write (marker and/or a substitution record)?"""
+    return REDACTED in (entry.content or "") or any(
+        t.startswith(REDACTION_TAG_PREFIX) for t in (entry.tags_json or [])
+    )
 
 
 # Injection buckets -> (setting name for the cap).
@@ -299,11 +371,16 @@ def _validate(entry: MemoryEntry, *, check_scope: bool = True) -> None:
 
 
 def render_file(session: Session, path: Path) -> None:
-    """Re-render one markdown file from all approved entries that map to it."""
+    """Re-render one markdown file from all approved entries that map to it.
+
+    A garbled entry (one whose text was rewritten on write) is deliberately left out: the
+    current pipeline used to render the marker into every future prompt with no warning.
+    The row stays approved in SQLite; triage reports it as needing a reword.
+    """
     entries = [
         e
         for e in session.exec(select(MemoryEntry).where(MemoryEntry.approved == True))  # noqa: E712
-        if _file_for(e) == path
+        if _file_for(e) == path and not is_garbled(e)
     ]
     entries.sort(key=lambda e: e.id or 0)
     title = path.stem
@@ -313,6 +390,7 @@ def render_file(session: Session, path: Path) -> None:
 
 
 def create(session: Session, data: MemoryCreate) -> MemoryEntry:
+    content, redaction_tags = _redact_memory_content(data.content.strip())
     entry = MemoryEntry(
         category=data.category.value,
         scope=data.scope,
@@ -322,9 +400,9 @@ def create(session: Session, data: MemoryCreate) -> MemoryEntry:
         # that shape (an unvalidated object, an import payload, a future caller) with the
         # vocabulary error rather than crashing on `.value`.
         role=getattr(data.role, "value", data.role) or None,
-        content=redact(data.content.strip()),
+        content=content,
         source=data.source,
-        tags_json=sorted(set(data.tags)),
+        tags_json=_combine_tags(data.tags, redaction_tags, preserve_existing=True),
         approved=data.approved,
     )
     _validate(entry)
@@ -366,9 +444,21 @@ def suggest_from_handoff_report(
     injector can read.
     """
     outcome = SuggestionOutcome()
-    existing = {
-        (e.category, e.scope, e.project_slug, e.content.strip()) for e in list_entries(session)
-    }
+    all_entries = list_entries(session)
+    existing = {(e.category, e.scope, e.project_slug, e.content.strip()) for e in all_entries}
+    # The duplicate index is the same rare-token containment triage uses. Build document
+    # frequency over every stored entry plus this batch, so the domain's common words are not
+    # "rare" merely because a bucket is small (a whole-text ratio would fuse unrelated facts).
+    suggestion_texts = [s.content for s in suggestions]
+    df = build_df([e.content for e in all_entries] + suggestion_texts)
+    by_domain: dict[tuple[str, str | None, str | None], list[MemoryEntry]] = {}
+    for e in all_entries:
+        domain = (
+            e.category,
+            e.project_slug if e.category == MemoryCategory.project else None,
+            role_file_key(e) if e.category == MemoryCategory.role else None,
+        )
+        by_domain.setdefault(domain, []).append(e)
     for s in suggestions:
         try:
             category = MemoryCategory(s.category)
@@ -397,8 +487,33 @@ def suggest_from_handoff_report(
                 if category == MemoryCategory.project and project_slug
                 else None
             )
-            key = (category, scope, proj, redact(s.content.strip()))
+            redacted_content, _ = _redact_memory_content(
+                s.content.strip()
+            )
+            key = (category, scope, proj, redacted_content)
             if key in existing:
+                continue  # byte-identical: no row, exactly as before
+            domain = (
+                category,
+                proj,
+                scope if category == MemoryCategory.role else None,
+            )
+            match = _linked_duplicate(redacted_content, by_domain.get(domain, []), df)
+            if match is not None:
+                existing_id, ratio = match
+                record = {
+                    "existing_id": existing_id,
+                    "content": redacted_content,
+                    "reason": (
+                        "rare-token containment "
+                        f"{ratio:.3f} >= 0.5 identifies the same fact in new words"
+                    ),
+                }
+                outcome.linked.append(record)
+                outcome.notes.append(
+                    f"linked suggestion from {source} to existing memory #{existing_id}: "
+                    f"{record['reason']}"
+                )
                 continue
             existing.add(key)
             outcome.created.append(
@@ -416,10 +531,26 @@ def suggest_from_handoff_report(
                     ),
                 )
             )
+            by_domain.setdefault(domain, []).append(outcome.created[-1])
         except (ValueError, MemoryError_) as e:
             # A drop is an operator-visible decision, never a silent `continue`.
             outcome.notes.append(f"dropped suggestion from {source}: {e}")
     return outcome
+
+
+def _linked_duplicate(
+    content: str, candidates: list[MemoryEntry], df: dict[str, int]
+) -> tuple[int, float] | None:
+    """The first existing entry that states `content` in different words (or None).
+
+    Deliberately `memory_text.is_duplicate_pair` (rare-token containment), never a
+    whole-text similarity ratio. Deterministic: candidates are already in id order.
+    """
+    for candidate in candidates:
+        is_dup, ratio = is_duplicate_pair(content, candidate.content, df)
+        if is_dup and candidate.id is not None:
+            return candidate.id, ratio
+    return None
 
 
 def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
@@ -431,8 +562,14 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     "unchanged" guarantee does not depend on session rollback behaviour.
     """
     entry = _get(session, entry_id)
-    new_content = redact(data.content.strip()) if data.content is not None else entry.content
-    new_tags = sorted(set(data.tags)) if data.tags is not None else entry.tags_json
+    if data.content is not None:
+        new_content, redaction_tags = _redact_memory_content(data.content.strip())
+    else:
+        new_content = entry.content
+        redaction_tags = [t for t in entry.tags_json if t.startswith(REDACTION_TAG_PREFIX)]
+    new_tags = _combine_tags(
+        data.tags if data.tags is not None else entry.tags_json, redaction_tags
+    )
     preview = MemoryEntry(
         category=entry.category,
         scope=data.scope if data.scope is not None else entry.scope,
@@ -455,8 +592,68 @@ def update(session: Session, entry_id: int, data: MemoryUpdate) -> MemoryEntry:
     return entry
 
 
-def approve(session: Session, entry_id: int) -> MemoryEntry:
+def approval_impact(session: Session, entry_id: int) -> dict[str, Any]:
+    """Which approved entries a pending approval would demote, and in which section.
+
+    Memory is a zero-sum static section: approving over a cap evicts another approved row.
+    The comparison is the same deterministic selection the prompt will use, so the answer
+    cannot drift from the render.
+    """
     entry = _get(session, entry_id)
+    if entry.approved:
+        return {"entry_id": entry.id, "evicted": []}
+    projects: tuple[str | None, ...] = (
+        (entry.project_slug,) if entry.category == MemoryCategory.project else (None,)
+    )
+    evicted: dict[int, dict[str, Any]] = {}
+    for role in (Role.architect.value, Role.worker.value, Role.supervisor.value):
+        for project_slug in projects:
+            before = select_for_prompt(session, role, project_slug)
+            after = select_for_prompt(session, role, project_slug, also_approved=[entry])
+            already = {x["id"] for x in before.excluded}
+            for row in after.excluded:
+                if row["id"] == entry.id or row["id"] in already:
+                    continue
+                record = evicted.setdefault(
+                    row["id"],
+                    {
+                        "id": row["id"],
+                        "bucket": row["bucket"],
+                        "scope": row["scope"],
+                        "roles": [],
+                    },
+                )
+                if role not in record["roles"]:
+                    record["roles"].append(role)
+    return {"entry_id": entry.id, "evicted": sorted(evicted.values(), key=lambda r: r["id"])}
+
+
+def approve(session: Session, entry_id: int, *, override: bool = False) -> MemoryEntry:
+    """Approve a row. Over-cap eviction is refused by default and explained.
+
+    `override=True` is the explicit operator opt-in; even then the evicted rows stay
+    approved in SQLite and are reported by triage/budget, never deleted.
+    """
+    entry = _get(session, entry_id)
+    if is_garbled(entry):
+        raise MemoryError_(
+            f"memory #{entry.id} carries a redaction marker or substitution record; reword "
+            "it (PATCH content) before approving: the pipeline would otherwise render the "
+            "garbled text into every future prompt"
+        )
+    impact = approval_impact(session, entry_id)
+    if impact["evicted"] and not override:
+        casualties = ", ".join(
+            f"#{row['id']} ({row['bucket']}/{row['scope']}; roles "
+            f"{','.join(row['roles'])})"
+            for row in impact["evicted"]
+        )
+        raise MemoryError_(
+            f"approving #{entry.id} would evict already-approved entr"
+            f"{'y' if len(impact['evicted']) == 1 else 'ies'} {casualties} from the injected "
+            "section; nothing was approved. Condense/reword first, or re-run with "
+            "override=true (the evicted rows stay approved but are not injected)"
+        )
     entry.approved, entry.rejected, entry.updated_at = True, False, utcnow()
     session.add(entry)
     session.commit()
@@ -737,11 +934,53 @@ def for_prompt(session: Session, role: str, project_slug: str | None) -> dict[st
     return select_for_prompt(session, role, project_slug).sections
 
 
-def _keep_priority(entry: MemoryEntry) -> tuple[int, int]:
-    """Higher = keep. Durable entries outrank task/round/SHA-shaped ones; within a class,
-    newer (higher id) outranks older. Content-derived only: no clock, no file access, so the
-    rendered text stays byte-identical across calls and does not churn the prompt cache."""
-    return (0 if is_rot_prone(entry.content) else 1, entry.id or 0)
+def _tag_rank(entry: MemoryEntry) -> int:
+    """Explicit operator value: pinned/durable, then tier:1, tier:2/untagged, tier:3."""
+    tags = {t.strip().lower() for t in (entry.tags_json or [])}
+    if tags & PINNED_TAGS:
+        return 4
+    for tag, rank in TIER_TAGS.items():
+        if tag in tags:
+            return rank
+    return DEFAULT_TIER_RANK
+
+
+def _keep_priority(entry: MemoryEntry) -> tuple[int, int, int]:
+    """Higher = keep. Pin/tier from `tags_json` first, then content class, then id last.
+
+    No new column: the value signal is the existing tags_json. An untagged set keeps the
+    pre-T-13 behaviour exactly (rot-prone demoted first, then the oldest id), while a
+    pinned entry is demoted last and an unpinned tier:3 entry first. Content-derived only:
+    no clock, no file access, so the rendered text stays byte-identical across calls.
+    """
+    return (
+        _tag_rank(entry),
+        0 if is_rot_prone(entry.content) else 1,
+        entry.id or 0,
+    )
+
+
+def _exclusion_reason(entry: MemoryEntry, bucket: str, budget: int) -> str:
+    tags = {t.strip().lower() for t in (entry.tags_json or [])}
+    if tags & PINNED_TAGS:
+        return (
+            f"pinned/durable but the {bucket} section still cannot fit it within its "
+            f"budget of {budget} tokens"
+        )
+    if "tier:3" in tags:
+        return (
+            f"tagged tier:3 (lowest value) and the {bucket} section is over its budget "
+            f"of {budget} tokens"
+        )
+    if is_rot_prone(entry.content):
+        return (
+            f"rot-prone (names a task/round/SHA) and the {bucket} section is over "
+            f"its budget of {budget} tokens"
+        )
+    return (
+        f"no pinned/durable/tier tag and the {bucket} section is over its budget of "
+        f"{budget} tokens; id #{entry.id} is only the last tiebreak"
+    )
 
 
 def _line_tokens(content: str) -> int:
@@ -754,10 +993,10 @@ def _select_bucket(
     """Keep entries within `budget` tokens; return (kept sorted by id, excluded with reasons).
 
     `budget <= 0` disables the cap. Rule, stated so it is reviewable: if the bucket already
-    fits, everything is injected. If it does not, demote until it fits -- first the
-    rot-prone entries (task/round/SHA-shaped) oldest-first, then the rest oldest-first.
-    The newest entries are therefore never the ones silently dropped, and every exclusion
-    carries a reason that prompt preview and `orchestrator memory triage` show.
+    fits, everything is injected. If it does not, demote in `_keep_priority` order -- tag
+    value (`pinned`/`durable`, then `tier:1`..`tier:3`), then content class (rot-prone
+    first), and id only as the final tiebreak. `id` is a timestamp proxy, not a measure of
+    worth; every exclusion carries a reason that prompt preview, triage and budget show.
     """
     cost = {e.id: _line_tokens(e.content) for e in entries}
     total = sum(cost.values())
@@ -772,20 +1011,13 @@ def _select_bucket(
             break
         total -= cost[entry.id]
         kept_ids.discard(entry.id)
-        prone = is_rot_prone(entry.content)
         excluded.append(
             {
                 "id": entry.id,
                 "bucket": bucket,
                 "scope": entry.scope,
                 "tokens": cost[entry.id],
-                "reason": (
-                    f"rot-prone (names a task/round/SHA) and the {bucket} section is over "
-                    f"its budget of {budget} tokens"
-                    if prone
-                    else f"oldest of the remaining durable entries while the {bucket} section "
-                    f"is over its budget of {budget} tokens"
-                ),
+                "reason": _exclusion_reason(entry, bucket, budget),
             }
         )
     kept = [e for e in entries if e.id in kept_ids]
@@ -806,6 +1038,9 @@ def select_for_prompt(
     `also_approved` is a what-if list of unapproved entries treated as approved for the
     calculation only (used by `orchestrator memory triage` to price a batch). Nothing is
     written.
+
+    A garbled entry (redaction marker or substitution record) is reported as excluded and
+    is never injected, because it is not a fact the operator authored.
 
     Memory is a static prompt section, so `prompt_builder.enforce_budget` can never trim it;
     uncapped growth squeezes diff/handoff/verification evidence instead. Capping happens here
@@ -836,8 +1071,23 @@ def select_for_prompt(
     buckets = {"global": glob, "role": role_mem, "project": proj}
     selection = MemorySelection(budgets=dict(budgets))
     for bucket, entries in buckets.items():
-        kept, excluded = _select_bucket(bucket, entries, budgets.get(bucket, -1))
+        garbled = sorted((e for e in entries if is_garbled(e)), key=lambda e: e.id or 0)
+        usable = [e for e in entries if not is_garbled(e)]
+        kept, excluded = _select_bucket(bucket, usable, budgets.get(bucket, -1))
         selection.excluded.extend(excluded)
+        for e in garbled:
+            selection.excluded.append(
+                {
+                    "id": e.id,
+                    "bucket": bucket,
+                    "scope": e.scope,
+                    "tokens": _line_tokens(e.content),
+                    "reason": (
+                        "contains a redaction marker or substitution record; reword it before "
+                        "it can be injected"
+                    ),
+                }
+            )
         by_scope: dict[str, list[str]] = {}
         for e in kept:
             by_scope.setdefault(e.scope, []).append(e.content.strip())
@@ -862,17 +1112,95 @@ def _budget_warnings(selection: MemorySelection, session: Session | None = None)
             continue
         used = selection.used.get(bucket, 0)
         if used >= frac * cap:
-            demoted = sum(1 for x in selection.excluded if x["bucket"] == bucket)
+            demoted = [x for x in selection.excluded if x["bucket"] == bucket]
+            names = ", ".join(f"#{x['id']}" for x in demoted)
             out.append(
                 f"memory section '{bucket}' is at {used}/{cap} tokens "
                 f"({round(100 * used / cap)}% of its cap)"
-                + (f"; {demoted} approved entry(ies) are already demoted" if demoted else "")
+                + (
+                    f"; already demoted: {names}"
+                    if demoted
+                    else ""
+                )
                 + " - condense or merge entries before approving more"
             )
     return out
 
 
 # ---------------------------------------------------------------- export/import
+
+
+def condense(
+    session: Session,
+    project_slug: str | None = None,
+    *,
+    apply_ids: list[int] | None = None,
+    rewrite_content: str | None = None,
+) -> dict[str, Any]:
+    """Report merge candidates; write only when the caller names the exact ids.
+
+    A dry run (the default) changes no row and no rendered file. `apply_ids` must name the
+    complete id set of one or more proposals (survivor + every absorbed row); a partial or
+    unknown set is refused before anything is written. Applying means `update()` on the
+    survivor and `reject()` on the absorbed rows, both through this module, so redaction and
+    markdown re-rendering stay on the one sanctioned path. `rewrite_content` is the explicit
+    way to strip task framing while keeping the rule; it is only allowed for one proposal.
+    """
+    from orchestrator.services import memory_triage as mt  # local: avoids an import cycle
+
+    proposals = mt.condense_proposals(session, project_slug)
+    result: dict[str, Any] = {
+        "project_slug": project_slug,
+        "proposals": proposals,
+        "applied": [],
+        "dry_run": True,
+    }
+    if not apply_ids:
+        return result
+    try:
+        requested = {int(i) for i in apply_ids}
+    except (TypeError, ValueError) as e:
+        raise MemoryError_(f"--apply needs integer memory ids: {e}") from e
+    known = {i for p in proposals for i in p["ids"]}
+    unknown = sorted(requested - known)
+    if unknown:
+        raise MemoryError_(
+            "refusing to apply: "
+            + ", ".join(f"#{i}" for i in unknown)
+            + " is not part of any current merge candidate (run the dry run first)"
+        )
+    touched = [p for p in proposals if requested & set(p["ids"])]
+    incomplete = [p for p in touched if not set(p["ids"]).issubset(requested)]
+    if incomplete:
+        missing = sorted({i for p in incomplete for i in p["ids"]} - requested)
+        raise MemoryError_(
+            "refusing a partial merge: --apply must also name "
+            + ", ".join(f"#{i}" for i in missing)
+        )
+    if rewrite_content is not None and len(touched) != 1:
+        raise MemoryError_(
+            "--content can rewrite exactly one surviving row; name one proposal's ids"
+        )
+    for proposal in touched:
+        survivor_id = proposal["survivor"]
+        new_content = rewrite_content if rewrite_content is not None else proposal["content"]
+        update(
+            session,
+            survivor_id,
+            MemoryUpdate(content=new_content, tags=proposal["tags"]),
+        )
+        for absorbed_id in proposal["absorbed"]:
+            reject(session, absorbed_id)
+        result["applied"].append(
+            {
+                "survivor": survivor_id,
+                "rejected": proposal["absorbed"],
+                "ids": proposal["ids"],
+                "tokens_saved": proposal["tokens_saved"],
+            }
+        )
+    result["dry_run"] = False
+    return result
 
 
 def export_all(session: Session) -> dict[str, Any]:
@@ -935,7 +1263,7 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
     count = 0
     touched: set[Path] = set()
     for raw in payload["entries"]:
-        content = redact(str(raw.get("content", "")).strip())
+        content, redaction_tags = _redact_memory_content(str(raw.get("content", "")).strip())
         category = raw.get("category")
         if not content or category not in {c.value for c in MemoryCategory}:
             continue
@@ -946,7 +1274,9 @@ def import_all(session: Session, payload: dict[str, Any]) -> int:
             role=raw.get("role"),
             content=content,
             source=raw.get("source", "import"),
-            tags_json=list(raw.get("tags_json") or []),
+            tags_json=_combine_tags(
+                list(raw.get("tags_json") or []), redaction_tags, preserve_existing=True
+            ),
             approved=bool(raw.get("approved")),
             rejected=bool(raw.get("rejected")),
         )

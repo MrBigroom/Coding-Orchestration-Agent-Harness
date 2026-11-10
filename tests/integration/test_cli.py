@@ -153,3 +153,35 @@ def test_memory_triage_and_budget_commands(home, tmp_path):
 
     b = runner.invoke(app, ["memory", "budget", "--project", "demo"])
     assert b.exit_code == 0 and "caps" in b.output
+
+
+def test_memory_condense_is_a_dry_run_until_apply_names_the_ids(home):
+    import json
+
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    for content in (
+        "The wrapper must resolve the interpreter inside the worktree before running tests.",
+        "Resolve the interpreter inside the worktree before running tests with the wrapper.",
+    ):
+        assert runner.invoke(
+            app,
+            [
+                "memory", "add", content,
+                "--category", "project", "--scope", "gotchas",
+                "--project", "demo", "--approve",
+            ],
+        ).exit_code == 0
+
+    dry = runner.invoke(app, ["memory", "condense", "--project", "demo"])
+    assert dry.exit_code == 0, dry.output
+    assert "dry run" in dry.output and "proposal keep" in dry.output
+
+    report = runner.invoke(app, ["memory", "condense", "--project", "demo", "--json"])
+    data = json.loads(report.output[report.output.index("{"):])
+    proposal = data["proposals"][0]
+    args = ["memory", "condense", "--project", "demo"]
+    for entry_id in proposal["ids"]:
+        args += ["--apply", str(entry_id)]
+    applied = runner.invoke(app, args)
+    assert applied.exit_code == 0, applied.output
+    assert "applied: kept" in applied.output

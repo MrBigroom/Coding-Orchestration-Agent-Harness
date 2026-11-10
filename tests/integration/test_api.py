@@ -144,6 +144,53 @@ def test_memory_budget_and_triage_endpoints_are_read_only(client, tmp_path):
     assert client.get("/api/memory/triage", params={"status": "bogus"}).status_code == 422
 
 
+def test_approval_eviction_is_refused_and_override_is_explicit(client, monkeypatch):
+    """DoD 7c: the response names the casualty, and only an explicit override approves it."""
+    from orchestrator.core import config as config_mod
+    from orchestrator.core.db import session_scope
+    from orchestrator.core.schemas import MemoryCreate
+    from orchestrator.services import memory_service
+    from orchestrator.utils.truncate import estimate_tokens
+
+    def tokens(entry):
+        return estimate_tokens(f"- {entry.content.strip()}\n")
+
+    with session_scope() as s:
+        keep = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="Keep rule " + "alpha " * 10, approved=True,
+            ),
+        )
+        risk = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="At-risk rule " + "beta " * 10, approved=True,
+            ),
+        )
+        pending = memory_service.create(
+            s,
+            MemoryCreate(
+                category="project", scope="gotchas", project_slug="demo",
+                content="New rule " + "gamma " * 10, approved=False,
+            ),
+        )
+        cap = tokens(keep) + tokens(risk)
+        pending_id = pending.id
+    monkeypatch.setenv("ORCHESTRATOR_MAX_MEMORY_TOKENS_PROJECT", str(cap))
+    config_mod.reset_settings_cache()
+    with session_scope() as s:
+        casualty = memory_service.approval_impact(s, pending_id)["evicted"][0]["id"]
+
+    refused = client.post(f"/api/memory/{pending_id}/approve")
+    assert refused.status_code == 400
+    assert f"#{casualty} (" in refused.json()["error"]
+    approved = client.post(f"/api/memory/{pending_id}/approve", params={"override": "true"})
+    assert approved.status_code == 200 and approved.json()["approved"] is True
+
+
 def test_triage_flags_an_unregistered_project(client):
     client.post(
         "/api/memory",

@@ -110,8 +110,13 @@ def update_memory(
 
 
 @router.post("/memory/{entry_id}/approve")
-def approve_memory(entry_id: int, session: Session = SessionDep) -> dict[str, Any]:
-    return dump(memory_service.approve(session, entry_id))
+def approve_memory(
+    entry_id: int, override: bool = False, session: Session = SessionDep
+) -> dict[str, Any]:
+    # An approval that would evict another approved row is refused (400) with the ids at
+    # risk; `override=true` is the explicit opt-in. The route shape is unchanged and the
+    # query parameter is additive.
+    return dump(memory_service.approve(session, entry_id, override=override))
 
 
 @router.post("/memory/{entry_id}/reject")

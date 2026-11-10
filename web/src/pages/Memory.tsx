@@ -4,6 +4,17 @@ import type { MemoryEntry } from "../api/types";
 import { Badge, Card, Empty, ErrorNote, Field, PageHeader } from "../components/ui";
 import { useAction, useApi } from "../hooks/useApi";
 
+type BudgetRole = {
+  sections_now: Record<string, number>;
+  excluded_now: number[];
+  warnings: string[];
+};
+type BudgetReport = {
+  budgets: Record<string, number>;
+  budget_enabled: boolean;
+  roles: Record<string, BudgetRole>;
+};
+
 export default function Memory() {
   const [filters, setFilters] = useState({ status: "", category: "", project_slug: "", role: "" });
   const [q, setQ] = useState("");
@@ -14,6 +25,7 @@ export default function Memory() {
     return `/memory?${p}`;
   }, [filters, q]);
   const { data, error, reload } = useApi<MemoryEntry[]>(path);
+  const budget = useApi<BudgetReport>("/memory/budget");
   const act = useAction();
   const [edit, setEdit] = useState<{ id: number; content: string } | null>(null);
   const [form, setForm] = useState({ category: "global", scope: "preferences", project_slug: "", role: "", content: "" });
@@ -89,16 +101,29 @@ export default function Memory() {
             {data && !data.length && <Empty>No memory entries.</Empty>}
           </div>
         </div>
-        <Card title="Add entry">
-          <div className="space-y-3">
-            <Field label="Category"><select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{["global", "project", "role"].map((c) => <option key={c}>{c}</option>)}</select></Field>
-            <Field label="Scope"><input className="input" value={form.scope} onChange={(e) => setForm({ ...form, scope: e.target.value })} placeholder="environment | preferences | conventions | decisions | gotchas | worker" /></Field>
-            {form.category === "project" && <Field label="Project slug"><input className="input" value={form.project_slug} onChange={(e) => setForm({ ...form, project_slug: e.target.value })} /></Field>}
-            {form.category === "role" && <Field label="Role"><select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="">—</option>{["architect", "worker", "supervisor"].map((r) => <option key={r}>{r}</option>)}</select></Field>}
-            <Field label="Content"><textarea className="input h-24" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
-            <button className="btn btn-primary" disabled={!form.content.trim()} onClick={add}>Add (pending approval)</button>
-          </div>
-        </Card>
+        <div className="space-y-4">
+          <Card title="Injection caps">
+            <p className="mb-3 text-xs text-muted">A section over its cap demotes entries; the casualties are named here so a favourite cannot silently stop being injected. Tags <code>pinned</code>/<code>durable</code> and <code>tier:1</code>..<code>tier:3</code> order the demotion.</p>
+            {budget.data && Object.entries(budget.data.roles).map(([role, p]) => (
+              <div key={role} className="mb-3 text-sm">
+                <div className="flex justify-between gap-2"><b>{role}</b><span className="text-xs text-muted">{Object.entries(p.sections_now).map(([k, v]) => `${k} ${v}/${budget.data?.budgets[k] ?? 0}`).join(" · ")}</span></div>
+                <div className="text-xs text-muted">not injected: {p.excluded_now.length ? p.excluded_now.map((id) => `#${id}`).join(", ") : "none"}</div>
+                {p.warnings.map((w) => <div key={w} className="text-xs text-warn">{w}</div>)}
+              </div>
+            ))}
+            {budget.data && !budget.data.budget_enabled && <div className="text-xs text-warn">caps disabled: every approved entry is injected</div>}
+          </Card>
+          <Card title="Add entry">
+            <div className="space-y-3">
+              <Field label="Category"><select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{["global", "project", "role"].map((c) => <option key={c}>{c}</option>)}</select></Field>
+              <Field label="Scope"><input className="input" value={form.scope} onChange={(e) => setForm({ ...form, scope: e.target.value })} placeholder="environment | preferences | conventions | decisions | gotchas | worker" /></Field>
+              {form.category === "project" && <Field label="Project slug"><input className="input" value={form.project_slug} onChange={(e) => setForm({ ...form, project_slug: e.target.value })} /></Field>}
+              {form.category === "role" && <Field label="Role"><select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="">—</option>{["architect", "worker", "supervisor"].map((r) => <option key={r}>{r}</option>)}</select></Field>}
+              <Field label="Content"><textarea className="input h-24" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+              <button className="btn btn-primary" disabled={!form.content.trim()} onClick={add}>Add (pending approval)</button>
+            </div>
+          </Card>
+        </div>
       </div>
     </>
   );

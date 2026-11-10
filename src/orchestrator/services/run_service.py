@@ -470,11 +470,12 @@ def _store_memory_suggestions(
         session, suggestions, source=source, project_slug=project_slug, role=role
     )
     for note in outcome.notes:
-        event = (
-            "memory_suggestion_dropped"
-            if note.startswith("dropped ")
-            else "memory_scope_substituted"
-        )
+        if note.startswith("dropped "):
+            event = "memory_suggestion_dropped"
+        elif note.startswith("linked "):
+            event = "memory_suggestion_linked"
+        else:
+            event = "memory_scope_substituted"
         log_service.log_event(
             session,
             event,

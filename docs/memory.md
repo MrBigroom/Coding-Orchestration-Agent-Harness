@@ -171,14 +171,34 @@ cap of `0` disables that one section. `memory_budget_warn_fraction` (default `0.
 warns before anything is dropped.
 
 Demotion rule, stated so it is reviewable: if a section fits, every approved entry is
-injected. If it does not, entries are demoted **rot-prone first (names a task/round/commit),
-then oldest first** — the newest durable entries are never the ones silently dropped.
-Demotion is reporting, not deletion: the row stays approved in SQLite and is simply left out
-of the render. Every exclusion surfaces as a warning in prompt preview
-(`orchestrator prompt-preview`, the GUI Prompt Cache page) and in `orchestrator memory budget`.
+injected. If it does not, entries are demoted in **value order**, and `id` is only the last
+tiebreak. The value signal is the existing `tags_json` column — no new column and no
+migration:
 
-Selection depends on entry content and ids only — no clock, no file access — so a rendered
-section stays byte-identical between calls and does not churn the prompt cache.
+1. `pinned` (or `durable`) is kept longest.
+2. `tier:1` outranks `tier:2` (also the value of an untagged entry) and `tier:2` outranks
+   `tier:3`, so an unpinned `tier:3` entry is demoted first.
+3. Within one tag rank, a rot-prone entry (one that names a task/round/commit) is demoted
+   before a durable one, and the older id goes before the newer one.
+
+This is intentional: **an id is a timestamp proxy, not a measure of worth**, so approving a
+new suggestion can never evict a load-bearing row merely because the row is older. Tag the
+rows you cannot afford to lose (`PATCH /api/memory/{id}` with `{"tags": ["pinned"]}`, or
+`orchestrator memory add ... --tag pinned`).
+
+Demotion is reporting, not deletion: the row stays approved in SQLite and is simply left out
+of the render. Every exclusion names its casualty and reason in prompt preview
+(`orchestrator prompt-preview`, the GUI Prompt Cache page), `orchestrator memory triage`
+(`excluded_now`), `orchestrator memory budget` (per role "demoted by cap"), and the GUI
+Memory page's Injection caps panel.
+
+Approve is **refused by default** when it would evict an already-approved row: the response
+names every entry at risk and the section it would leave. `orchestrator memory approve ID
+--override` / `POST /api/memory/{id}/approve?override=true` is the explicit opt-in; even then
+the evicted rows stay approved and are reported, never deleted. Condense or reword first.
+
+Selection depends on entry content, tags and ids only — no clock, no file access — so a
+rendered section stays byte-identical between calls and does not churn the prompt cache.
 
 ## Triage (read-only)
 
@@ -216,18 +236,67 @@ Suggested actions (advisory, one per entry): `fix-stale`, `rewrite-durable`, `me
 stay explicit (`memory approve|reject`, the GUI, `POST /api/memory/{id}/approve`), so the
 gate remains human by construction.
 
+A row with a `redaction-marker` flag (one whose text was rewritten on write) is reported as
+garbled, cannot be approved, and is left out of both the prompt section and the rendered
+markdown until it is reworded.
+
+## Condensing memory
+
+```bash
+orchestrator memory condense --project myapp          # dry run: proposals, token delta, ids
+orchestrator memory condense --project myapp --json   # the same report as JSON
+orchestrator memory condense --project myapp --apply 12 --apply 13
+orchestrator memory condense --project myapp --apply 12 --apply 13 --content "the durable rule"
+```
+
+`condense` groups **approved** rows by duplicate group (rare-token containment, the same
+grouping triage shows) and by shared code entities (`memory_triage.related_approved`). It
+chooses the survivor with the injection value order above, and prints the survivor, every
+absorbed id, the proposed content and the token delta (`tokens_after - tokens_before`).
+
+The default is non-destructive: a dry run changes no row, no approval state and no markdown.
+`--apply` writes only when it names the **complete** id set of a proposal (survivor plus every
+absorbed row); a partial or unknown id set is refused before anything is written. Applying
+means `memory_service.update` on the survivor and `memory_service.reject` on the absorbed
+rows, so redaction and markdown re-rendering stay on the one sanctioned path. `--content`
+rewrites the surviving row in the same call (use it to strip task framing and keep the rule).
+
 ## Approval workflow
 
 1. Workers and Architects add `memory_suggestions` to their handoff/review JSON
    (`{category, scope, content, tags}`).
-2. The orchestrator stores them as **pending** and skips exact duplicates of existing
-   entries. Content is redacted before storage.
+2. The orchestrator stores them as **pending**. A byte-identical suggestion creates no row.
+   A reworded restatement of an existing entry in the same domain (category, project or role
+   file) is **linked**, not stored again: ingest uses the same rare-token containment as
+   triage, never a whole-text similarity ratio, so a same-domain but unrelated fact still
+   gets its own row. The link records the existing entry id and the containment reason in
+   `SuggestionOutcome.linked`, the chat notice, and the build log event
+   `memory_suggestion_linked`.
 3. The Supervisor or a human approves or rejects them: GUI Memory page, Task Detail →
    memory tab, `orchestrator memory approve|reject ID`, or `POST /api/memory/{id}/approve`.
    An entry whose scope was substituted is still pending, and the build log says which
    scope it was filed under. `orchestrator memory list` marks any row no prompt can read.
 4. Approving re-renders the matching markdown file. Rejecting keeps the row (marked
    `rejected`) so the suggestion doesn't come back.
+
+## Storage is not log redaction
+
+Memory content is operator-authored durable text. The one redaction control
+(`utils/redaction.py`) still runs on write so real credentials never reach a prompt, but a
+rewrite is **recorded per entry** instead of being silent: `tags_json` gains
+`redaction-substitution:<pattern>:count=<n>:lines=<where>`, and `memory_triage` flags the row
+`redaction-marker`. Such a row is not injected and not rendered into markdown until it is
+reworded (PATCH the content). Log, review-payload and command-preview redaction are
+unchanged; this only stops a benign `KEY: value`-shaped phrase from being silently eaten in
+memory.
+
+## Lifecycle fields are not here yet
+
+`supersedes` and `stale_after` would need new columns on the frozen `memory_entries` table,
+so they ship only as `docs/contract-change-request-T13-memory-lifecycle.md` plus written
+operator approval. No Alembic revision in this task touches `memory_entries`. The current,
+weaker mechanism is content-derived: the `absolute_date`, `forward_looking` and
+`task_shape` flags demote a row first but never retire it.
 
 ## Export / import
 

@@ -558,13 +558,18 @@ class LiveSession:
         if added:
             n = len(added)
             message = f"Added {n} memory suggestion{'s' if n > 1 else ''} to review on Memory."
+        elif outcome.linked:
+            message = (
+                f"Linked {len(outcome.linked)} suggestion"
+                f"{'s' if len(outcome.linked) != 1 else ''} to existing memory."
+            )
         else:
             message = "No new memory suggestions."
         self.emit({"type": "notice", "message": message})
-        # T-4: a scope that had to be rewritten, or a suggestion that was dropped, is said
-        # out loud here as well as in the log — the alternative is a silent orphan row.
+        # T-4/T-13: a rewritten scope, a duplicate link or a dropped suggestion is said out
+        # loud here as well as in the log — the alternative is a silent orphan row.
         for note in outcome.notes:
-            self.emit({"type": "notice", "message": f"Memory scope: {note}"})
+            self.emit({"type": "notice", "message": f"Memory: {note}"})
 
     def _can_steer(self) -> bool:
         return bool(self.driver and self.driver.can_steer)

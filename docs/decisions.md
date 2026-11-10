@@ -494,3 +494,24 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   `timing.txt` rows each carry the HEAD their own pass measured. Paths are resolved before
   `is_relative_to`, so a lexical escape is refused. The shared clock-out rule: an instruction the
   Worker cannot satisfy without violating another is not tightness, it is a timeout.
+- **2026-11-10 — T-17: memory ingest dedups by subject, demotion is value-ordered, and a
+  rewrite is recorded.** Ingest (handoff and chat suggestions) keeps the byte-identical
+  skip, and now links a reworded restatement to the existing entry in the same domain
+  (category + project, or role file) using `memory_text.is_duplicate_pair` — the rare-token
+  containment triage already uses. A whole-text similarity ratio is explicitly rejected: on
+  the live home it flagged 461 of 595 pending pairs above 0.72 while the true duplicate
+  count was zero. The link names the existing id and reason and is logged as
+  `memory_suggestion_linked`; no row is created, so the frozen `memory_entries` shape is
+  unchanged. Demotion order now comes from the existing `tags_json` column: `pinned`/
+  `durable` first, then `tier:1`/`tier:2` (untagged default)/`tier:3`, then content class,
+  and `id` only as the final tiebreak, so a new approval can no longer evict a load-bearing
+  row for being old. Approving an entry that would evict an approved row is refused with the
+  casualty ids and sections unless the operator passes `override`; demotions are visible in
+  triage, budget, prompt preview and the GUI. `orchestrator memory condense` proposes
+  survivor/absorbed groups with a token delta and writes nothing until `--apply` names a
+  complete proposal's ids; apply uses `memory_service.update`/`reject`, and an optional
+  `--content` rewrites the survivor to strip task framing. Finally, memory redaction no
+  longer happens silently: a rewrite records pattern class, count and line(s) in tags_json,
+  triage flags the entry as garbled, and it is excluded from prompts and rendered markdown
+  until reworded. Log and review redaction are untouched. Lifecycle columns (`supersedes`,
+  `stale_after`) remain a contract-change request, not a migration.

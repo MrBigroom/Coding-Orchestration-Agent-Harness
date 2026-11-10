@@ -104,6 +104,11 @@ _UNMERGED = re.compile(
     r"\b(?:pending merge|not yet merged|not merged yet|still unmerged|awaiting merge)\b", re.I
 )
 _FLAG_LABELS = dict(ROT_FLAGS)
+# A memory entry whose text was rewritten on write is not a fact the operator authored. It is
+# reported and kept out of every prompt/markdown render until it is reworded (DoD 6b).
+_FLAG_LABELS["redaction-marker"] = (
+    "contains a redaction marker or a substitution record; reword it before it is injected"
+)
 # Codes that mean "this entry asserts something that is not true right now".
 _HARD_STALE = frozenset(
     {"contradicts-live-config", "stale-branch-claim", "stale-merge-claim", "unknown-project"}
@@ -295,6 +300,8 @@ def audit_entry(
     out: list[dict[str, str]] = [
         {"code": c, "detail": _FLAG_LABELS.get(c, c)} for c in rot_flags(entry.content)
     ]
+    if memory_service.is_garbled(entry):
+        out.append({"code": "redaction-marker", "detail": _FLAG_LABELS["redaction-marker"]})
     project = _project_for(session, entry)
     if entry.category == "project" and not project:
         out.append(
@@ -433,6 +440,101 @@ def related_approved(
     return hits[:3]
 
 
+def condense_proposals(session: Session, project_slug: str | None = None) -> list[dict[str, Any]]:
+    """Approved rows that propose one surviving row: duplicate groups + shared code entities.
+
+    Read-only. Grouping uses the same rare-token `duplicate_groups` triage shows and the
+    `related_approved` entity overlap; a survivor is chosen by the SAME value order injection
+    uses (`memory_service._keep_priority`), so a pinned row is never the one dropped. The
+    caller (`memory_service.condense`) is the only writer, and only when it is handed the
+    complete id set.
+    """
+    approved = [
+        e
+        for e in memory_service.list_entries(session, status="approved", project_slug=project_slug)
+        if not memory_service.is_garbled(e)
+    ]
+    if len(approved) < 2:
+        return []
+    by_id = {e.id: e for e in approved if e.id is not None}
+    parent = {e.id: e.id for e in approved}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    duplicate_sets = duplicate_groups(approved)
+    for group in duplicate_sets:
+        for other in group[1:]:
+            union(group[0], other)
+
+    entity_edges: set[tuple[int, int]] = set()
+    for entry in approved:
+        for hit in related_approved(session, entry):
+            if hit["id"] not in by_id or entry.id is None:
+                continue
+            entity_edges.add((min(entry.id, hit["id"]), max(entry.id, hit["id"])))
+            union(entry.id, hit["id"])
+
+    groups: dict[int, list[MemoryEntry]] = {}
+    for entry in approved:
+        groups.setdefault(find(entry.id), []).append(entry)
+
+    def line_tokens(content: str) -> int:
+        return estimate_tokens(f"- {content.strip()}\n")
+
+    proposals: list[dict[str, Any]] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda e: e.id or 0)
+        survivor = max(members, key=memory_service._keep_priority)
+        absorbed = [e for e in members if e.id != survivor.id]
+        ids = [survivor.id] + [e.id for e in absorbed]
+        tokens_before = sum(line_tokens(e.content) for e in members)
+        tokens_after = line_tokens(survivor.content)
+        tags = sorted({t for e in members for t in (e.tags_json or [])})
+        member_ids = {e.id for e in members}
+        is_dup = any(set(g) <= member_ids for g in duplicate_sets)
+        shared_entities: set[str] = set()
+        for a, b in entity_edges:
+            if a in member_ids and b in member_ids:
+                shared_entities |= entity_terms(by_id[a].content) & entity_terms(by_id[b].content)
+        reasons = []
+        if is_dup:
+            reasons.append("restates the same fact in different words")
+        if shared_entities:
+            reasons.append(
+                "shares code entities: " + ", ".join(sorted(shared_entities)[:6])
+            )
+        if not reasons:
+            reasons.append("related approved rows")
+        proposals.append(
+            {
+                "survivor": survivor.id,
+                "absorbed": [e.id for e in absorbed],
+                "ids": ids,
+                "scopes": sorted({e.scope for e in members}),
+                "reason": "; ".join(reasons),
+                "content": survivor.content.strip(),
+                "tags": tags,
+                "tokens_before": tokens_before,
+                "tokens_after": tokens_after,
+                "token_delta": tokens_after - tokens_before,
+                "tokens_saved": tokens_before - tokens_after,
+            }
+        )
+    proposals.sort(key=lambda p: (p["survivor"] or 0))
+    return proposals
+
+
 def _suggest(
     flags: list[dict[str, str]],
     dups: list[int],
@@ -449,6 +551,12 @@ def _suggest(
     section as four unrelated rows each needing a merge.
     """
     codes = {f["code"] for f in flags}
+    if "redaction-marker" in codes:
+        return (
+            "rewrite-durable",
+            "its text was rewritten on write; reword it so the fact is stored verbatim "
+            "before it can be approved or injected",
+        )
     if codes & _HARD_STALE:
         return (
             "fix-stale",
@@ -527,6 +635,7 @@ def triage(
                 "amend_candidates": amends,
                 "suggested_action": action,
                 "reason": reason,
+                "garbled": memory_service.is_garbled(e),
                 "excerpt": e.content[:160],
             }
         )

@@ -1182,13 +1182,20 @@ def memory_add(
 
 @memory_app.command("approve")
 @handled
-def memory_approve(entry_id: int) -> None:
+def memory_approve(
+    entry_id: int,
+    override: bool = typer.Option(
+        False,
+        "--override",
+        help="Approve even when it evicts another approved entry (the eviction is reported).",
+    ),
+) -> None:
     from orchestrator.services import memory_service
 
     _ensure_ready()
     with _session() as s:
-        e = memory_service.approve(s, entry_id)
-        console.print(f"approved #{e.id}")
+        e = memory_service.approve(s, entry_id, override=override)
+        console.print(f"approved #{e.id}" + (" (override)" if override else ""))
 
 
 @memory_app.command("reject")
@@ -1452,6 +1459,65 @@ def memory_budget(
         f"(enabled={rep['budget_enabled']}) | pending {rep['pending_count']} entries "
         f"≈{rep['pending_tokens']} tokens"
     )
+
+
+@memory_app.command("condense")
+@handled
+def memory_condense(
+    project: str = typer.Option(None, help="Project slug whose approved rows to condense."),
+    apply: list[int] = typer.Option(
+        [], "--apply", help="Apply one proposal by naming ALL of its ids (repeatable)."
+    ),
+    content: str = typer.Option(
+        None,
+        "--content",
+        help="Rewrite the surviving row while applying one proposal (strip task framing).",
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Propose merges among approved memory; write nothing unless --apply names the ids.
+
+    Groups come from the same rare-token duplicate groups and shared code entities triage
+    shows. Each proposal prints its survivor, every absorbed id, the proposed content and
+    the token delta. Applying updates the survivor and rejects the absorbed rows through
+    memory_service, so redaction and markdown re-rendering stay on one sanctioned path.
+    """
+    from orchestrator.services import memory_service
+
+    _ensure_ready()
+    with _session() as s:
+        result = memory_service.condense(
+            s, project, apply_ids=apply or None, rewrite_content=content
+        )
+    if as_json:
+        _print_json(result)
+        return
+    proposals = result["proposals"]
+    if not proposals:
+        console.print(
+            "no merge candidates: approved memory has no duplicate group or shared entities"
+        )
+    for p in proposals:
+        ids = ", ".join(f"#{i}" for i in p["ids"])
+        console.print(
+            f"proposal keep #{p['survivor']} <- {', '.join(f'#{i}' for i in p['absorbed'])} "
+            f"(touch {ids})  tokens {p['tokens_before']} -> {p['tokens_after']} "
+            f"({p['token_delta']:+d})"
+        )
+        console.print(f"  why: {escape(p['reason'])}")
+        console.print(f"  survivor content: {escape(p['content'])}")
+    if result["applied"]:
+        for a in result["applied"]:
+            console.print(
+                f"applied: kept #{a['survivor']}, rejected "
+                + ", ".join(f"#{i}" for i in a["rejected"])
+                + f"; saved {a['tokens_saved']} tokens"
+            )
+    elif proposals:
+        console.print(
+            "dry run: nothing written. Re-run with --apply naming every id of a proposal "
+            "to update the survivor and reject the absorbed rows."
+        )
 
 
 @memory_app.command("export")
