@@ -187,6 +187,45 @@ def test_transient_failures_back_off_and_stop_at_the_consecutive_cap(
     assert calls == ["SyncTransientError"] * 3
 
 
+def test_the_running_loop_retries_a_transient_failure_after_backoff(
+    initialized, monkeypatch
+):
+    """The loop itself (not just repeated run_once calls) waits and retries a 5xx."""
+    _configured(monkeypatch)
+    _enable_sync()
+    calls: list[str] = []
+    reached = asyncio.Event()
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncTransientError("Supabase returned HTTP 503: unavailable"), calls, reached
+        ),
+        poll_seconds=0.005,
+        backoff_base_seconds=0.01,
+        backoff_max_seconds=0.02,
+        max_consecutive_failures=10,
+    )
+
+    async def scenario():
+        task = asyncio.create_task(runner.run_loop())
+        await asyncio.wait_for(reached.wait(), timeout=2)
+        for _ in range(200):
+            if len(calls) >= 2:
+                break
+            await asyncio.sleep(0.005)
+        with session_scope() as session:
+            health = sync_service.health(session)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        return health
+
+    health = asyncio.run(scenario())
+    assert len(calls) >= 2  # the transient failure was retried by the loop
+    assert health["stopped"] is False
+    assert health["consecutive_failures"] >= 2
+    assert health["backoff_seconds"] == 0.02
+
+
 def test_identical_failures_log_once_with_an_occurrence_counter(initialized, caplog):
     calls: list[str] = []
     client = FailingClient(SyncTransientError("Supabase returned HTTP 503: unavailable"), calls)
