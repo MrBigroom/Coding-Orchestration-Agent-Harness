@@ -7,12 +7,12 @@ only=all files this pass produces
 # what the check saw, so a no-op second run is byte-identical.
 basis=worktree
 scope=every evidence file except manifest.json and this file
-commit_under_verification=c42c072379e16bed604aed5f7e36935671eaa69b
-compared_commit=c42c072379e16bed604aed5f7e36935671eaa69b
+commit_under_verification=872fa1ded68c12788da50b26e5864b7cf07368f3
+compared_commit=872fa1ded68c12788da50b26e5864b7cf07368f3
 status=pass
 stamped_files=5
 stale_count=0
 deleted_count=0
-evidence=5 stamped evidence file(s) fresh at c42c072 (c42c072379e16bed604aed5f7e36935671eaa69b)
+evidence=5 stamped evidence file(s) fresh at 872fa1d (872fa1ded68c12788da50b26e5864b7cf07368f3)
 notes=none
 committed_view=the stamps name this HEAD; the commit adding this bundle must be evidence-only, and the gate then reports pass with that explanation; run `orchestrator task evidence <id> --at-tip` at the delivered tip for the committed-view record (see tests/unit/test_evidence_freshness.py::test_the_generated_bundle_is_fresh_once_committed).

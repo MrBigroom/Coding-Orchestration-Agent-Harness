@@ -1,4 +1,4 @@
-# HEAD=c42c072379e16bed604aed5f7e36935671eaa69b mode=fast
+# HEAD=872fa1ded68c12788da50b26e5864b7cf07368f3 mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)
 
 ## src/orchestrator/services/sync_transport.py
@@ -73,13 +73,13 @@
 42:## Version protocol and rejected transitions (T-41)
 53:      raise exception 'invalid version transition: % -> %', p_expected_version, p_version;
 68:A rejection reading `invalid version transition: 0 -> 3` means the local side presented local
-73:fix: `logs/desktop-server.log` held 7,000 lines of exactly `invalid version transition: 0 -> 3`
-86:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
-91:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
-92:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
-110:- **Transient** (5xx, 408/425/429, timeout, network) retries indefinitely with exponential backoff.
-131:`sync reinit --apply` and a manual `sync now` that succeeds.
-133:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+74:lines of exactly `invalid version transition: 0 -> 3` (7,416 version-transition lines in total; the
+87:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+92:orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
+93:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
+111:- **Transient** (5xx, 408/425/429, timeout, network) retries indefinitely with exponential backoff.
+132:`sync reinit --apply` and a manual `sync now` that succeeds.
+134:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
 
 ## supabase/migrations/0001_orchestrator_sync.sql:39-90 (the RPC contract, quoted)
   39  -- Atomic compare-and-swap push. expected_version is the last version observed by the
