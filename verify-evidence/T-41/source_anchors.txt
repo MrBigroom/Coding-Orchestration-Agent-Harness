@@ -1,4 +1,4 @@
-# HEAD=8aedfd693e89ddcfd9f18c4b04de7cd2b04c0f34 mode=fast
+# HEAD=c42c072379e16bed604aed5f7e36935671eaa69b mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)
 
 ## src/orchestrator/services/sync_transport.py
