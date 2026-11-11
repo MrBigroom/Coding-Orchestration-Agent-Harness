@@ -529,6 +529,7 @@ Running log of architecture decisions. Newest last. Format: date â€” decision â€
   `synced_version + 1` and records the landed version, `sync_health` in the device-local
   `sync_state` records the failure streak, permanent 4xx stops automatic attempts, transient
   failures retry indefinitely with exponential backoff capped on the delay (not on attempts), and
-  one `sync_failed` event per streak notifies the operator. `orchestrator sync reinit --dry-run|--apply` re-baselines counters to remote truth and
-  never touches payload conflicts. No schema, status vocabulary, or notification status changed.
+  one `sync_failed` event per streak notifies the operator. `orchestrator sync reinit` (dry
+  run by default) and `orchestrator sync reinit --apply` re-baseline counters to remote truth
+  and never touch payload conflicts. No schema, status vocabulary, or notification status changed.
 

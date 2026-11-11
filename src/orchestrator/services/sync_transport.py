@@ -68,6 +68,15 @@ RECOVERY_BY_KIND: dict[str, str] = {
     ),
 }
 
+# The version-rejection repair path. The dry run is the DEFAULT and has no flag: the shipped
+# `--dry-run` hint was not a command the CLI accepts (T-45), so it is validated against the real
+# Typer app in tests/unit/test_operator_command_hints.py. It also must not promise a repair it
+# cannot perform: reinit reports payload conflicts and never touches them.
+VERSION_REJECTION_RECOVERY = (
+    "run `orchestrator sync reinit` (the dry run is the default and `--apply` writes). "
+    "Unresolved payload conflicts are reported as conflicts_skipped and left untouched"
+)
+
 
 def recovery_for(kind: str) -> str:
     """The repair path for a classified transport failure (see ``RECOVERY_BY_KIND``)."""
@@ -135,9 +144,9 @@ class SupabaseSyncClient:
             return SyncTransientError(message, status_code=response.status_code, detail=detail)
         if "invalid version transition" in message:
             # A 4xx version rejection is the legacy local/remote counter drift. It is still
-            # permanent for this process, but the detail names the dry-run recovery command so
-            # the GUI/CLI never has to parse the sentence.
-            detail["recovery"] = "orchestrator sync reinit --dry-run"
+            # permanent for this process, but the detail names the recovery command so the
+            # GUI/CLI never has to parse the sentence.
+            detail["recovery"] = VERSION_REJECTION_RECOVERY
         return SyncPermanentError(message, status_code=response.status_code, detail=detail)
 
     async def _authenticate(self, refresh: bool = False) -> None:

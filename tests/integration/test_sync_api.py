@@ -87,7 +87,10 @@ def test_sync_status_reports_the_stopped_reason_and_failure_streak(client):
 
 def test_manual_sync_returns_the_permanent_error_as_structured_detail(client, monkeypatch):
     from orchestrator.api.routes import sync
-    from orchestrator.services.sync_transport import SyncPermanentError
+    from orchestrator.services.sync_transport import (
+        VERSION_REJECTION_RECOVERY,
+        SyncPermanentError,
+    )
 
     async def refuse():
         raise SyncPermanentError(
@@ -95,7 +98,7 @@ def test_manual_sync_returns_the_permanent_error_as_structured_detail(client, mo
             status_code=400,
             detail={
                 "retryable": False,
-                "recovery": "orchestrator sync reinit --dry-run",
+                "recovery": VERSION_REJECTION_RECOVERY,
             },
         )
 
@@ -106,7 +109,8 @@ def test_manual_sync_returns_the_permanent_error_as_structured_detail(client, mo
     assert body["error"] == "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
     assert body["detail"]["kind"] == "permanent"
     assert body["detail"]["status_code"] == 400
-    assert body["detail"]["recovery"] == "orchestrator sync reinit --dry-run"
+    assert body["detail"]["recovery"] == VERSION_REJECTION_RECOVERY
+    assert "orchestrator sync reinit" in body["detail"]["recovery"]
 
 
 def test_manual_sync_returns_a_transient_error_as_503(client, monkeypatch):

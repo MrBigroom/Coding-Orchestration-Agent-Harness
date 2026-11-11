@@ -1,0 +1,49 @@
+# HEAD=57cdb53bc0e8fb036585cb662340b01a098a3629 mode=fast
+# command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/orchestrator sync reinit --dry-run --help
+old_hint_exit=2
+│ No such option: --dry-run                                                    │
+# command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/orchestrator sync reinit --help
+corrected_default_exit=0
+ Dry run by default, and unresolved payload conflicts are reported but never    
+ --apply          Write the re-baselined counters (default is a dry run that  
+# command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/orchestrator sync reinit --apply --help
+corrected_apply_exit=0
+# guards: no operator hint may keep --dry-run on the reinit command
+guards: no 'sync reinit --dry-run' in operator-facing files (tests quote it on purpose)
+# guards: every remaining --dry-run mention outside evidence
+  docs/build-loop.md:901:- Cleanup (`orchestrator cleanup --dry-run`) removes only worktrees that have the
+  docs/decisions.md:250:  repair output is Rich-escaped and a `--dry-run` only ever says "would", so an interpolated
+  docs/memory.md:106:orchestrator memory fix-scopes --dry-run  # preview the moves and the dead files
+  docs/product-spec.md:1169:orchestrator cleanup --dry-run
+  docs/product-spec.md:1299:- Cleanup command must support --dry-run.
+  docs/security.md:123:  dirty ones, and supports `--dry-run` (the default).
+  src/orchestrator/cli.py:312:        True, "--dry-run/--no-dry-run", help="Only show what would be removed."
+  src/orchestrator/cli.py:1256:    dry_run: bool = typer.Option(False, "--dry-run", help="Report the moves, change nothing."),
+  src/orchestrator/services/git_service.py:394:    Taking `LOCK_EX` here -- even non-blocking -- made `cleanup --dry-run` able to fail a
+  src/orchestrator/services/sync_transport.py:72:# `--dry-run` hint was not a command the CLI accepts (T-45), so it is validated against the real
+  tests/integration/test_cleanup_chat_worktrees.py:102:    r = runner.invoke(app, ["cleanup", "--dry-run"])
+  tests/integration/test_cleanup_chat_worktrees.py:123:    default = runner.invoke(app, ["cleanup", "--dry-run"])
+  tests/integration/test_cleanup_chat_worktrees.py:131:    dry = runner.invoke(app, ["cleanup", "--dry-run", "--include-chats"])
+  tests/integration/test_cleanup_chat_worktrees.py:181:    dry = runner.invoke(app, ["cleanup", "--dry-run"])
+  tests/integration/test_cleanup_chat_worktrees.py:211:        r = runner.invoke(app, ["cleanup", "--dry-run", *extra])
+  tests/integration/test_cleanup_chat_worktrees.py:252:    dry = runner.invoke(app, ["cleanup", "--dry-run", "--include-chats", "--json"])
+  tests/integration/test_cleanup_chat_worktrees.py:269:    human = runner.invoke(app, ["cleanup", "--dry-run", "--include-chats"])
+  tests/integration/test_cli.py:79:    r = runner.invoke(app, ["cleanup", "--dry-run"])
+  tests/integration/test_cli.py:95:    dry = runner.invoke(app, ["cleanup", "--dry-run"])
+  tests/integration/test_env_hermeticity.py:810:    --dry-run` could be the very reason a concurrent parity run reported "another parity run is
+  tests/integration/test_env_hermeticity.py:871:    --dry-run` and `doctor --env-parity` previews created lock files (and a phantom `.managed`
+  tests/integration/test_memory_scope_boundary.py:384:    dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"])
+  tests/integration/test_memory_scope_boundary.py:445:    dry = runner.invoke(app, ["memory", "fix-scopes", "--dry-run"], env=WIDE)
+  tests/integration/test_memory_scope_boundary.py:521:    # A --gc-only --dry-run still shows the operator what a real run would collect.
+  tests/integration/test_memory_scope_boundary.py:522:    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
+  tests/unit/test_operator_command_hints.py:3:The shipped recovery hint told the operator to run ``orchestrator sync reinit --dry-run``, which
+  tests/unit/test_operator_command_hints.py:4:exits with ``No such option: --dry-run``: the dry run is the default and has no flag. A suite that
+  tests/unit/test_operator_command_hints.py:274:    assert "orchestrator sync reinit --dry-run" not in recovery
+  tests/unit/test_operator_command_hints.py:289:    assert "--dry-run" not in action
+  tests/unit/test_operator_command_hints.py:299:        _parse_cli("orchestrator sync reinit --dry-run")
+  tests/unit/test_operator_command_hints.py:301:    assert "No such option: --dry-run" in str(excinfo.value)
+  tests/unit/test_operator_command_hints.py:309:        "run `orchestrator sync reinit --dry-run`",
+  tests/unit/test_operator_command_hints.py:320:    bad = "run `orchestrator sync reinit` (the dry run is the default and `--dry-run` writes)"
+  tests/unit/test_operator_command_hints.py:323:    with pytest.raises(AssertionError, match="--dry-run"):
+  tests/unit/test_operator_command_hints.py:360:        assert "orchestrator sync reinit --dry-run" not in text, name
+  tests/unit/test_operator_command_hints.py:362:        assert "--dry-run" not in text, name

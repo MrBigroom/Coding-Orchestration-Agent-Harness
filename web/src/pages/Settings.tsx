@@ -201,8 +201,10 @@ export default function Settings() {
                         Automatic sync is stopped: {sync.stopped_reason ?? sync.last_failure_error ?? "unknown reason"}
                         <span className="mt-1 block text-muted">
                           {sync.last_failure_kind === "permanent" ? (
-                            <>Fix the cause, then run <span className="mono">orchestrator sync reinit --dry-run</span>,
-                              then <span className="mono"> --apply</span>, or retry with Sync now.</>
+                            <>Fix the cause, then run <span className="mono">orchestrator sync reinit</span>{" "}
+                              (dry run by default; add <span className="mono">--apply</span> to write).
+                              Payload conflicts are reported as conflicts_skipped and left untouched;
+                              retry with Sync now.</>
                           ) : (
                             <>Retry with Sync now; a transient failure is not repaired by reinit.</>
                           )}

@@ -1,0 +1,50 @@
+# HEAD=57cdb53bc0e8fb036585cb662340b01a098a3629 mode=fast
+# command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src:/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45 /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - (test helpers drive the CLI parser)
+recovery_string_count=6
+RECOVERY recovery_for('permanent'): check ORCHESTRATOR_SUPABASE_EMAIL and ORCHESTRATOR_SUPABASE_PASSWORD in .env, then run `orchestrator sync now`
+OK recovery command: orchestrator sync now
+RECOVERY recovery_for('transient'): the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> version rejection: run `orchestrator sync reinit` (the dry run is the default and `--apply` writes). Unresolved payload conflicts are reported as conflicts_skipped and left untouched
+OK recovery command: orchestrator sync reinit
+RECOVERY _response_error -> server error: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> request timeout: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> rate limited: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+NOTIFICATION sync_failed: Run `orchestrator sync status`; if versions drifted, run `orchestrator sync reinit` (dry run by default; `--apply` writes). It never touches payload conflicts: they are reported as conflicts_skipped and left untouched.
+OK sync_failed body names the skip behaviour and parses
+python_command_count=12
+OK python command: orchestrator cleanup flags=['--include-active', '--include-chats', '--include-live-chats'] sources=5
+OK python command: orchestrator demo flags=[] sources=3
+    at src/orchestrator/adapters/mock_harness.py:88
+    at src/orchestrator/services/demo_service.py:1
+    at src/orchestrator/services/demo_service.py:76
+OK python command: orchestrator desktop install flags=[] sources=1
+    at src/orchestrator/desktop/__init__.py:1
+OK python command: orchestrator desktop stop flags=[] sources=1
+    at src/orchestrator/desktop/__init__.py:271
+OK python command: orchestrator init flags=[] sources=1
+    at src/orchestrator/services/bootstrap.py:1
+OK python command: orchestrator memory fix-scopes flags=[] sources=1
+    at src/orchestrator/cli.py:1137
+OK python command: orchestrator memory triage flags=[] sources=2
+    at src/orchestrator/services/memory_service.py:1424
+    at src/orchestrator/services/memory_service.py:1532
+OK python command: orchestrator serve flags=[] sources=1
+    at src/orchestrator/desktop/__init__.py:1
+OK python command: orchestrator sync now flags=[] sources=2
+    at src/orchestrator/services/sync_service.py:281
+    at src/orchestrator/services/sync_transport.py:62
+OK python command: orchestrator sync reinit flags=['--apply'] sources=2
+    at src/orchestrator/core/notification_vocab.py:57
+    at src/orchestrator/services/sync_transport.py:76
+OK python command: orchestrator sync status flags=[] sources=2
+    at src/orchestrator/core/notification_vocab.py:57
+    at src/orchestrator/services/sync_runner.py:218
+OK python command: orchestrator task evidence flags=['--at-tip', '--full', '--only'] sources=10
+gui_command_count=5
+OK gui command: orchestrator adapters set flags=['--args'] sources=['src/orchestrator/api/static_fallback/index.html']
+OK gui command: orchestrator agent add flags=['--instructions', '--model', '--project'] sources=['src/orchestrator/api/static_fallback/index.html']
+OK gui command: orchestrator demo flags=[] sources=['web/src/pages/Projects.tsx']
+OK gui command: orchestrator schedule add flags=['--agent', '--template'] sources=['src/orchestrator/api/static_fallback/index.html']
+OK gui command: orchestrator sync reinit flags=['--apply'] sources=['src/orchestrator/api/static_fallback/index.html', 'web/src/pages/Settings.tsx']
+CONTROL rejected the shipped hint: NoSuchOption: No such option: --dry-run
+CONTROL rejected a separately formatted bogus flag: 'orchestrator sync reinit' carries flags the CLI does not declare: ['--nope']
