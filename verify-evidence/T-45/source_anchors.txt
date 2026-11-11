@@ -1,4 +1,4 @@
-# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast
+# HEAD=82969fb8f962520aed7e6e77a4c5cee06d08acde mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>'
 
 ## src/orchestrator/services/sync_transport.py
@@ -43,8 +43,8 @@
 ## tests/unit/test_operator_command_hints.py
 94:def test_every_recovery_string_the_transport_can_emit_parses_against_the_cli():
 136:def test_the_validator_rejects_the_flag_that_shipped():
-144:def test_every_operator_command_hint_in_the_source_tree_parses_against_the_cli():
-154:def test_the_guis_name_commands_the_cli_accepts_and_drop_the_bad_flag():
+163:def test_every_operator_command_hint_in_the_source_tree_parses_against_the_cli():
+173:def test_the_guis_name_commands_the_cli_accepts_and_drop_the_bad_flag():
 
 ## tests/integration/test_sync_api.py
 91:        VERSION_REJECTION_RECOVERY,

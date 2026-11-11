@@ -1,4 +1,4 @@
-# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast
+# HEAD=82969fb8f962520aed7e6e77a4c5cee06d08acde mode=fast
 # command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src:/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45 /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - (test helpers drive the CLI parser)
 recovery_string_count=6
 RECOVERY recovery_for('permanent'): check ORCHESTRATOR_SUPABASE_EMAIL and ORCHESTRATOR_SUPABASE_PASSWORD in .env, then run `orchestrator sync now`

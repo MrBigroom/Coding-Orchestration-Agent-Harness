@@ -1,4 +1,4 @@
-# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast
+# HEAD=82969fb8f962520aed7e6e77a4c5cee06d08acde mode=fast
 # command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/orchestrator sync reinit --dry-run --help
 old_hint_exit=2
 │ No such option: --dry-run                                                    │
@@ -41,5 +41,7 @@ guards: no 'sync reinit --dry-run' in operator-facing files (tests quote it on p
   tests/unit/test_operator_command_hints.py:127:    assert "orchestrator sync reinit --dry-run" not in recovery
   tests/unit/test_operator_command_hints.py:139:        _parse_cli("orchestrator sync reinit --dry-run")
   tests/unit/test_operator_command_hints.py:141:    assert "No such option: --dry-run" in str(excinfo.value)
-  tests/unit/test_operator_command_hints.py:164:        assert "orchestrator sync reinit --dry-run" not in text, name
-  tests/unit/test_operator_command_hints.py:166:        assert "--dry-run" not in text, name
+  tests/unit/test_operator_command_hints.py:149:        "run `orchestrator sync reinit --dry-run`",
+  tests/unit/test_operator_command_hints.py:160:    assert "No such option: --dry-run" in str(excinfo.value)
+  tests/unit/test_operator_command_hints.py:183:        assert "orchestrator sync reinit --dry-run" not in text, name
+  tests/unit/test_operator_command_hints.py:185:        assert "--dry-run" not in text, name
