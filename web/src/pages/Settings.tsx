@@ -33,6 +33,9 @@ type SyncStatus = {
   stopped_reason: string | null;
   next_retry_at: string | null;
   backoff_seconds: number;
+  notify_failures: number;
+  last_notify_error: string | null;
+  last_notify_failed_at: string | null;
 };
 
 const BOOLS: [string, string][] = [
@@ -211,6 +214,15 @@ export default function Settings() {
                         {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
                         <span className="mt-1 block text-muted">
                           Retrying with exponential backoff; next attempt {fmtTime(sync.next_retry_at)}.
+                        </span>
+                      </p>
+                    )}
+                    {sync.last_notify_error && (
+                      <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
+                        Sync alerts are not reaching the operator: {sync.last_notify_error}
+                        <span className="mt-1 block text-muted">
+                          {sync.notify_failures} failed attempt(s); retrying with capped backoff
+                          {sync.last_notify_failed_at ? ` (last attempt ${fmtTime(sync.last_notify_failed_at)})` : ""}.
                         </span>
                       </p>
                     )}

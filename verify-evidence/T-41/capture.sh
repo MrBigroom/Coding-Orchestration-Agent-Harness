@@ -76,8 +76,8 @@ MAIN="${COMMON%/.git}"
   echo "$STAMP"
   echo "# command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)"
   for spec in \
-    "src/orchestrator/services/sync_transport.py|class SyncPermanentError|class SyncTransientError|RECOVERY_BY_KIND|def recovery_for|setdefault\(\"recovery\"|next_version = mapping.synced_version|p_version|async def remote_versions" \
-    "src/orchestrator/services/sync_runner.py|def backoff_seconds|def _record_failure|identical repeats|def _notify_if_needed|claim_health_flag|complete_health_flag|release_health_flag|_next_notify_retry|sync_failed|health\[\"stopped\"\]|interval = float" \
+    "src/orchestrator/services/sync_transport.py|class SyncPermanentError|class SyncTransientError|RECOVERY_BY_KIND|def recovery_for|setdefault\(\"recovery\"|recovery_for\(\"transient\"\)|next_version = mapping.synced_version|p_version|async def remote_versions" \
+    "src/orchestrator/services/sync_runner.py|def backoff_seconds|def _record_failure|identical repeats|def _record_notify_failure|def _notify_due|def _notify_if_needed|claim_health_flag|complete_health_flag|release_health_flag|notify_log_occurrences|notify_next_retry_at|sync_failed|health\[\"stopped\"\]|interval = float" \
     "src/orchestrator/services/sync_service.py|SYNC_HEALTH_KEY|HEALTH_FLAG_CLAIM_LEASE_SECONDS|def _read_health_raw|def health|def update_health|def write_health|def claim_health_flag|def complete_health_flag|def release_health_flag|compare-and-set|def reinitialise|conflicts_skipped|remote_ahead_skipped|version = synced" \
     "src/orchestrator/core/notification_vocab.py|sync_failed|Cloud sync needs attention" \
     "src/orchestrator/api/routes/sync.py|except SyncError|status_code = 503|SyncTransientError|sync_runner.status" \

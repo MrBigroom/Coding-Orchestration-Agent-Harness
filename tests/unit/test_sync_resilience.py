@@ -127,6 +127,7 @@ def test_response_status_classification_separates_permanent_from_transient():
         assert isinstance(transient, SyncTransientError)
         assert transient.detail["kind"] == "transient"
         assert transient.detail["retryable"] is True
+        assert transient.detail["recovery"] == recovery_for("transient")
 
 
 def test_authentication_recovery_text_is_derived_from_the_error_class():
@@ -134,6 +135,15 @@ def test_authentication_recovery_text_is_derived_from_the_error_class():
     def client_for(status_code: int, message: str) -> tuple[SupabaseSyncClient, httpx.AsyncClient]:
         def handler(_request):
             return httpx.Response(status_code, json={"message": message})
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return SupabaseSyncClient(_settings(), http), http
+
+    def failing_client_for(
+        error: Exception,
+    ) -> tuple[SupabaseSyncClient, httpx.AsyncClient]:
+        def handler(_request):
+            raise error
 
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         return SupabaseSyncClient(_settings(), http), http
@@ -147,6 +157,18 @@ def test_authentication_recovery_text_is_derived_from_the_error_class():
     with pytest.raises(SyncTransientError) as transient:
         asyncio.run(transient_client._authenticate())
     asyncio.run(transient_http.aclose())
+
+    # The network/timeout branch is a transient class too: it must carry the same structured
+    # repair path as a 503, not an empty detail (finding R-87-2).
+    for timeout_type in (httpx.ConnectTimeout, httpx.ConnectError):
+        timeout_client, timeout_http = failing_client_for(timeout_type("connection timed out"))
+        with pytest.raises(SyncTransientError) as timeout:
+            asyncio.run(timeout_client._authenticate())
+        asyncio.run(timeout_http.aclose())
+        assert timeout.value.detail["kind"] == "transient"
+        assert timeout.value.detail["cause"] == timeout_type.__name__
+        assert timeout.value.detail["recovery"] == recovery_for("transient")
+        assert "backoff" in timeout.value.detail["recovery"]
 
     permanent_recovery = permanent.value.detail["recovery"]
     transient_recovery = transient.value.detail["recovery"]
@@ -684,6 +706,16 @@ def test_the_stopped_loop_retries_a_notification_whose_emission_failed(
         return real_log_event(*args, **kwargs)
 
     monkeypatch.setattr(log_service, "log_event", flaky_log_event)
+    # The notify retry runs on its own capped backoff now, so shrink the base/ceiling the way the
+    # transient-retry loop test does; the production defaults are asserted by the 900 s cap test.
+    real_get = settings_service.get
+
+    def fast_interval(session, key):
+        if key == "supabase_sync_interval_seconds":
+            return 0.02
+        return real_get(session, key)
+
+    monkeypatch.setattr(settings_service, "get", fast_interval)
     calls: list[str] = []
     reached = asyncio.Event()
     runner = SyncRunner(
@@ -695,6 +727,8 @@ def test_the_stopped_loop_retries_a_notification_whose_emission_failed(
             reached,
         ),
         poll_seconds=0.01,
+        backoff_base_seconds=0.01,
+        backoff_max_seconds=0.02,
     )
 
     asyncio.run(_run_until(reached, runner))
@@ -746,6 +780,161 @@ def test_two_overlapping_streaks_produce_one_notification(initialized, monkeypat
     assert emitted == ["sync_failed"]
     with session_scope() as session:
         assert sync_service.health(session)["stop_notified"] is True
+
+
+def test_repeated_notify_failures_log_once_with_an_occurrence_counter(initialized, monkeypatch, caplog):
+    """DoD 5 applies to the alert path: a broken notifier logs once, then only counts."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    def raising_log_event(*_args, **_kwargs):
+        raise RuntimeError("notification fan-out failed")
+
+    monkeypatch.setattr(log_service, "log_event", raising_log_event)
+    calls: list[str] = []
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncPermanentError(
+                "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+            ),
+            calls,
+        )
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        for _ in range(3):
+            with pytest.raises(SyncPermanentError):
+                asyncio.run(runner.run_once())
+
+    notify_errors = [
+        record
+        for record in caplog.records
+        if record.name == LOGGER
+        and record.levelno == logging.ERROR
+        and "notification path failed" in record.getMessage()
+    ]
+    assert len(notify_errors) == 1
+    assert "occurrence 1" in notify_errors[0].getMessage()
+    with session_scope() as session:
+        health = sync_service.health(session)
+    assert health["notify_failures"] == 3
+    assert health["notify_log_occurrences"] == 3
+    assert health["last_notify_error"] == "notification fan-out failed"
+
+
+def test_notify_failures_back_off_to_the_configured_ceiling(initialized):
+    """The alert retry delay doubles from the same base and caps at the same ceiling."""
+    with session_scope() as session:
+        settings_service.update(session, {"supabase_sync_interval_seconds": 15})
+    runner = SyncRunner(backoff_base_seconds=30.0, backoff_max_seconds=50.0)
+
+    observed = []
+    for _ in range(5):
+        runner._record_notify_failure(RuntimeError("notification fan-out failed"))
+        with session_scope() as session:
+            observed.append(sync_service.health(session)["notify_backoff_seconds"])
+    assert observed == [30.0, 50.0, 50.0, 50.0, 50.0]
+
+
+def test_status_surfaces_a_failed_alert(initialized, monkeypatch):
+    """`sync status` / the GUI must show a failed alert, not only the log (DoD 3/4)."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    def raising_log_event(*_args, **_kwargs):
+        raise RuntimeError("notification fan-out failed")
+
+    monkeypatch.setattr(log_service, "log_event", raising_log_event)
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(SyncPermanentError("permanent 400"), [])
+    )
+
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with session_scope() as session:
+        status = runner.status(session)
+    assert status["last_notify_error"] == "notification fan-out failed"
+    assert status["last_notify_failed_at"] is not None
+    assert status["notify_failures"] == 1
+
+
+def test_a_successful_emission_resets_the_notify_failure_counter(initialized, monkeypatch):
+    """A delivered alert is the reset signal for the dedupe counter and the retry schedule."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    real_log_event = log_service.log_event
+    emitted: list[str] = []
+
+    def flaky_log_event(*args, **kwargs):
+        if not emitted:
+            emitted.append("raised")
+            raise RuntimeError("notification fan-out failed")
+        emitted.append("delivered")
+        return real_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(log_service, "log_event", flaky_log_event)
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(SyncPermanentError("permanent 400"), [])
+    )
+
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with session_scope() as session:
+        failed = sync_service.health(session)
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with session_scope() as session:
+        delivered = sync_service.health(session)
+        status = runner.status(session)
+
+    assert failed["notify_failures"] == 1
+    assert delivered["notify_log_occurrences"] == 0
+    assert delivered["notify_next_retry_at"] is None
+    assert delivered["last_notify_error"] is None
+    assert status["last_notify_error"] is None
+    assert emitted == ["raised", "delivered"]
+
+
+def test_the_stopped_loop_respects_the_alert_backoff_before_retrying(
+    initialized, monkeypatch
+):
+    """A persistently failing notifier is retried on its backoff, not on every poll."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    def raising_log_event(*_args, **_kwargs):
+        raise RuntimeError("notification fan-out failed")
+
+    monkeypatch.setattr(log_service, "log_event", raising_log_event)
+    calls: list[str] = []
+    reached = asyncio.Event()
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncPermanentError(
+                "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+            ),
+            calls,
+            reached,
+        ),
+        poll_seconds=0.01,
+        # A 0.5 s alert backoff is far longer than the observation window, so only the emission
+        # from the failing cycle itself may happen. Retrying every poll would be many more.
+        backoff_base_seconds=0.5,
+        backoff_max_seconds=0.5,
+    )
+
+    asyncio.run(_run_until(reached, runner))
+
+    with session_scope() as session:
+        health = sync_service.health(session)
+    assert health["notify_failures"] == 1
+    assert health["stop_notified"] is False
+    assert calls == ["SyncPermanentError"]
 
 
 def test_a_stopped_sync_respects_the_notification_master_switch(initialized, monkeypatch):

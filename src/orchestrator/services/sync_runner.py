@@ -15,6 +15,12 @@ interval (``base = max(30 s, supabase_sync_interval_seconds)``), so the default 
 60, 120, 240, 480, 900, 900, ... seconds. ``backoff_max_seconds`` is raised to the interval when a
 device polls less often than 900 s, so the documented cap is reachable at every interval.
 
+The failure *alert* is held to the same two rules, because the code that removes an unbounded
+log must not become the next one: an emission failure is deduplicated by exception signature
+(one line plus a counter) and retried on the same capped backoff, with the reason, the schedule
+and the counter in the health record so ``sync status`` and the GUI show a failed alert without
+anyone reading a log.
+
 The stopped state lives in the device-local ``sync_state`` table (key ``sync_health``). The
 polling coroutine stays alive so enable/disable and interval changes still apply without a
 restart; "stopped" means no further automatic attempts until a manual ``sync now`` succeeds or
@@ -26,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session
@@ -82,7 +88,10 @@ class SyncRunner:
         self._lock = asyncio.Lock()
         self._running = False
         self._next_run = 0.0
-        self._next_notify_retry = 0.0
+        # In-memory signature of a notify failure that could not itself be recorded. Only the
+        # first occurrence is logged, so an unwritable health record cannot reintroduce the
+        # per-interval ERROR line the persisted dedupe removes.
+        self._unrecorded_notify_error: str | None = None
         self._last_started_at: str | None = None
         self._last_finished_at: str | None = None
         self._last_success_at: str | None = None
@@ -126,6 +135,14 @@ class SyncRunner:
             "next_retry_at": health["next_retry_at"],
             "backoff_seconds": health["backoff_seconds"],
             "log_occurrences": health["log_occurrences"],
+            # Additive (T-41): a failed alert is an operator-visible fact, not a log line. The
+            # Notifications list records the delivery outcome; these say the alert never left.
+            "notify_failures": health["notify_failures"],
+            "last_notify_error": health["last_notify_error"],
+            "last_notify_failed_at": health["last_notify_failed_at"],
+            "notify_backoff_seconds": health["notify_backoff_seconds"],
+            "notify_next_retry_at": health["notify_next_retry_at"],
+            "notify_log_occurrences": health["notify_log_occurrences"],
         }
 
     def _record_failure(self, exc: Exception) -> dict[str, Any]:
@@ -197,6 +214,111 @@ class SyncRunner:
             )
         return values
 
+    def _record_notify_failure(self, exc: Exception) -> dict[str, Any]:
+        """Count and deduplicate a failed alert emission; never raises into the caller.
+
+        DoD 5 applies to this path too: the code that removes an unbounded log must not create
+        one. The rule is the same one ``_record_failure`` uses, applied to the alert:
+
+        * the log line is keyed by the exact ``<exception type>: <message>`` signature, so the
+          first occurrence logs once with a traceback and identical repeats only increment
+          ``sync_health.notify_log_occurrences`` (at DEBUG, normally invisible);
+        * the retry delay is the same capped exponential backoff as the sync path, measured from
+          this failure and persisted as ``notify_next_retry_at``, so a broken notifier is retried
+          once per backoff instead of every interval forever;
+        * the reason, the schedule and the counter are written to the health record, which is what
+          ``SyncRunner.status()`` / ``orchestrator sync status`` / the GUI read.
+
+        This method is called from inside an ``except`` block that is already handling the sync
+        failure, so a failure to record the alert failure must not replace it: the recording
+        write is guarded and a non-recordable signature is logged at most once.
+        """
+        signature = f"{type(exc).__name__}: {exc}"
+        decision: dict[str, Any] = {}
+        values: dict[str, Any] = {}
+        try:
+            with session_scope() as session:
+                interval = float(
+                    settings_service.get(session, "supabase_sync_interval_seconds") or 0
+                )
+                base = max(float(self.backoff_base_seconds), interval)
+                cap = max(float(self.backoff_max_seconds), base)
+
+                def mutate(previous: dict[str, Any]) -> dict[str, Any]:
+                    failures = int(previous.get("notify_failures") or 0) + 1
+                    same = previous.get("last_logged_notify_error") == signature
+                    occurrences = (
+                        int(previous.get("notify_log_occurrences") or 0) if same else 0
+                    ) + 1
+                    backoff = backoff_seconds(failures, base, cap)
+                    now = utcnow()
+                    decision.update(
+                        same_signature=same, occurrences=occurrences, failures=failures
+                    )
+                    return {
+                        "notify_failures": failures,
+                        "last_notify_error": str(exc)[:500],
+                        "last_notify_failed_at": now.isoformat(),
+                        "notify_backoff_seconds": backoff,
+                        "notify_next_retry_at": (
+                            now + timedelta(seconds=backoff)
+                        ).isoformat(),
+                        "notify_log_occurrences": occurrences,
+                        "last_logged_notify_error": signature,
+                    }
+
+                values = sync_service.update_health(session, mutate)
+        except Exception as record_exc:  # noqa: BLE001 - must not mask the alert/sync failure
+            self._log_unrecorded_notify_failure(record_exc)
+            return {}
+
+        backoff = float(values.get("notify_backoff_seconds") or 0.0)
+        if not decision["same_signature"]:
+            log.error(
+                "Supabase sync notification path failed: %s (occurrence 1; identical repeats "
+                "only increment sync_health.notify_log_occurrences; retrying in %.0f s)",
+                exc,
+                backoff,
+                exc_info=True,
+            )
+        else:
+            log.debug(
+                "Supabase sync notification path failed again (occurrence %d; retrying in "
+                "%.0f s): %s",
+                decision["occurrences"],
+                backoff,
+                exc,
+            )
+        return values
+
+    def _log_unrecorded_notify_failure(self, exc: Exception) -> None:
+        """Log a notify failure that could not be written down, at most once per signature."""
+        signature = f"{type(exc).__name__}: {exc}"
+        if self._unrecorded_notify_error == signature:
+            return
+        self._unrecorded_notify_error = signature
+        log.error(
+            "Supabase sync notification failure could not be recorded in sync_health: %s",
+            exc,
+        )
+
+    @staticmethod
+    def _notify_due(health: dict[str, Any]) -> bool:
+        """Is the stopped-alert emission due, per its persisted capped-backoff schedule?
+
+        The schedule lives in the health record rather than in memory so a restarted desktop loop
+        resumes the backoff instead of re-alerting every poll, and so the next attempt is visible
+        through ``sync status``. An unparseable timestamp is treated as due: wedging the alert on
+        a corrupt value is worse than one early duplicate.
+        """
+        at = health.get("notify_next_retry_at")
+        if not at:
+            return True
+        try:
+            return utcnow() >= datetime.fromisoformat(str(at))
+        except (TypeError, ValueError):
+            return True
+
     def _notify_if_needed(self, health: dict[str, Any]) -> bool:
         """At most two delivered notifications per failure streak.
 
@@ -247,13 +369,16 @@ class SyncRunner:
         except Exception as exc:  # noqa: BLE001 - the sync failure being reported must survive
             # An emission failure must never replace the original sync exception (the caller is
             # already in an ``except`` block) and must never leave the streak looking announced.
-            with session_scope() as session:
-                sync_service.release_health_flag(
-                    session, flag, token, error=f"{type(exc).__name__}: {exc}"
-                )
-            log.error(
-                "Supabase sync notification could not be emitted; claim released: %s", exc
-            )
+            try:
+                with session_scope() as session:
+                    sync_service.release_health_flag(
+                        session, flag, token, error=f"{type(exc).__name__}: {exc}"
+                    )
+            finally:
+                # Release first (so the streak can notify again), then record the failure under
+                # the same dedupe/backoff rule as the sync path: one line per signature with an
+                # occurrence count, and a capped delay before the next attempt.
+                self._record_notify_failure(exc)
             return False
 
         with session_scope() as session:
@@ -299,8 +424,10 @@ class SyncRunner:
                 # may replace the sync exception the caller has to see.
                 try:
                     self._notify_if_needed(health)
-                except Exception:  # noqa: BLE001 - never mask the original sync failure
-                    log.exception("Supabase sync notification path failed")
+                except Exception as exc:  # noqa: BLE001 - never mask the original sync failure
+                    # Same dedupe and capped backoff as an emission failure: the claim path (or
+                    # the health write) failing must not become a per-interval ERROR line.
+                    self._record_notify_failure(exc)
                 self._next_run = time.monotonic() + float(health["backoff_seconds"] or 0)
                 raise
             finally:
@@ -323,18 +450,15 @@ class SyncRunner:
                 elif health["stopped"]:
                     # Only a permanent refusal is terminal; keep polling preferences and make no
                     # further automatic attempts until a human repairs the state. The alert is
-                    # the exception: an emission that failed released its claim, so retry it at
-                    # the configured cadence instead of leaving the operator uninformed (and not
-                    # every poll, so a broken notifier cannot spam the log).
-                    if (
-                        not health.get("stop_notified")
-                        and time.monotonic() >= self._next_notify_retry
-                    ):
-                        self._next_notify_retry = time.monotonic() + interval
+                    # the exception: an emission that failed released its claim, so retry it on
+                    # its own capped-backoff schedule (``notify_next_retry_at``, persisted, so a
+                    # restart resumes it) rather than every poll -- a broken notifier must not
+                    # become an unbounded ERROR source.
+                    if not health.get("stop_notified") and self._notify_due(health):
                         try:
                             self._notify_if_needed(health)
-                        except Exception:  # noqa: BLE001 - keep the background loop alive
-                            log.exception("Supabase sync notification retry failed")
+                        except Exception as exc:  # noqa: BLE001 - keep the background loop alive
+                            self._record_notify_failure(exc)
                     self._next_run = 0.0
                 elif time.monotonic() >= self._next_run:
                     self._next_run = time.monotonic() + interval

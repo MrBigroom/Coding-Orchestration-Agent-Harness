@@ -129,6 +129,9 @@ class SupabaseSyncClient:
         }
         if response.status_code >= 500 or response.status_code in TRANSIENT_CLIENT_STATUSES:
             detail["retryable"] = True
+            # A transient status is unambiguous, so the repair path comes from the class here and
+            # every caller of this classifier (authentication or request) carries it.
+            detail["recovery"] = recovery_for("transient")
             return SyncTransientError(message, status_code=response.status_code, detail=detail)
         if "invalid version transition" in message:
             # A 4xx version rejection is the legacy local/remote counter drift. It is still
@@ -150,9 +153,16 @@ class SupabaseSyncClient:
                 f"{url.rstrip('/')}{endpoint}", headers={"apikey": key}, json=body
             )
         except httpx.HTTPError as exc:
+            # A timeout/connection failure is a transient class with its own repair path: say that
+            # it is retried with backoff and what would stop it. Leaving ``recovery`` off this
+            # branch sent a timeout out with no structured next step while a 503 carried one.
             raise SyncTransientError(
                 f"Supabase authentication failed: {exc}",
-                detail={"retryable": True, "cause": type(exc).__name__},
+                detail={
+                    "retryable": True,
+                    "cause": type(exc).__name__,
+                    "recovery": recovery_for("transient"),
+                },
             ) from exc
         if response.status_code >= 400:
             error = self._response_error(response)
@@ -187,9 +197,15 @@ class SupabaseSyncClient:
                     method, f"{url.rstrip('/')}{path}", headers=headers, **kwargs
                 )
         except httpx.HTTPError as exc:
+            # Same class-derived recovery as the auth path: a request-level network failure is
+            # transient and must name the retry behaviour, never the credential repair.
             raise SyncTransientError(
                 f"Supabase request failed: {exc}",
-                detail={"retryable": True, "cause": type(exc).__name__},
+                detail={
+                    "retryable": True,
+                    "cause": type(exc).__name__,
+                    "recovery": recovery_for("transient"),
+                },
             ) from exc
         if response.status_code >= 400:
             raise self._response_error(response)

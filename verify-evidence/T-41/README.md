@@ -37,7 +37,7 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    shows the RPC-derived `next_version`, sent at `:248-249`.
 2. **Recoverable or explicitly terminal.** `sync_transport.py:241`/`:248-249` send
    `p_expected_version = synced_version` and `p_version = synced_version + 1`
-   (`test_push_sends_synced_version_plus_one_not_the_local_revision`); `sync_service.py:488`
+   (`test_push_sends_synced_version_plus_one_not_the_local_revision`); `sync_service.py:505`
    `reinitialise` plus `cli.py:1607` `sync reinit --dry-run|--apply` repair a version disagreement
    from remote truth (`test_reinit_dry_run_then_apply_realigns_a_rejected_version`). A dirty row
    whose remote version is ahead is `remote_ahead_skipped` and untouched, so reinit cannot
@@ -50,33 +50,47 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    `sync_runner.py:104` status, `GET /api/sync/status` (`api/routes/sync.py`), and `cli.py:1594`
    `sync status` expose `stopped`, `stopped_reason`, `consecutive_failures`, `last_failure_kind`,
    `next_retry_at`. The structured `{error, detail}` body carries the classified `kind` plus a
-   class-derived `recovery` (`sync_transport.py:60` `RECOVERY_BY_KIND`, applied at `:163`):
-   credentials guidance only for a permanent refusal, and for transient classes the exponential
-   retry policy and what would stop it, so a 5xx never points the operator at `.env`
-   (`test_authentication_recovery_text_is_derived_from_the_error_class`). Tests:
+   class-derived `recovery` (`sync_transport.py:60` `RECOVERY_BY_KIND`, applied at `:134` in
+   `_response_error` for transient statuses, `:164` on the authentication `httpx.HTTPError`
+   branch, `:173` on the status-code branch and `:207` on the request branch): credentials
+   guidance only for a permanent refusal, and for transient classes the exponential retry policy
+   and what would stop it, so a 5xx **and a `ConnectTimeout`/`ConnectError`** never point the
+   operator at `.env` (`test_authentication_recovery_text_is_derived_from_the_error_class`, which
+   pins the recovery text per class and asserts the network-error branches carry
+   `recovery_for("transient")`). Tests:
    `test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason`,
    `test_sync_status_reports_the_stopped_reason_and_failure_streak`,
    `test_sync_status_reports_a_stopped_streak`.
 4. **Operator-visible notification and GUI.** `notification_vocab.py:55` adds the non-noisy
-   `sync_failed` trigger. `sync_runner.py:200` `_notify_if_needed` emits at most one event when a
+   `sync_failed` trigger. `sync_runner.py:322` `_notify_if_needed` emits at most one event when a
    transient streak becomes persistent and one when a permanent error stops the loop; `run_once`
    calls it, so a manual `sync now` is covered too, and while stopped the loop retries an alert
-   whose emission failed (`sync_runner.py:310-337`). The once-per-streak flag is now a three-part
+   whose emission failed on the alert path's own persisted capped-backoff schedule
+   (`sync_runner.py:306` `_notify_due`, used at `:457`). A failing alert is deduplicated and backed
+   off exactly like a failing sync (`sync_runner.py:217` `_record_notify_failure`): one ERROR per
+   signature with an occurrence count (`:278`), the schedule and count persisted as
+   `sync_health.notify_next_retry_at` / `notify_log_occurrences`, and the fields
+   `last_notify_error` / `last_notify_failed_at` / `notify_failures` / `notify_next_retry_at`
+   exposed by `SyncRunner.status()` (`sync_runner.py:113`), so `orchestrator sync status`,
+   `GET /api/sync/status` and both Settings UIs show a failed alert instead of hiding it in a log.
+   The once-per-streak flag is now a three-part
    cross-process claim: `sync_service.py:386` `claim_health_flag` leases the emission with a
    per-attempt token whose window covers the whole delivery path (`:266`
    `HEALTH_FLAG_CLAIM_LEASE_SECONDS`), `sync_service.py:445` `complete_health_flag` writes the
    `*_notified` flag by compare-and-set on that token only after `log_service.log_event`
    returned, and `sync_service.py:467` `release_health_flag` clears the claim and records
-   `last_notify_error` when the emission raised. A failed emission therefore never leaves a record
+   `last_notify_error` when the emission raised (`sync_runner.py:366-383` releases first, then
+   records the deduplicated failure). A failed emission therefore never leaves a record
    claiming the operator was told, and the original sync exception still propagates
-   (`run_once`'s guard at `sync_runner.py:295-305`). `sync_service.py:303` `update_health` remains
+   (`run_once`'s guard at `sync_runner.py:425-430`). `sync_service.py:303` `update_health` remains
    the conditional `UPDATE ... WHERE value_json = <bytes read>` underneath all three. No
    single-writer assumption is made across the desktop loop and CLI processes;
    `docs/cloud-sync.md:150-158` states this. The T-9 fan-out therefore respects the master switch
    and per-trigger subscription.
-   React `web/src/pages/Settings.tsx:198` shows the stopped reason and `:200` gives reinit only for
-   a permanent error; `:213` shows the transient retry line. Fallback UI:
-   `api/static_fallback/index.html:213` chooses the same hint from `last_failure_kind`. Tests:
+   React `web/src/pages/Settings.tsx:220` shows a failed alert (`last_notify_error`), `:198` shows
+   the stopped reason and `:200` gives reinit only for a permanent error; `:213` is the transient
+   retry line. Fallback UI: `api/static_fallback/index.html:219` renders the same failed-alert
+   note, and `:213` chooses the hint from `last_failure_kind`. Tests:
    `test_a_stopped_sync_emits_one_sync_failed_notification_per_streak`,
    `test_a_manual_sync_that_stops_permanently_still_notifies`,
    `test_a_persistently_failing_transient_sync_notifies_once`,
@@ -89,11 +103,22 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    `test_a_completed_emission_sets_the_flag_exactly_once`,
    `test_two_overlapping_streaks_produce_one_notification`,
    `test_authentication_recovery_text_is_derived_from_the_error_class`.
-5. **Log damage bounded.** `sync_runner.py:131` `_record_failure` states the rule in its docstring:
-   a line is keyed by exact `<exception type>: <message>`; a matching `last_logged_error` increments
-   `sync_health.log_occurrences`, the first occurrence logs once with a traceback and identical
-   repeats log at DEBUG. Test `test_identical_failures_log_once_with_an_occurrence_counter` asserts
-   one ERROR for two identical failures and `log_occurrences == 2`.
+5. **Log damage bounded.** `sync_runner.py:148` `_record_failure` states the rule in its
+   docstring: a line is keyed by exact `<exception type>: <message>`; a matching
+   `last_logged_error` increments `sync_health.log_occurrences`, the first occurrence logs once
+   with a traceback and identical repeats log at DEBUG. The rule now covers the **alert path as
+   well** (`sync_runner.py:217` `_record_notify_failure`, ERROR line at `:278`): a persistently
+   failing `log_event` produces one line with an occurrence count, not one per interval. Tests:
+   `test_identical_failures_log_once_with_an_occurrence_counter` asserts one ERROR for two
+   identical failures and `log_occurrences == 2`;
+   `test_repeated_notify_failures_log_once_with_an_occurrence_counter` asserts one ERROR for three
+   identical emission failures plus `notify_log_occurrences == 3`;
+   `test_notify_failures_back_off_to_the_configured_ceiling` asserts the delay sequence
+   `[30, 50, 50, 50, 50]`;
+   `test_the_stopped_loop_respects_the_alert_backoff_before_retrying` asserts a 0.5 s alert
+   backoff is honoured (one attempt, not one per poll);
+   `test_a_successful_emission_resets_the_notify_failure_counter` and
+   `test_status_surfaces_a_failed_alert` cover the reset and the operator-visible fields.
 6. **Offline tests (a)-(f).** `tests/unit/test_sync_resilience.py`,
    `tests/integration/test_sync_api.py`, `tests/integration/test_cli.py`. (a) permanent 400 stops
    and records; (b) the capped-backoff sequence, the running loop retrying a 5xx, and the transport
@@ -103,7 +128,8 @@ produced: the stamped outputs (`full_suite.txt`, `lint.txt`, `t41_tests.txt`, `t
    two racer tests above. No network: fake clients and `httpx.MockTransport`.
 7. **Docs.** `docs/cloud-sync.md` covers the SQL-backed protocol, the reconciled live measurement,
    rejection meaning, reinit, permanent-stop vs transient-retry/notify, the cross-process CAS rule,
-   and the dedupe rule; `README.md` Known limitations states what sync does not guarantee and how a
+   the dedupe rule, and the alert-path dedupe/backoff plus the `notify_*` status fields it exposes
+   (`docs/cloud-sync.md:176-186`); `README.md` Known limitations states what sync does not guarantee and how a
    stop or transient streak is surfaced; the `sync_failed` notification default is in
    `docs/configuration.md` and `docs/decisions.md`.
 8. **Full suite and lint via `./scripts/orch_verify.sh`**, stamped at the code HEAD in

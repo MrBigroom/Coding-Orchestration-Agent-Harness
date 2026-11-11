@@ -254,6 +254,13 @@ HEALTH_DEFAULTS: dict[str, Any] = {
     "stop_notified_claim": None,
     "last_notify_error": None,
     "last_notify_failed_at": None,
+    # The alert path gets the same treatment as the sync path: a distinct-signature dedupe and a
+    # capped backoff, so a broken notifier cannot become the next unbounded ERROR source (T-41).
+    "notify_failures": 0,
+    "notify_backoff_seconds": 0.0,
+    "notify_next_retry_at": None,
+    "notify_log_occurrences": 0,
+    "last_logged_notify_error": None,
 }
 
 # The notification claim's stale window has to cover the WHOLE emission, not just the moment of
@@ -456,9 +463,16 @@ def complete_health_flag(session: Session, flag: str, token: str, **extra: Any) 
         {
             flag: True,
             f"{flag}_claim": None,
-            # A delivered alert supersedes any earlier emission failure for this streak.
+            # A delivered alert supersedes any earlier emission failure for this streak: the
+            # reason, the retry schedule and the log-dedup counter all reset, so the next streak
+            # starts from a clean slate and logs its first failure again.
             "last_notify_error": None,
             "last_notify_failed_at": None,
+            "notify_failures": 0,
+            "notify_backoff_seconds": 0.0,
+            "notify_next_retry_at": None,
+            "notify_log_occurrences": 0,
+            "last_logged_notify_error": None,
             **extra,
         },
     )
@@ -472,6 +486,9 @@ def release_health_flag(
     The flag stays false: a failed emission is not a delivered alert. The failure itself is
     recorded separately in ``last_notify_error`` / ``last_notify_failed_at`` so the reason an
     alert was not seen survives without changing the frozen notification status vocabulary.
+    The retry schedule and its dedupe counter are written by ``SyncRunner._record_notify_failure``
+    in the same cycle: releasing the claim is what makes a retry possible, the schedule is what
+    keeps it bounded.
     """
     changes: dict[str, Any] = {f"{flag}_claim": None}
     if error is not None:

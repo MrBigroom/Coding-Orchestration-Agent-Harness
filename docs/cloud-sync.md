@@ -173,6 +173,17 @@ restarts the count. This is what keeps a permanent 400 from writing thousands of
 signature's counter lives in `sync_health.log_occurrences`, so `orchestrator sync status` still
 reports the true repeat count without another traceback.
 
+The **alert path is held to the same rule**, because the code that removes an unbounded log must
+not create one. If `log_service.log_event` itself fails (the notification fan-out is broken), the
+failure is keyed by the same `<exception type>: <message>` signature, its first occurrence logs
+once and identical repeats only increment `sync_health.notify_log_occurrences`, and the retry is
+delayed by the same capped exponential backoff (persisted as `sync_health.notify_next_retry_at`),
+not re-attempted every interval forever. The claim is still released first, so a repaired notifier
+alerts on its next attempt. `orchestrator sync status`, `GET /api/sync/status` and both Settings
+UIs therefore expose `last_notify_error`, `last_notify_failed_at`, `notify_failures` and
+`notify_next_retry_at`: a failed alert is visible where the operator looks, not only in a log. A
+delivered alert resets all four.
+
 ## Conflict rules
 
 Cloud pushes use an atomic compare-and-swap function with the last remotely observed
