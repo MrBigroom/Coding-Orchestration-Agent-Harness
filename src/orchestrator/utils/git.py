@@ -67,7 +67,9 @@ def head_sha(repo: Path | str) -> str | None:
     return (r.stdout.strip() or None) if r.code == 0 else None
 
 
-def status_porcelain(repo: Path | str, tracked_only: bool = False) -> str:
+def status_porcelain(
+    repo: Path | str, tracked_only: bool = False, lock_free: bool = False
+) -> str:
     """`git status --porcelain -uall`. With tracked_only=True (-uno) untracked paths are NOT listed.
 
     The default keeps the historical behaviour (untracked paths show up, so "non-empty output"
@@ -81,17 +83,21 @@ def status_porcelain(repo: Path | str, tracked_only: bool = False) -> str:
     that comparison to be exact).
     """
     args = ["status", "--porcelain", "-uall"] + (["-uno"] if tracked_only else [])
-    return run_git(args, repo).stdout
+    # `--no-optional-locks` makes git skip the opportunistic index refresh, so a read-only
+    # caller (a preview) does not rewrite `.git/worktrees/<id>/index` just by looking (T-39).
+    prefix = ["--no-optional-locks"] if lock_free else []
+    return run_git([*prefix, *args], repo).stdout
 
 
-def status_entries(repo: Path | str) -> list[tuple[str, str]]:
+def status_entries(repo: Path | str, lock_free: bool = False) -> list[tuple[str, str]]:
     """Every `git status --porcelain -z -uall` entry as an (XY, path) pair, renames/copy resolved.
 
     XY is the two-column status: "??" means untracked, anything else is a tracked change
     (modified, deleted, staged, conflicted, renamed). `-z` is used so paths with spaces and
     newlines survive; for R/C entries git emits the original path as the following NUL token.
     """
-    raw = run_git(["status", "--porcelain", "-z", "-uall"], repo).stdout
+    prefix = ["--no-optional-locks"] if lock_free else []
+    raw = run_git([*prefix, "status", "--porcelain", "-z", "-uall"], repo).stdout
     tokens = [t for t in raw.split("\0") if t]
     out: list[tuple[str, str]] = []
     skip_next = False

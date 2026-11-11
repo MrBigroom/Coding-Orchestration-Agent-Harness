@@ -899,7 +899,22 @@ copy-pasteable — `git -C <repo> checkout main && git -C <repo> merge --no-ff <
 - The orchestrator never modifies the base branch except through the gated
   `merge --no-ff`. It never pushes or force-pushes and never deletes branches.
 - Cleanup (`orchestrator cleanup --dry-run`) removes only worktrees that have the
-  orchestrator's marker, skips dirty ones, and keeps branches.
+  orchestrator's marker, skips dirty ones, and keeps branches. It judges each worktree by
+  OWNERSHIP, not by its name or its dirt:
+  - a **task** worktree is judged by its task status -- `accepted`/`archived`/`rejected` are
+    removable, anything else is skipped unless `--include-active`;
+  - a **chat** worktree (`chat-<id>` marker) is judged by its `chat_sessions` row, mapped
+    through `cwd` (`src/orchestrator/services/cleanup_service.py`), never by parsing the marker
+    name, plus a live-process check: any process whose cwd is that directory refuses the
+    removal even when the row says `closed`. Dirt is only the last line of defence. Chat
+    worktrees are kept unless `--include-chats` (closed sessions only); removing a session
+    that is not closed additionally needs `--include-live-chats`, whose help text says it can
+    delete the directory of a running session. The parity sweep is separate and
+    lock-aware, and is unchanged.
+  - the output is one record per line (`removed` / `would remove` / `skip <path>: <reason>` /
+    `refuse <path>: <reason>` / `failed`), or a single JSON object with `--json`; the closing
+    counts are derived from those records, and a failed removal is counted as a failure and
+    exits non-zero.
 
 ## Merge gate
 

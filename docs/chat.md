@@ -234,6 +234,30 @@ transcript says which way it went. Sessions from before Continue existed always 
 
 `POST /api/chat/sessions/{id}/continue` does the same through the API.
 
+## `orchestrator cleanup` and chat worktrees
+
+Cleanup reclaims disk, so it needs to know which directories a live session is using. A chat
+worktree is judged by OWNERSHIP, not by its dirt and not by its marker name:
+
+- the marker is `chat-<id>`, so it is resolved against `chat_sessions` by matching
+  `chat_sessions.cwd` to the worktree path. Any session whose status is not `closed` protects
+  its worktree, and prints `skip <path>: chat session <id> is <status>` (`busy` means an agent
+  process is holding that directory mid-turn);
+- a live-process check backs that up: if any process has the directory as its cwd, cleanup
+  reports `refuse <path>: live process <pid> has it as its cwd`, even when the row says
+  `closed`, so a stale database cannot cost you the directory your session is running in;
+- uncommitted changes are still refused as the last line of defence, but they are no longer
+  the only protection -- a CLEAN busy worktree is skipped too.
+
+Chat worktrees are therefore kept by default. `--include-chats` reclaims the worktrees of
+**closed** sessions only; a session that is not closed needs `--include-live-chats`, which
+states in its help that it can delete the directory of a running session. Branches are never
+deleted, and task worktrees behave exactly as before: `accepted`/`archived`/`rejected` are
+removable, anything else needs `--include-active`. The parity snapshot has its own lock-aware
+sweep. A dry run lists the outcomes (would remove / skipped with a reason / refused because a
+live process owns it) without writing anything, including git's own metadata; `--json` prints
+the same as one machine-readable object.
+
 ## Limits
 
 - Sessions live inside the server process. When it stops they end; see above to continue
