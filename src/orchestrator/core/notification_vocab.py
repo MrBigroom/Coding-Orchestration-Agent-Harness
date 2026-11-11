@@ -54,7 +54,8 @@ TRIGGERS: dict[str, NotificationTrigger] = {
     # subscribed; the notification is emitted once per failure streak, never once per retry.
     "sync_failed": _t(
         "sync_failed", "Cloud sync needs attention",
-        "Run `orchestrator sync status`; if versions drifted, reinit (dry-run first).",
+        "Run `orchestrator sync status`; if versions drifted, run `orchestrator sync reinit` "
+        "(dry run by default; `--apply` writes).",
     ),
     "worktree_created": _t("worktree_created", "Worktree created", "No action needed.", noisy=True),
     "recovery_commit": _t(

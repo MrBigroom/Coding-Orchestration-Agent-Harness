@@ -111,9 +111,9 @@ It downloads versions only (never payloads), leaves dirty payloads pending so th
 next cycle, and prints a plan by default:
 
 ```bash
-orchestrator sync reinit --dry-run   # inspect the planned counter changes; writes nothing
-orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
-orchestrator sync now                # normal cycle; a success clears the stop
+orchestrator sync reinit           # inspect the planned counter changes; writes nothing (dry run is the default)
+orchestrator sync reinit --apply   # write them and clear the stopped/failure streak
+orchestrator sync now              # normal cycle; a success clears the stop
 ```
 
 Records with an unresolved payload conflict are reported as `conflicts_skipped` and never

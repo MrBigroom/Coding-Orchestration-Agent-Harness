@@ -23,6 +23,7 @@ from orchestrator.core.schemas import ProjectCreate
 from orchestrator.services import project_service, settings_service, sync_service
 from orchestrator.services.sync_runner import SyncRunner, backoff_seconds
 from orchestrator.services.sync_transport import (
+    VERSION_REJECTION_RECOVERY,
     SupabaseSyncClient,
     SyncPermanentError,
     SyncTransientError,
@@ -120,7 +121,8 @@ def test_response_status_classification_separates_permanent_from_transient():
     )
     assert isinstance(permanent, SyncPermanentError)
     assert permanent.detail["kind"] == "permanent"
-    assert permanent.detail["recovery"] == "orchestrator sync reinit --dry-run"
+    assert permanent.detail["recovery"] == VERSION_REJECTION_RECOVERY
+    assert "orchestrator sync reinit" in permanent.detail["recovery"]
 
     for status_code in (500, 503, 408, 429):
         transient = SupabaseSyncClient._response_error(response(status_code, "unavailable"))
@@ -198,7 +200,7 @@ def test_a_permanent_400_stops_the_loop_and_records_the_stopped_reason(
     error = SyncPermanentError(
         "Supabase returned HTTP 400: invalid version transition: 0 -> 3",
         status_code=400,
-        detail={"recovery": "orchestrator sync reinit --dry-run"},
+        detail={"recovery": VERSION_REJECTION_RECOVERY},
     )
     runner = SyncRunner(
         transport_factory=lambda: FailingClient(error, calls, reached), poll_seconds=0.01

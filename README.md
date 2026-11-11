@@ -263,8 +263,8 @@ Layout: `src/orchestrator/{core,services,adapters,providers,prompts,api,migratio
   There is no incrementally cursor-based pull, no per-entity conflict UI, and no encryption. A
   stopped sync and the consecutive-failure/next-retry state are visible in
   `orchestrator sync status`, `GET /api/sync/status`, and Settings → Cloud Sync; recovery from a
-  permanent stop is `orchestrator sync reinit --dry-run` then `--apply` (or a successful manual
-  sync). Persistent failures raise the `sync_failed` notification. See `docs/cloud-sync.md` for the
+  permanent stop is `orchestrator sync reinit` (dry run by default) then
+  `orchestrator sync reinit --apply` (or a successful manual sync). Persistent failures raise the `sync_failed` notification. See `docs/cloud-sync.md` for the
   protocol and the measured `0 -> 3` failure.
 
 - **Desktop notifications: one channel, and the link is usually text.** Only the `notify-send`
