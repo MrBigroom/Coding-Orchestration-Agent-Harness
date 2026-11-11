@@ -1,4 +1,4 @@
-# HEAD=82969fb8f962520aed7e6e77a4c5cee06d08acde mode=fast
+# HEAD=57cdb53bc0e8fb036585cb662340b01a098a3629 mode=fast
 # command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/orchestrator sync reinit --dry-run --help
 old_hint_exit=2
 │ No such option: --dry-run                                                    │
@@ -37,11 +37,13 @@ guards: no 'sync reinit --dry-run' in operator-facing files (tests quote it on p
   tests/integration/test_memory_scope_boundary.py:521:    # A --gc-only --dry-run still shows the operator what a real run would collect.
   tests/integration/test_memory_scope_boundary.py:522:    dry = flat(runner.invoke(app, ["memory", "fix-scopes", "--gc-only", "--dry-run"],
   tests/unit/test_operator_command_hints.py:3:The shipped recovery hint told the operator to run ``orchestrator sync reinit --dry-run``, which
-  tests/unit/test_operator_command_hints.py:4:exits with ``No such option: --dry-run``: the dry run is the default and has no flag. The tests
-  tests/unit/test_operator_command_hints.py:127:    assert "orchestrator sync reinit --dry-run" not in recovery
-  tests/unit/test_operator_command_hints.py:139:        _parse_cli("orchestrator sync reinit --dry-run")
-  tests/unit/test_operator_command_hints.py:141:    assert "No such option: --dry-run" in str(excinfo.value)
-  tests/unit/test_operator_command_hints.py:149:        "run `orchestrator sync reinit --dry-run`",
-  tests/unit/test_operator_command_hints.py:160:    assert "No such option: --dry-run" in str(excinfo.value)
-  tests/unit/test_operator_command_hints.py:183:        assert "orchestrator sync reinit --dry-run" not in text, name
-  tests/unit/test_operator_command_hints.py:185:        assert "--dry-run" not in text, name
+  tests/unit/test_operator_command_hints.py:4:exits with ``No such option: --dry-run``: the dry run is the default and has no flag. A suite that
+  tests/unit/test_operator_command_hints.py:274:    assert "orchestrator sync reinit --dry-run" not in recovery
+  tests/unit/test_operator_command_hints.py:289:    assert "--dry-run" not in action
+  tests/unit/test_operator_command_hints.py:299:        _parse_cli("orchestrator sync reinit --dry-run")
+  tests/unit/test_operator_command_hints.py:301:    assert "No such option: --dry-run" in str(excinfo.value)
+  tests/unit/test_operator_command_hints.py:309:        "run `orchestrator sync reinit --dry-run`",
+  tests/unit/test_operator_command_hints.py:320:    bad = "run `orchestrator sync reinit` (the dry run is the default and `--dry-run` writes)"
+  tests/unit/test_operator_command_hints.py:323:    with pytest.raises(AssertionError, match="--dry-run"):
+  tests/unit/test_operator_command_hints.py:360:        assert "orchestrator sync reinit --dry-run" not in text, name
+  tests/unit/test_operator_command_hints.py:362:        assert "--dry-run" not in text, name

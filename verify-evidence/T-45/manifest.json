@@ -3,48 +3,48 @@
   "files": [
     {
       "path": "command_audit.txt",
-      "sha256": "a19b394e3e3d4bf1872fb20ee9a155799010aef7b5accc4879907dcae16a5774"
+      "sha256": "f47f74fc92bbe127a19e22d3233407b790c5324bb863fcbf7a79bfcb1c0c5702"
     },
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "3f553b71f9669e4a202dbbfc0e84c6583fecaa6e8469281b6c488dd90401be70"
+      "sha256": "655dd7ed2bcf2f5780be5d025e385e25147412456375434ce078303e371d0f14"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "c3fc02ee276e1b8ccc32e9a3d78d10cd81ed880954468e4a1e57b5446f8120e3"
+      "sha256": "8dd076ca94a23bc93ca8022a9ec3f8d53c6ac855f33a53f5a49214075282c985"
     },
     {
       "path": "lint.txt",
-      "sha256": "9113595347750adb0a7a4c0a01d03b3d6a54969acc0b04ff6bf310ebdeebca56"
+      "sha256": "bf45b67b2de54f444ea803023cbb930eab2b096808235594e74872d5a9a0f26c"
     },
     {
       "path": "live_cli.txt",
-      "sha256": "4b3cf78b2fb7a3cf40d281335d6bfd94902d68063468a6ba84e7c2f5737f7f9a"
+      "sha256": "57e4c59cc08fd7073fc143b2ba4ee87bf59bac2711de84dcc4752a7942b78a4d"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "0a1732193eff0fcc9c7fe312448d873308f7a60c240cf21bbb76f28526f7b3ef"
+      "sha256": "53b02acdeb793d13bc75113118f1bedec501c45f2575c2bee80fbb83a509e499"
     },
     {
       "path": "t45_tests.txt",
-      "sha256": "b3102b28042dfc64cb0bf1820226b194c7a126767b761211ad090e64e9e948d6"
+      "sha256": "1a8499c7385fbd4e2614e2a433934a8ee3428c9f089a1ab1ad81e5044ca72ae5"
     },
     {
       "path": "tsc_web.txt",
-      "sha256": "8bd2148118a720eaffb7ea52dca1aed1f6ced2798191038a3d29c777ac5ac35b"
+      "sha256": "ad13f7ebea44227b6bcfb0be1607a7c090e87275687476bba3c7a2bd3896f5f1"
     }
   ],
-  "generated_at": "2026-11-11T03:23:26Z",
+  "generated_at": "2026-11-11T03:48:48Z",
   "generator": "verify-evidence/T-45/capture.sh",
-  "head": "82969fb8f962520aed7e6e77a4c5cee06d08acde",
-  "head_short": "82969fb",
+  "head": "57cdb53bc0e8fb036585cb662340b01a098a3629",
+  "head_short": "57cdb53",
   "inputs": [
     "capture.sh"
   ],
   "label": "T-45",
   "mode": "fast",
   "only": [],
-  "stamp": "# HEAD=82969fb8f962520aed7e6e77a4c5cee06d08acde mode=fast",
+  "stamp": "# HEAD=57cdb53bc0e8fb036585cb662340b01a098a3629 mode=fast",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",
