@@ -17,7 +17,7 @@ SHA="$(git rev-parse HEAD)"
 MODE=fast
 [ "${T15_FULL:-}" = "1" ] && MODE=full
 STAMP="# HEAD=$SHA mode=$MODE"
-KEEP='ORCH_VERIFY\||passed|failed|skipped|PASSED|FAILED|SKIPPED|ERROR|All checks|tsc_exit|listfiles_|^# (HEAD|command|exact|CONTROL|guards|checked)|^OK |^CONTROL|^source_command_count|^recovery_string_count'
+KEEP='ORCH_VERIFY\||passed|failed|skipped|PASSED|FAILED|SKIPPED|ERROR|All checks|tsc_exit|listfiles_|^# (HEAD|command|exact|CONTROL|guards|checked)|^OK |^CONTROL|^source_command_count|^recovery_string_count|^python_command_count|^gui_command_count|^NOTIFICATION|^RECOVERY'
 
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
 MAIN="${COMMON%/.git}"
@@ -40,39 +40,77 @@ echo "capturing at $(git rev-parse --short HEAD) mode=$MODE"
   > "$STAGE/t45_tests.txt"
 
 # Enumerate every operator-command hint the code can emit, using the same helpers the test uses,
-# and parse each with the real Typer/Click tree (make_context; no callback runs).
+# and parse each with the real Typer/Click tree (make_context; no callback runs). The scan covers
+# every string expression in src/orchestrator (AST, including f-strings and concatenations), every
+# command-shaped string in the two GUIs (raw text, not only <code>/mono spans), and resolves each
+# flag against the command that owns it.
 {
   echo "$STAMP"
   echo "# command: PYTHONPATH=$ROOT/src:$ROOT $PY - (test helpers drive the CLI parser)"
   PYTHONPATH="$ROOT/src:$ROOT" "$PY" - <<'PY'
 from tests.unit.test_operator_command_hints import (
-    BACKTICKED_COMMAND,
-    SRC_ROOT,
+    _assert_commands_are_real,
+    _audit_gui_files,
+    _audit_python_tree,
+    _audit_text,
     _emitted_recovery_strings,
     _parse_cli,
-    _source_commands,
 )
+from orchestrator.core.notification_vocab import TRIGGERS
 
 recovery = _emitted_recovery_strings()
 print(f"recovery_string_count={len(recovery)}")
 for label, text in recovery.items():
     print(f"RECOVERY {label}: {text}")
-    for command in BACKTICKED_COMMAND.findall(text):
+    audit = _audit_text(text)
+    _assert_commands_are_real(audit)
+    for command in audit:
         _parse_cli(command)
         print(f"OK recovery command: {command}")
 
-commands = _source_commands(SRC_ROOT)
-print(f"source_command_count={len(commands)}")
-for command, where in commands.items():
-    _parse_cli(command)
-    print(f"OK source command: {command} | {where}")
+body = TRIGGERS["sync_failed"].action
+print(f"NOTIFICATION sync_failed: {body}")
+assert "conflicts_skipped" in body and "left untouched" in body
+_assert_commands_are_real(_audit_text(body))
+print("OK sync_failed body names the skip behaviour and parses")
 
+python_audit = _audit_python_tree()
+print(f"python_command_count={len(python_audit)}")
+for command in sorted(python_audit):
+    flags = sorted(python_audit[command]["flags"])
+    sources = sorted(python_audit[command]["sources"])
+    print(f"OK python command: {command} flags={flags} sources={len(sources)}")
+    if len(sources) <= 4:
+        for source in sources:
+            print(f"    at {source}")
+_assert_commands_are_real(python_audit)
+
+gui_audit = _audit_gui_files()
+print(f"gui_command_count={len(gui_audit)}")
+for command in sorted(gui_audit):
+    print(
+        f"OK gui command: {command}"
+        f" flags={sorted(gui_audit[command]['flags'])}"
+        f" sources={sorted(gui_audit[command]['sources'])}"
+    )
+_assert_commands_are_real(gui_audit)
+
+# Control 1: the shipped hint must be rejected by this same validator.
 try:
     _parse_cli("orchestrator sync reinit --dry-run")
-except Exception as exc:  # the shipped hint must be rejected by this same validator
+except Exception as exc:
     print(f"CONTROL rejected the shipped hint: {type(exc).__name__}: {exc}")
 else:
     raise SystemExit("CONTROL FAILED: the validator accepted the shipped --dry-run hint")
+
+# Control 2: a wrong flag in its own backticks/span must be caught, not only a wrong command.
+bad = "run `orchestrator sync reinit` (the dry run is the default and `--nope` writes)"
+try:
+    _assert_commands_are_real(_audit_text(bad))
+except AssertionError as exc:
+    print(f"CONTROL rejected a separately formatted bogus flag: {exc}")
+else:
+    raise SystemExit("CONTROL FAILED: a flag in its own backticks escaped the audit")
 PY
 } > "$STAGE/command_audit.txt" 2>&1
 
@@ -147,13 +185,13 @@ PY
   echo "# command: git show HEAD:<file> | grep -nE '<anchor>'"
   for spec in \
     "src/orchestrator/services/sync_transport.py|VERSION_REJECTION_RECOVERY|RECOVERY_BY_KIND|def recovery_for|invalid version transition|detail\[\"recovery\"\] = VERSION_REJECTION_RECOVERY" \
-    "src/orchestrator/core/notification_vocab.py|sync_failed|orchestrator sync reinit|dry run by default" \
-    "src/orchestrator/api/static_fallback/index.html|sync reinit|conflicts_skipped|--dry-run" \
+    "src/orchestrator/core/notification_vocab.py|sync_failed|orchestrator sync reinit|conflicts_skipped|left untouched" \
+    "src/orchestrator/api/static_fallback/index.html|sync reinit|conflicts_skipped|--dry-run|dry run by default" \
     "web/src/pages/Settings.tsx|sync reinit|dry run by default|conflicts_skipped|--dry-run" \
     "docs/cloud-sync.md|sync reinit|dry run is the default|conflicts_skipped" \
     "docs/decisions.md|sync reinit|dry run by default" \
-    "README.md|sync reinit|dry run by default" \
-    "tests/unit/test_operator_command_hints.py|def test_every_recovery_string|def test_the_validator_rejects|def test_every_operator_command_hint|def test_the_guis_name" \
+    "README.md|sync reinit|dry run by default|conflicts_skipped" \
+    "tests/unit/test_operator_command_hints.py|def test_every_recovery_string|def test_sync_failed_notification|def test_the_validator_rejects|def test_a_flag_in_its_own_backticks|def test_every_command_shaped_string|def test_every_command_shaped_string_in_the_guis" \
     "tests/integration/test_sync_api.py|VERSION_REJECTION_RECOVERY" \
     "tests/unit/test_sync_resilience.py|VERSION_REJECTION_RECOVERY" ; do
     file="${spec%%|*}"; patterns="${spec#*|}"

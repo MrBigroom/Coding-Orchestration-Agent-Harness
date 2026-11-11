@@ -55,7 +55,8 @@ TRIGGERS: dict[str, NotificationTrigger] = {
     "sync_failed": _t(
         "sync_failed", "Cloud sync needs attention",
         "Run `orchestrator sync status`; if versions drifted, run `orchestrator sync reinit` "
-        "(dry run by default; `--apply` writes).",
+        "(dry run by default; `--apply` writes). It never touches payload conflicts: they are "
+        "reported as conflicts_skipped and left untouched.",
     ),
     "worktree_created": _t("worktree_created", "Worktree created", "No action needed.", noisy=True),
     "recovery_commit": _t(
