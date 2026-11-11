@@ -2,14 +2,14 @@
 # this is a report about the commits it names, not evidence measured at it).
 # command: orchestrator task evidence T-45 --at-tip
 basis=committed
-delivered_tip=0caee84e338670d270f122d2e546f0c110354f53
-delivered_tip_short=0caee84
-compared_commit=73fb69895557823b80b77db80a8b170ab1203282
-compared_short=73fb698
+delivered_tip=6f684d883347072ef1442d74c3abc22a952cb3f7
+delivered_tip_short=6f684d8
+compared_commit=82969fb8f962520aed7e6e77a4c5cee06d08acde
+compared_short=82969fb
 status=pass
 stamped_files=8
 stale_count=0
 deleted_count=0
-evidence=8 stamped evidence file(s) fresh at 73fb698 (73fb69895557823b80b77db80a8b170ab1203282); commit under verification 0caee84 (0caee84e338670d270f122d2e546f0c110354f53) is evidence-only/empty on top of that target
+evidence=8 stamped evidence file(s) fresh at 82969fb (82969fb8f962520aed7e6e77a4c5cee06d08acde); commit under verification 6f684d8 (6f684d883347072ef1442d74c3abc22a952cb3f7) is evidence-only/empty on top of that target
 notes=none
-delivery=the comparison target is the nearest ancestor of the delivered tip that is not an evidence-only or empty commit; the commit adding this report touches only verify-evidence/, so the same check at the final tip reports pass naming that code HEAD (73fb698).
+delivery=the comparison target is the nearest ancestor of the delivered tip that is not an evidence-only or empty commit; the commit adding this report touches only verify-evidence/, so the same check at the final tip reports pass naming that code HEAD (82969fb).
