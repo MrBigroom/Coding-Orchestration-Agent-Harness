@@ -141,6 +141,25 @@ def test_the_validator_rejects_the_flag_that_shipped():
     assert "No such option: --dry-run" in str(excinfo.value)
 
 
+def test_the_recovery_enumeration_catches_a_broken_hint_runtime_patched(monkeypatch):
+    """Mutation check: the enumeration test must fail if the emitted hint itself is wrong."""
+    monkeypatch.setattr(
+        sync_transport,
+        "VERSION_REJECTION_RECOVERY",
+        "run `orchestrator sync reinit --dry-run`",
+    )
+    commands = [
+        command
+        for text in _emitted_recovery_strings().values()
+        for command in BACKTICKED_COMMAND.findall(text)
+    ]
+    with pytest.raises(Exception) as excinfo:
+        for command in commands:
+            _parse_cli(command)
+    assert type(excinfo.value).__name__ == "NoSuchOption"
+    assert "No such option: --dry-run" in str(excinfo.value)
+
+
 def test_every_operator_command_hint_in_the_source_tree_parses_against_the_cli():
     commands = _source_commands(SRC_ROOT)
     assert len(commands) >= 10, commands  # the regex must keep finding the known hints
