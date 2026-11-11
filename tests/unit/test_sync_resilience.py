@@ -26,6 +26,7 @@ from orchestrator.services.sync_transport import (
     SupabaseSyncClient,
     SyncPermanentError,
     SyncTransientError,
+    recovery_for,
 )
 
 LOGGER = "orchestrator.services.sync_runner"
@@ -126,6 +127,37 @@ def test_response_status_classification_separates_permanent_from_transient():
         assert isinstance(transient, SyncTransientError)
         assert transient.detail["kind"] == "transient"
         assert transient.detail["retryable"] is True
+
+
+def test_authentication_recovery_text_is_derived_from_the_error_class():
+    """A 5xx/timeout must not send the operator looking for a bad password."""
+    def client_for(status_code: int, message: str) -> tuple[SupabaseSyncClient, httpx.AsyncClient]:
+        def handler(_request):
+            return httpx.Response(status_code, json={"message": message})
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return SupabaseSyncClient(_settings(), http), http
+
+    permanent_client, permanent_http = client_for(401, "invalid credentials")
+    with pytest.raises(SyncPermanentError) as permanent:
+        asyncio.run(permanent_client._authenticate())
+    asyncio.run(permanent_http.aclose())
+
+    transient_client, transient_http = client_for(503, "service unavailable")
+    with pytest.raises(SyncTransientError) as transient:
+        asyncio.run(transient_client._authenticate())
+    asyncio.run(transient_http.aclose())
+
+    permanent_recovery = permanent.value.detail["recovery"]
+    transient_recovery = transient.value.detail["recovery"]
+    assert permanent.value.detail["kind"] == "permanent"
+    assert transient.value.detail["kind"] == "transient"
+    assert permanent_recovery == recovery_for("permanent")
+    assert transient_recovery == recovery_for("transient")
+    assert permanent_recovery != transient_recovery
+    assert "ORCHESTRATOR_SUPABASE_EMAIL" in permanent_recovery
+    assert "backoff" in transient_recovery
+    assert "backoff" not in permanent_recovery
 
 
 def test_backoff_sequence_doubles_until_the_cap_and_resets_when_healthy():
@@ -549,6 +581,173 @@ def test_a_persistently_failing_transient_sync_notifies_once(initialized, monkey
     assert health["stopped"] is False
 
 
+def test_a_failed_emission_releases_the_claim_so_a_later_cycle_notifies(
+    initialized, monkeypatch
+):
+    """An emission that raises must leave the streak unannounced, not silently marked done."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    emitted: list[str] = []
+    real_log_event = log_service.log_event
+
+    def flaky_log_event(*args, **kwargs):
+        if not emitted:
+            emitted.append("raised")
+            raise RuntimeError("notification fan-out failed")
+        emitted.append("delivered")
+        return real_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(log_service, "log_event", flaky_log_event)
+    calls: list[str] = []
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncPermanentError(
+                "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+            ),
+            calls,
+        )
+    )
+
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with session_scope() as session:
+        health = sync_service.health(session)
+    assert health["stop_notified"] is False
+    assert health["stop_notified_claim"] is None
+    assert "notification fan-out failed" in health["last_notify_error"]
+
+    # The next cycle may try again because the claim was released, and this time it lands.
+    with pytest.raises(SyncPermanentError):
+        asyncio.run(runner.run_once())
+    with session_scope() as session:
+        health = sync_service.health(session)
+    assert health["stop_notified"] is True
+    assert health["stop_notified_claim"] is None
+    assert health["last_notify_error"] is None
+    assert emitted == ["raised", "delivered"]
+
+
+def test_an_emission_failure_does_not_mask_the_sync_exception(initialized, monkeypatch):
+    """The caller must still see the original classified failure, unchanged."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    def raising_log_event(*_args, **_kwargs):
+        raise RuntimeError("notification fan-out failed")
+
+    monkeypatch.setattr(log_service, "log_event", raising_log_event)
+    error = SyncPermanentError(
+        "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+    )
+    runner = SyncRunner(transport_factory=lambda: FailingClient(error, []))
+
+    with pytest.raises(SyncPermanentError) as caught:
+        asyncio.run(runner.run_once())
+    assert caught.value is error
+    assert str(caught.value) == "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+
+
+def test_a_completed_emission_sets_the_flag_exactly_once(initialized):
+    with session_scope() as session:
+        token = sync_service.claim_health_flag(session, "stop_notified")
+    assert token
+
+    with session_scope() as session:
+        assert sync_service.complete_health_flag(session, "stop_notified", token) is True
+    with session_scope() as session:
+        # A second terminal write with the same token matches nothing: the claim is gone.
+        assert sync_service.complete_health_flag(session, "stop_notified", token) is False
+        health = sync_service.health(session)
+    assert health["stop_notified"] is True
+    assert health["stop_notified_claim"] is None
+
+
+def test_the_stopped_loop_retries_a_notification_whose_emission_failed(
+    initialized, monkeypatch
+):
+    """A released claim must be retried by the loop, which otherwise makes no sync attempts."""
+    _configured(monkeypatch)
+    _enable_sync()
+    from orchestrator.services import log_service
+
+    emitted: list[str] = []
+    real_log_event = log_service.log_event
+
+    def flaky_log_event(*args, **kwargs):
+        if not emitted:
+            emitted.append("raised")
+            raise RuntimeError("notification fan-out failed")
+        emitted.append("delivered")
+        return real_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(log_service, "log_event", flaky_log_event)
+    calls: list[str] = []
+    reached = asyncio.Event()
+    runner = SyncRunner(
+        transport_factory=lambda: FailingClient(
+            SyncPermanentError(
+                "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+            ),
+            calls,
+            reached,
+        ),
+        poll_seconds=0.01,
+    )
+
+    asyncio.run(_run_until(reached, runner))
+
+    with session_scope() as session:
+        health = sync_service.health(session)
+    assert emitted == ["raised", "delivered"]
+    assert health["stop_notified"] is True
+    assert health["stop_notified_claim"] is None
+    # Still exactly one sync attempt: the retry is the alert, not the refused request.
+    assert calls == ["SyncPermanentError"]
+
+
+def test_two_overlapping_streaks_produce_one_notification(initialized, monkeypatch):
+    """While one emission is in flight the leased claim blocks the second emitter."""
+    from orchestrator.services import log_service
+
+    real_log_event = log_service.log_event
+    emitted: list[str] = []
+    in_flight = threading.Event()
+    release = threading.Event()
+
+    def slow_log_event(*args, **kwargs):
+        emitted.append("sync_failed")
+        in_flight.set()
+        release.wait(timeout=5)
+        return real_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(log_service, "log_event", slow_log_event)
+    health = {
+        "stopped": True,
+        "consecutive_failures": 1,
+        "stopped_reason": "permanent client error: invalid version transition: 0 -> 3",
+    }
+    runner = SyncRunner(transport_factory=lambda: FailingClient(SyncPermanentError("x"), []))
+
+    first: list[bool] = []
+    first_thread = threading.Thread(target=lambda: first.append(runner._notify_if_needed(health)))
+    first_thread.start()
+    assert in_flight.wait(timeout=5)
+
+    # The first emission owns a live claim, so the overlapping streak must write nothing.
+    second = runner._notify_if_needed(health)
+    release.set()
+    first_thread.join(timeout=5)
+
+    assert first == [True]
+    assert second is False
+    assert emitted == ["sync_failed"]
+    with session_scope() as session:
+        assert sync_service.health(session)["stop_notified"] is True
+
+
 def test_a_stopped_sync_respects_the_notification_master_switch(initialized, monkeypatch):
     _configured(monkeypatch)
     _enable_sync()
@@ -647,11 +846,15 @@ def test_a_health_flag_claim_is_won_by_exactly_one_racer(initialized, monkeypatc
 
     monkeypatch.setattr(sync_service, "_read_health_raw", stale_first_read)
 
-    def claim(_barrier: threading.Barrier) -> bool:
+    def claim(_barrier: threading.Barrier) -> str | None:
         with session_scope() as session:
             return sync_service.claim_health_flag(session, "stop_notified")
 
-    assert sorted(_race(claim)) == [False, True]
+    results = _race(claim)
+    winners = [token for token in results if token is not None]
+    assert len(winners) == 1
+    assert sum(1 for token in results if token is None) == 1
     with session_scope() as session:
         _exists, _raw, stored = original(session)
-        assert stored["stop_notified"] is True
+    assert stored["stop_notified"] is False
+    assert stored["stop_notified_claim"]["token"] == winners[0]

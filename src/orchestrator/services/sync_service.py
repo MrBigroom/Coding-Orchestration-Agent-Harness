@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -249,7 +250,20 @@ HEALTH_DEFAULTS: dict[str, Any] = {
     "last_logged_error": None,
     "streak_notified": False,
     "stop_notified": False,
+    "streak_notified_claim": None,
+    "stop_notified_claim": None,
+    "last_notify_error": None,
+    "last_notify_failed_at": None,
 }
+
+# The notification claim's stale window has to cover the WHOLE emission, not just the moment of
+# claiming. ``log_service.log_event`` commits the build-log row and the JSONL line first, then
+# fans out to ``notification_service.notify_event`` in its own session: that delivery probes the
+# daemon (2 s) and then runs the client (10 s), and a coalescing flush can add a little more. A
+# window derived from the claim instant alone would let the next cycle re-claim and emit while
+# the first emission is still in flight. This is a ceiling on an in-flight claim only; it never
+# suppresses an alert whose emission actually failed, because a failure releases the claim.
+HEALTH_FLAG_CLAIM_LEASE_SECONDS = 120.0
 
 
 class HealthConflict(RuntimeError):
@@ -353,26 +367,117 @@ def write_health(session: Session, **changes: Any) -> dict[str, Any]:
     return update_health(session, lambda _current: changes)
 
 
-def claim_health_flag(session: Session, flag: str, **extra: Any) -> bool:
-    """Atomically set ``flag`` once; exactly one caller (across processes) returns ``True``.
+def _live_claim(current: dict[str, Any], flag: str, now: datetime) -> bool:
+    """Is another emitter's unexpired claim recorded for ``flag``?
 
-    This is the notification once-per-streak gate. Checking a flag read in a previous session
-    and then writing it lets the loop and a manual run both alert; the conditional update keeps
-    the write if and only if the flag was still false in the bytes we just matched.
+    An unparseable lease is treated as expired: wedging the alert forever because of a corrupt
+    timestamp is worse than one possible duplicate event.
     """
-    claimed = {"value": False}
+    claim = current.get(f"{flag}_claim")
+    if not isinstance(claim, dict) or not claim.get("token"):
+        return False
+    try:
+        deadline = datetime.fromisoformat(str(claim.get("expires_at")))
+    except (TypeError, ValueError):
+        return False
+    return now < deadline
+
+
+def claim_health_flag(session: Session, flag: str, **extra: Any) -> str | None:
+    """Lease the right to emit ``flag``'s notification; returns a per-attempt token or ``None``.
+
+    This is the notification once-per-streak gate and it has the three parts a cross-process
+    claim needs: (1) the lease window (``HEALTH_FLAG_CLAIM_LEASE_SECONDS``) covers the whole
+    emission, so a slow delivery is not re-claimed by the next cycle; (2) the token is unique
+    per attempt, so two claims are distinguishable even inside the same second; (3) the flag
+    itself is NOT set here -- ``complete_health_flag`` writes it with a compare-and-set on this
+    token after the emission actually succeeded. A caller that loses the race gets ``None`` and
+    must write nothing and log nothing.
+    """
+    token = uuid4().hex
+    won: dict[str, str | None] = {"token": None}
 
     def mutate(current: dict[str, Any]) -> dict[str, Any] | None:
         # Re-evaluated on every CAS attempt: a failed attempt must not leave this set, or the
         # loser of the race would report a claim it never wrote.
-        claimed["value"] = False
-        if current.get(flag):
+        won["token"] = None
+        now = utcnow()
+        if current.get(flag) or _live_claim(current, flag, now):
             return None
-        claimed["value"] = True
-        return {flag: True, **extra}
+        won["token"] = token
+        return {
+            f"{flag}_claim": {
+                "token": token,
+                "claimed_at": now.isoformat(),
+                "expires_at": (
+                    now + timedelta(seconds=HEALTH_FLAG_CLAIM_LEASE_SECONDS)
+                ).isoformat(),
+            },
+            **extra,
+        }
 
     update_health(session, mutate)
-    return claimed["value"]
+    return won["token"]
+
+
+def _settle_health_flag(
+    session: Session, flag: str, token: str, changes: dict[str, Any]
+) -> bool:
+    """Apply ``changes`` only while ``token`` still owns the claim; ``True`` iff it landed.
+
+    The compare-and-set is on the claim token, not on a flag read earlier, so a settlement can
+    never overwrite a newer attempt's claim (the claim expired and another process took over).
+    """
+    settled = {"value": False}
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any] | None:
+        settled["value"] = False
+        lease = current.get(f"{flag}_claim")
+        if not isinstance(lease, dict) or lease.get("token") != token:
+            return None
+        settled["value"] = True
+        return changes
+
+    update_health(session, mutate)
+    return settled["value"]
+
+
+def complete_health_flag(session: Session, flag: str, token: str, **extra: Any) -> bool:
+    """Record a delivered emission: set ``flag`` and clear the claim in one CAS write.
+
+    This is the terminal write the earlier shape was missing. Only the owner of ``token`` lands
+    it, and only after the emission returned; an interrupted emission therefore leaves the flag
+    false (the claim is released or expires) instead of recording an alert nobody saw.
+    """
+    return _settle_health_flag(
+        session,
+        flag,
+        token,
+        {
+            flag: True,
+            f"{flag}_claim": None,
+            # A delivered alert supersedes any earlier emission failure for this streak.
+            "last_notify_error": None,
+            "last_notify_failed_at": None,
+            **extra,
+        },
+    )
+
+
+def release_health_flag(
+    session: Session, flag: str, token: str, *, error: str | None = None
+) -> bool:
+    """Give up a claim after a failed emission so the next cycle can notify again.
+
+    The flag stays false: a failed emission is not a delivered alert. The failure itself is
+    recorded separately in ``last_notify_error`` / ``last_notify_failed_at`` so the reason an
+    alert was not seen survives without changing the frozen notification status vocabulary.
+    """
+    changes: dict[str, Any] = {f"{flag}_claim": None}
+    if error is not None:
+        changes["last_notify_error"] = str(error)[:500]
+        changes["last_notify_failed_at"] = utcnow().isoformat()
+    return _settle_health_flag(session, flag, token, changes)
 
 
 def clear_health(session: Session) -> dict[str, Any]:

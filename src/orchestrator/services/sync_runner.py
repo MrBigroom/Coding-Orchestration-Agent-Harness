@@ -82,6 +82,7 @@ class SyncRunner:
         self._lock = asyncio.Lock()
         self._running = False
         self._next_run = 0.0
+        self._next_notify_retry = 0.0
         self._last_started_at: str | None = None
         self._last_finished_at: str | None = None
         self._last_success_at: str | None = None
@@ -197,43 +198,72 @@ class SyncRunner:
         return values
 
     def _notify_if_needed(self, health: dict[str, Any]) -> bool:
-        """At most two build-log events (and so notifications) per failure streak.
+        """At most two delivered notifications per failure streak.
 
-        One when a transient streak becomes persistent (``notify_after_failures``) and one when
-        the loop stops. Each is claimed with an atomic compare-and-set flag, so a restart or a
-        concurrent process cannot replay the same alert every interval and two processes racing
-        the same failing cycle produce one event, not two. The notification fan-out is the T-9
-        trigger mechanism, so the master switch and the per-trigger subscription decide whether
-        a popup happens; either way the event is visible in the Notifications list and the build
-        log.
+        Each alert is a three-part claim, because two processes (the desktop loop and a CLI
+        ``sync now``) can hit the same failing cycle:
+
+        * ``claim_health_flag`` leases the emission with a per-attempt token whose window covers
+          the whole delivery path, so a slow emission is not duplicated;
+        * the flag that says "the operator was notified" is written by
+          ``complete_health_flag`` only AFTER ``log_service.log_event`` returned, as a
+          compare-and-set on that token -- a record derived from the actual result, never from
+          the intent to emit;
+        * a failed emission RELEASES the claim, records its error separately in the health
+          record, and leaves the flag false, so the next cycle tries again instead of the streak
+          being silently marked as announced.
+
+        The notification fan-out is the T-9 trigger mechanism, so the master switch and the
+        per-trigger subscription decide whether a popup happens; either way the event is visible
+        in the Notifications list and the build log.
         """
         from orchestrator.services import log_service
 
         failures = int(health.get("consecutive_failures") or 0)
         if health.get("stopped"):
+            flag = "stop_notified"
             details = (
                 f"Supabase sync stopped after {failures} failure(s): "
                 f"{health.get('stopped_reason') or health.get('last_failure_error') or 'unknown'}"
             )
-            with session_scope() as session:
-                # Claim before logging: the loser of the race writes nothing and logs nothing.
-                if not sync_service.claim_health_flag(
-                    session, "stop_notified", streak_notified=True
-                ):
-                    return False
-                log_service.log_event(session, "sync_failed", details, role="system")
-            return True
-        if failures < self.notify_after_failures:
+        elif failures >= self.notify_after_failures:
+            flag = "streak_notified"
+            details = (
+                f"Supabase sync has failed {failures} consecutive times: "
+                f"{health.get('last_failure_error') or 'unknown'}"
+            )
+        else:
             return False
-        details = (
-            f"Supabase sync has failed {failures} consecutive times: "
-            f"{health.get('last_failure_error') or 'unknown'}"
-        )
+
         with session_scope() as session:
-            if not sync_service.claim_health_flag(session, "streak_notified"):
-                return False
-            log_service.log_event(session, "sync_failed", details, role="system")
-        return True
+            # Claim before logging: the loser of the race writes nothing and logs nothing.
+            token = sync_service.claim_health_flag(session, flag)
+        if token is None:
+            return False
+
+        try:
+            with session_scope() as session:
+                log_service.log_event(session, "sync_failed", details, role="system")
+        except Exception as exc:  # noqa: BLE001 - the sync failure being reported must survive
+            # An emission failure must never replace the original sync exception (the caller is
+            # already in an ``except`` block) and must never leave the streak looking announced.
+            with session_scope() as session:
+                sync_service.release_health_flag(
+                    session, flag, token, error=f"{type(exc).__name__}: {exc}"
+                )
+            log.error(
+                "Supabase sync notification could not be emitted; claim released: %s", exc
+            )
+            return False
+
+        with session_scope() as session:
+            settled = sync_service.complete_health_flag(session, flag, token)
+        if not settled:
+            # The claim expired or was cleared (for example a successful cycle) while the
+            # emission ran. The event itself still went out, but this runner must not report a
+            # flag write it did not land.
+            log.debug("Supabase sync notification claim was settled by another writer")
+        return settled
 
     async def run_once(self) -> dict[str, Any]:
         """Run one pull/push cycle, regardless of the automatic-sync preference.
@@ -264,8 +294,13 @@ class SyncRunner:
                 health = self._record_failure(exc)
                 # Notify from run_once, not only from the loop: a manual `sync now` that stops the
                 # sync must reach the operator too. The persisted flags make this idempotent, so
-                # the loop calling it as well would not double-alert.
-                self._notify_if_needed(health)
+                # the loop calling it as well would not double-alert. ``_notify_if_needed`` handles
+                # its own emission failures, but this guard is deliberate: no notification problem
+                # may replace the sync exception the caller has to see.
+                try:
+                    self._notify_if_needed(health)
+                except Exception:  # noqa: BLE001 - never mask the original sync failure
+                    log.exception("Supabase sync notification path failed")
                 self._next_run = time.monotonic() + float(health["backoff_seconds"] or 0)
                 raise
             finally:
@@ -287,7 +322,19 @@ class SyncRunner:
                     self._next_run = 0.0
                 elif health["stopped"]:
                     # Only a permanent refusal is terminal; keep polling preferences and make no
-                    # further automatic attempts until a human repairs the state.
+                    # further automatic attempts until a human repairs the state. The alert is
+                    # the exception: an emission that failed released its claim, so retry it at
+                    # the configured cadence instead of leaving the operator uninformed (and not
+                    # every poll, so a broken notifier cannot spam the log).
+                    if (
+                        not health.get("stop_notified")
+                        and time.monotonic() >= self._next_notify_retry
+                    ):
+                        self._next_notify_retry = time.monotonic() + interval
+                        try:
+                            self._notify_if_needed(health)
+                        except Exception:  # noqa: BLE001 - keep the background loop alive
+                            log.exception("Supabase sync notification retry failed")
                     self._next_run = 0.0
                 elif time.monotonic() >= self._next_run:
                     self._next_run = time.monotonic() + interval

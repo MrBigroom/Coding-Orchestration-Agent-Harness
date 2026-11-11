@@ -149,9 +149,13 @@ The health record lives in the device-local `sync_state` key `sync_health` (addi
 schema change). The desktop loop and a CLI `sync now` are separate processes sharing one SQLite
 file, so **no single-writer assumption is made**: every health write is a compare-and-set
 (`sync_service.update_health`) that re-reads and re-applies the change if another process wrote
-first, and the once-per-streak notification flags are claimed through the same conditional write
-(`claim_health_flag`). Two racing processes therefore produce one event and cannot lose a failure
-increment.
+first. The once-per-streak alert uses the same conditional write in three parts
+(`claim_health_flag` / `complete_health_flag` / `release_health_flag`): an emission is leased with
+a per-attempt token whose window covers the whole notification delivery path, the
+`*_notified` flag is written **only after** the emission returned (a compare-and-set on that
+token), and a failed emission releases the claim and records `last_notify_error` so the next
+cycle tries again. An emission that fails therefore never leaves a record claiming the operator
+was told, and two racing processes produce one event, not two.
 
 A `sync_failed` build-log event (and therefore one notification decision, subject to the master
 switch and the `notification_sync_failed` subscription) is emitted at most twice per failure

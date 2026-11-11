@@ -53,6 +53,27 @@ class SyncTransientError(SyncTransportError):
 # transient; every other 4xx is a permanent refusal until the configuration or state changes.
 TRANSIENT_CLIENT_STATUSES = frozenset({408, 425, 429})
 
+# The structured ``recovery`` text is derived from the error CLASS, never from where the failure
+# was raised. Credentials advice on a 5xx or a timeout names the wrong repair path: the operator
+# would go looking for a bad password while the loop is already retrying by itself. Each side of
+# the classification therefore states its own next step, including what would stop a retry.
+RECOVERY_BY_KIND: dict[str, str] = {
+    "permanent": (
+        "check ORCHESTRATOR_SUPABASE_EMAIL and ORCHESTRATOR_SUPABASE_PASSWORD in .env, "
+        "then run `orchestrator sync now`"
+    ),
+    "transient": (
+        "the sync loop retries this with exponential backoff; only a permanent 4xx response "
+        "stops it and notifies the operator"
+    ),
+}
+
+
+def recovery_for(kind: str) -> str:
+    """The repair path for a classified transport failure (see ``RECOVERY_BY_KIND``)."""
+    return RECOVERY_BY_KIND[kind]
+
+
 
 class SupabaseSyncClient:
     def __init__(
@@ -136,7 +157,10 @@ class SupabaseSyncClient:
         if response.status_code >= 400:
             error = self._response_error(response)
             error.detail["stage"] = "authenticate"
-            error.detail["recovery"] = "check the Supabase credentials in .env"
+            # Only a genuine credential refusal gets credential guidance. ``setdefault`` keeps a
+            # more specific recovery already classified for this response (a version rejection
+            # names the reinit command); otherwise the class decides the sentence.
+            error.detail.setdefault("recovery", recovery_for(error.detail["kind"]))
             raise error
         data = response.json()
         self._access_token = data["access_token"]
