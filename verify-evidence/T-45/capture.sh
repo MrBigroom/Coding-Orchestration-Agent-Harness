@@ -97,10 +97,12 @@ PY
   echo "corrected_apply_exit=$?"
   set -e
   echo "# guards: no operator hint may keep --dry-run on the reinit command"
-  if git grep -n -- 'sync reinit --dry-run' -- . ':(exclude)verify-evidence' ; then
+  # Exclude tests on purpose: the T-45 test file quotes the broken string to prove it is
+  # rejected, so only operator-facing files are guarded here.
+  if git grep -n -- 'sync reinit --dry-run' -- . ':(exclude)verify-evidence' ':(exclude)tests' ; then
     echo "GUARD FAILED: a stale reinit --dry-run hint is still in the tree"
   else
-    echo "guards: no 'sync reinit --dry-run' outside historical verify-evidence"
+    echo "guards: no 'sync reinit --dry-run' in operator-facing files (tests quote it on purpose)"
   fi
   echo "# guards: every remaining --dry-run mention outside evidence"
   git grep -n -- '--dry-run' -- . ':(exclude)verify-evidence' | sed 's/^/  /' || true

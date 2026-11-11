@@ -33,7 +33,7 @@ commit that ships this bundle does not change code, so it does not stale the bun
    the validator fails on the old string. `command_audit.txt` reproduces the enumeration outside
    pytest.
 3. **Other operator-command strings audited.** `test_every_operator_command_hint_in_the_source_tree_parses_against_the_cli`
-   scans all of `src/orchestrator` for backticked and `# command:` hints (15 today) and parses each;
+   scans all of `src/orchestrator` for backticked and `# command:` hints (16 today) and parses each;
    `test_the_guis_name_commands_the_cli_accepts_and_drop_the_bad_flag` does the same for the
    `<code>` templates in `static_fallback/index.html` and the `className="mono"` command in
    `Settings.tsx`. Placeholder rule: `<id>`/`{label}` holes become `T-45` before parsing. Covered
