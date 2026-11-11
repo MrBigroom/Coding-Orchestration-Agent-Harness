@@ -275,6 +275,26 @@ def test_providers_never_expose_secrets(client, monkeypatch):
     assert "supersecretvalue" not in body and '"api_key_set":true' in body.replace(" ", "")
 
 
+def test_model_profiles_can_be_added_but_not_duplicated(client):
+    profiles = {m["name"]: m for m in client.get("/api/model-profiles").json()}
+    qwen4 = profiles["worker-qwen4-max-preview"]
+    assert qwen4["model_name"] == "qwen4-max-preview" and qwen4["enabled"]
+    assert qwen4["chat_harnesses"] == ["pi", "qwen_code", "opencode", "aider"]
+
+    provider = next(p["id"] for p in client.get("/api/providers").json() if p["name"] == "mock")
+    body = {"name": "  extra  ", "role": "worker", "provider_id": provider, "model_name": " m1 "}
+    r = client.post("/api/model-profiles", json=body)
+    assert r.status_code == 201
+    assert (r.json()["name"], r.json()["model_name"], r.json()["chat_harnesses"]) == (
+        "extra",
+        "m1",
+        [],
+    )
+    assert client.post("/api/model-profiles", json=body).status_code == 409
+    assert client.post("/api/model-profiles", json={**body, "name": "x", "model_name": " "}).status_code == 422
+    assert client.post("/api/model-profiles", json={**body, "name": "y", "provider_id": 9999}).status_code == 404
+
+
 def test_settings_merge_gate_defaults_and_validation(client):
     s = client.get("/api/settings").json()
     # T-9: notifications are off on a new install, but the human-must-act triggers are

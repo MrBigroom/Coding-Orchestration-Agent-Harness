@@ -70,18 +70,20 @@ async def test_provider(provider_id: int, session: Session = SessionDep) -> dict
 
 @router.get("/model-profiles")
 def list_profiles(session: Session = SessionDep) -> list[dict[str, Any]]:
-    return [_profile(m) for m in session.exec(select(ModelProfile))]
+    return [_profile(session, m) for m in session.exec(select(ModelProfile))]
 
 
 @router.post("/model-profiles", status_code=201)
 def create_profile(body: ModelProfileCreate, session: Session = SessionDep) -> dict[str, Any]:
     if not session.get(Provider, body.provider_id):
         raise HTTPException(404, "provider not found")
+    if session.exec(select(ModelProfile).where(ModelProfile.name == body.name)).first():
+        raise HTTPException(409, f"a model profile named {body.name!r} already exists")
     m = ModelProfile(**body.model_dump(mode="json"))
     session.add(m)
     session.commit()
     session.refresh(m)
-    return _profile(m)
+    return _profile(session, m)
 
 
 @router.patch("/model-profiles/{profile_id}")
@@ -95,12 +97,18 @@ def update_profile(
         setattr(m, k, v)
     session.add(m)
     session.commit()
-    return _profile(m)
+    return _profile(session, m)
 
 
-def _profile(m: ModelProfile) -> dict[str, Any]:
-    """`builtin_context_window` is what applies when the profile leaves `context_window` empty."""
-    return {**dump(m), "builtin_context_window": context_windows.builtin(m.model_name)}
+def _profile(session: Session, m: ModelProfile) -> dict[str, Any]:
+    """`builtin_context_window` is what applies when the profile leaves `context_window` empty.
+    `chat_harnesses` are the harnesses whose Chat model menu offers this profile's model."""
+    routes = adapter_service.harness_routes(session)
+    return {
+        **dump(m),
+        "builtin_context_window": context_windows.builtin(m.model_name),
+        "chat_harnesses": adapter_service.route_for(routes, m.name, m.model_name),
+    }
 
 
 @router.get("/adapters")

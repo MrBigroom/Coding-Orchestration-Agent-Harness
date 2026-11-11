@@ -222,10 +222,12 @@ class ProviderUpdate(BaseModel):
 
 
 class ModelProfileCreate(BaseModel):
-    name: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
     role: Role
     provider_id: int
-    model_name: str
+    model_name: str = Field(min_length=1, max_length=200)
     temperature: float | None = None
     max_tokens: int = 16_000
     timeout_seconds: int = 600

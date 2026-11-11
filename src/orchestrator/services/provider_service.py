@@ -165,6 +165,15 @@ DEFAULT_PROFILES: list[tuple[str, str, str, str, str | None, bool, str]] = [
         "Harder agent work. Only used when an agent selects it.",
     ),
     (
+        "worker-qwen4-max-preview",
+        "worker",
+        "qwen-token-plan",
+        "qwen4-max-preview",
+        None,
+        True,
+        "Qwen4 Max preview via Token Plan. Offered in Chat for Qwen-routed harnesses.",
+    ),
+    (
         "hermes-local",
         "agent",
         "hermes",

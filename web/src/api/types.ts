@@ -153,6 +153,7 @@ export interface ModelProfile {
   effort: string | null;
   context_window: number | null;
   builtin_context_window: number | null;
+  chat_harnesses: string[];
   enabled: boolean;
   notes: string | null;
 }

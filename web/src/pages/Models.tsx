@@ -12,6 +12,7 @@ export default function Models() {
   const [windows, setWindows] = useState<Record<number, string>>({});
   const provName = (id: number) => providers.data?.find((p) => p.id === id)?.name ?? "?";
   const [checks, setChecks] = useState<Record<number, string>>({});
+  const [adding, setAdding] = useState(false);
 
   return (
     <>
@@ -36,10 +37,11 @@ export default function Models() {
             </tr>))}</tbody>
         </table></div>
       </Card>
-      <Card title="Model profiles">
+      <Card title="Model profiles" actions={<button className="btn" onClick={() => setAdding(!adding)}>{adding ? "Cancel" : "Add model"}</button>}>
+        {adding && providers.data && <AddModel providers={providers.data} onAdded={async () => { setAdding(false); await profiles.reload(); }} />}
         <p className="mb-3 text-xs text-muted">Model IDs are editable placeholders. Claude 5.x models ignore temperature; use effort instead. Context is the model's window in tokens, shown in Chat; leave it empty to use the built-in figure.</p>
         <div className="overflow-x-auto"><table className="w-full">
-          <thead><tr>{["Name", "Role", "Provider", "Model", "Effort", "Max tokens", "Context", "Enabled"].map((h) => <th key={h} className="th">{h}</th>)}</tr></thead>
+          <thead><tr>{["Name", "Role", "Provider", "Model", "Effort", "Max tokens", "Context", "In Chat", "Enabled"].map((h) => <th key={h} className="th">{h}</th>)}</tr></thead>
           <tbody>{profiles.data?.map((m) => (
             <tr key={m.id}>
               <td className="td font-medium">{m.name}<div className="max-w-xs text-xs text-muted">{m.notes}</div></td>
@@ -70,11 +72,54 @@ export default function Models() {
                     void act.run(async () => { await patch(`/model-profiles/${m.id}`, { context_window: value }); await profiles.reload(); });
                   }} />
               </td>
+              <td className="td text-xs">{m.chat_harnesses.length ? <span className="mono">{m.chat_harnesses.join(", ")}</span> : <span className="text-muted" title="No harness route matches this model ID, so Chat doesn't offer it.">—</span>}</td>
               <td className="td"><Toggle checked={m.enabled} onChange={(v) => act.run(async () => { await patch(`/model-profiles/${m.id}`, { enabled: v }); await profiles.reload(); })} /></td>
             </tr>))}</tbody>
         </table></div>
       </Card>
     </>
+  );
+}
+
+const ROLES = ["worker", "agent", "supervisor", "architect"];
+
+/** Creates a model profile. Chat offers it in the harnesses its model ID routes to. */
+function AddModel({ providers, onAdded }: { providers: ProviderStatus[]; onAdded: () => Promise<void> }) {
+  const act = useAction();
+  const [form, setForm] = useState({ name: "", model_name: "", role: "worker", provider_id: providers.find((p) => p.enabled && p.kind !== "mock")?.id ?? providers[0]?.id ?? 0, effort: "", context_window: "", notes: "" });
+  const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const model = form.model_name.trim();
+  const name = form.name.trim() || (model ? `${form.role}-${model}` : "");
+  const submit = () => act.run(async () => {
+    await post("/model-profiles", {
+      name, model_name: model, role: form.role, provider_id: Number(form.provider_id),
+      effort: form.effort || null, context_window: form.context_window ? Number(form.context_window) : null, notes: form.notes.trim() || null,
+    });
+    await onAdded();
+  });
+  return (
+    <form className="mb-4 rounded-lg border border-line p-4" onSubmit={(e) => { e.preventDefault(); if (model) void submit(); }}>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="text-xs text-muted">Model ID<input className="input mono mt-1 text-xs" required autoFocus placeholder="e.g. qwen4-max-preview" value={form.model_name} onChange={set("model_name")} /></label>
+        <label className="text-xs text-muted">Provider<select className="input mt-1 text-xs" value={form.provider_id} onChange={set("provider_id")}>
+          {providers.map((p) => <option key={p.id} value={p.id}>{p.name}{p.enabled ? "" : " (disabled)"}</option>)}
+        </select></label>
+        <label className="text-xs text-muted">Role<select className="input mt-1 text-xs" value={form.role} onChange={set("role")}>
+          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select></label>
+        <label className="text-xs text-muted">Profile name<input className="input mono mt-1 text-xs" placeholder={name || "defaults to role-model"} value={form.name} onChange={set("name")} /></label>
+        <label className="text-xs text-muted">Effort<select className="input mt-1 text-xs" value={form.effort} onChange={set("effort")}>
+          {["", "low", "medium", "high", "xhigh", "max"].map((x) => <option key={x} value={x}>{x || "—"}</option>)}
+        </select></label>
+        <label className="text-xs text-muted">Context window (tokens)<input className="input mono mt-1 text-xs" inputMode="numeric" placeholder="optional" value={form.context_window} onChange={(e) => setForm({ ...form, context_window: e.target.value.replace(/[^0-9]/g, "") })} /></label>
+        <label className="text-xs text-muted sm:col-span-2 lg:col-span-3">Notes<input className="input mt-1 text-xs" placeholder="optional" value={form.notes} onChange={set("notes")} /></label>
+      </div>
+      <ErrorNote error={act.error} />
+      <div className="mt-3 flex items-center gap-3">
+        <button className="btn btn-primary" type="submit" disabled={!model || act.busy}>Add model</button>
+        <span className="text-xs text-muted">Chat lists it under harnesses routed for its model ID (e.g. qwen… → Pi, Qwen Code).</span>
+      </div>
+    </form>
   );
 }
 
