@@ -1,52 +1,69 @@
-# HEAD=c5b0bb43a746af1185b07feffc87db4c46613e28 mode=fast
+# HEAD=3ad993ac1f4a81e73842e5594b23e398e4c92693 mode=fast
 # command: git show HEAD:<file> | grep -nE '<anchor>' (SQL block quoted verbatim)
 
 ## src/orchestrator/services/sync_transport.py
 27:class SyncPermanentError(SyncTransportError):
 42:class SyncTransientError(SyncTransportError):
-217:            next_version = mapping.synced_version + 1
-225:                    "p_version": next_version,
-254:    async def remote_versions(self) -> dict[str, int]:
+60:RECOVERY_BY_KIND: dict[str, str] = {
+72:def recovery_for(kind: str) -> str:
+73:    """The repair path for a classified transport failure (see ``RECOVERY_BY_KIND``)."""
+74:    return RECOVERY_BY_KIND[kind]
+163:            error.detail.setdefault("recovery", recovery_for(error.detail["kind"]))
+241:            next_version = mapping.synced_version + 1
+249:                    "p_version": next_version,
+278:    async def remote_versions(self) -> dict[str, int]:
 
 ## src/orchestrator/services/sync_runner.py
 48:def backoff_seconds(
-123:            "stopped": health["stopped"],
-130:    def _record_failure(self, exc: Exception) -> dict[str, Any]:
-153:            interval = float(
-187:                "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
-199:    def _notify_if_needed(self, health: dict[str, Any]) -> bool:
-220:                if not sync_service.claim_health_flag(
-224:                log_service.log_event(session, "sync_failed", details, role="system")
-233:            if not sync_service.claim_health_flag(session, "streak_notified"):
-235:            log_service.log_event(session, "sync_failed", details, role="system")
-288:                elif health["stopped"]:
-301:                        if not health["stopped"]:
+85:        self._next_notify_retry = 0.0
+124:            "stopped": health["stopped"],
+131:    def _record_failure(self, exc: Exception) -> dict[str, Any]:
+154:            interval = float(
+188:                "(occurrence 1; identical repeats only increment sync_health.log_occurrences)",
+200:    def _notify_if_needed(self, health: dict[str, Any]) -> bool:
+206:        * ``claim_health_flag`` leases the emission with a per-attempt token whose window covers
+209:          ``complete_health_flag`` only AFTER ``log_service.log_event`` returned, as a
+240:            token = sync_service.claim_health_flag(session, flag)
+246:                log_service.log_event(session, "sync_failed", details, role="system")
+251:                sync_service.release_health_flag(
+260:            settled = sync_service.complete_health_flag(session, flag, token)
+323:                elif health["stopped"]:
+331:                        and time.monotonic() >= self._next_notify_retry
+333:                        self._next_notify_retry = time.monotonic() + interval
+348:                        if not health["stopped"]:
 
 ## src/orchestrator/services/sync_service.py
-237:SYNC_HEALTH_KEY = "sync_health"
-256:    """The health record changed under us on every compare-and-set attempt."""
-259:def _read_health_raw(session: Session) -> tuple[bool, str | None, dict[str, Any]]:
-262:    The raw text is the compare-and-set token: it is what the conditional ``UPDATE`` matches on,
-267:        "SELECT value_json FROM sync_state WHERE key = ?", (SYNC_HEALTH_KEY,)
-281:def health(session: Session) -> dict[str, Any]:
-289:def update_health(
-328:                    (payload, now, SYNC_HEALTH_KEY, raw),
-333:                    (SYNC_HEALTH_KEY, payload, now),
-347:        f"sync health changed on {attempts} consecutive compare-and-set attempts"
-351:def write_health(session: Session, **changes: Any) -> dict[str, Any]:
-352:    """Set absolute health fields through the same compare-and-set path as the counters."""
-356:def claim_health_flag(session: Session, flag: str, **extra: Any) -> bool:
-383:def reinitialise(
-394:    is also left untouched (``remote_ahead_skipped``): re-baselining forward would let the next
-400:    conflicts_skipped = 0
-401:    remote_ahead_skipped = 0
-404:            conflicts_skipped += 1
-411:            remote_ahead_skipped += 1
-413:        version = synced + 1 if mapping.dirty else synced
-426:            mapping.synced_version = synced
-430:    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
-439:        "conflicts_skipped": conflicts_skipped,
-440:        "remote_ahead_skipped": remote_ahead_skipped,
+238:SYNC_HEALTH_KEY = "sync_health"
+266:HEALTH_FLAG_CLAIM_LEASE_SECONDS = 120.0
+270:    """The health record changed under us on every compare-and-set attempt."""
+273:def _read_health_raw(session: Session) -> tuple[bool, str | None, dict[str, Any]]:
+276:    The raw text is the compare-and-set token: it is what the conditional ``UPDATE`` matches on,
+281:        "SELECT value_json FROM sync_state WHERE key = ?", (SYNC_HEALTH_KEY,)
+295:def health(session: Session) -> dict[str, Any]:
+303:def update_health(
+342:                    (payload, now, SYNC_HEALTH_KEY, raw),
+347:                    (SYNC_HEALTH_KEY, payload, now),
+361:        f"sync health changed on {attempts} consecutive compare-and-set attempts"
+365:def write_health(session: Session, **changes: Any) -> dict[str, Any]:
+366:    """Set absolute health fields through the same compare-and-set path as the counters."""
+386:def claim_health_flag(session: Session, flag: str, **extra: Any) -> str | None:
+390:    claim needs: (1) the lease window (``HEALTH_FLAG_CLAIM_LEASE_SECONDS``) covers the whole
+393:    itself is NOT set here -- ``complete_health_flag`` writes it with a compare-and-set on this
+413:                    now + timedelta(seconds=HEALTH_FLAG_CLAIM_LEASE_SECONDS)
+428:    The compare-and-set is on the claim token, not on a flag read earlier, so a settlement can
+445:def complete_health_flag(session: Session, flag: str, token: str, **extra: Any) -> bool:
+467:def release_health_flag(
+488:def reinitialise(
+499:    is also left untouched (``remote_ahead_skipped``): re-baselining forward would let the next
+505:    conflicts_skipped = 0
+506:    remote_ahead_skipped = 0
+509:            conflicts_skipped += 1
+516:            remote_ahead_skipped += 1
+518:        version = synced + 1 if mapping.dirty else synced
+531:            mapping.synced_version = synced
+535:    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
+544:        "conflicts_skipped": conflicts_skipped,
+545:        "remote_ahead_skipped": remote_ahead_skipped,
 
 ## src/orchestrator/core/notification_vocab.py
 55:    "sync_failed": _t(
@@ -91,8 +108,8 @@
 115:orchestrator sync reinit --apply     # write them and clear the stopped/failure streak
 133:- **Transient** (5xx, 408/425/429, timeout, network) retries indefinitely with exponential backoff.
 150:file, so **no single-writer assumption is made**: every health write is a compare-and-set
-162:`sync reinit --apply` and a manual `sync now` that succeeds.
-164:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
+166:`sync reinit --apply` and a manual `sync now` that succeeds.
+168:**Log deduplication rule:** a failure line is keyed by the exact `<exception type>: <message>`
 
 ## supabase/migrations/0001_orchestrator_sync.sql:39-90 (the RPC contract, quoted)
   39  -- Atomic compare-and-swap push. expected_version is the last version observed by the
