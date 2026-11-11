@@ -28,9 +28,11 @@ echo "capturing at $(git rev-parse --short HEAD) mode=$MODE"
   ./scripts/orch_verify.sh lint; } 2>&1 | grep -E "$KEEP|^# (HEAD|command)" > "$STAGE/lint.txt"
 
 { echo "$STAMP"
-  echo "# command: ./scripts/orch_verify.sh test -vv tests/unit/test_sync_resilience.py tests/integration/test_sync_api.py tests/integration/test_cli.py -k sync"
-  ./scripts/orch_verify.sh test -vv tests/unit/test_sync_resilience.py \
-    tests/integration/test_sync_api.py tests/integration/test_cli.py -k sync; } 2>&1 \
+  echo "# command: ./scripts/orch_verify.sh test -vv tests/unit/test_sync_resilience.py"
+  ./scripts/orch_verify.sh test -vv tests/unit/test_sync_resilience.py
+  echo "# command: ./scripts/orch_verify.sh test -vv tests/integration/test_sync_api.py tests/integration/test_cli.py -k sync"
+  ./scripts/orch_verify.sh test -vv tests/integration/test_sync_api.py \
+    tests/integration/test_cli.py -k sync; } 2>&1 \
   | grep -E "PASSED|FAILED|ERROR|passed|failed|^# (HEAD|command)|ORCH_VERIFY\|" \
   > "$STAGE/t41_tests.txt"
 
