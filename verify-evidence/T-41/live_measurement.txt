@@ -1,20 +1,20 @@
-# HEAD=3ad993ac1f4a81e73842e5594b23e398e4c92693 mode=fast
+# HEAD=1ad665e65363bca0155e503b381947fc28eb9d3b mode=fast
 # T-41 live measurement (read-only; no file under ORCHESTRATOR_HOME is modified)
-# measured_at=2026-11-11T09:05:31+08:00
+# measured_at=2026-11-11T09:24:07+08:00
 # log=/home/mrbigroom/.local/share/coding-orchestrator/logs/desktop-server.log
-live_lines=288548
-snapshot_sha256=2cf845ec1a9abfbcbdf60c91f27863b49d2ef599ec25480e99fceea257d0d978
-exact_0_3=7396
-all_transition_lines=7784
-background_failed_lines=7795
+live_lines=289191
+snapshot_sha256=079082eeecffa12b3ec3a76cdb57928cf47225d1fd3528a97b6a9e15ec5d9629
+exact_0_3=7415
+all_transition_lines=7803
+background_failed_lines=7814
 ### by transition pair (snapshot)
-   7396 invalid version transition: 0 -> 3
+   7415 invalid version transition: 0 -> 3
     370 invalid version transition: 9 -> 14
      14 invalid version transition: 9 -> 11
       2 invalid version transition: 9 -> 12
       2 invalid version transition: 0 -> 2
 ### by terminal exception (snapshot)
-   7786 SyncTransportError:
+   7805 SyncTransportError:
       7 AttributeError:
 ### reconciliation window: head -n 275740 (the operator's snapshot)
 window_lines=275740
@@ -30,6 +30,6 @@ window_other_transitions=388
 # device-local DB=/home/mrbigroom/.local/share/coding-orchestrator/orchestrator.db (sqlite mode=ro)
 sync_state_keys= ['device_id']
 device_id_updated_at= ('2026-10-28 04:09:49.984300',)
-sync_entities_rows= 1476
-sync_entities_dirty= 928
+sync_entities_rows= 1493
+sync_entities_dirty= 945
 sync_entities_conflicts= 2

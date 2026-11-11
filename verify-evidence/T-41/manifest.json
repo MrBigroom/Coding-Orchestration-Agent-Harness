@@ -3,44 +3,44 @@
   "files": [
     {
       "path": "freshness_selfcheck.txt",
-      "sha256": "b34b7bcf428c37a8ceb890c57481860c0c6ea69903d96bf1b828e8fd8389cf62"
+      "sha256": "5b0019396051ff4dc10d652d22e1a2a2b1c8bc07cd165f0bda21beeceaaf7c9e"
     },
     {
       "path": "full_suite.txt",
-      "sha256": "fc0e02a3eef86ee0112824e51cdbf7082751a6ca3b49bee4b186be853518fa24"
+      "sha256": "806dee37b3102e9a9a3ee98662ea440777c54d277696b262c3ac3f683a9035ae"
     },
     {
       "path": "lint.txt",
-      "sha256": "7a5357bda89b8fc9e386d683e6fb25a424bdb6529808045c36138238d8e6e844"
+      "sha256": "448a34b330048accf82ecebc9fa9b02398cda436fe83fa096c05058653d644a1"
     },
     {
       "path": "live_measurement.txt",
-      "sha256": "595e07a1e161861e169cd6b475ef3d5cd51d895d1082b49ecdb96b8129301115"
+      "sha256": "a86c27605eb4f48a2c00adf8b8aee7cc6aafd141aeeda2af212ee9a63e17fc9e"
     },
     {
       "path": "source_anchors.txt",
-      "sha256": "36e2ff6d9a2dc7083ea749a0b1ebc5eeecf1b05e5c830f4a2c2ae6996f9e506f"
+      "sha256": "61d1718a069a175a00d03ea4c415113218fafc81101de82105dbf795a54bc263"
     },
     {
       "path": "t41_tests.txt",
-      "sha256": "be0a0324723ea9f07c97b1d37350bf63540f664f85aeb686c379cb4e5b378133"
+      "sha256": "cbb920a0bc13444687b3b6719c9099b47e92b0bb506008d241af4716e7ad8304"
     },
     {
       "path": "tsc_web.txt",
-      "sha256": "fc987683769ecf994ddb2a07e7dea4ddb00266015c4ff1813c53ccc1a5491f13"
+      "sha256": "3bc80917d25121ecdcf1649f335da1b0d3d7b546a6392966ca766df57b06cc70"
     }
   ],
-  "generated_at": "2026-11-11T01:05:32Z",
+  "generated_at": "2026-11-11T01:24:07Z",
   "generator": "verify-evidence/T-41/capture.sh",
-  "head": "3ad993ac1f4a81e73842e5594b23e398e4c92693",
-  "head_short": "3ad993a",
+  "head": "1ad665e65363bca0155e503b381947fc28eb9d3b",
+  "head_short": "1ad665e",
   "inputs": [
     "capture.sh"
   ],
   "label": "T-41",
   "mode": "fast",
   "only": [],
-  "stamp": "# HEAD=3ad993ac1f4a81e73842e5594b23e398e4c92693 mode=fast",
+  "stamp": "# HEAD=1ad665e65363bca0155e503b381947fc28eb9d3b mode=fast",
   "tool_versions": {
     "git": "git version 2.56.0",
     "pytest": "9.1.1",
