@@ -1,0 +1,38 @@
+# HEAD=ca3b9ebae0755d89f22fd4e44912c60ca1ccca86 mode=full
+# DRY RUN ONLY (the T-39 operator note forbids --no-dry-run on the live home).
+# command: ORCHESTRATOR_HOME=/home/mrbigroom/.local/share/coding-orchestrator PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/39/src /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - (cleanup_service.plan dry_run=True)
+# sqlite is opened with mode=ro; _ensure_ready()/db.upgrade() are NEVER called.
+import=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/39/src/orchestrator/__init__.py
+live_home=/home/mrbigroom/.local/share/coding-orchestrator db_mode=ro
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/sample-project/1 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/sample-project/1 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/sample-project/2 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/sample-project/2 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/ai-livestreaming-avatar/3 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/ai-livestreaming-avatar/3 (branch kept)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/ai-livestreaming-avatar/chat-2 | chat session 2 is closed (pass --include-chats to remove)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/6 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/6 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/8 (branch kept)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-4 | chat session 4 is closed (pass --include-chats to remove)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-5 | chat session 5 is closed (pass --include-chats to remove)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/10 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/12 (branch kept)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-6 | chat session 6 is closed (pass --include-chats to remove)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/4 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/11 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/9 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/19 (branch kept)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-8 | chat session 8 is closed (pass --include-chats to remove)
+refused | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-10 | live process 282742, 282767, 282846 has it as its cwd (chat session 10 is idle)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/22 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/21 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/20 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/28 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/28 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/16 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/18 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/15 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/36 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/17 (branch kept)
+would_remove | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41 | would remove worktree /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/41 (branch kept)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/chat-13 | chat session 13 is closed (pass --include-chats to remove)
+skipped | /home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/39 | task T-39 is in_progress
+cleanup (dry run): 21 would remove, 7 skipped, 1 refused, 0 failed
+managed_markers_before=29 after=29
+git_worktree_list_before=18 after=18

@@ -1,0 +1,49 @@
+{
+  "command": "verify-evidence/T-39/capture.sh",
+  "files": [
+    {
+      "path": "freshness_selfcheck.txt",
+      "sha256": "c63598d1883d55fc3dc29f063f9381d341fed7b031d8d2a6751b59e700f4405f"
+    },
+    {
+      "path": "full_suite.txt",
+      "sha256": "a4e2f9ac0a7afa8e8832737ad35f9f23168124eb2486ddeb1a17edf052a00774"
+    },
+    {
+      "path": "lint.txt",
+      "sha256": "18a170537ae3a6a85c81024ec833e2afd2311e04f9981e2b252ec34e52d34d7b"
+    },
+    {
+      "path": "live_measurement.txt",
+      "sha256": "3fdef3302255ca4c5f79adf2ba5d749dd85c90eb0ca346ed65c5dcd63c7f46c6"
+    },
+    {
+      "path": "source_anchors.txt",
+      "sha256": "459c665e2ee904c5f6349c370e67e1c7778608108ef53ef7e5bad6b9d9a96971"
+    },
+    {
+      "path": "t39_tests.txt",
+      "sha256": "590347b9ecb3eb29e0783dc7b024c35801b8d4340f22266d4a967c548a806f8a"
+    },
+    {
+      "path": "timing.txt",
+      "sha256": "1ed65facf9f7c3266eea7d7da8f1fc72a624755b1cc24f1f5826e51d711b55cc"
+    }
+  ],
+  "generated_at": "2026-11-11T02:23:34Z",
+  "generator": "verify-evidence/T-39/capture.sh",
+  "head": "ca3b9ebae0755d89f22fd4e44912c60ca1ccca86",
+  "head_short": "ca3b9eb",
+  "inputs": [
+    "capture.sh"
+  ],
+  "label": "T-39",
+  "mode": "full",
+  "only": [],
+  "stamp": "# HEAD=ca3b9ebae0755d89f22fd4e44912c60ca1ccca86 mode=full",
+  "tool_versions": {
+    "git": "git version 2.56.0",
+    "pytest": "9.1.1",
+    "python": "3.13.15"
+  }
+}

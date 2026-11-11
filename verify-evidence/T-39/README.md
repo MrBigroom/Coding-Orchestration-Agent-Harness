@@ -68,7 +68,7 @@ stamped-file count.
    the two opt-in flags; `docs/build-loop.md:902-916` states the ownership rule (task by status,
    chat by session + live process, parity sweep unchanged) and the one-record-per-line/`--json`
    output.
-8. **Suite and lint.** `full_suite.txt` (926 passed, 10 skipped at the stamped HEAD) and
+8. **Suite and lint.** `full_suite.txt` (929 passed, 10 skipped at the stamped HEAD) and
    `lint.txt` (`All checks passed!`), both through `./scripts/orch_verify.sh`, whose
    `ORCH_VERIFY|...|worktree_root=...` marker proves the imports resolved inside this worktree.
 

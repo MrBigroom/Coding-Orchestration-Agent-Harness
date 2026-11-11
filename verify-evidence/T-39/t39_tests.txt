@@ -1,0 +1,14 @@
+# HEAD=ca3b9ebae0755d89f22fd4e44912c60ca1ccca86 mode=full
+# command: ./scripts/orch_verify.sh test -vv tests/integration/test_cleanup_chat_worktrees.py
+ORCH_VERIFY|mode=test|module=orchestrator|module_file=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/39/src/orchestrator/__init__.py|worktree_root=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/39
+tests/integration/test_cleanup_chat_worktrees.py::test_busy_chat_worktree_is_skipped_and_named PASSED [ 10%]
+tests/integration/test_cleanup_chat_worktrees.py::test_closed_chat_worktree_is_removable PASSED [ 20%]
+tests/integration/test_cleanup_chat_worktrees.py::test_live_cwd_refuses_even_when_session_row_says_closed PASSED [ 30%]
+tests/integration/test_cleanup_chat_worktrees.py::test_task_worktrees_keep_their_existing_behaviour PASSED [ 40%]
+tests/integration/test_cleanup_chat_worktrees.py::test_dry_run_mutates_nothing_including_git_metadata PASSED [ 50%]
+tests/integration/test_cleanup_chat_worktrees.py::test_failed_removal_is_counted_as_a_failure_not_a_removal PASSED [ 60%]
+tests/integration/test_cleanup_chat_worktrees.py::test_printed_counts_and_json_match_the_actual_outcomes PASSED [ 70%]
+tests/integration/test_cleanup_chat_worktrees.py::test_the_live_process_check_is_what_refuses_a_closed_session PASSED [ 80%]
+tests/integration/test_cleanup_chat_worktrees.py::test_without_the_live_process_a_closed_session_is_removable PASSED [ 90%]
+tests/integration/test_cleanup_chat_worktrees.py::test_counts_and_summary_read_the_kind_not_the_wording PASSED [100%]
+============================== 10 passed in 1.57s ==============================
