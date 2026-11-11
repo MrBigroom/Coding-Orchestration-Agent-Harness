@@ -124,6 +124,32 @@ def test_websocket_requires_the_token(enabled, project, monkeypatch):
     enabled.post(f"/api/chat/sessions/{chat['id']}/close")
 
 
+def _chat_models(client, harness):
+    catalog = client.get("/api/chat/harnesses").json()["harnesses"]
+    return next(h for h in catalog if h["name"] == harness)["models"]
+
+
+def test_qwen4_max_preview_is_offered_by_qwen_harnesses(enabled):
+    assert "qwen4-max-preview" in _chat_models(enabled, "pi")
+    assert "qwen4-max-preview" in _chat_models(enabled, "qwen_code")
+    assert "qwen4-max-preview" not in _chat_models(enabled, "claude_cli")
+
+
+def test_a_model_added_on_the_models_page_shows_in_chat(enabled):
+    providers = {p["name"]: p["id"] for p in enabled.get("/api/providers").json()}
+    r = enabled.post(
+        "/api/model-profiles",
+        json={
+            "name": "worker-kimi-k3",
+            "role": "worker",
+            "provider_id": providers["qwen-token-plan"],
+            "model_name": "kimi-k3",
+        },
+    )
+    assert r.status_code == 201 and r.json()["chat_harnesses"] == ["pi", "opencode", "aider"]
+    assert "kimi-k3" in _chat_models(enabled, "pi")
+
+
 def test_catalog_explains_unavailable_harnesses(enabled):
     harnesses = {h["name"]: h for h in enabled.get("/api/chat/harnesses").json()["harnesses"]}
     assert harnesses["mock"]["available"]
