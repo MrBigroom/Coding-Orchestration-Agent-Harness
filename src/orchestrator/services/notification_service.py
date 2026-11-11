@@ -151,6 +151,7 @@ def _outcome(
         "merge_candidate": "accepted; merge gate off, waiting for a manual merge",
         "merged": "accepted phase branch merged with --no-ff",
         "merge_refused": "the merge gate refused this branch",
+        "sync_failed": "background Supabase sync stopped or is failing repeatedly",
     }.get(key, trigger.label.lower())
 
 

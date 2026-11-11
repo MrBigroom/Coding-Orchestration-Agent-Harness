@@ -60,3 +60,71 @@ def test_sync_settings_validation_and_local_defaults(client):
     assert response.status_code == 200
     assert response.json()["supabase_sync_enabled"] is True
     assert response.json()["supabase_sync_interval_seconds"] == 15
+
+
+def test_sync_status_reports_the_stopped_reason_and_failure_streak(client):
+    from orchestrator.core.db import session_scope
+    from orchestrator.services import sync_service
+
+    with session_scope() as session:
+        sync_service.write_health(
+            session,
+            consecutive_failures=4,
+            last_failure_kind="permanent",
+            last_failure_error="Supabase returned HTTP 400: invalid version transition: 0 -> 3",
+            stopped=True,
+            stopped_reason="permanent client error: invalid version transition: 0 -> 3",
+        )
+
+    body = client.get("/api/sync/status").json()
+    assert body["stopped"] is True
+    assert body["consecutive_failures"] == 4
+    assert body["stopped_reason"] == (
+        "permanent client error: invalid version transition: 0 -> 3"
+    )
+    assert body["last_failure_kind"] == "permanent"
+
+
+def test_manual_sync_returns_the_permanent_error_as_structured_detail(client, monkeypatch):
+    from orchestrator.api.routes import sync
+    from orchestrator.services.sync_transport import SyncPermanentError
+
+    async def refuse():
+        raise SyncPermanentError(
+            "Supabase returned HTTP 400: invalid version transition: 0 -> 3",
+            status_code=400,
+            detail={
+                "retryable": False,
+                "recovery": "orchestrator sync reinit --dry-run",
+            },
+        )
+
+    monkeypatch.setattr(sync.sync_runner, "run_once", refuse)
+    response = client.post("/api/sync/run")
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"] == "Supabase returned HTTP 400: invalid version transition: 0 -> 3"
+    assert body["detail"]["kind"] == "permanent"
+    assert body["detail"]["status_code"] == 400
+    assert body["detail"]["recovery"] == "orchestrator sync reinit --dry-run"
+
+
+def test_manual_sync_returns_a_transient_error_as_503(client, monkeypatch):
+    """A retryable upstream failure is 503, not 400: the request itself was not wrong."""
+    from orchestrator.api.routes import sync
+    from orchestrator.services.sync_transport import SyncTransientError
+
+    async def unavailable():
+        raise SyncTransientError(
+            "Supabase returned HTTP 503: unavailable",
+            status_code=503,
+            detail={"retryable": True},
+        )
+
+    monkeypatch.setattr(sync.sync_runner, "run_once", unavailable)
+    response = client.post("/api/sync/run")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"] == "Supabase returned HTTP 503: unavailable"
+    assert body["detail"]["kind"] == "transient"
+    assert body["detail"]["retryable"] is True

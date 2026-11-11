@@ -521,3 +521,14 @@ Running log of architecture decisions. Newest last. Format: date — decision �
   line(s) in tags_json, triage flags the entry as garbled, and it is excluded from prompts
   and rendered markdown until reworded. Log and review redaction are untouched. Lifecycle
   columns (`supersedes`, `stale_after`) remain a contract-change request, not a migration.
+
+- **2026-11-11 — T-41: cloud sync versions are remote per-entity counters, and a permanent
+  failure stops instead of retrying forever.** The `invalid version transition: 0 -> 3` loop sent
+  the local dirty revision as the next remote version; the push function requires
+  `expected + 1`, so the local record could never advance. Push now sends
+  `synced_version + 1` and records the landed version, `sync_health` in the device-local
+  `sync_state` records the failure streak, permanent 4xx stops automatic attempts, transient
+  failures retry indefinitely with exponential backoff capped on the delay (not on attempts), and
+  one `sync_failed` event per streak notifies the operator. `orchestrator sync reinit --dry-run|--apply` re-baselines counters to remote truth and
+  never touches payload conflicts. No schema, status vocabulary, or notification status changed.
+

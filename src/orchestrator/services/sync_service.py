@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -228,6 +230,338 @@ def mark_synced(session: Session, mapping: SyncEntity) -> None:
     mapping.conflict_json = None
     session.add(mapping)
     session.commit()
+
+
+# Device-local health lives in the existing key/value sync_state table: no migration and no
+# change to which entities sync. `sync_state` is deliberately never cloud-synchronized, so a
+# stopped loop on one device cannot stop another. The key is additive data, not a new column.
+SYNC_HEALTH_KEY = "sync_health"
+HEALTH_DEFAULTS: dict[str, Any] = {
+    "consecutive_failures": 0,
+    "last_failure_at": None,
+    "last_failure_kind": None,
+    "last_failure_error": None,
+    "stopped": False,
+    "stopped_reason": None,
+    "stopped_at": None,
+    "next_retry_at": None,
+    "backoff_seconds": 0.0,
+    "log_occurrences": 0,
+    "last_logged_error": None,
+    "streak_notified": False,
+    "stop_notified": False,
+    "streak_notified_claim": None,
+    "stop_notified_claim": None,
+    "last_notify_error": None,
+    "last_notify_failed_at": None,
+    # The alert path gets the same treatment as the sync path: a distinct-signature dedupe and a
+    # capped backoff, so a broken notifier cannot become the next unbounded ERROR source (T-41).
+    "notify_failures": 0,
+    "notify_backoff_seconds": 0.0,
+    "notify_next_retry_at": None,
+    "notify_log_occurrences": 0,
+    "last_logged_notify_error": None,
+}
+
+# The notification claim's stale window has to cover the WHOLE emission, not just the moment of
+# claiming. ``log_service.log_event`` commits the build-log row and the JSONL line first, then
+# fans out to ``notification_service.notify_event`` in its own session: that delivery probes the
+# daemon (2 s) and then runs the client (10 s), and a coalescing flush can add a little more. A
+# window derived from the claim instant alone would let the next cycle re-claim and emit while
+# the first emission is still in flight. This is a ceiling on an in-flight claim only; it never
+# suppresses an alert whose emission actually failed, because a failure releases the claim.
+HEALTH_FLAG_CLAIM_LEASE_SECONDS = 120.0
+
+
+class HealthConflict(RuntimeError):
+    """The health record changed under us on every compare-and-set attempt."""
+
+
+def _read_health_raw(session: Session) -> tuple[bool, str | None, dict[str, Any]]:
+    """Read the stored JSON verbatim, bypassing the ORM identity map.
+
+    The raw text is the compare-and-set token: it is what the conditional ``UPDATE`` matches on,
+    so a write from another session or process (the desktop loop vs ``orchestrator sync now``)
+    cannot be silently overwritten by a value read before that write landed.
+    """
+    row = session.connection().exec_driver_sql(
+        "SELECT value_json FROM sync_state WHERE key = ?", (SYNC_HEALTH_KEY,)
+    ).first()
+    if row is None:
+        return False, None, {}
+    raw = row[0]
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        stored = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        stored = {}
+    return True, raw, stored if isinstance(stored, dict) else {}
+
+
+def health(session: Session) -> dict[str, Any]:
+    """Read the additive sync health record; a device that never ran reads as healthy."""
+    _exists, _raw, stored = _read_health_raw(session)
+    values = dict(HEALTH_DEFAULTS)
+    values.update(stored)
+    return values
+
+
+def update_health(
+    session: Session,
+    mutate: Callable[[dict[str, Any]], dict[str, Any] | None],
+    *,
+    attempts: int = 8,
+) -> dict[str, Any]:
+    """Compare-and-set read-modify-write of the health record.
+
+    There is deliberately no single-writer assumption. The desktop background loop and a CLI
+    ``sync now`` are separate processes sharing one SQLite file, so two of them can read the same
+    streak (or the same ``*_notified`` flag) before either writes. Every write is therefore a
+    conditional ``UPDATE ... WHERE value_json = <the exact text we read>``; if another writer got
+    there first the update matches zero rows, and this function re-reads and re-applies ``mutate``
+    to the new value. Increments are re-derived on each attempt, so a lost update is impossible,
+    and a claim that returns ``None`` on an already-set flag is won by exactly one caller.
+
+    ``mutate`` receives a complete health dict and returns the fields to change, or ``None`` to
+    abandon the write (a claim that lost the race). The row is created with an ``INSERT`` when a
+    device has never recorded health; a racing insert is retried as a normal CAS conflict.
+    """
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    for _ in range(attempts):
+        exists, raw, stored = _read_health_raw(session)
+        values = dict(HEALTH_DEFAULTS)
+        values.update(stored)
+        changes = mutate(dict(values))
+        if changes is None:
+            return values
+        values.update(changes)
+        # Canonical text: the next CAS compares against exactly these bytes.
+        payload = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        now = utcnow()
+        result = None
+        try:
+            if exists:
+                result = session.connection().exec_driver_sql(
+                    "UPDATE sync_state SET value_json = ?, updated_at = ? "
+                    "WHERE key = ? AND value_json IS ?",
+                    (payload, now, SYNC_HEALTH_KEY, raw),
+                )
+            else:
+                session.connection().exec_driver_sql(
+                    "INSERT INTO sync_state (key, value_json, updated_at) VALUES (?, ?, ?)",
+                    (SYNC_HEALTH_KEY, payload, now),
+                )
+        except (IntegrityError, OperationalError):
+            # A racing insert (unique key) or a WAL snapshot taken before another process
+            # committed is not a lost write: roll back and re-read, then CAS again.
+            session.rollback()
+            continue
+        session.commit()
+        if result is None or result.rowcount == 1:
+            # The raw write bypassed the ORM; make any cached SyncState row re-read next time.
+            session.expire_all()
+            return values
+        session.rollback()
+    raise HealthConflict(
+        f"sync health changed on {attempts} consecutive compare-and-set attempts"
+    )
+
+
+def write_health(session: Session, **changes: Any) -> dict[str, Any]:
+    """Set absolute health fields through the same compare-and-set path as the counters."""
+    return update_health(session, lambda _current: changes)
+
+
+def _live_claim(current: dict[str, Any], flag: str, now: datetime) -> bool:
+    """Is another emitter's unexpired claim recorded for ``flag``?
+
+    An unparseable lease is treated as expired: wedging the alert forever because of a corrupt
+    timestamp is worse than one possible duplicate event.
+    """
+    claim = current.get(f"{flag}_claim")
+    if not isinstance(claim, dict) or not claim.get("token"):
+        return False
+    try:
+        deadline = datetime.fromisoformat(str(claim.get("expires_at")))
+    except (TypeError, ValueError):
+        return False
+    return now < deadline
+
+
+def claim_health_flag(session: Session, flag: str, **extra: Any) -> str | None:
+    """Lease the right to emit ``flag``'s notification; returns a per-attempt token or ``None``.
+
+    This is the notification once-per-streak gate and it has the three parts a cross-process
+    claim needs: (1) the lease window (``HEALTH_FLAG_CLAIM_LEASE_SECONDS``) covers the whole
+    emission, so a slow delivery is not re-claimed by the next cycle; (2) the token is unique
+    per attempt, so two claims are distinguishable even inside the same second; (3) the flag
+    itself is NOT set here -- ``complete_health_flag`` writes it with a compare-and-set on this
+    token after the emission actually succeeded. A caller that loses the race gets ``None`` and
+    must write nothing and log nothing.
+    """
+    token = uuid4().hex
+    won: dict[str, str | None] = {"token": None}
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any] | None:
+        # Re-evaluated on every CAS attempt: a failed attempt must not leave this set, or the
+        # loser of the race would report a claim it never wrote.
+        won["token"] = None
+        now = utcnow()
+        if current.get(flag) or _live_claim(current, flag, now):
+            return None
+        won["token"] = token
+        return {
+            f"{flag}_claim": {
+                "token": token,
+                "claimed_at": now.isoformat(),
+                "expires_at": (
+                    now + timedelta(seconds=HEALTH_FLAG_CLAIM_LEASE_SECONDS)
+                ).isoformat(),
+            },
+            **extra,
+        }
+
+    update_health(session, mutate)
+    return won["token"]
+
+
+def _settle_health_flag(
+    session: Session, flag: str, token: str, changes: dict[str, Any]
+) -> bool:
+    """Apply ``changes`` only while ``token`` still owns the claim; ``True`` iff it landed.
+
+    The compare-and-set is on the claim token, not on a flag read earlier, so a settlement can
+    never overwrite a newer attempt's claim (the claim expired and another process took over).
+    """
+    settled = {"value": False}
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any] | None:
+        settled["value"] = False
+        lease = current.get(f"{flag}_claim")
+        if not isinstance(lease, dict) or lease.get("token") != token:
+            return None
+        settled["value"] = True
+        return changes
+
+    update_health(session, mutate)
+    return settled["value"]
+
+
+def complete_health_flag(session: Session, flag: str, token: str, **extra: Any) -> bool:
+    """Record a delivered emission: set ``flag`` and clear the claim in one CAS write.
+
+    This is the terminal write the earlier shape was missing. Only the owner of ``token`` lands
+    it, and only after the emission returned; an interrupted emission therefore leaves the flag
+    false (the claim is released or expires) instead of recording an alert nobody saw.
+    """
+    return _settle_health_flag(
+        session,
+        flag,
+        token,
+        {
+            flag: True,
+            f"{flag}_claim": None,
+            # A delivered alert supersedes any earlier emission failure for this streak: the
+            # reason, the retry schedule and the log-dedup counter all reset, so the next streak
+            # starts from a clean slate and logs its first failure again.
+            "last_notify_error": None,
+            "last_notify_failed_at": None,
+            "notify_failures": 0,
+            "notify_backoff_seconds": 0.0,
+            "notify_next_retry_at": None,
+            "notify_log_occurrences": 0,
+            "last_logged_notify_error": None,
+            **extra,
+        },
+    )
+
+
+def release_health_flag(
+    session: Session, flag: str, token: str, *, error: str | None = None
+) -> bool:
+    """Give up a claim after a failed emission so the next cycle can notify again.
+
+    The flag stays false: a failed emission is not a delivered alert. The failure itself is
+    recorded separately in ``last_notify_error`` / ``last_notify_failed_at`` so the reason an
+    alert was not seen survives without changing the frozen notification status vocabulary.
+    The retry schedule and its dedupe counter are written by ``SyncRunner._record_notify_failure``
+    in the same cycle: releasing the claim is what makes a retry possible, the schedule is what
+    keeps it bounded.
+    """
+    changes: dict[str, Any] = {f"{flag}_claim": None}
+    if error is not None:
+        changes["last_notify_error"] = str(error)[:500]
+        changes["last_notify_failed_at"] = utcnow().isoformat()
+    return _settle_health_flag(session, flag, token, changes)
+
+
+def clear_health(session: Session) -> dict[str, Any]:
+    """A successful cycle clears the streak, the stop, and the dedupe counter together."""
+    return write_health(session, **HEALTH_DEFAULTS)
+
+
+def reinitialise(
+    session: Session, remote_versions: dict[str, int], *, dry_run: bool = True
+) -> dict[str, Any]:
+    """Re-baseline local version counters to remote truth; never edits synchronized payloads.
+
+    The remote version is a per-entity compare-and-swap counter. A local mapping is only allowed
+    to present ``synced_version + 1`` on its next push. When the two sides disagree (restored
+    database, a lost push, the legacy `0 -> 3` drift), this aligns ``synced_version`` with the
+    version the remote actually holds and leaves a dirty record's payload pending. Rows with an
+    unresolved payload conflict are reported and left untouched: silently discarding one side is
+    not a version repair. A dirty row whose remote version is AHEAD of the local synced version
+    is also left untouched (``remote_ahead_skipped``): re-baselining forward would let the next
+    push overwrite remote changes this device has not seen. The stop is only cleared when every
+    row could be aligned. With ``dry_run`` the plan is returned and no row or health key is
+    written, so an operator can inspect it first.
+    """
+    changes: list[dict[str, Any]] = []
+    conflicts_skipped = 0
+    remote_ahead_skipped = 0
+    for mapping in session.exec(select(SyncEntity)):
+        if mapping.conflict_json is not None:
+            conflicts_skipped += 1
+            continue
+        synced = int(remote_versions.get(mapping.uuid, 0))
+        if mapping.dirty and synced > mapping.synced_version:
+            # The remote has changes this device has never seen. Re-baselining forward would let
+            # the next push overwrite them, defeating the compare-and-swap guarantee, so this
+            # row is reported until the content conflict is resolved by a human.
+            remote_ahead_skipped += 1
+            continue
+        version = synced + 1 if mapping.dirty else synced
+        if mapping.synced_version == synced and mapping.version == version:
+            continue
+        changes.append(
+            {
+                "entity_type": mapping.entity_type,
+                "entity_id": mapping.uuid,
+                "local_id": mapping.local_id,
+                "synced_version": [mapping.synced_version, synced],
+                "version": [mapping.version, version],
+            }
+        )
+        if not dry_run:
+            mapping.synced_version = synced
+            mapping.version = version
+            session.add(mapping)
+    # A skipped row means the stop is real: resuming the loop would only re-hit a conflict.
+    health_cleared = not dry_run and not conflicts_skipped and not remote_ahead_skipped
+    if not dry_run:
+        session.commit()
+        if health_cleared:
+            clear_health(session)
+    return {
+        "dry_run": dry_run,
+        "changes": changes,
+        "change_count": len(changes),
+        "conflicts_skipped": conflicts_skipped,
+        "remote_ahead_skipped": remote_ahead_skipped,
+        "health_cleared": health_cleared,
+    }
 
 
 def status(session: Session) -> dict[str, int]:

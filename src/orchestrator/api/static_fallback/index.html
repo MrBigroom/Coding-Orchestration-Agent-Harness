@@ -208,9 +208,19 @@ const views = {
   },
   async settings() {
     const s = await api("/settings");
+    const sync = await api("/sync/status");
     const keys = ["merge_enabled", "auto_merge_enabled", "supervisor_microfixes_enabled", "scheduler_enabled", "worker_enabled", "allow_gui_commands", "notifications_enabled"];
+    const syncHint = sync.last_failure_kind === "permanent"
+      ? "Run orchestrator sync reinit --dry-run, then --apply, or retry with sync now."
+      : "Retry with sync now; a transient failure is not repaired by reinit.";
+    const syncNote = sync.stopped
+      ? `<div class="err">Cloud sync stopped: ${esc(sync.stopped_reason || sync.last_failure_error || "unknown reason")}. ${syncHint}</div>`
+      : `<p class="muted">Cloud sync: ${sync.enabled ? "automatic" : "manual"} · ${esc(sync.consecutive_failures || 0)} consecutive failure(s)${sync.last_failure_error ? " · " + esc(sync.last_failure_error) : ""}${sync.consecutive_failures && sync.next_retry_at ? " · next attempt " + esc(sync.next_retry_at) : ""}</p>`;
+    const notifyNote = sync.last_notify_error
+      ? `<div class="err">Sync alerts are not reaching the operator: ${esc(sync.last_notify_error)} (${esc(sync.notify_failures || 0)} failed attempt(s), retrying with capped backoff${sync.last_notify_failed_at ? ", last attempt " + esc(sync.last_notify_failed_at) : ""})</div>`
+      : "";
     show(`<h2>Settings</h2><div class="card">${keys.map((k) => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${k}</span><input type="checkbox" data-k="${k}" style="width:auto" ${s[k] ? "checked" : ""}></div>`).join("")}
-      <p class="muted">Bind ${esc(s.bind_host)}:${esc(s.bind_port)} · token auth ${s.token_auth_enabled ? "on" : "off"}</p></div>`);
+      <p class="muted">Bind ${esc(s.bind_host)}:${esc(s.bind_port)} · token auth ${s.token_auth_enabled ? "on" : "off"}</p>${syncNote}${notifyNote}</div>`);
     $main.querySelectorAll("input[data-k]").forEach((i) => i.onchange = () => guard(async () => { await patch("/settings", { values: { [i.dataset.k]: i.checked } }); }));
   },
 };

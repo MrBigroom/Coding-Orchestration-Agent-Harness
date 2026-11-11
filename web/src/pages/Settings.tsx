@@ -25,6 +25,17 @@ type SyncStatus = {
   last_success_at: string | null;
   last_error: string | null;
   last_result: SyncResult | null;
+  consecutive_failures: number;
+  last_failure_at: string | null;
+  last_failure_kind: string | null;
+  last_failure_error: string | null;
+  stopped: boolean;
+  stopped_reason: string | null;
+  next_retry_at: string | null;
+  backoff_seconds: number;
+  notify_failures: number;
+  last_notify_error: string | null;
+  last_notify_failed_at: string | null;
 };
 
 const BOOLS: [string, string][] = [
@@ -52,6 +63,7 @@ const NOTIFICATION_TRIGGERS: [string, string, boolean][] = [
   ["notification_merge_candidate", "Merge candidate ready", false],
   ["notification_merged", "Branch merged", false],
   ["notification_merge_refused", "Merge refused", false],
+  ["notification_sync_failed", "Cloud sync needs attention", false],
   ["notification_worktree_created", "Noisy: worktree created", true],
   ["notification_recovery_commit", "Noisy: recovery commit", true],
   ["notification_supervisor_verification", "Noisy: supervisor verification", true],
@@ -129,8 +141,8 @@ export default function Settings() {
             </div>
           </Card>
           <Card title="Cloud Sync" className="xl:col-span-2" actions={sync && (
-            <Badge value={sync.running ? "running" : sync.configured ? "configured" : "not configured"}
-              tone={sync.running ? "info" : sync.configured ? "ok" : "muted"} />
+            <Badge value={sync.stopped ? "stopped" : sync.running ? "running" : sync.configured ? "configured" : "not configured"}
+              tone={sync.stopped ? "bad" : sync.running ? "info" : sync.configured ? "ok" : "muted"} />
           )}>
             {!sync ? <p className="text-sm text-muted">Loading synchronization status…</p> : (
               <div className="space-y-5">
@@ -175,10 +187,43 @@ export default function Settings() {
                       <dt className="text-muted">Synchronized</dt><dd>{sync.synced}</dd>
                       <dt className="text-muted">Conflicts</dt><dd className={sync.conflicts ? "text-bad" : ""}>{sync.conflicts}</dd>
                       <dt className="text-muted">Last success</dt><dd>{fmtTime(sync.last_success_at)}</dd>
+                      <dt className="text-muted">Consecutive failures</dt>
+                      <dd className={sync.consecutive_failures ? "text-bad" : ""}>{sync.consecutive_failures}</dd>
+                      <dt className="text-muted">Next retry</dt><dd>{fmtTime(sync.next_retry_at)}</dd>
                     </dl>
                     {sync.last_result && (
                       <p className="mt-3 text-xs text-muted">
                         Last transfer: {sync.last_result.pulled.applied ?? 0} remote records applied, {sync.last_result.pushed.pushed ?? 0} local records uploaded.
+                      </p>
+                    )}
+                    {sync.stopped && (
+                      <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
+                        Automatic sync is stopped: {sync.stopped_reason ?? sync.last_failure_error ?? "unknown reason"}
+                        <span className="mt-1 block text-muted">
+                          {sync.last_failure_kind === "permanent" ? (
+                            <>Fix the cause, then run <span className="mono">orchestrator sync reinit --dry-run</span>,
+                              then <span className="mono"> --apply</span>, or retry with Sync now.</>
+                          ) : (
+                            <>Retry with Sync now; a transient failure is not repaired by reinit.</>
+                          )}
+                        </span>
+                      </p>
+                    )}
+                    {!sync.stopped && sync.consecutive_failures > 0 && (
+                      <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
+                        {sync.consecutive_failures} consecutive failure(s): {sync.last_failure_error ?? "unknown error"}
+                        <span className="mt-1 block text-muted">
+                          Retrying with exponential backoff; next attempt {fmtTime(sync.next_retry_at)}.
+                        </span>
+                      </p>
+                    )}
+                    {sync.last_notify_error && (
+                      <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">
+                        Sync alerts are not reaching the operator: {sync.last_notify_error}
+                        <span className="mt-1 block text-muted">
+                          {sync.notify_failures} failed attempt(s); retrying with capped backoff
+                          {sync.last_notify_failed_at ? ` (last attempt ${fmtTime(sync.last_notify_failed_at)})` : ""}.
+                        </span>
                       </p>
                     )}
                     {sync.last_error && <p className="mt-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-xs text-bad">{sync.last_error}</p>}
