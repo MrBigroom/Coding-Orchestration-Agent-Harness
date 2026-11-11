@@ -1,0 +1,29 @@
+# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast
+# command: PYTHONPATH=/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45/src:/home/mrbigroom/.local/share/coding-orchestrator/worktrees/coding-orchestrator/45 /run/media/mrbigroom/Backup2TB/Projects/Coding-Orchestration-Agent-Harness/.venv/bin/python - (test helpers drive the CLI parser)
+recovery_string_count=6
+RECOVERY recovery_for('permanent'): check ORCHESTRATOR_SUPABASE_EMAIL and ORCHESTRATOR_SUPABASE_PASSWORD in .env, then run `orchestrator sync now`
+OK recovery command: orchestrator sync now
+RECOVERY recovery_for('transient'): the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> version rejection: run `orchestrator sync reinit` (the dry run is the default and `--apply` writes). Unresolved payload conflicts are reported as conflicts_skipped and left untouched
+OK recovery command: orchestrator sync reinit
+RECOVERY _response_error -> server error: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> request timeout: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+RECOVERY _response_error -> rate limited: the sync loop retries this with exponential backoff; only a permanent 4xx response stops it and notifies the operator
+source_command_count=16
+OK source command: orchestrator memory list | src/orchestrator/api/routes/memory.py
+OK source command: orchestrator memory fix-scopes | src/orchestrator/cli.py
+OK source command: orchestrator --help | src/orchestrator/cli.py
+OK source command: orchestrator sync status | src/orchestrator/core/notification_vocab.py
+OK source command: orchestrator sync reinit | src/orchestrator/core/notification_vocab.py
+OK source command: orchestrator serve | src/orchestrator/desktop/__init__.py
+OK source command: orchestrator desktop install | src/orchestrator/desktop/__init__.py
+OK source command: orchestrator init | src/orchestrator/services/bootstrap.py
+OK source command: orchestrator cleanup | src/orchestrator/services/cleanup_service.py
+OK source command: orchestrator demo | src/orchestrator/services/demo_service.py
+OK source command: orchestrator task evidence <id> | src/orchestrator/services/evidence_freshness.py
+OK source command: orchestrator task evidence <id> --at-tip | src/orchestrator/services/evidence_freshness.py
+OK source command: orchestrator task evidence {label} | src/orchestrator/services/evidence_freshness.py
+OK source command: orchestrator task evidence {label} --at-tip | src/orchestrator/services/evidence_freshness.py
+OK source command: orchestrator memory triage | src/orchestrator/services/memory_service.py
+OK source command: orchestrator sync now | src/orchestrator/services/sync_service.py
+CONTROL rejected the shipped hint: NoSuchOption: No such option: --dry-run

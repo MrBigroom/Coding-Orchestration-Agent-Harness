@@ -1,0 +1,53 @@
+{
+  "command": "verify-evidence/T-45/capture.sh",
+  "files": [
+    {
+      "path": "command_audit.txt",
+      "sha256": "014b2e2c6a057515a4198f46742541b64051bdfbc6f260ebacb090814848173f"
+    },
+    {
+      "path": "freshness_selfcheck.txt",
+      "sha256": "6d13be0c632abfa5bb846567a56490f6f2ed5003aa8870935e5c8b16b56ae1f6"
+    },
+    {
+      "path": "full_suite.txt",
+      "sha256": "065d939e0c41744c8f288463b566fcaf6b3a8b71e286ff84c6eade30856e9a88"
+    },
+    {
+      "path": "lint.txt",
+      "sha256": "dcf5ed39574f5085255972c26bde1c9c491bafc8a3f4a8a64951be8515492251"
+    },
+    {
+      "path": "live_cli.txt",
+      "sha256": "3eec6f1d42b5a05a545f8fffea8325666488e09ae20592cbf5146202616c04a8"
+    },
+    {
+      "path": "source_anchors.txt",
+      "sha256": "098c98faac0f6c5565a16ec50a6192eeac6e0658e2cf6059d31968262706d6f6"
+    },
+    {
+      "path": "t45_tests.txt",
+      "sha256": "54dd885ad34335562894e4686ad753fb07d55b32ca017fcf45155cd6480b8306"
+    },
+    {
+      "path": "tsc_web.txt",
+      "sha256": "3434104e3c5488e4c3ed8fc96c70c82d3971bd4c584f45e80bea62db7ce5ee0b"
+    }
+  ],
+  "generated_at": "2026-11-11T03:20:02Z",
+  "generator": "verify-evidence/T-45/capture.sh",
+  "head": "73fb69895557823b80b77db80a8b170ab1203282",
+  "head_short": "73fb698",
+  "inputs": [
+    "capture.sh"
+  ],
+  "label": "T-45",
+  "mode": "fast",
+  "only": [],
+  "stamp": "# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast",
+  "tool_versions": {
+    "git": "git version 2.56.0",
+    "pytest": "9.1.1",
+    "python": "3.13.15"
+  }
+}

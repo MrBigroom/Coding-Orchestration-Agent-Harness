@@ -1,0 +1,57 @@
+# HEAD=73fb69895557823b80b77db80a8b170ab1203282 mode=fast
+# command: git show HEAD:<file> | grep -nE '<anchor>'
+
+## src/orchestrator/services/sync_transport.py
+60:RECOVERY_BY_KIND: dict[str, str] = {
+75:VERSION_REJECTION_RECOVERY = (
+81:def recovery_for(kind: str) -> str:
+82:    """The repair path for a classified transport failure (see ``RECOVERY_BY_KIND``)."""
+83:    return RECOVERY_BY_KIND[kind]
+145:        if "invalid version transition" in message:
+149:            detail["recovery"] = VERSION_REJECTION_RECOVERY
+285:                # `invalid version transition: 0 -> 3` failure was produced. Record the version
+
+## src/orchestrator/core/notification_vocab.py
+55:    "sync_failed": _t(
+56:        "sync_failed", "Cloud sync needs attention",
+57:        "Run `orchestrator sync status`; if versions drifted, run `orchestrator sync reinit` "
+58:        "(dry run by default; `--apply` writes).",
+
+## src/orchestrator/api/static_fallback/index.html
+214:      ? "Run orchestrator sync reinit (dry run by default; --apply writes). Payload conflicts are reported as conflicts_skipped and left untouched; retry with sync now."
+
+## web/src/pages/Settings.tsx
+204:                            <>Fix the cause, then run <span className="mono">orchestrator sync reinit</span>{" "}
+205:                              (dry run by default; add <span className="mono">--apply</span> to write).
+206:                              Payload conflicts are reported as conflicts_skipped and left untouched;
+
+## docs/cloud-sync.md
+109:`orchestrator sync reinit` re-baselines local counters to the versions the remote actually holds.
+114:orchestrator sync reinit           # inspect the planned counter changes; writes nothing (dry run is the default)
+115:orchestrator sync reinit --apply   # write them and clear the stopped/failure streak
+119:Records with an unresolved payload conflict are reported as `conflicts_skipped` and never
+166:`sync reinit --apply` and a manual `sync now` that succeeds.
+
+## docs/decisions.md
+532:  one `sync_failed` event per streak notifies the operator. `orchestrator sync reinit` (dry
+533:  run by default) and `orchestrator sync reinit --apply` re-baseline counters to remote truth
+
+## README.md
+266:  permanent stop is `orchestrator sync reinit` (dry run by default) then
+267:  `orchestrator sync reinit --apply` (or a successful manual sync). Persistent failures raise the `sync_failed` notification. See `docs/cloud-sync.md` for the
+
+## tests/unit/test_operator_command_hints.py
+94:def test_every_recovery_string_the_transport_can_emit_parses_against_the_cli():
+136:def test_the_validator_rejects_the_flag_that_shipped():
+144:def test_every_operator_command_hint_in_the_source_tree_parses_against_the_cli():
+154:def test_the_guis_name_commands_the_cli_accepts_and_drop_the_bad_flag():
+
+## tests/integration/test_sync_api.py
+91:        VERSION_REJECTION_RECOVERY,
+101:                "recovery": VERSION_REJECTION_RECOVERY,
+112:    assert body["detail"]["recovery"] == VERSION_REJECTION_RECOVERY
+
+## tests/unit/test_sync_resilience.py
+26:    VERSION_REJECTION_RECOVERY,
+124:    assert permanent.detail["recovery"] == VERSION_REJECTION_RECOVERY
+203:        detail={"recovery": VERSION_REJECTION_RECOVERY},
