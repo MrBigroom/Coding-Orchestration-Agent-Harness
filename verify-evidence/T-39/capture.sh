@@ -15,6 +15,7 @@
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+OUT="$ROOT/verify-evidence/T-39"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/t39-evidence.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 SHA="$(git rev-parse HEAD)"
