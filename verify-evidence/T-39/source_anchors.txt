@@ -1,0 +1,62 @@
+# HEAD=ca3b9ebae0755d89f22fd4e44912c60ca1ccca86 mode=full
+# command: git show HEAD:<file> | grep -nE '<anchors>'
+## src/orchestrator/services/cleanup_service.py
+15:   (`git_service.process_is_alive`) and is what refuses the tree even when the row says `closed`;
+60:    def as_dict(self) -> dict[str, str]:
+68:def cwd_owner_pids(path: Path) -> list[int]:
+73:    reported only after `git_service.process_is_alive` (T-20's `os.kill(pid, 0)` rule) confirms
+94:            if git_service.process_is_alive(pid):
+99:def _chat_sessions_by_cwd(session: Session) -> dict[str, list[ChatSession]]:
+117:def _chat_action(
+123:    include_live_chats: bool,
+128:    if owners and not include_live_chats:
+136:        return _refuse(path, f"live process {who} has it as its cwd ({state})")
+137:    if chats and not include_live_chats:
+138:        live = [c for c in chats if c.status != ChatStatus.closed]
+146:    if not include_chats and not include_live_chats:
+150:                f"chat session {chats[0].id} is closed (pass --include-chats to remove)",
+166:def plan(
+172:    include_live_chats: bool = False,
+196:                    include_live_chats=include_live_chats,
+209:def counts(actions: list[CleanupAction]) -> dict[str, int]:
+216:def summary(actions: list[CleanupAction], *, dry_run: bool) -> str:
+227:def as_dict(actions: list[CleanupAction], *, dry_run: bool) -> dict:
+## src/orchestrator/cli.py
+310:def cleanup(
+319:        "--include-chats",
+324:        "--include-live-chats",
+336:    tree happens to be dirty; chat worktrees are kept unless --include-chats, and a session
+337:    that is not closed additionally needs --include-live-chats. Records print one per line, or
+348:        actions = cleanup_service.plan(
+365:            console.print(action.message, soft_wrap=True, markup=False)
+369:    if any(action.kind == cleanup_service.FAILED for action in actions):
+## src/orchestrator/services/git_service.py
+1204:REMOVAL_FAILED = "failed"
+1208:class RemovalOutcome:
+1221:def process_is_alive(pid: int | None) -> bool:
+1226:def remove_worktree_outcome(repo: Path | None, info: dict, dry_run: bool = True) -> RemovalOutcome:
+1243:    if path.exists() and is_repo(path) and is_dirty(path, lock_free=dry_run):
+1265:        return RemovalOutcome(REMOVAL_FAILED, path, f"failed to remove worktree {path}{detail}")
+1274:            REMOVAL_FAILED,
+## src/orchestrator/utils/git.py
+71:    repo: Path | str, tracked_only: bool = False, lock_free: bool = False
+86:    # `--no-optional-locks` makes git skip the opportunistic index refresh, so a read-only
+88:    prefix = ["--no-optional-locks"] if lock_free else []
+92:def status_entries(repo: Path | str, lock_free: bool = False) -> list[tuple[str, str]]:
+99:    prefix = ["--no-optional-locks"] if lock_free else []
+## src/orchestrator/core/models.py
+101:class ChatStatus(StrEnum):
+104:    busy = "busy"
+106:    closed = "closed"
+## src/orchestrator/services/chat_service.py
+826:        cwd=Path(chat.cwd),
+882:        cwd=Path(chat.cwd),
+## docs/chat.md
+237:## `orchestrator cleanup` and chat worktrees
+240:worktree is judged by OWNERSHIP, not by its dirt and not by its marker name:
+247:  reports `refuse <path>: live process <pid> has it as its cwd`, even when the row says
+258:live process owns it) without writing anything, including git's own metadata; `--json` prints
+## docs/build-loop.md
+902:  orchestrator's marker, skips dirty ones, and keeps branches. It judges each worktree by
+906:  - a **chat** worktree (`chat-<id>` marker) is judged by its `chat_sessions` row, mapped
+911:    that is not closed additionally needs `--include-live-chats`, whose help text says it can

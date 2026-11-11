@@ -314,37 +314,60 @@ def cleanup(
     include_active: bool = typer.Option(
         False, help="Also remove worktrees of tasks not accepted/archived/rejected."
     ),
+    include_chats: bool = typer.Option(
+        False,
+        "--include-chats",
+        help="Also remove chat worktrees whose session is closed (kept by default).",
+    ),
+    include_live_chats: bool = typer.Option(
+        False,
+        "--include-live-chats",
+        help=(
+            "Also remove chat worktrees whose session is still open or whose directory a live "
+            "process holds — CAN DELETE THE DIRECTORY OF A RUNNING SESSION."
+        ),
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object per run."),
 ) -> None:
-    """Remove orchestrator-managed worktrees (branches are never deleted)."""
-    from sqlmodel import select
+    """Remove orchestrator-managed worktrees (branches are never deleted).
 
-    from orchestrator.core.models import Project, Task
-    from orchestrator.services import git_service
+    A task worktree is judged by its task status. A chat worktree is judged by its
+    `chat_sessions` row and by whether a live process holds the directory, not by whether the
+    tree happens to be dirty; chat worktrees are kept unless --include-chats, and a session
+    that is not closed additionally needs --include-live-chats. Records print one per line, or
+    as one JSON object with --json, and the counts/summary derive from the actual outcomes.
+    """
+    from orchestrator.services import cleanup_service, git_service
 
     _ensure_ready()
-    done = {"accepted", "archived", "rejected"}
     # T-20: parity residue is not a task worktree and has its own lock-aware sweep. Doing it here
     # (as well as at the start of the parity probe) means a SIGKILLed run is reclaimable without
-    # waiting for the next doctor invocation.
-    for action in git_service.sweep_parity_residue(dry_run=dry_run):
-        console.print(action.detail)
+    # waiting for the next doctor invocation. Unchanged by T-39.
+    parity = git_service.sweep_parity_residue(dry_run=dry_run)
     with _session() as s:
-        projects = {p.slug: p for p in s.exec(select(Project))}
-        for info in git_service.managed_worktrees():
-            if info["task_id"] == git_service.PARITY_TASK_ID:
-                # Already handled above; a live parity snapshot was skipped there on purpose.
-                continue
-            task = s.get(Task, int(info["task_id"])) if info["task_id"].isdigit() else None
-            if task and task.status not in done and not include_active:
-                console.print(f"skip {info['path']}: task {task.short_id} is {task.status}")
-                continue
-            proj = projects.get(info["project_slug"])
-            msg = git_service.remove_worktree(
-                Path(proj.path) if proj else None, info, dry_run=dry_run
-            )
-            console.print(msg)
-    if dry_run:
-        console.print("[dim](dry run — pass --no-dry-run to apply)[/dim]")
+        actions = cleanup_service.plan(
+            s,
+            dry_run=dry_run,
+            include_active=include_active,
+            include_chats=include_chats,
+            include_live_chats=include_live_chats,
+        )
+    if as_json:
+        payload = cleanup_service.as_dict(actions, dry_run=dry_run)
+        payload["parity"] = [{"message": a.detail, "ok": a.ok} for a in parity]
+        _print_json(payload)
+    else:
+        for action in parity:
+            console.print(action.detail)
+        for action in actions:
+            # soft_wrap: one record per line. Rich's 80-column wrapping split a record across
+            # three lines, which no script could parse (T-39 DoD 6).
+            console.print(action.message, soft_wrap=True, markup=False)
+        console.print(cleanup_service.summary(actions, dry_run=dry_run))
+        if dry_run:
+            console.print("[dim](dry run — pass --no-dry-run to apply)[/dim]")
+    if any(action.kind == cleanup_service.FAILED for action in actions):
+        raise typer.Exit(code=1)
 
 
 @app.command()

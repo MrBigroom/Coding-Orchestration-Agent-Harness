@@ -867,7 +867,7 @@ def ensure_worktree(
     return WorktreeInfo(path, branch, created=True)
 
 
-def status_split(path: Path) -> DirtyStatus:
+def status_split(path: Path, lock_free: bool = False) -> DirtyStatus:
     """Split the uncommitted state into tracked changes vs. untracked new files.
 
     Untracked synthetic parity files (`.env`, `.env.*.parity`) in a parity worktree are NOT worker
@@ -878,21 +878,21 @@ def status_split(path: Path) -> DirtyStatus:
     parity = is_parity_worktree(path)
     tracked: list[str] = []
     untracked: list[str] = []
-    for xy, p in status_entries(path):
+    for xy, p in status_entries(path, lock_free=lock_free):
         if parity and xy == "??" and _is_parity_residue_name(Path(p).name):
             continue
         (untracked if xy == "??" else tracked).append(p)
     return DirtyStatus(tracked_modified=tracked, untracked_added=untracked)
 
 
-def is_dirty(path: Path) -> bool:
+def is_dirty(path: Path, lock_free: bool = False) -> bool:
     """Anything uncommitted at all, INCLUDING untracked paths (scratch files, local tool
     directories). Use it only where losing an untracked file would be the damage —
     recovery_commit and cleanup. Merge/refuse and cleanliness verdicts want `tracked_dirty`.
 
     Parity residue is excluded by `status_split` for parity destinations only; a task worktree
     keeps the inclusive predicate, so worker output is still never discarded."""
-    return status_split(path).dirty
+    return status_split(path, lock_free=lock_free).dirty
 
 
 def tracked_dirty(path: Path) -> bool:
@@ -1198,33 +1198,86 @@ def managed_worktrees() -> list[dict]:
     return out
 
 
-def remove_worktree(repo: Path | None, info: dict, dry_run: bool = True) -> str:
-    """Remove one managed worktree (never the branch). Returns a description of the action."""
+REMOVAL_REMOVED = "removed"
+REMOVAL_WOULD_REMOVE = "would_remove"
+REMOVAL_SKIPPED = "skipped"
+REMOVAL_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class RemovalOutcome:
+    """One `remove_worktree` attempt, classified by what was VERIFIED afterwards (T-39 DoD 4).
+
+    `message` stays the operator-facing sentence every existing caller prints, while `kind` is
+    the machine-readable outcome so a caller can count removals, skips and failures without
+    parsing the wording (a record must be derived from the result, never from the intent).
+    """
+
+    kind: str
+    path: Path
+    message: str
+
+
+def process_is_alive(pid: int | None) -> bool:
+    """True only when `os.kill(pid, 0)` proves the process still exists (T-20's liveness rule)."""
+    return _pid_is_alive(pid)
+
+
+def remove_worktree_outcome(repo: Path | None, info: dict, dry_run: bool = True) -> RemovalOutcome:
+    """Remove one managed worktree (never the branch) and report what actually happened."""
     root = get_settings().worktree_root
     assert root
     path: Path = info["path"]
     marker: Path = info["marker"]
     if not marker.exists() or not is_within(root, path):
-        return f"skip {path}: not managed"
+        return RemovalOutcome(REMOVAL_SKIPPED, path, f"skip {path}: not managed")
     # Parity files are harness residue, not worker output: remove them explicitly before the
     # dirty check so a leaked .env can never make cleanup refuse the tree (T-20 DoD 3). A
     # dry-run must not delete, and `status_split` already exempts parity residue from the
     # dirty predicate.
     if not dry_run:
         _remove_parity_residue(path)
-    if path.exists() and is_repo(path) and is_dirty(path):
-        return f"skip {path}: has uncommitted changes"
+    # A dry run must write nothing (T-39 DoD 6f), and a plain `git status` refreshes the
+    # per-worktree index; `lock_free` keeps the preview read-only while answering the same
+    # "is anything uncommitted?" question.
+    if path.exists() and is_repo(path) and is_dirty(path, lock_free=dry_run):
+        return RemovalOutcome(REMOVAL_SKIPPED, path, f"skip {path}: has uncommitted changes")
     if dry_run:
-        return f"would remove worktree {path} (branch kept)"
+        return RemovalOutcome(
+            REMOVAL_WOULD_REMOVE, path, f"would remove worktree {path} (branch kept)"
+        )
+    failure = ""
     if path.exists():
         if repo and is_repo(repo):
             run_git(["worktree", "remove", str(path)], repo, check=False)
         if path.exists():
             # Directory left behind (repo moved or worktree metadata gone): remove our files.
-            import shutil
-
-            shutil.rmtree(path)
-    marker.unlink(missing_ok=True)
+            try:
+                shutil.rmtree(path)
+            except OSError as exc:
+                failure = f"{type(exc).__name__}: {exc}"
+    if path.exists():
+        # Never claim a removal that did not happen, and do not leave git's registration
+        # behind: prune the metadata so the repo is consistent although the tree survived.
+        if repo and is_repo(repo):
+            run_git(["worktree", "prune"], repo, check=False)
+        detail = f": {failure}" if failure else ""
+        return RemovalOutcome(REMOVAL_FAILED, path, f"failed to remove worktree {path}{detail}")
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError as exc:
+        failure = f"{type(exc).__name__}: {exc}"
     if repo and is_repo(repo):
         run_git(["worktree", "prune"], repo, check=False)
-    return f"removed worktree {path} (branch kept)"
+    if marker.exists():
+        return RemovalOutcome(
+            REMOVAL_FAILED,
+            path,
+            f"failed to remove managed marker {marker} (tree gone): {failure}",
+        )
+    return RemovalOutcome(REMOVAL_REMOVED, path, f"removed worktree {path} (branch kept)")
+
+
+def remove_worktree(repo: Path | None, info: dict, dry_run: bool = True) -> str:
+    """Remove one managed worktree (never the branch). Returns a description of the action."""
+    return remove_worktree_outcome(repo, info, dry_run=dry_run).message
